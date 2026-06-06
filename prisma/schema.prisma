@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  owner
+  admin
+  operator
+  viewer
+}
+
+enum ReportType {
+  product_source
+  damo_product_source
+  promotion_product_source
+  audience_source
+}
+
+enum ImportStatus {
+  uploaded
+  validated
+  failed
+}
+
+enum SnapshotKind {
+  import
+  prefill
+  calculation
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  users     User[]
+  shops     Shop[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  email     String   @unique
+  role      Role     @default(operator)
+  createdAt DateTime @default(now())
+}
+
+model Shop {
+  id        String          @id @default(cuid())
+  tenantId  String
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  platform  String
+  cycles    AnalysisCycle[]
+  createdAt DateTime        @default(now())
+}
+
+model AnalysisCycle {
+  id          String            @id @default(cuid())
+  tenantId    String
+  shopId      String
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String
+  startDate   DateTime
+  endDate     DateTime
+  status      String            @default("draft")
+  imports     ImportBatch[]
+  prefill     PrefillItem[]
+  calcRuns    CalcRun[]
+  snapshots   VersionSnapshot[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ImportBatch {
+  id            String        @id @default(cuid())
+  cycleId       String
+  cycle         AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  reportType    ReportType
+  fileName      String
+  status        ImportStatus  @default(uploaded)
+  rowCount      Int           @default(0)
+  validation    Json
+  rawRows       Json
+  createdAt     DateTime      @default(now())
+}
+
+model PrefillItem {
+  id                               String        @id @default(cuid())
+  cycleId                          String
+  cycle                            AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  productId                        String
+  productCode                      String
+  productName                      String
+  grade                            String
+  monthlyGsvOpportunity            Decimal       @default(0)
+  grossMarginRate                  Decimal       @default(0)
+  paidVisitorRatio                 Decimal       @default(0)
+  imageUrl                         String?
+  competitorConversionExpectation  Decimal?
+  benchmarkProductId               String?
+  audienceStrategy                 String?
+  updatedAt                        DateTime      @updatedAt
+
+  @@unique([cycleId, productId])
+}
+
+model CalcRun {
+  id                   String        @id @default(cuid())
+  cycleId              String
+  cycle                AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  investmentResults    Json
+  breakthroughResults  Json
+  audiencePlans        Json
+  managementDashboard  Json
+  createdAt            DateTime      @default(now())
+}
+
+model VersionSnapshot {
+  id        String        @id @default(cuid())
+  cycleId   String
+  cycle     AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  kind      SnapshotKind
+  title     String
+  summary   String
+  createdBy String
+  payload   Json
+  createdAt DateTime      @default(now())
+}
