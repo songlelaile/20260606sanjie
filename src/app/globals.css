@@ -578,6 +578,7 @@ button:disabled {
   align-items: center;
   display: flex;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .management-tab {
@@ -646,6 +647,10 @@ button:disabled {
   padding: 18px;
 }
 
+.invite-form-panel {
+  margin-top: 2px;
+}
+
 .management-form-panel label {
   color: var(--muted);
   display: grid;
@@ -679,6 +684,18 @@ button:disabled {
 .management-table {
   min-width: 760px;
   table-layout: fixed;
+}
+
+.invite-table {
+  min-width: 760px;
+}
+
+.user-table {
+  min-width: 920px;
+}
+
+.history-table {
+  min-width: 1060px;
 }
 
 .management-table th:nth-child(1),
@@ -716,6 +733,34 @@ button:disabled {
   vertical-align: middle;
 }
 
+.history-table th:nth-child(1),
+.history-table td:nth-child(1) {
+  width: 180px;
+}
+
+.history-table th:nth-child(2),
+.history-table td:nth-child(2) {
+  width: 180px;
+}
+
+.history-table th:nth-child(3),
+.history-table td:nth-child(3),
+.history-table th:nth-child(4),
+.history-table td:nth-child(4),
+.history-table th:nth-child(5),
+.history-table td:nth-child(5),
+.history-table th:nth-child(6),
+.history-table td:nth-child(6),
+.history-table th:nth-child(7),
+.history-table td:nth-child(7) {
+  width: 118px;
+}
+
+.history-table th:nth-child(8),
+.history-table td:nth-child(8) {
+  width: 150px;
+}
+
 .invite-code-cell {
   color: var(--brand);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -726,6 +771,235 @@ button:disabled {
 .table-count {
   color: var(--muted);
   font-size: 14px;
+}
+
+.panel-shell {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+
+.management-section-label {
+  color: var(--brand);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.management-section-label.danger {
+  color: #ff9a8b;
+}
+
+.management-primary-button {
+  align-items: center;
+  background: var(--brand);
+  border: 1px solid #caa34d;
+  border-radius: 6px;
+  color: #182007;
+  display: inline-flex;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 800;
+  min-height: 42px;
+  padding: 0 16px;
+  white-space: nowrap;
+}
+
+.management-history {
+  display: grid;
+  gap: 16px;
+}
+
+.management-history-policy {
+  align-items: center;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) 220px auto;
+  padding: 18px 18px 16px;
+}
+
+.management-history-policy-copy h2 {
+  color: #fff6d7;
+  font-size: 20px;
+  margin: 0 0 8px;
+}
+
+.management-history-policy-copy p,
+.management-history-danger-copy p,
+.management-history-preview-top p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.management-history-input,
+.history-date-field {
+  display: grid;
+  gap: 8px;
+}
+
+.management-history-input span,
+.history-date-field span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.management-history-input input,
+.history-date-field input,
+.management-history-report-row input,
+.management-form-panel input {
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  min-height: 42px;
+  outline: 0;
+  padding: 0 14px;
+}
+
+.management-history-input input:focus,
+.history-date-field input:focus,
+.management-history-report-row input:focus {
+  border-color: var(--brand);
+}
+
+.management-history-danger {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px 18px;
+}
+
+.management-history-danger-copy {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.management-history-danger-actions {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto 180px auto auto;
+}
+
+.danger-solid {
+  background: #d35a54;
+  border-color: #c64d47;
+  color: #fff4ef;
+}
+
+.management-history-strip {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding-left: 2px;
+}
+
+.management-history-strip strong {
+  color: var(--brand);
+}
+
+.management-history-preview {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.management-history-preview-top {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+}
+
+.management-history-preview-range {
+  display: flex;
+  gap: 10px;
+}
+
+.management-history-preview-range label {
+  display: grid;
+  gap: 6px;
+}
+
+.management-history-preview-range span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.management-history-view-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.history-view-pill {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.history-view-pill.active {
+  background: rgba(246, 198, 95, 0.15);
+  border-color: var(--brand);
+  color: #fff0c1;
+}
+
+.management-history-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.history-bar-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 92px minmax(0, 1fr) 92px;
+}
+
+.history-bar-row span,
+.history-bar-row small {
+  color: var(--muted);
+}
+
+.history-bar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(126, 146, 83, 0.4);
+  border-radius: 999px;
+  height: 18px;
+  overflow: hidden;
+}
+
+.history-bar-track i {
+  background: linear-gradient(90deg, #7fb86d, #bedb89);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+}
+
+.management-history-report-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.management-history-report-row input {
+  min-width: 0;
+}
+
+.management-history-hint {
+  color: var(--muted);
 }
 
 .section-band,
@@ -1228,6 +1502,12 @@ td small {
     grid-template-columns: 1fr;
   }
 
+  .management-history-policy,
+  .management-history-danger-actions,
+  .management-history-report-row {
+    grid-template-columns: 1fr;
+  }
+
   .management-topbar {
     align-items: flex-start;
     display: grid;
@@ -1248,6 +1528,14 @@ td small {
   .timeline-axis {
     margin-left: 106px;
     padding-right: 0;
+  }
+
+  .management-history-preview-top {
+    display: grid;
+  }
+
+  .management-history-preview-range {
+    flex-wrap: wrap;
   }
 }
 

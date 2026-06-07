@@ -2,6 +2,7 @@ import { ManagementConsole } from "@/components/management/ManagementConsole";
 import {
   getInviteCodes,
   getManagedUsers,
+  getManagementHistory,
   getWorkspaceContext
 } from "@/lib/store/runtime-store";
 
@@ -13,6 +14,7 @@ export default function ManagementPage() {
       currentUser={user}
       initialInvites={getInviteCodes()}
       initialUsers={getManagedUsers()}
+      initialHistory={getManagementHistory()}
     />
   );
 }

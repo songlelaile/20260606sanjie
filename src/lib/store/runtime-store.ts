@@ -8,6 +8,7 @@ import { getGoldenScenario } from "@/lib/fixtures/golden-scenario";
 import {
   getImportBatchesSize,
   pruneAdminVersionSnapshots,
+  pruneHistoryRecordsByMonths,
   retentionPolicy,
   validateTenantDatasetSize
 } from "@/lib/retention-policy";
@@ -17,6 +18,10 @@ import type {
   InviteCode,
   ImportBatch,
   ImportValidationResult,
+  ManagementHistoryRecord,
+  ManagementHistoryReport,
+  ManagementHistoryRetention,
+  ManagementHistoryState,
   ManagedUser,
   PrefillItem,
   ProfitMarginMatrix,
@@ -34,6 +39,9 @@ interface RuntimeStoreState {
   versions: VersionSnapshot[];
   inviteCodes: InviteCode[];
   managedUsers: ManagedUser[];
+  historyRecords: ManagementHistoryRecord[];
+  historyReports: ManagementHistoryReport[];
+  historyRetention: ManagementHistoryRetention;
 }
 
 const scenario = getGoldenScenario();
@@ -56,7 +64,7 @@ function createInitialState(): RuntimeStoreState {
   currentTenantDatasetBytes: getImportBatchesSize(scenario.importBatches),
   prefillItems: [...scenario.prefillItems],
   growthProfitConfig: initialGrowthProfitConfig,
-  calcRun: runThreeStageCalculation({
+    calcRun: runThreeStageCalculation({
     cycleId: scenario.cycle.id,
     productSourceRows: scenario.productSourceRows,
     damoProductRows: scenario.damoProductRows,
@@ -64,9 +72,12 @@ function createInitialState(): RuntimeStoreState {
     audienceSourceRows: scenario.audienceSourceRows,
     prefillItems: scenario.prefillItems,
     marginMatrix
-  }),
-  versions: pruneAdminVersionSnapshots([...scenario.versionSnapshots]),
-  inviteCodes: [
+    }),
+    versions: pruneAdminVersionSnapshots([...scenario.versionSnapshots]),
+    historyRecords: pruneHistoryRecordsByMonths([...scenario.historyRecords], scenario.historyRetention.months, new Date()),
+    historyReports: [...scenario.historyReports],
+    historyRetention: { ...scenario.historyRetention },
+    inviteCodes: [
     {
       id: "invite-u5x5xgu423",
       tenantId: scenario.tenant.id,
@@ -453,6 +464,109 @@ export function getManagedUsers() {
   return state.managedUsers;
 }
 
+export function getManagementHistory(): ManagementHistoryState {
+  return {
+    records: [...state.historyRecords].sort((left, right) => right.uploadAt.localeCompare(left.uploadAt)),
+    reports: [...state.historyReports].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    retention: { ...state.historyRetention }
+  };
+}
+
+export function updateManagementHistoryRetention(months: number) {
+  const normalizedMonths = normalizeHistoryMonths(months);
+  state.historyRetention = {
+    ...state.historyRetention,
+    months: normalizedMonths,
+    updatedAt: new Date().toISOString(),
+    updatedBy: scenario.user.name
+  };
+  state.historyRecords = pruneHistoryRecordsByMonths(
+    state.historyRecords,
+    normalizedMonths,
+    new Date()
+  );
+  state.historyReports = pruneHistoryReportsByMonths(
+    state.historyReports,
+    normalizedMonths,
+    new Date()
+  );
+  return getManagementHistory();
+}
+
+export function clearManagementHistory() {
+  state.historyRecords = [];
+  state.historyReports = [];
+  return getManagementHistory();
+}
+
+export function deleteManagementHistoryBefore(beforeDate: string) {
+  const cutoff = parseDate(beforeDate);
+  if (!cutoff) {
+    return getManagementHistory();
+  }
+  state.historyRecords = state.historyRecords.filter(
+    (record) => new Date(record.uploadAt).getTime() >= cutoff.getTime()
+  );
+  state.historyReports = state.historyReports.filter(
+    (report) => new Date(`${report.endDate}T23:59:59.999Z`).getTime() >= cutoff.getTime()
+  );
+  return getManagementHistory();
+}
+
+export function deleteManagementHistoryRange(startDate: string, endDate: string) {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  if (!start || !end) {
+    return getManagementHistory();
+  }
+  const normalizedStart = start.getTime();
+  const normalizedEnd = end.getTime();
+  state.historyRecords = state.historyRecords.filter((record) => {
+    const uploadTime = new Date(record.uploadAt).getTime();
+    return uploadTime < normalizedStart || uploadTime > normalizedEnd;
+  });
+  state.historyReports = state.historyReports.filter((report) => {
+    const reportStart = new Date(report.startDate).getTime();
+    const reportEnd = new Date(`${report.endDate}T23:59:59.999Z`).getTime();
+    return reportEnd < normalizedStart || reportStart > normalizedEnd;
+  });
+  return getManagementHistory();
+}
+
+export function saveManagementHistoryReport(input: {
+  name: string;
+  startDate: string;
+  endDate: string;
+  categories: ManagementHistoryReport["categories"];
+}) {
+  const report: ManagementHistoryReport = {
+    id: `history-report-${Date.now()}`,
+    tenantId: scenario.tenant.id,
+    shopId: scenario.shop.id,
+    cycleId: scenario.cycle.id,
+    name: input.name.trim(),
+    createdAt: new Date().toISOString(),
+    createdBy: scenario.user.name,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    categories: [...input.categories]
+  };
+  state.historyReports = [report, ...state.historyReports];
+  return report;
+}
+
+function normalizeHistoryMonths(months: number) {
+  if (!Number.isFinite(months) || months < 0) {
+    return 0;
+  }
+  return Math.floor(months);
+}
+
+function parseDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export class ImportRetentionError extends Error {
   constructor(
     message: string,
@@ -519,6 +633,21 @@ function growthProfitConfigToMarginMatrix(rows: GrowthProfitConfigRow[]): Profit
   return Object.fromEntries(
     normalized.map((row) => [row.grade, { ...row.values }])
   ) as ProfitMarginMatrix;
+}
+
+function pruneHistoryReportsByMonths(
+  reports: ManagementHistoryReport[],
+  months: number,
+  referenceDate = new Date()
+) {
+  if (!Number.isFinite(months) || months <= 0) {
+    return [...reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+  const cutoff = new Date(referenceDate);
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return [...reports]
+    .filter((report) => new Date(`${report.endDate}T23:59:59.999Z`).getTime() >= cutoff.getTime())
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function formatMegabytes(bytes: number) {

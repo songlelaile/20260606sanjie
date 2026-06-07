@@ -1,31 +1,47 @@
 "use client";
 
 import clsx from "clsx";
-import { Copy, LogOut, Trash2, UserRoundPlus, UsersRound } from "lucide-react";
+import {
+  Copy,
+  History,
+  LogOut,
+  Trash2,
+  UserRoundPlus,
+  UsersRound
+} from "lucide-react";
 import { useMemo, useState } from "react";
-import type { InviteCode, ManagedUser, User } from "@/lib/types/domain";
+import { ManagementHistoryPanel } from "@/components/management/ManagementHistoryPanel";
+import type {
+  InviteCode,
+  ManagementHistoryState,
+  ManagedUser,
+  User
+} from "@/lib/types/domain";
 
-type ManagementTab = "invites" | "users";
+type ManagementTab = "invites" | "users" | "history";
 
 export function ManagementConsole({
   initialInvites,
   initialUsers,
+  initialHistory,
   currentUser
 }: {
   initialInvites: InviteCode[];
   initialUsers: ManagedUser[];
+  initialHistory: ManagementHistoryState;
   currentUser: User;
 }) {
-  const [activeTab, setActiveTab] = useState<ManagementTab>("invites");
+  const [activeTab, setActiveTab] = useState<ManagementTab>("history");
   const [invites, setInvites] = useState(initialInvites);
   const [users] = useState(initialUsers);
   const [note, setNote] = useState("");
   const [maxUses, setMaxUses] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const loginName = currentUser.role === "owner" || currentUser.role === "admin"
-    ? "admin"
-    : currentUser.email.split("@")[0];
+  const loginName =
+    currentUser.role === "owner" || currentUser.role === "admin"
+      ? "admin"
+      : currentUser.email.split("@")[0];
 
   const inviteRows = useMemo(
     () => [...invites].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -94,6 +110,14 @@ export function ManagementConsole({
             <UsersRound size={17} />
             用户列表
           </button>
+          <button
+            type="button"
+            className={clsx("management-tab", activeTab === "history" && "active")}
+            onClick={() => setActiveTab("history")}
+          >
+            <History size={17} />
+            历史数据
+          </button>
         </div>
         <div className="login-strip" aria-label="当前登录账号">
           <span>登录：</span>
@@ -108,7 +132,7 @@ export function ManagementConsole({
 
       {activeTab === "invites" ? (
         <>
-          <section className="management-form-panel">
+          <section className="management-form-panel invite-form-panel">
             <label>
               说明（选填）
               <input
@@ -136,7 +160,7 @@ export function ManagementConsole({
 
           <section className="table-panel management-table-panel">
             <div className="table-wrap">
-              <table className="management-table">
+              <table className="management-table invite-table">
                 <thead>
                   <tr>
                     <th>邀请码</th>
@@ -184,7 +208,9 @@ export function ManagementConsole({
             </div>
           </section>
         </>
-      ) : (
+      ) : null}
+
+      {activeTab === "users" ? (
         <section className="table-panel management-table-panel">
           <div className="panel-toolbar">
             <div>
@@ -193,7 +219,7 @@ export function ManagementConsole({
             </div>
           </div>
           <div className="table-wrap">
-            <table className="management-table">
+            <table className="management-table user-table">
               <thead>
                 <tr>
                   <th>用户</th>
@@ -224,7 +250,9 @@ export function ManagementConsole({
             </table>
           </div>
         </section>
-      )}
+      ) : null}
+
+      {activeTab === "history" ? <ManagementHistoryPanel initialHistory={initialHistory} /> : null}
     </section>
   );
 }

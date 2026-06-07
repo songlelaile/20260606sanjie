@@ -257,6 +257,46 @@ export interface AudiencePlanItem {
   subjectName: string;
 }
 
+export type HistoryDataKey =
+  | "product"
+  | "promotionProduct"
+  | "promotionContent"
+  | "keyword"
+  | "audience";
+
+export interface ManagementHistoryRecord {
+  id: string;
+  tenantId: string;
+  shopId: string;
+  cycleId: string;
+  uploadAt: string;
+  dataRangeStart: string;
+  dataRangeEnd: string;
+  counts: Record<HistoryDataKey, number>;
+  note: string;
+  reportName?: string;
+}
+
+export interface ManagementHistoryReport {
+  id: string;
+  tenantId: string;
+  shopId: string;
+  cycleId: string;
+  name: string;
+  createdAt: string;
+  createdBy: string;
+  startDate: string;
+  endDate: string;
+  categories: HistoryDataKey[];
+}
+
+export interface ManagementHistoryRetention {
+  tenantId: string;
+  months: number;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface ManagementDashboard {
   productCount: number;
   monthlyNetSales: number;
@@ -289,4 +329,10 @@ export interface VersionSnapshot {
   createdAt: string;
   createdBy: string;
   summary: string;
+}
+
+export interface ManagementHistoryState {
+  records: ManagementHistoryRecord[];
+  reports: ManagementHistoryReport[];
+  retention: ManagementHistoryRetention;
 }

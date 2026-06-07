@@ -1,4 +1,8 @@
-import type { ImportBatch, VersionSnapshot } from "@/lib/types/domain";
+import type {
+  ImportBatch,
+  ManagementHistoryRecord,
+  VersionSnapshot
+} from "@/lib/types/domain";
 
 const megabyte = 1024 * 1024;
 
@@ -67,6 +71,27 @@ export function pruneAdminVersionSnapshots(versions: VersionSnapshot[]) {
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
+export function pruneHistoryRecordsByMonths(
+  records: ManagementHistoryRecord[],
+  months: number,
+  referenceDate = new Date()
+) {
+  if (!Number.isFinite(months) || months <= 0) {
+    return [...records].sort((left, right) => right.uploadAt.localeCompare(left.uploadAt));
+  }
+
+  const cutoff = subtractMonths(referenceDate, months);
+  return [...records]
+    .filter((record) => new Date(record.uploadAt).getTime() >= cutoff.getTime())
+    .sort((left, right) => right.uploadAt.localeCompare(left.uploadAt));
+}
+
 function trimNumber(value: number) {
   return Number(value.toFixed(value >= 10 ? 1 : 2)).toString();
+}
+
+function subtractMonths(date: Date, months: number) {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() - months);
+  return next;
 }

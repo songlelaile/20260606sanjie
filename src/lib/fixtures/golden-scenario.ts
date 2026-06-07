@@ -3,6 +3,9 @@ import type {
   AudienceSourceRow,
   DamoProductRow,
   ImportBatch,
+  ManagementHistoryRecord,
+  ManagementHistoryReport,
+  ManagementHistoryRetention,
   PrefillItem,
   ProductSourceRow,
   PromotionProductRow,
@@ -387,6 +390,186 @@ export const versionSnapshots: VersionSnapshot[] = [
   }
 ];
 
+export const historyRetention: ManagementHistoryRetention = {
+  tenantId: goldenTenant.id,
+  months: 0,
+  updatedAt: "2026-06-06T05:10:00.000Z",
+  updatedBy: goldenUser.name
+};
+
+export const historyRecords: ManagementHistoryRecord[] = [
+  {
+    id: "history-20260605-01",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-05T05:19:49.000Z",
+    dataRangeStart: "2026-04-20",
+    dataRangeEnd: "2026-06-04",
+    counts: {
+      product: 9407,
+      promotionProduct: 11650,
+      promotionContent: 2875,
+      keyword: 24713,
+      audience: 28749
+    },
+    note: "—",
+    reportName: "近两月历史库快照"
+  },
+  {
+    id: "history-20260604-01",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-04T06:55:36.000Z",
+    dataRangeStart: "2026-04-20",
+    dataRangeEnd: "2026-06-03",
+    counts: {
+      product: 1001,
+      promotionProduct: 1574,
+      promotionContent: 6465,
+      keyword: 1451,
+      audience: 56665
+    },
+    note: "异常波动复盘",
+    reportName: "波动复盘"
+  },
+  {
+    id: "history-20260604-02",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-04T06:53:30.000Z",
+    dataRangeStart: "2026-04-20",
+    dataRangeEnd: "2026-06-03",
+    counts: {
+      product: 0,
+      promotionProduct: 1574,
+      promotionContent: 6465,
+      keyword: 1451,
+      audience: 56665
+    },
+    note: "仅推广内容保留"
+  },
+  {
+    id: "history-20260604-03",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-04T05:40:53.000Z",
+    dataRangeStart: "2026-04-20",
+    dataRangeEnd: "2026-06-03",
+    counts: {
+      product: 4205,
+      promotionProduct: 15380,
+      promotionContent: 16515,
+      keyword: 26604,
+      audience: 151118
+    },
+    note: "历史归档"
+  },
+  {
+    id: "history-20260604-04",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-04T03:03:48.000Z",
+    dataRangeStart: "2026-04-01",
+    dataRangeEnd: "2026-06-03",
+    counts: {
+      product: 4856,
+      promotionProduct: 4097,
+      promotionContent: 2742,
+      keyword: 17646,
+      audience: 24445
+    },
+    note: "历史归档"
+  },
+  {
+    id: "history-20260603-01",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-03T05:19:33.000Z",
+    dataRangeStart: "2026-05-01",
+    dataRangeEnd: "2026-06-02",
+    counts: {
+      product: 2524,
+      promotionProduct: 4393,
+      promotionContent: 0,
+      keyword: 4479,
+      audience: 1960
+    },
+    note: "历史归档"
+  },
+  {
+    id: "history-20260603-02",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-03T05:18:50.000Z",
+    dataRangeStart: "2026-04-01",
+    dataRangeEnd: "2026-06-02",
+    counts: {
+      product: 2524,
+      promotionProduct: 4393,
+      promotionContent: 193,
+      keyword: 4479,
+      audience: 1960
+    },
+    note: "历史归档"
+  },
+  {
+    id: "history-20260603-03",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-03T01:29:51.000Z",
+    dataRangeStart: "2026-04-01",
+    dataRangeEnd: "2026-06-02",
+    counts: {
+      product: 17786,
+      promotionProduct: 1489,
+      promotionContent: 193,
+      keyword: 2937,
+      audience: 2573
+    },
+    note: "历史归档"
+  },
+  {
+    id: "history-20260602-01",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    uploadAt: "2026-06-02T13:48:05.000Z",
+    dataRangeStart: "2026-04-01",
+    dataRangeEnd: "2026-06-01",
+    counts: {
+      product: 6074,
+      promotionProduct: 38216,
+      promotionContent: 0,
+      keyword: 52216,
+      audience: 1390
+    },
+    note: "历史归档"
+  }
+];
+
+export const historyReports: ManagementHistoryReport[] = [
+  {
+    id: "history-report-20260605",
+    tenantId: goldenTenant.id,
+    shopId: goldenShop.id,
+    cycleId: goldenCycle.id,
+    name: "2026-06 历史追溯",
+    createdAt: "2026-06-05T08:20:00.000Z",
+    createdBy: goldenUser.name,
+    startDate: "2026-04-20",
+    endDate: "2026-06-04",
+    categories: ["product", "promotionProduct", "promotionContent", "keyword", "audience"]
+  }
+];
+
 export function getGoldenScenario() {
   return {
     tenant: goldenTenant,
@@ -399,7 +582,10 @@ export function getGoldenScenario() {
     audienceSourceRows,
     prefillItems,
     importBatches,
-    versionSnapshots
+    versionSnapshots,
+    historyRecords,
+    historyReports,
+    historyRetention
   };
 }
 
