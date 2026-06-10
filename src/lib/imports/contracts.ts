@@ -7,6 +7,8 @@ export interface ReportContract {
   entityHeader: string;
   dateHeader?: string;
   requiredHeaders: string[];
+  /** 明细表：同一主键多行属正常（如推广/人群按计划·人群拆行），不报重复提示。 */
+  allowDuplicateEntity?: boolean;
 }
 
 export const reportContracts: Record<ReportType, ReportContract> = {
@@ -75,6 +77,7 @@ export const reportContracts: Record<ReportType, ReportContract> = {
     sourceSystem: "万相台无界-人群报表",
     entityHeader: "主体ID",
     dateHeader: "日期",
+    allowDuplicateEntity: true,
     requiredHeaders: [
       "日期",
       "场景ID",
@@ -136,8 +139,10 @@ export function validateImportRows(
     errors.push("报表没有可计算的数据行");
   }
 
-  if (duplicateEntityIds.length > 0) {
-    warnings.push(`发现重复 ${contract.entityHeader}：${duplicateEntityIds.slice(0, 8).join("、")}`);
+  if (duplicateEntityIds.length > 0 && !contract.allowDuplicateEntity) {
+    warnings.push(
+      `发现 ${duplicateEntityIds.length} 个重复 ${contract.entityHeader}，已自动归并为每个商品一条：${duplicateEntityIds.slice(0, 8).join("、")}`
+    );
   }
 
   if (dateIndex >= 0 && dateValues.length === 0) {
@@ -188,4 +193,38 @@ function findDuplicates(values: string[]) {
 
 function findLooseDateHeaderIndex(headers: string[]) {
   return headers.findIndex((header) => /(日期|时间|周期|统计区间|报表区间)/.test(header));
+}
+
+/**
+ * 在解析出的整张表格(可能含标题、统计周期等前导行)中,定位真正的列表头行。
+ * 取与该报表契约必填字段匹配最多、且包含主键字段的那一行,其后为数据行。
+ */
+export function locateHeaderRow(matrix: unknown[][], reportType: ReportType) {
+  const contract = reportContracts[reportType];
+  const requiredSet = new Set(contract.requiredHeaders.map(normalizeHeader));
+  const entityKey = normalizeHeader(contract.entityHeader);
+  const scanLimit = Math.min(matrix.length, 20);
+  let bestIndex = 0;
+  let bestScore = -1;
+  for (let index = 0; index < scanLimit; index += 1) {
+    const cells = new Set((matrix[index] ?? []).map(normalizeHeader).filter(Boolean));
+    let score = 0;
+    for (const cell of cells) {
+      if (requiredSet.has(cell)) {
+        score += 1;
+      }
+    }
+    if (cells.has(entityKey)) {
+      score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  const headers = (matrix[bestIndex] ?? []).map((cell) => stringifyCell(cell));
+  const rows = matrix
+    .slice(bestIndex + 1)
+    .filter((row) => row.some((cell) => stringifyCell(cell) !== ""));
+  return { headerIndex: bestIndex, headers, rows };
 }

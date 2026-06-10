@@ -2,8 +2,10 @@ import { PageHeader } from "@/components/PageHeader";
 import { SourceDataConsole } from "@/components/SourceDataConsole";
 import { getImportBatches } from "@/lib/store/runtime-store";
 
-export default function ImportsPage() {
-  const batches = getImportBatches();
+export const dynamic = "force-dynamic";
+
+export default async function ImportsPage() {
+  const batches = await getImportBatches();
 
   return (
     <>

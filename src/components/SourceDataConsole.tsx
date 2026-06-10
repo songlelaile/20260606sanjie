@@ -9,6 +9,7 @@ import {
   X
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { reportContracts } from "@/lib/imports/contracts";
 import { formatNumber } from "@/lib/format";
 import {
@@ -53,6 +54,7 @@ const sourceSlots: Array<{
 ];
 
 export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBatch[] }) {
+  const router = useRouter();
   const [batches, setBatches] = useState(initialBatches);
   const [files, setFiles] = useState<Partial<Record<ReportType, File>>>({});
   const [busy, setBusy] = useState(false);
@@ -91,21 +93,17 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
       return;
     }
 
-    if (batches.length > 0) {
-      setDialog({
-        title: "请先清空当前源数据",
-        lines: [
-          `租户端默认只保存最新一次源数据。当前已保存 ${formatStorageSize(savedBytes)}，上传新数据前请先点击“清空源数据”。`
-        ],
-        tone: "warn"
-      });
-      return;
-    }
-
     setBusy(true);
     setNotice("");
+    // 租户端仅保留最新一次源数据：上传前自动清空旧数据，无需用户先手动点“清空源数据”。
+    if (batches.length > 0) {
+      await fetch("/api/import-batches", { method: "DELETE" });
+      setBatches([]);
+    }
     const uploaded: ImportBatch[] = [];
-    const problems: string[] = [];
+    const failures: string[] = [];
+    const validationErrors: string[] = [];
+    const warnings: string[] = [];
     const datasetId = createDatasetId();
 
     for (const [reportType, file] of selectedEntries) {
@@ -121,19 +119,27 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
       });
       const payload = (await response.json()) as { data?: { batch: ImportBatch }; error?: string };
       if (payload.data?.batch) {
-        uploaded.push(payload.data.batch);
-        problems.push(...payload.data.batch.validation.errors, ...payload.data.batch.validation.warnings);
+        const batch = payload.data.batch;
+        uploaded.push(batch);
+        if (!batch.validation.ok) {
+          validationErrors.push(...batch.validation.errors);
+        }
+        warnings.push(...batch.validation.warnings);
       } else {
-        problems.push(payload.error ?? `${file.name} 上传失败`);
+        failures.push(payload.error ?? `${file.name} 上传失败`);
       }
     }
 
     setBatches(uploaded);
-    if (uploaded.some((batch) => !batch.validation.ok) || problems.length > 0) {
+
+    // 仅当上传失败或校验未通过(error)时才阻断重算；
+    // “已自动归并、未闭合引号”等提示(warning)不阻断，照常重算。
+    const blocking = [...failures, ...validationErrors];
+    if (blocking.length > 0) {
       setDialog({
-        title: "源表校验提醒",
-        lines: problems.length > 0 ? problems : ["部分源表未通过校验，请检查字段和日期后重新上传。"],
-        tone: uploaded.every((batch) => batch.validation.ok) ? "warn" : "bad"
+        title: "部分源表未通过校验",
+        lines: blocking,
+        tone: "bad"
       });
       setBusy(false);
       return;
@@ -144,16 +150,24 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cycleId: "cycle-2026-05" })
     });
-    setNotice(`已上传 ${uploaded.length} 份源表并重算。`);
     setFiles({});
     setBusy(false);
+    router.refresh();
+    if (warnings.length > 0) {
+      setDialog({
+        title: "已上传并重算",
+        lines: [...warnings, "看板已按新数据重算，切换到看板页即可查看。"],
+        tone: "warn"
+      });
+    } else {
+      setNotice(`已上传 ${uploaded.length} 份源表并重算，切换到看板页查看结果。`);
+    }
   }
 
   async function clearSourceData() {
     setBusy(true);
     await fetch("/api/import-batches", { method: "DELETE" });
     setBatches([]);
-    setFiles({});
     setNotice("源数据已清空。");
     setBusy(false);
   }

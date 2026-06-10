@@ -1594,3 +1594,254 @@ td small {
     font-size: 24px;
   }
 }
+
+/* —— 登录页 —— */
+/* —— 登录 / 邀请注册：参考货盘 BI 的左右分屏布局 —— */
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.auth-hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 36px;
+  padding: 56px 56px 48px;
+  overflow: hidden;
+  background:
+    radial-gradient(900px 520px at 18% -8%, rgba(246, 198, 95, 0.16), transparent 70%),
+    radial-gradient(720px 480px at 100% 110%, rgba(127, 175, 114, 0.16), transparent 65%),
+    linear-gradient(155deg, #0c1606 0%, #0a1205 60%, #080f04 100%);
+  border-right: 1px solid var(--line);
+}
+
+.auth-hero-brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.auth-hero-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(140deg, var(--brand), var(--accent));
+  color: #1c2408;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.auth-hero-brand strong {
+  display: block;
+  font-size: 18px;
+  color: var(--ink);
+}
+
+.auth-hero-brand small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.auth-hero-headline h2 {
+  margin: 0 0 12px;
+  font-size: 30px;
+  line-height: 1.32;
+  color: var(--ink);
+  max-width: 18em;
+}
+
+.auth-hero-headline p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.auth-hero-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-hero-features li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 16px;
+  border-left: 2px solid var(--line-strong);
+}
+
+.auth-hero-features strong {
+  color: var(--brand);
+  font-size: 14px;
+}
+
+.auth-hero-features span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.auth-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 32px 30px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.auth-tabs button {
+  min-height: 38px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-tabs button.is-active {
+  background: var(--brand);
+  color: #182007;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.auth-form input {
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.auth-form input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(246, 198, 95, 0.12);
+}
+
+.auth-submit {
+  margin-top: 4px;
+  border-radius: 8px;
+  font-size: 15px;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.auth-error {
+  color: var(--bad);
+  font-size: 13px;
+  margin: 0;
+}
+
+.auth-hint {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  margin: 2px 0 0;
+}
+
+@media (max-width: 880px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-hero {
+    display: none;
+  }
+}
+
+/* —— 侧边栏底部用户区 —— */
+.sidebar-user {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar-user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sidebar-user-meta strong {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-user-meta small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.logout-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.logout-button:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}

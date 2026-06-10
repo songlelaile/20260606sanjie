@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { parseWorkbookUpload } from "@/lib/imports/parse-workbook";
-import { reportContracts, validateImportRows } from "@/lib/imports/contracts";
+import { locateHeaderRow, reportContracts, validateImportRows } from "@/lib/imports/contracts";
 import {
   addImportBatch,
   clearImportBatches,
@@ -15,15 +15,15 @@ import type { ReportType } from "@/lib/types/domain";
 export async function GET() {
   return NextResponse.json({
     data: {
-      batches: getImportBatches(),
-      retention: getRetentionStatus()
+      batches: await getImportBatches(),
+      retention: await getRetentionStatus()
     }
   });
 }
 
 export async function POST(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
-  const { cycle } = getWorkspaceContext();
+  const { cycle } = await getWorkspaceContext();
 
   if (contentType.includes("multipart/form-data")) {
     const formData = await request.formData();
@@ -39,22 +39,34 @@ export async function POST(request: Request) {
     const datasetId = readString(formData.get("datasetId")) ?? `dataset-${Date.now()}`;
     const datasetTotalBytes = readNumber(formData.get("datasetTotalBytes")) ?? file.size;
     const fileSizeBytes = readNumber(formData.get("fileSizeBytes")) ?? file.size;
-    const retentionError = validateImportDatasetWrite({ datasetId, datasetTotalBytes });
+    const retentionError = await validateImportDatasetWrite({ datasetId, datasetTotalBytes });
     if (retentionError) {
       return NextResponse.json({ error: retentionError.message }, { status: retentionError.status });
     }
 
-    const parsed = await parseWorkbookUpload(file);
-    const validation = validateImportRows(reportType, parsed.headers, parsed.rows);
+    let parsed;
     try {
-      const batch = addImportBatch({
+      parsed = await parseWorkbookUpload(file);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "文件解析失败";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    const { headers, rows } = locateHeaderRow(parsed.matrix, reportType);
+    const validation = validateImportRows(reportType, headers, rows);
+    if (parsed.warnings.length > 0) {
+      validation.warnings = [...validation.warnings, ...parsed.warnings];
+    }
+    try {
+      const batch = await addImportBatch({
         cycleId: cycle.id,
         datasetId,
         datasetTotalBytes,
         reportType,
         fileName: file.name,
         fileSizeBytes,
-        validation
+        validation,
+        parsedHeaders: headers,
+        parsedRows: rows
       });
       return NextResponse.json({ data: { batch } }, { status: validation.ok ? 201 : 422 });
     } catch (error) {
@@ -81,19 +93,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "reportType 不合法" }, { status: 400 });
   }
 
-  const validation = validateImportRows(body.reportType, body.headers ?? [], body.rows ?? []);
+  const headers = Array.isArray(body.headers) ? body.headers : [];
+  const rows = Array.isArray(body.rows) ? body.rows.filter(Array.isArray) : [];
+  const validation = validateImportRows(body.reportType, headers, rows);
   const datasetId = body.datasetId ?? `dataset-${Date.now()}`;
   const datasetTotalBytes = body.datasetTotalBytes ?? body.fileSizeBytes ?? 0;
   const fileSizeBytes = body.fileSizeBytes ?? datasetTotalBytes;
   try {
-    const batch = addImportBatch({
+    const batch = await addImportBatch({
       cycleId: cycle.id,
       datasetId,
       datasetTotalBytes,
       reportType: body.reportType,
       fileName: body.fileName ?? reportContracts[body.reportType].label,
       fileSizeBytes,
-      validation
+      validation,
+      parsedHeaders: headers,
+      parsedRows: rows
     });
     return NextResponse.json({ data: { batch } }, { status: validation.ok ? 201 : 422 });
   } catch (error) {
@@ -105,7 +121,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE() {
-  clearImportBatches();
+  await clearImportBatches();
   return NextResponse.json({ data: { batches: [] } });
 }
 

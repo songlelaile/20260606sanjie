@@ -122,7 +122,10 @@ export function buildInvestmentResults(input: ThreeStageInput): ProductInvestmen
     const promotion = promoById.get(item.productId);
     const lifecycle = damo?.growthStage ?? "冷启期";
     const attackDefenseMarginRate =
-      activeMarginMatrix[item.grade]?.[lifecycle] ?? marginMatrix[item.grade][lifecycle];
+      activeMarginMatrix[item.grade]?.[lifecycle] ??
+      marginMatrix[item.grade]?.[lifecycle] ??
+      marginMatrix.C[lifecycle] ??
+      0;
     const paymentAmount = product?.paymentAmount ?? 0;
     const refundAmount = product?.refundAmount ?? 0;
     const netSales = paymentAmount - refundAmount;
@@ -151,6 +154,7 @@ export function buildInvestmentResults(input: ThreeStageInput): ProductInvestmen
       productName: product?.productName ?? item.productName,
       lifecycle,
       grade: item.grade,
+      grossMarginRate: item.grossMarginRate,
       attackDefenseMarginRate,
       monthlyGsvOpportunity: item.monthlyGsvOpportunity,
       plannedGrossProfit,
@@ -285,7 +289,14 @@ export function buildManagementDashboard(
     plannedProfit,
     availableAdBudget,
     plannedMarginRate: safeDivide(plannedProfit, monthlyGsvOpportunity),
+    // 明细只展示「评级 + 月GSV机会 + 毛利率」三项都填齐的商品；未填齐的不进明细。
     topProducts: [...investmentResults]
+      .filter(
+        (row) =>
+          gradeRows.includes(row.grade) &&
+          row.monthlyGsvOpportunity > 0 &&
+          row.grossMarginRate > 0
+      )
       .sort((a, b) => b.netSales - a.netSales)
       .slice(0, 10)
   };

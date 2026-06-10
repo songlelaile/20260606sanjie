@@ -91,4 +91,31 @@ describe("three-stage calculation", () => {
 
     expect(plans.map((item) => item.type)).toEqual(["拉新", "追投", "收割"]);
   });
+
+  it("综合看板明细只展示填齐三项（评级+月GSV机会+毛利率）的商品", () => {
+    const run = runThreeStageCalculation({
+      cycleId: scenario.cycle.id,
+      productSourceRows: scenario.productSourceRows,
+      damoProductRows: scenario.damoProductRows,
+      promotionProductRows: scenario.promotionProductRows,
+      audienceSourceRows: scenario.audienceSourceRows,
+      prefillItems: scenario.prefillItems
+    });
+
+    const top = run.managementDashboard.topProducts;
+    expect(top.length).toBeGreaterThan(0);
+    // 明细里每个商品都填齐三项
+    expect(
+      top.every(
+        (p) =>
+          ["S", "A", "B", "C"].includes(p.grade) &&
+          p.monthlyGsvOpportunity > 0 &&
+          p.grossMarginRate > 0
+      )
+    ).toBe(true);
+    // 未填月GSV机会的样例 demo 商品不进明细
+    expect(top.some((p) => p.productId.startsWith("demo-product"))).toBe(false);
+    // 但 KPI 汇总仍按全部商品（productCount 不变）
+    expect(run.managementDashboard.productCount).toBe(60);
+  });
 });

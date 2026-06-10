@@ -6,12 +6,14 @@ import { StatusPill } from "@/components/StatusPill";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { getImportBatches, getLatestCalcRun, getVersions, getWorkspaceContext } from "@/lib/store/runtime-store";
 
-export default function AdminPage() {
-  const { tenant, shop, cycle } = getWorkspaceContext();
-  const run = getLatestCalcRun();
+export const dynamic = "force-dynamic";
+
+export default async function AdminPage() {
+  const { tenant, shop, cycle } = await getWorkspaceContext();
+  const run = await getLatestCalcRun();
   const dashboard = run.managementDashboard;
-  const imports = getImportBatches();
-  const versions = getVersions(cycle.id);
+  const imports = await getImportBatches();
+  const versions = await getVersions(cycle.id);
 
   return (
     <>
@@ -40,7 +42,7 @@ export default function AdminPage() {
           {
             label: "历史利润率",
             value: formatPercent(dashboard.historicalMarginRate, 1),
-            helper: `规划利润率 ${formatPercent(dashboard.plannedMarginRate, 1)}`
+            helper: `预留毛利率 ${formatPercent(dashboard.plannedMarginRate, 1)}`
           }
         ]}
       />

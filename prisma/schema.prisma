@@ -1,3 +1,8 @@
+// 多租户持久化（Postgres）。
+// 设计：跨租户需索引/查询的实体用关系表（Tenant/User/InviteCode）；
+// 每个租户的工作区状态（源数据导入、预填、利润配置、看板计算、版本、历史）
+// 以 JSON blob 存于 Workspace.data（一行一租户），复用现有领域逻辑、按 tenantId 隔离。
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,130 +12,52 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Role {
-  owner
-  admin
-  operator
-  viewer
-}
-
-enum ReportType {
-  product_source
-  damo_product_source
-  promotion_product_source
-  audience_source
-}
-
-enum ImportStatus {
-  uploaded
-  validated
-  failed
-}
-
-enum SnapshotKind {
-  import
-  prefill
-  calculation
-}
-
 model Tenant {
-  id        String   @id @default(cuid())
+  id        String       @id @default(cuid())
   name      String
-  slug      String   @unique
-  createdAt DateTime @default(now())
+  slug      String       @unique
+  createdAt DateTime     @default(now())
   users     User[]
-  shops     Shop[]
+  invites   InviteCode[]
+  workspace Workspace?
 }
 
 model User {
-  id        String   @id @default(cuid())
-  tenantId  String
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  username     String   @unique
+  password     String
+  name         String
+  authRole     String   @default("tenant") // 登录权限：tenant | admin
+  role         String   @default("operator") // 管理视图角色：owner | admin | operator | viewer
+  email        String   @default("")
+  shopName     String   @default("")
+  status       String   @default("active")
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model InviteCode {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  code            String   @unique
+  registrationUrl String
+  usedCount       Int      @default(0)
+  maxUses         Int      @default(1)
+  note            String   @default("")
+  createdBy       String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+}
+
+model Workspace {
+  tenantId  String   @id
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
-  email     String   @unique
-  role      Role     @default(operator)
-  createdAt DateTime @default(now())
-}
-
-model Shop {
-  id        String          @id @default(cuid())
-  tenantId  String
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
-  platform  String
-  cycles    AnalysisCycle[]
-  createdAt DateTime        @default(now())
-}
-
-model AnalysisCycle {
-  id          String            @id @default(cuid())
-  tenantId    String
-  shopId      String
-  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  name        String
-  startDate   DateTime
-  endDate     DateTime
-  status      String            @default("draft")
-  imports     ImportBatch[]
-  prefill     PrefillItem[]
-  calcRuns    CalcRun[]
-  snapshots   VersionSnapshot[]
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-}
-
-model ImportBatch {
-  id            String        @id @default(cuid())
-  cycleId       String
-  cycle         AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  reportType    ReportType
-  fileName      String
-  status        ImportStatus  @default(uploaded)
-  rowCount      Int           @default(0)
-  validation    Json
-  rawRows       Json
-  createdAt     DateTime      @default(now())
-}
-
-model PrefillItem {
-  id                               String        @id @default(cuid())
-  cycleId                          String
-  cycle                            AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  productId                        String
-  productCode                      String
-  productName                      String
-  grade                            String
-  monthlyGsvOpportunity            Decimal       @default(0)
-  grossMarginRate                  Decimal       @default(0)
-  paidVisitorRatio                 Decimal       @default(0)
-  imageUrl                         String?
-  competitorConversionExpectation  Decimal?
-  benchmarkProductId               String?
-  audienceStrategy                 String?
-  updatedAt                        DateTime      @updatedAt
-
-  @@unique([cycleId, productId])
-}
-
-model CalcRun {
-  id                   String        @id @default(cuid())
-  cycleId              String
-  cycle                AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  investmentResults    Json
-  breakthroughResults  Json
-  audiencePlans        Json
-  managementDashboard  Json
-  createdAt            DateTime      @default(now())
-}
-
-model VersionSnapshot {
-  id        String        @id @default(cuid())
-  cycleId   String
-  cycle     AnalysisCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
-  kind      SnapshotKind
-  title     String
-  summary   String
-  createdBy String
-  payload   Json
-  createdAt DateTime      @default(now())
+  data      Json
+  updatedAt DateTime @updatedAt
 }

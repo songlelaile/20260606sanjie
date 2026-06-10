@@ -2,8 +2,10 @@ import { AudiencePlanTable } from "@/components/AudiencePlanTable";
 import { PageHeader } from "@/components/PageHeader";
 import { getLatestCalcRun } from "@/lib/store/runtime-store";
 
-export default function AudiencePlanPage() {
-  const items = getLatestCalcRun().audiencePlans;
+export const dynamic = "force-dynamic";
+
+export default async function AudiencePlanPage() {
+  const items = (await getLatestCalcRun()).audiencePlans;
 
   return (
     <>

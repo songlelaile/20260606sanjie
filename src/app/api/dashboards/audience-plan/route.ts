@@ -4,7 +4,7 @@ import { getLatestCalcRun } from "@/lib/store/runtime-store";
 export async function GET() {
   return NextResponse.json({
     data: {
-      items: getLatestCalcRun().audiencePlans
+      items: (await getLatestCalcRun()).audiencePlans
     }
   });
 }

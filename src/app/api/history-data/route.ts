@@ -13,7 +13,7 @@ const allowedKeys: HistoryDataKey[] = ["product", "promotionProduct", "promotion
 
 export async function GET() {
   return NextResponse.json({
-    data: getManagementHistory()
+    data: await getManagementHistory()
   });
 }
 
@@ -30,7 +30,7 @@ export async function PATCH(request: Request) {
   }
 
   return NextResponse.json({
-    data: updateManagementHistoryRetention(months)
+    data: await updateManagementHistoryRetention(months)
   });
 }
 
@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   }
 
   const categories = normalizeCategories(body?.categories);
-  const report = saveManagementHistoryReport({
+  const report = await saveManagementHistoryReport({
     name,
     startDate: toDateInput(startDate),
     endDate: toDateInput(endDate),
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     data: {
       report,
-      history: getManagementHistory()
+      history: await getManagementHistory()
     }
   });
 }
@@ -81,13 +81,16 @@ export async function DELETE(request: Request) {
     | null;
 
   const action = body?.action ?? "all";
+  if (!["all", "before", "range"].includes(action)) {
+    return NextResponse.json({ error: "未知的删除动作" }, { status: 400 });
+  }
   if (action === "before") {
     const beforeDate = parseDate(body?.beforeDate);
     if (!beforeDate) {
       return NextResponse.json({ error: "请选择要删除的开始日期" }, { status: 400 });
     }
     return NextResponse.json({
-      data: deleteManagementHistoryBefore(toDateInput(beforeDate))
+      data: await deleteManagementHistoryBefore(toDateInput(beforeDate))
     });
   }
 
@@ -98,12 +101,12 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: "请选择合法的日期区间" }, { status: 400 });
     }
     return NextResponse.json({
-      data: deleteManagementHistoryRange(toDateInput(startDate), toDateInput(endDate))
+      data: await deleteManagementHistoryRange(toDateInput(startDate), toDateInput(endDate))
     });
   }
 
   return NextResponse.json({
-    data: clearManagementHistory()
+    data: await clearManagementHistory()
   });
 }
 

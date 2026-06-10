@@ -10,7 +10,7 @@ import type { GrowthProfitConfigRow } from "@/lib/types/domain";
 export async function GET() {
   return NextResponse.json({
     data: {
-      config: getGrowthProfitConfig()
+      config: await getGrowthProfitConfig()
     }
   });
 }
@@ -25,8 +25,8 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: validation.errors.join("；") }, { status: 400 });
   }
 
-  const { cycle } = getWorkspaceContext();
-  const config = updateGrowthProfitConfig(body?.cycleId ?? cycle.id, validation.config);
+  const { cycle } = await getWorkspaceContext();
+  const config = await updateGrowthProfitConfig(body?.cycleId ?? cycle.id, validation.config);
   return NextResponse.json({ data: { config } });
 }
 

@@ -1,254 +1,192 @@
+import "server-only";
 import {
   gradeRows,
   lifecycleColumns,
   marginMatrix,
   runThreeStageCalculation
 } from "@/lib/algorithm/three-stage";
-import { getGoldenScenario } from "@/lib/fixtures/golden-scenario";
+import { prisma } from "@/lib/db";
+import { requireTenantId } from "@/lib/session-server";
+import { mapImportedRows, type MappedSourceRows } from "@/lib/imports/map-rows";
 import {
-  getImportBatchesSize,
   pruneAdminVersionSnapshots,
   pruneHistoryRecordsByMonths,
   retentionPolicy,
   validateTenantDatasetSize
 } from "@/lib/retention-policy";
 import type {
+  AnalysisCycle,
   CalcRun,
+  DamoProductRow,
   GrowthProfitConfigRow,
   InviteCode,
   ImportBatch,
   ImportValidationResult,
+  Lifecycle,
   ManagementHistoryRecord,
   ManagementHistoryReport,
   ManagementHistoryRetention,
   ManagementHistoryState,
   ManagedUser,
   PrefillItem,
+  ProductGrade,
+  ProductSourceRow,
   ProfitMarginMatrix,
   ReportType,
+  Shop,
+  Tenant,
+  User,
   VersionSnapshot
 } from "@/lib/types/domain";
 
-interface RuntimeStoreState {
+// ——————————————————————————————————————————————————————————————
+// 工作区（每租户一份）数据形状：业务状态以 JSON blob 持久化于 Workspace.data。
+// 邀请码 / 管理用户已落入关系表（跨租户索引），不在 blob 内。
+// ——————————————————————————————————————————————————————————————
+
+export interface WorkspaceContext {
+  tenant: Tenant;
+  user: User;
+  shop: Shop;
+  cycle: AnalysisCycle;
+}
+
+interface WorkspaceData {
+  context: WorkspaceContext;
   imports: ImportBatch[];
+  uploadedSources: MappedSourceRows;
   currentTenantDatasetId: string | null;
   currentTenantDatasetBytes: number;
   prefillItems: PrefillItem[];
   growthProfitConfig: GrowthProfitConfigRow[];
   calcRun: CalcRun;
   versions: VersionSnapshot[];
-  inviteCodes: InviteCode[];
-  managedUsers: ManagedUser[];
   historyRecords: ManagementHistoryRecord[];
   historyReports: ManagementHistoryReport[];
   historyRetention: ManagementHistoryRetention;
 }
 
-const scenario = getGoldenScenario();
 const initialGrowthProfitConfig = matrixToGrowthProfitConfig(marginMatrix);
 
-const state: RuntimeStoreState = getRuntimeState();
-
-function getRuntimeState(): RuntimeStoreState {
-  const globalStore = globalThis as typeof globalThis & {
-    __threeStageRuntimeStore?: RuntimeStoreState;
-  };
-  globalStore.__threeStageRuntimeStore ??= createInitialState();
-  return globalStore.__threeStageRuntimeStore;
-}
-
-function createInitialState(): RuntimeStoreState {
+/** 为某租户构造初始（空白业务数据）工作区。 */
+export function buildInitialWorkspaceData(context: WorkspaceContext): WorkspaceData {
   return {
-  imports: [...scenario.importBatches],
-  currentTenantDatasetId: scenario.importBatches[0]?.datasetId ?? null,
-  currentTenantDatasetBytes: getImportBatchesSize(scenario.importBatches),
-  prefillItems: [...scenario.prefillItems],
-  growthProfitConfig: initialGrowthProfitConfig,
+    context,
+    imports: [],
+    uploadedSources: {},
+    currentTenantDatasetId: null,
+    currentTenantDatasetBytes: 0,
+    prefillItems: [],
+    growthProfitConfig: initialGrowthProfitConfig,
     calcRun: runThreeStageCalculation({
-    cycleId: scenario.cycle.id,
-    productSourceRows: scenario.productSourceRows,
-    damoProductRows: scenario.damoProductRows,
-    promotionProductRows: scenario.promotionProductRows,
-    audienceSourceRows: scenario.audienceSourceRows,
-    prefillItems: scenario.prefillItems,
-    marginMatrix
+      cycleId: context.cycle.id,
+      productSourceRows: [],
+      damoProductRows: [],
+      promotionProductRows: [],
+      audienceSourceRows: [],
+      prefillItems: [],
+      marginMatrix
     }),
-    versions: pruneAdminVersionSnapshots([...scenario.versionSnapshots]),
-    historyRecords: pruneHistoryRecordsByMonths([...scenario.historyRecords], scenario.historyRetention.months, new Date()),
-    historyReports: [...scenario.historyReports],
-    historyRetention: { ...scenario.historyRetention },
-    inviteCodes: [
-    {
-      id: "invite-u5x5xgu423",
-      tenantId: scenario.tenant.id,
-      code: "U5X5XGU423",
-      registrationUrl: "/register?invite=U5X5XGU423",
-      usedCount: 0,
-      maxUses: 1,
-      note: "永发",
-      createdAt: "2026-06-04T08:27:47",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-ats7b7pjmy",
-      tenantId: scenario.tenant.id,
-      code: "ATS7B7PJMY",
-      registrationUrl: "/register?invite=ATS7B7PJMY",
-      usedCount: 1,
-      maxUses: 3,
-      note: "时之蜜",
-      createdAt: "2026-06-04T08:27:32",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-pymajv3e6w",
-      tenantId: scenario.tenant.id,
-      code: "PYMAJV3E6W",
-      registrationUrl: "/register?invite=PYMAJV3E6W",
-      usedCount: 1,
-      maxUses: 1,
-      note: "倩怡",
-      createdAt: "2026-06-04T08:21:56",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-l4pnn7yzyw",
-      tenantId: scenario.tenant.id,
-      code: "L4PNN7YZYW",
-      registrationUrl: "/register?invite=L4PNN7YZYW",
-      usedCount: 0,
-      maxUses: 3,
-      note: "琛誉",
-      createdAt: "2026-06-02T10:32:16",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-dk7mksppds",
-      tenantId: scenario.tenant.id,
-      code: "DK7MKSPPDS",
-      registrationUrl: "/register?invite=DK7MKSPPDS",
-      usedCount: 3,
-      maxUses: 3,
-      note: "萃茂",
-      createdAt: "2026-06-01T10:20:29",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-vvjrb-szlva",
-      tenantId: scenario.tenant.id,
-      code: "VVJRBSZLVA",
-      registrationUrl: "/register?invite=VVJRBSZLVA",
-      usedCount: 1,
-      maxUses: 1,
-      note: "华馨",
-      createdAt: "2026-06-01T04:29:03",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-frbfrgc87s",
-      tenantId: scenario.tenant.id,
-      code: "FRBFRGC87S",
-      registrationUrl: "/register?invite=FRBFRGC87S",
-      usedCount: 1,
-      maxUses: 1,
-      note: "纽强",
-      createdAt: "2026-05-29T09:58:41",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-buvbtvwjpa",
-      tenantId: scenario.tenant.id,
-      code: "BUVBTVWJPA",
-      registrationUrl: "/register?invite=BUVBTVWJPA",
-      usedCount: 0,
-      maxUses: 1,
-      note: "鲁匠师厨具旗舰店",
-      createdAt: "2026-05-29T04:34:04",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-85gck2erh6",
-      tenantId: scenario.tenant.id,
-      code: "85GCK2ERH6",
-      registrationUrl: "/register?invite=85GCK2ERH6",
-      usedCount: 1,
-      maxUses: 1,
-      note: "lijiang",
-      createdAt: "2026-05-29T01:55:15",
-      createdBy: scenario.user.name
-    },
-    {
-      id: "invite-n38s46sgzv",
-      tenantId: scenario.tenant.id,
-      code: "N38S46SGZV",
-      registrationUrl: "/register?invite=N38S46SGZV",
-      usedCount: 1,
-      maxUses: 1,
-      note: "zhouao",
-      createdAt: "2026-05-29T01:36:26",
-      createdBy: scenario.user.name
+    versions: [],
+    historyRecords: [],
+    historyReports: [],
+    historyRetention: {
+      tenantId: context.tenant.id,
+      months: 12,
+      updatedAt: new Date().toISOString(),
+      updatedBy: context.user.name
     }
-  ],
-  managedUsers: [
-    {
-      id: "managed-user-admin",
-      tenantId: scenario.tenant.id,
-      name: "运营负责人",
-      username: "admin",
-      email: "admin@sanjie.local",
-      role: "owner",
-      shopName: scenario.shop.name,
-      status: "active",
-      createdAt: "2026-05-01T09:00:00",
-      lastActiveAt: "2026-06-06T14:00:00"
-    },
-    {
-      id: "managed-user-operator",
-      tenantId: scenario.tenant.id,
-      name: "投放运营",
-      username: "operator",
-      email: "operator@sanjie.local",
-      role: "operator",
-      shopName: scenario.shop.name,
-      status: "active",
-      createdAt: "2026-05-18T11:20:00",
-      lastActiveAt: "2026-06-05T18:32:00"
-    },
-    {
-      id: "managed-user-viewer",
-      tenantId: scenario.tenant.id,
-      name: "管理观察员",
-      username: "viewer",
-      email: "viewer@sanjie.local",
-      role: "viewer",
-      shopName: scenario.shop.name,
-      status: "pending",
-      createdAt: "2026-06-01T10:15:00",
-      lastActiveAt: "2026-06-01T10:15:00"
-    }
-  ]
   };
 }
 
-export function getWorkspaceContext() {
-  return {
-    tenant: scenario.tenant,
-    user: scenario.user,
-    shop: scenario.shop,
-    cycle: scenario.cycle
+/** 由租户行派生默认上下文（shop/cycle 以 tenantId 派生，保证隔离）。 */
+function defaultContextFor(tenant: Tenant, user: User): WorkspaceContext {
+  const shop: Shop = {
+    id: `shop-${tenant.id}`,
+    tenantId: tenant.id,
+    name: tenant.name,
+    platform: "淘宝"
   };
+  const cycle: AnalysisCycle = {
+    id: `cycle-${tenant.id}`,
+    tenantId: tenant.id,
+    shopId: shop.id,
+    name: "当前分析周期",
+    startDate: "2026-01-01",
+    endDate: "2026-12-31",
+    status: "draft"
+  };
+  return { tenant, user, shop, cycle };
 }
 
-export function getImportBatches() {
+// ——————————————————————————————————————————————————————————————
+// 工作区读写：每次请求从 DB 读取 → 内存内复用既有领域逻辑 → 写回 DB。
+// ——————————————————————————————————————————————————————————————
+
+async function loadWorkspace(tenantId: string): Promise<WorkspaceData> {
+  const row = await prisma.workspace.findUnique({ where: { tenantId } });
+  if (row) {
+    return row.data as unknown as WorkspaceData;
+  }
+  // 工作区不存在（理论上租户创建时已建）：按租户行兜底初始化。
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
+  const userRow = await prisma.user.findFirst({
+    where: { tenantId },
+    orderBy: { createdAt: "asc" }
+  });
+  const tenantDomain: Tenant = {
+    id: tenantId,
+    name: tenant?.name ?? "租户",
+    slug: tenant?.slug ?? tenantId
+  };
+  const userDomain: User = {
+    id: userRow?.id ?? `user-${tenantId}`,
+    tenantId,
+    name: userRow?.name ?? "运营负责人",
+    email: userRow?.email ?? "",
+    role: (userRow?.role as User["role"]) ?? "owner"
+  };
+  const data = buildInitialWorkspaceData(defaultContextFor(tenantDomain, userDomain));
+  await saveWorkspace(tenantId, data);
+  return data;
+}
+
+async function saveWorkspace(tenantId: string, data: WorkspaceData): Promise<void> {
+  const json = data as unknown as object;
+  await prisma.workspace.upsert({
+    where: { tenantId },
+    update: { data: json },
+    create: { tenantId, data: json }
+  });
+}
+
+/** 取当前请求租户的工作区（读 cookie → 加载 blob）。 */
+async function ctx(): Promise<{ tenantId: string; state: WorkspaceData }> {
+  const tenantId = await requireTenantId();
+  const state = await loadWorkspace(tenantId);
+  return { tenantId, state };
+}
+
+// ——————————————————————————————————————————————————————————————
+// 公开 API（保持原语义，全部改为 async；tenant 由会话内部解析）
+// ——————————————————————————————————————————————————————————————
+
+export async function getWorkspaceContext(): Promise<WorkspaceContext> {
+  const { state } = await ctx();
+  return state.context;
+}
+
+export async function getImportBatches(): Promise<ImportBatch[]> {
+  const { state } = await ctx();
   return state.imports;
 }
 
-export function getRetentionStatus() {
+export async function getRetentionStatus() {
+  const { state } = await ctx();
   const versionsByShop = new Map<string, number>();
   for (const version of state.versions) {
     versionsByShop.set(version.shopId, (versionsByShop.get(version.shopId) ?? 0) + 1);
   }
-
   return {
     policy: retentionPolicy,
     tenantDataset: {
@@ -267,24 +205,37 @@ export function getRetentionStatus() {
   };
 }
 
-export function clearImportBatches() {
+export async function clearImportBatches(): Promise<void> {
+  const { tenantId, state } = await ctx();
   const now = new Date().toISOString();
   state.imports = [];
+  state.uploadedSources = {};
+  state.prefillItems = [];
   state.currentTenantDatasetId = null;
   state.currentTenantDatasetBytes = 0;
-  addVersionSnapshot({
+  state.calcRun = runThreeStageCalculation({
+    cycleId: state.context.cycle.id,
+    productSourceRows: [],
+    damoProductRows: [],
+    promotionProductRows: [],
+    audienceSourceRows: [],
+    prefillItems: [],
+    marginMatrix: growthProfitConfigToMarginMatrix(state.growthProfitConfig)
+  });
+  pushVersion(state, {
     id: `version-import-clear-${Date.now()}`,
-    cycleId: scenario.cycle.id,
-    shopId: scenario.shop.id,
+    cycleId: state.context.cycle.id,
+    shopId: state.context.shop.id,
     kind: "import",
     title: "清空源数据",
     createdAt: now,
-    createdBy: scenario.user.name,
-    summary: "租户端当前源数据已清空，可上传下一次最新数据。"
+    createdBy: state.context.user.name,
+    summary: "租户端当前源数据已清空，看板同步清空，可上传下一次最新数据。"
   });
+  await saveWorkspace(tenantId, state);
 }
 
-export function addImportBatch(input: {
+export async function addImportBatch(input: {
   cycleId: string;
   datasetId: string;
   datasetTotalBytes: number;
@@ -292,8 +243,11 @@ export function addImportBatch(input: {
   fileName: string;
   fileSizeBytes: number;
   validation: ImportValidationResult;
-}) {
-  const preflightError = validateImportDatasetWrite({
+  parsedHeaders?: string[];
+  parsedRows?: unknown[][];
+}): Promise<ImportBatch> {
+  const { tenantId, state } = await ctx();
+  const preflightError = validateImportDatasetWriteOn(state, {
     datasetId: input.datasetId,
     datasetTotalBytes: input.datasetTotalBytes
   });
@@ -321,27 +275,36 @@ export function addImportBatch(input: {
       (item) => item.datasetId === input.datasetId && item.reportType !== input.reportType
     )
   ];
-  addVersionSnapshot({
+  if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
+    state.uploadedSources = {
+      ...state.uploadedSources,
+      ...mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows)
+    };
+  }
+  pushVersion(state, {
     id: `version-import-${Date.now()}`,
     cycleId: input.cycleId,
-    shopId: scenario.shop.id,
+    shopId: state.context.shop.id,
     kind: "import",
     title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
     createdAt: batch.createdAt,
-    createdBy: scenario.user.name,
+    createdBy: state.context.user.name,
     summary: input.validation.ok
       ? `当前租户数据集 ${formatMegabytes(input.datasetTotalBytes)}，识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体。`
       : input.validation.errors.join("；")
   });
+  await saveWorkspace(tenantId, state);
   return batch;
 }
 
-export function validateImportDatasetWrite(input: { datasetId: string; datasetTotalBytes: number }) {
+function validateImportDatasetWriteOn(
+  state: WorkspaceData,
+  input: { datasetId: string; datasetTotalBytes: number }
+) {
   const sizeError = validateTenantDatasetSize(input.datasetTotalBytes);
   if (sizeError) {
     return { ok: false as const, status: 413, message: sizeError };
   }
-
   if (
     state.currentTenantDatasetId !== null &&
     state.currentTenantDatasetId !== input.datasetId &&
@@ -353,172 +316,364 @@ export function validateImportDatasetWrite(input: { datasetId: string; datasetTo
       message: "租户端仅保存最新一次源数据。请先点击“清空源数据”，再上传新的数据集。"
     };
   }
-
   return null;
 }
 
-export function getImportBatch(id: string) {
+/** 上传前置校验（路由会单独调用）。 */
+export async function validateImportDatasetWrite(input: {
+  datasetId: string;
+  datasetTotalBytes: number;
+}) {
+  const { state } = await ctx();
+  return validateImportDatasetWriteOn(state, input);
+}
+
+export async function getImportBatch(id: string): Promise<ImportBatch | undefined> {
+  const { state } = await ctx();
   return state.imports.find((batch) => batch.id === id);
 }
 
-export function getPrefillItems(cycleId = scenario.cycle.id) {
-  return state.prefillItems.filter((item) => item.cycleId === cycleId);
+export async function getPrefillItems(cycleId?: string): Promise<PrefillItem[]> {
+  const { state } = await ctx();
+  const cid = cycleId ?? state.context.cycle.id;
+  return state.prefillItems.filter((item) => item.cycleId === cid);
 }
 
-export function getGrowthProfitConfig() {
+export async function getGrowthProfitConfig(): Promise<GrowthProfitConfigRow[]> {
+  const { state } = await ctx();
   return cloneGrowthProfitConfig(state.growthProfitConfig);
 }
 
-export function updateGrowthProfitConfig(cycleId: string, rows: GrowthProfitConfigRow[]) {
+export async function updateGrowthProfitConfig(
+  cycleId: string,
+  rows: GrowthProfitConfigRow[]
+): Promise<GrowthProfitConfigRow[]> {
+  const { tenantId, state } = await ctx();
   state.growthProfitConfig = normalizeGrowthProfitConfig(rows);
-  addVersionSnapshot({
+  pushVersion(state, {
     id: `version-profit-config-${Date.now()}`,
     cycleId,
-    shopId: scenario.shop.id,
+    shopId: state.context.shop.id,
     kind: "profit_config",
     title: "V9 增长利润配置更新",
     createdAt: new Date().toISOString(),
-    createdBy: scenario.user.name,
+    createdBy: state.context.user.name,
     summary: "更新 SAB 分层与生命周期对应的增长利润率矩阵。"
   });
-  return getGrowthProfitConfig();
+  await saveWorkspace(tenantId, state);
+  return cloneGrowthProfitConfig(state.growthProfitConfig);
 }
 
-export function updatePrefillItems(cycleId: string, items: PrefillItem[]) {
+const EDITABLE_PREFILL_FIELDS = [
+  "grade",
+  "monthlyGsvOpportunity",
+  "grossMarginRate",
+  "paidVisitorRatio",
+  "audienceStrategy",
+  "competitorConversionExpectation",
+  "benchmarkProductId",
+  "imageUrl"
+] as const;
+
+function pickEditablePrefillFields(patch: PrefillItem): Partial<PrefillItem> {
+  const result: Partial<PrefillItem> = {};
+  for (const field of EDITABLE_PREFILL_FIELDS) {
+    if (patch[field] !== undefined) {
+      (result as Record<string, unknown>)[field] = patch[field];
+    }
+  }
+  return result;
+}
+
+export async function updatePrefillItems(
+  cycleId: string,
+  items: PrefillItem[]
+): Promise<PrefillItem[]> {
+  const { tenantId, state } = await ctx();
   const byId = new Map(items.map((item) => [item.id, item]));
   state.prefillItems = state.prefillItems.map((item) =>
-    item.cycleId === cycleId && byId.has(item.id) ? { ...item, ...byId.get(item.id) } : item
+    item.cycleId === cycleId && byId.has(item.id)
+      ? { ...item, ...pickEditablePrefillFields(byId.get(item.id)!) }
+      : item
   );
-  addVersionSnapshot({
+  pushVersion(state, {
     id: `version-prefill-${Date.now()}`,
     cycleId,
-    shopId: scenario.shop.id,
+    shopId: state.context.shop.id,
     kind: "prefill",
     title: "预填写参数更新",
     createdAt: new Date().toISOString(),
-    createdBy: scenario.user.name,
+    createdBy: state.context.user.name,
     summary: `更新 ${items.length} 个商品的分层、GSV、毛利或付费访客参数。`
   });
-  return getPrefillItems(cycleId);
+  const result = state.prefillItems.filter((item) => item.cycleId === cycleId);
+  await saveWorkspace(tenantId, state);
+  return result;
 }
 
-export function runCalculation(cycleId = scenario.cycle.id) {
+const STAGE_TO_GRADE: Record<Lifecycle, ProductGrade> = {
+  冷启期: "C",
+  新品成长期: "C",
+  成长期: "B",
+  新品打爆期: "A",
+  爆品期: "S",
+  平销期: "A"
+};
+
+function derivePrefillItems(
+  cycleId: string,
+  productRows: ProductSourceRow[],
+  damoRows: DamoProductRow[],
+  existing: PrefillItem[]
+): PrefillItem[] {
+  const existingById = new Map(
+    existing.filter((item) => item.cycleId === cycleId).map((item) => [item.productId, item])
+  );
+  const damoById = new Map(damoRows.map((row) => [row.productId, row]));
+  return productRows.map((product, index) => {
+    const prev = existingById.get(product.productId);
+    const damo = damoById.get(product.productId);
+    const fallbackGrade: ProductGrade = damo ? STAGE_TO_GRADE[damo.growthStage] ?? "C" : "C";
+    return {
+      id: prev?.id ?? `prefill-upload-${index + 1}`,
+      cycleId,
+      productId: product.productId,
+      productCode: prev?.productCode ?? product.productId,
+      productName: product.productName,
+      grade: prev?.grade ?? fallbackGrade,
+      monthlyGsvOpportunity:
+        prev?.monthlyGsvOpportunity ?? Math.max(0, product.paymentAmount - product.refundAmount),
+      grossMarginRate: prev?.grossMarginRate ?? 0,
+      paidVisitorRatio: prev?.paidVisitorRatio ?? 0.3,
+      audienceStrategy: prev?.audienceStrategy,
+      benchmarkProductId: prev?.benchmarkProductId,
+      competitorConversionExpectation: prev?.competitorConversionExpectation,
+      imageUrl: prev?.imageUrl
+    };
+  });
+}
+
+export async function runCalculation(cycleId?: string): Promise<CalcRun> {
+  const { tenantId, state } = await ctx();
+  const cid = cycleId ?? state.context.cycle.id;
+  const productSourceRows = state.uploadedSources.product_source ?? [];
+  const damoProductRows = state.uploadedSources.damo_product_source ?? [];
+  const promotionProductRows = state.uploadedSources.promotion_product_source ?? [];
+  const audienceSourceRows = state.uploadedSources.audience_source ?? [];
+
+  let prefillItems: PrefillItem[];
+  if (state.uploadedSources.product_source) {
+    prefillItems = derivePrefillItems(cid, productSourceRows, damoProductRows, state.prefillItems);
+    const others = state.prefillItems.filter((item) => item.cycleId !== cid);
+    state.prefillItems = [...others, ...prefillItems];
+  } else {
+    prefillItems = state.prefillItems.filter((item) => item.cycleId === cid);
+  }
+
   state.calcRun = runThreeStageCalculation({
-    cycleId,
-    productSourceRows: scenario.productSourceRows,
-    damoProductRows: scenario.damoProductRows,
-    promotionProductRows: scenario.promotionProductRows,
-    audienceSourceRows: scenario.audienceSourceRows,
-    prefillItems: getPrefillItems(cycleId),
+    cycleId: cid,
+    productSourceRows,
+    damoProductRows,
+    promotionProductRows,
+    audienceSourceRows,
+    prefillItems,
     marginMatrix: growthProfitConfigToMarginMatrix(state.growthProfitConfig)
   });
-  addVersionSnapshot({
+  pushVersion(state, {
     id: `version-calc-${Date.now()}`,
-    cycleId,
-    shopId: scenario.shop.id,
+    cycleId: cid,
+    shopId: state.context.shop.id,
     kind: "calculation",
     title: "三阶评估算法重新运行",
     createdAt: state.calcRun.createdAt,
-    createdBy: scenario.user.name,
+    createdBy: state.context.user.name,
     summary: `生成 ${state.calcRun.investmentResults.length} 个商品结果和 ${state.calcRun.audiencePlans.length} 条人群计划。`
   });
+  await saveWorkspace(tenantId, state);
   return state.calcRun;
 }
 
-export function getLatestCalcRun() {
+export async function getLatestCalcRun(): Promise<CalcRun> {
+  const { state } = await ctx();
   return state.calcRun;
 }
 
-export function getVersions(cycleId = scenario.cycle.id) {
-  return state.versions.filter((version) => version.cycleId === cycleId);
+export async function getVersions(cycleId?: string): Promise<VersionSnapshot[]> {
+  const { state } = await ctx();
+  const cid = cycleId ?? state.context.cycle.id;
+  return state.versions
+    .filter((version) => version.cycleId === cid)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
-export function getInviteCodes() {
-  return state.inviteCodes;
+// ——————————————————————————————————————————————————————————————
+// 邀请码（关系表，跨租户索引）
+// ——————————————————————————————————————————————————————————————
+
+export async function getInviteCodes(): Promise<InviteCode[]> {
+  const tenantId = await requireTenantId();
+  const rows = await prisma.inviteCode.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: "desc" }
+  });
+  return rows.map(toDomainInvite);
 }
 
-export function createInviteCode(input: { note: string; maxUses: number }) {
-  const code = generateInviteCode();
-  const invite: InviteCode = {
-    id: `invite-${code.toLowerCase()}`,
-    tenantId: scenario.tenant.id,
-    code,
-    registrationUrl: `/register?invite=${code}`,
-    usedCount: 0,
-    maxUses: input.maxUses,
-    note: input.note.trim() || "未备注",
-    createdAt: new Date().toISOString(),
-    createdBy: scenario.user.name
-  };
-  state.inviteCodes = [invite, ...state.inviteCodes];
-  return invite;
+export async function createInviteCode(input: {
+  note: string;
+  maxUses: number;
+}): Promise<InviteCode> {
+  const { tenantId, state } = await ctx();
+  const code = await generateUniqueInviteCode();
+  const row = await prisma.inviteCode.create({
+    data: {
+      tenantId,
+      code,
+      registrationUrl: `/login?invite=${code}`,
+      usedCount: 0,
+      maxUses: input.maxUses,
+      note: input.note.trim() || "未备注",
+      createdBy: state.context.user.name
+    }
+  });
+  return toDomainInvite(row);
 }
 
-export function deleteInviteCode(id: string) {
-  const before = state.inviteCodes.length;
-  state.inviteCodes = state.inviteCodes.filter((invite) => invite.id !== id);
-  return state.inviteCodes.length < before;
+export async function deleteInviteCode(id: string): Promise<boolean> {
+  const tenantId = await requireTenantId();
+  const result = await prisma.inviteCode.deleteMany({ where: { id, tenantId } });
+  return result.count > 0;
 }
 
-export function getManagedUsers() {
-  return state.managedUsers;
+/**
+ * 消费一个邀请码（注册时调用，无会话上下文）：校验存在性与剩余次数，
+ * 成功后 usedCount + 1 并登记一名管理用户（User 行）。被吊销（删除）的码自然失效。
+ */
+export async function consumeInviteCode(
+  rawCode: string,
+  newUser: { name: string; username: string }
+): Promise<{ ok: true; invite: InviteCode } | { ok: false; error: string }> {
+  const code = rawCode.trim().toUpperCase();
+  if (!code) {
+    return { ok: false, error: "请输入邀请码" };
+  }
+  const invite = await prisma.inviteCode.findUnique({ where: { code } });
+  if (!invite) {
+    return { ok: false, error: "邀请码无效或已失效" };
+  }
+  if (invite.usedCount >= invite.maxUses) {
+    return { ok: false, error: "邀请码使用次数已用尽" };
+  }
+  const updated = await prisma.inviteCode.update({
+    where: { id: invite.id },
+    data: { usedCount: { increment: 1 } }
+  });
+  return { ok: true, invite: toDomainInvite(updated) };
 }
 
-export function getManagementHistory(): ManagementHistoryState {
+export async function getManagedUsers(): Promise<ManagedUser[]> {
+  const tenantId = await requireTenantId();
+  const users = await prisma.user.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: "desc" }
+  });
+  return users.map((u) => ({
+    id: u.id,
+    tenantId: u.tenantId,
+    name: u.name,
+    username: u.username,
+    email: u.email,
+    role: u.role as ManagedUser["role"],
+    shopName: u.shopName,
+    status: u.status as ManagedUser["status"],
+    createdAt: u.createdAt.toISOString(),
+    lastActiveAt: u.lastActiveAt.toISOString()
+  }));
+}
+
+// ——————————————————————————————————————————————————————————————
+// 管理历史
+// ——————————————————————————————————————————————————————————————
+
+export async function getManagementHistory(): Promise<ManagementHistoryState> {
+  const { state } = await ctx();
   return {
-    records: [...state.historyRecords].sort((left, right) => right.uploadAt.localeCompare(left.uploadAt)),
-    reports: [...state.historyReports].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
+    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
     retention: { ...state.historyRetention }
   };
 }
 
-export function updateManagementHistoryRetention(months: number) {
+export async function updateManagementHistoryRetention(
+  months: number
+): Promise<ManagementHistoryState> {
+  const { tenantId, state } = await ctx();
   const normalizedMonths = normalizeHistoryMonths(months);
   state.historyRetention = {
     ...state.historyRetention,
     months: normalizedMonths,
     updatedAt: new Date().toISOString(),
-    updatedBy: scenario.user.name
+    updatedBy: state.context.user.name
   };
-  state.historyRecords = pruneHistoryRecordsByMonths(
-    state.historyRecords,
-    normalizedMonths,
-    new Date()
+  state.historyRecords = pruneHistoryRecordsByMonths(state.historyRecords, normalizedMonths, new Date());
+  state.historyReports = pruneHistoryReportsByMonths(state.historyReports, normalizedMonths, new Date());
+  pushHistoryVersion(
+    state,
+    "历史保留策略更新",
+    `历史数据保留期调整为 ${normalizedMonths === 0 ? "永久保留" : `最近 ${normalizedMonths} 个月`}。`
   );
-  state.historyReports = pruneHistoryReportsByMonths(
-    state.historyReports,
-    normalizedMonths,
-    new Date()
-  );
-  return getManagementHistory();
+  await saveWorkspace(tenantId, state);
+  return {
+    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
+    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
+    retention: { ...state.historyRetention }
+  };
 }
 
-export function clearManagementHistory() {
+export async function clearManagementHistory(): Promise<ManagementHistoryState> {
+  const { tenantId, state } = await ctx();
+  const removed = state.historyRecords.length + state.historyReports.length;
   state.historyRecords = [];
   state.historyReports = [];
-  return getManagementHistory();
+  pushHistoryVersion(state, "清空历史数据", `清空全部管理历史，移除 ${removed} 条记录与报表。`);
+  await saveWorkspace(tenantId, state);
+  return getManagementHistorySnapshot(state);
 }
 
-export function deleteManagementHistoryBefore(beforeDate: string) {
+export async function deleteManagementHistoryBefore(beforeDate: string): Promise<ManagementHistoryState> {
+  const { tenantId, state } = await ctx();
   const cutoff = parseDate(beforeDate);
   if (!cutoff) {
-    return getManagementHistory();
+    return getManagementHistorySnapshot(state);
   }
+  const before = state.historyRecords.length + state.historyReports.length;
   state.historyRecords = state.historyRecords.filter(
     (record) => new Date(record.uploadAt).getTime() >= cutoff.getTime()
   );
   state.historyReports = state.historyReports.filter(
     (report) => new Date(`${report.endDate}T23:59:59.999Z`).getTime() >= cutoff.getTime()
   );
-  return getManagementHistory();
+  const after = state.historyRecords.length + state.historyReports.length;
+  pushHistoryVersion(
+    state,
+    "按日期清理历史数据",
+    `删除 ${beforeDate} 之前的历史，移除 ${before - after} 条记录与报表。`
+  );
+  await saveWorkspace(tenantId, state);
+  return getManagementHistorySnapshot(state);
 }
 
-export function deleteManagementHistoryRange(startDate: string, endDate: string) {
+export async function deleteManagementHistoryRange(
+  startDate: string,
+  endDate: string
+): Promise<ManagementHistoryState> {
+  const { tenantId, state } = await ctx();
   const start = parseDate(startDate);
   const end = parseDate(endDate);
   if (!start || !end) {
-    return getManagementHistory();
+    return getManagementHistorySnapshot(state);
   }
+  const before = state.historyRecords.length + state.historyReports.length;
   const normalizedStart = start.getTime();
   const normalizedEnd = end.getTime();
   state.historyRecords = state.historyRecords.filter((record) => {
@@ -530,29 +685,106 @@ export function deleteManagementHistoryRange(startDate: string, endDate: string)
     const reportEnd = new Date(`${report.endDate}T23:59:59.999Z`).getTime();
     return reportEnd < normalizedStart || reportStart > normalizedEnd;
   });
-  return getManagementHistory();
+  const after = state.historyRecords.length + state.historyReports.length;
+  pushHistoryVersion(
+    state,
+    "按区间清理历史数据",
+    `删除 ${startDate} ~ ${endDate} 区间的历史，移除 ${before - after} 条记录与报表。`
+  );
+  await saveWorkspace(tenantId, state);
+  return getManagementHistorySnapshot(state);
 }
 
-export function saveManagementHistoryReport(input: {
+export async function saveManagementHistoryReport(input: {
   name: string;
   startDate: string;
   endDate: string;
   categories: ManagementHistoryReport["categories"];
-}) {
+}): Promise<ManagementHistoryReport> {
+  const { tenantId, state } = await ctx();
   const report: ManagementHistoryReport = {
     id: `history-report-${Date.now()}`,
-    tenantId: scenario.tenant.id,
-    shopId: scenario.shop.id,
-    cycleId: scenario.cycle.id,
+    tenantId,
+    shopId: state.context.shop.id,
+    cycleId: state.context.cycle.id,
     name: input.name.trim(),
     createdAt: new Date().toISOString(),
-    createdBy: scenario.user.name,
+    createdBy: state.context.user.name,
     startDate: input.startDate,
     endDate: input.endDate,
     categories: [...input.categories]
   };
   state.historyReports = [report, ...state.historyReports];
+  await saveWorkspace(tenantId, state);
   return report;
+}
+
+// ——————————————————————————————————————————————————————————————
+// 内部工具
+// ——————————————————————————————————————————————————————————————
+
+function getManagementHistorySnapshot(state: WorkspaceData): ManagementHistoryState {
+  return {
+    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
+    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
+    retention: { ...state.historyRetention }
+  };
+}
+
+function pushHistoryVersion(state: WorkspaceData, title: string, summary: string) {
+  pushVersion(state, {
+    id: `version-history-${Date.now()}`,
+    cycleId: state.context.cycle.id,
+    shopId: state.context.shop.id,
+    kind: "history",
+    title,
+    createdAt: new Date().toISOString(),
+    createdBy: state.context.user.name,
+    summary
+  });
+}
+
+function pushVersion(state: WorkspaceData, version: VersionSnapshot) {
+  state.versions = pruneAdminVersionSnapshots([version, ...state.versions]);
+}
+
+function toDomainInvite(row: {
+  id: string;
+  tenantId: string;
+  code: string;
+  registrationUrl: string;
+  usedCount: number;
+  maxUses: number;
+  note: string;
+  createdBy: string;
+  createdAt: Date;
+}): InviteCode {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    code: row.code,
+    registrationUrl: row.registrationUrl,
+    usedCount: row.usedCount,
+    maxUses: row.maxUses,
+    note: row.note,
+    createdAt: row.createdAt.toISOString(),
+    createdBy: row.createdBy
+  };
+}
+
+async function generateUniqueInviteCode(): Promise<string> {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    let code = "";
+    for (let index = 0; index < 10; index += 1) {
+      code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    const existing = await prisma.inviteCode.findUnique({ where: { code } });
+    if (!existing) {
+      return code;
+    }
+  }
+  throw new Error("生成邀请码失败，请重试");
 }
 
 function normalizeHistoryMonths(months: number) {
@@ -575,22 +807,6 @@ export class ImportRetentionError extends Error {
     super(message);
     this.name = "ImportRetentionError";
   }
-}
-
-function addVersionSnapshot(version: VersionSnapshot) {
-  state.versions = pruneAdminVersionSnapshots([version, ...state.versions]);
-}
-
-function generateInviteCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let index = 0; index < 10; index += 1) {
-    code += alphabet[Math.floor(Math.random() * alphabet.length)];
-  }
-  if (state.inviteCodes.some((invite) => invite.code === code)) {
-    return generateInviteCode();
-  }
-  return code;
 }
 
 function matrixToGrowthProfitConfig(matrix: ProfitMarginMatrix): GrowthProfitConfigRow[] {
@@ -618,10 +834,7 @@ function normalizeGrowthProfitConfig(rows: GrowthProfitConfigRow[]) {
       values: Object.fromEntries(
         lifecycleColumns.map((lifecycle) => {
           const value = current?.values?.[lifecycle];
-          return [
-            lifecycle,
-            Number.isFinite(value) ? Number(value) : marginMatrix[grade][lifecycle]
-          ];
+          return [lifecycle, Number.isFinite(value) ? Number(value) : marginMatrix[grade][lifecycle]];
         })
       ) as GrowthProfitConfigRow["values"]
     };
@@ -630,9 +843,7 @@ function normalizeGrowthProfitConfig(rows: GrowthProfitConfigRow[]) {
 
 function growthProfitConfigToMarginMatrix(rows: GrowthProfitConfigRow[]): ProfitMarginMatrix {
   const normalized = normalizeGrowthProfitConfig(rows);
-  return Object.fromEntries(
-    normalized.map((row) => [row.grade, { ...row.values }])
-  ) as ProfitMarginMatrix;
+  return Object.fromEntries(normalized.map((row) => [row.grade, { ...row.values }])) as ProfitMarginMatrix;
 }
 
 function pruneHistoryReportsByMonths(

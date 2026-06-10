@@ -2,6 +2,7 @@
 
 import { RotateCcw, Save } from "lucide-react";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   gradeRows,
   lifecycleColumns,
@@ -17,6 +18,7 @@ export function GrowthProfitConfigEditor({
   cycleId: string;
   initialConfig: GrowthProfitConfigRow[];
 }) {
+  const router = useRouter();
   const [config, setConfig] = useState(() => cloneConfig(initialConfig));
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
@@ -51,7 +53,19 @@ export function GrowthProfitConfigEditor({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ cycleId, config })
       });
-      setMessage(response.ok ? "已保存增长利润配置，重新计算后进入看板口径" : "保存失败");
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        setMessage(payload?.error ?? "保存失败");
+        return;
+      }
+      // 保存后立即重算，让新的利润率矩阵进入看板口径
+      await fetch("/api/calc-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cycleId })
+      });
+      router.refresh();
+      setMessage("已保存并重算，切换到看板即可看到按新利润率计算的结果。");
     } catch {
       setMessage("保存失败");
     } finally {
@@ -73,7 +87,7 @@ export function GrowthProfitConfigEditor({
           </button>
           <button type="button" onClick={save} disabled={saving}>
             <Save size={16} />
-            {saving ? "保存中" : "保存配置"}
+            {saving ? "保存利润配置中" : "保存利润配置并重算"}
           </button>
         </div>
       </div>

@@ -4,7 +4,7 @@ import { createInviteCode, getInviteCodes } from "@/lib/store/runtime-store";
 export async function GET() {
   return NextResponse.json({
     data: {
-      invites: getInviteCodes()
+      invites: await getInviteCodes()
     }
   });
 }
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "可用次数必须是 1 到 99 的整数" }, { status: 400 });
   }
 
-  const invite = createInviteCode({
+  const invite = await createInviteCode({
     note: body?.note ?? "",
     maxUses
   });

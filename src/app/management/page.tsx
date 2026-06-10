@@ -6,15 +6,22 @@ import {
   getWorkspaceContext
 } from "@/lib/store/runtime-store";
 
-export default function ManagementPage() {
-  const { user } = getWorkspaceContext();
+export const dynamic = "force-dynamic";
+
+export default async function ManagementPage() {
+  const { user } = await getWorkspaceContext();
+  const [initialInvites, initialUsers, initialHistory] = await Promise.all([
+    getInviteCodes(),
+    getManagedUsers(),
+    getManagementHistory()
+  ]);
 
   return (
     <ManagementConsole
       currentUser={user}
-      initialInvites={getInviteCodes()}
-      initialUsers={getManagedUsers()}
-      initialHistory={getManagementHistory()}
+      initialInvites={initialInvites}
+      initialUsers={initialUsers}
+      initialHistory={initialHistory}
     />
   );
 }

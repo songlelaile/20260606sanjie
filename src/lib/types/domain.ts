@@ -199,6 +199,7 @@ export interface ProductInvestmentResult {
   productName: string;
   lifecycle: Lifecycle;
   grade: ProductGrade;
+  grossMarginRate: number;
   attackDefenseMarginRate: number;
   monthlyGsvOpportunity: number;
   plannedGrossProfit: number;
@@ -324,7 +325,7 @@ export interface VersionSnapshot {
   id: string;
   cycleId: string;
   shopId: string;
-  kind: "import" | "prefill" | "profit_config" | "calculation";
+  kind: "import" | "prefill" | "profit_config" | "calculation" | "history";
   title: string;
   createdAt: string;
   createdBy: string;
