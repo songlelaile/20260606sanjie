@@ -1773,6 +1773,38 @@ td small {
   justify-content: center;
 }
 
+.auth-field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* —— 预填写：填写状态 —— */
+.row-unfilled {
+  opacity: 0.62;
+}
+
+.pill-ready,
+.pill-pending {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pill-ready {
+  color: #173a17;
+  background: var(--good);
+}
+
+.pill-pending {
+  color: var(--muted);
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+}
+
 .auth-error {
   color: var(--bad);
   font-size: 13px;

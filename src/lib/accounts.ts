@@ -32,15 +32,16 @@ export async function validateRegistration(input: {
   password: string;
 }): Promise<string | null> {
   const username = input.username.trim();
-  if (username.length < 3) {
-    return "账号至少 3 个字符";
+  // 账号即手机号：大陆 11 位，1 开头，第二位 3-9。
+  if (!/^1[3-9]\d{9}$/.test(username)) {
+    return "请输入正确的 11 位手机号";
   }
   if (input.password.length < 6) {
     return "密码至少 6 个字符";
   }
   const existing = await prisma.user.findUnique({ where: { username } });
   if (existing) {
-    return "该账号已存在";
+    return "该手机号已注册";
   }
   return null;
 }

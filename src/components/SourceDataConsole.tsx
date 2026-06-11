@@ -95,9 +95,10 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
 
     setBusy(true);
     setNotice("");
-    // 租户端仅保留最新一次源数据：上传前自动清空旧数据，无需用户先手动点“清空源数据”。
+    // 租户端仅保留最新一次源数据：上传前自动清空旧的原始数据。
+    // keepPrefill=1 → 保留运营已填的分层/毛利率等参数，重新上传按 productId 沿用（多次依照已有数据展示）。
     if (batches.length > 0) {
-      await fetch("/api/import-batches", { method: "DELETE" });
+      await fetch("/api/import-batches?keepPrefill=1", { method: "DELETE" });
       setBatches([]);
     }
     const uploaded: ImportBatch[] = [];
@@ -145,10 +146,11 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
       return;
     }
 
+    // 不再写死 cycleId：由服务端按当前租户的分析周期处理（多租户隔离）。
     await fetch("/api/calc-runs", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cycleId: "cycle-2026-05" })
+      body: JSON.stringify({})
     });
     setFiles({});
     setBusy(false);

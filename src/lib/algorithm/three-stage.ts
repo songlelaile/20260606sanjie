@@ -121,9 +121,11 @@ export function buildInvestmentResults(input: ThreeStageInput): ProductInvestmen
     const damo = damoById.get(item.productId);
     const promotion = promoById.get(item.productId);
     const lifecycle = damo?.growthStage ?? "冷启期";
+    // 进入计算的商品分层一定已填写（runCalculation 已按 isPrefillReady 过滤）。
+    const grade = (item.grade || "C") as ProductGrade;
     const attackDefenseMarginRate =
-      activeMarginMatrix[item.grade]?.[lifecycle] ??
-      marginMatrix[item.grade]?.[lifecycle] ??
+      activeMarginMatrix[grade]?.[lifecycle] ??
+      marginMatrix[grade]?.[lifecycle] ??
       marginMatrix.C[lifecycle] ??
       0;
     const paymentAmount = product?.paymentAmount ?? 0;
@@ -153,7 +155,7 @@ export function buildInvestmentResults(input: ThreeStageInput): ProductInvestmen
       productId: item.productId,
       productName: product?.productName ?? item.productName,
       lifecycle,
-      grade: item.grade,
+      grade,
       grossMarginRate: item.grossMarginRate,
       attackDefenseMarginRate,
       monthlyGsvOpportunity: item.monthlyGsvOpportunity,
@@ -229,7 +231,7 @@ export function buildBreakthroughResults(input: ThreeStageInput): ProductBreakth
       productCode: row.item.productCode,
       productName: row.item.productName,
       lifecycle: row.lifecycle,
-      grade: row.item.grade,
+      grade: (row.item.grade || "C") as ProductGrade,
       dimensions,
       score: dimensions.filter((dimension) => dimension.passed).length,
       solutionCode,

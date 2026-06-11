@@ -156,7 +156,8 @@ export interface PrefillItem {
   productId: string;
   productCode: string;
   productName: string;
-  grade: ProductGrade;
+  /** 空串表示运营尚未填写分层（仅占位，不参与三阶计算）。 */
+  grade: ProductGrade | "";
   monthlyGsvOpportunity: number;
   grossMarginRate: number;
   paidVisitorRatio: number;

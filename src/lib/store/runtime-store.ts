@@ -6,6 +6,7 @@ import {
   runThreeStageCalculation
 } from "@/lib/algorithm/three-stage";
 import { prisma } from "@/lib/db";
+import { isPrefillReady } from "@/lib/prefill-status";
 import { requireTenantId } from "@/lib/session-server";
 import { mapImportedRows, type MappedSourceRows } from "@/lib/imports/map-rows";
 import {
@@ -205,12 +206,17 @@ export async function getRetentionStatus() {
   };
 }
 
-export async function clearImportBatches(): Promise<void> {
+export async function clearImportBatches(options?: { keepPrefill?: boolean }): Promise<void> {
   const { tenantId, state } = await ctx();
   const now = new Date().toISOString();
   state.imports = [];
   state.uploadedSources = {};
-  state.prefillItems = [];
+  // keepPrefill：上传新数据前的"换一批源数据"。保留运营已填的分层/毛利率等参数，
+  // 重新上传时按 productId 沿用（满足"多次依照已有数据展示"）。
+  // 不传 keepPrefill：运营主动「清空源数据」，连预填参数一并清空，回到从零体验。
+  if (!options?.keepPrefill) {
+    state.prefillItems = [];
+  }
   state.currentTenantDatasetId = null;
   state.currentTenantDatasetBytes = 0;
   state.calcRun = runThreeStageCalculation({
@@ -411,36 +417,25 @@ export async function updatePrefillItems(
   return result;
 }
 
-const STAGE_TO_GRADE: Record<Lifecycle, ProductGrade> = {
-  冷启期: "C",
-  新品成长期: "C",
-  成长期: "B",
-  新品打爆期: "A",
-  爆品期: "S",
-  平销期: "A"
-};
-
 function derivePrefillItems(
   cycleId: string,
   productRows: ProductSourceRow[],
-  damoRows: DamoProductRow[],
+  _damoRows: DamoProductRow[],
   existing: PrefillItem[]
 ): PrefillItem[] {
   const existingById = new Map(
     existing.filter((item) => item.cycleId === cycleId).map((item) => [item.productId, item])
   );
-  const damoById = new Map(damoRows.map((row) => [row.productId, row]));
   return productRows.map((product, index) => {
     const prev = existingById.get(product.productId);
-    const damo = damoById.get(product.productId);
-    const fallbackGrade: ProductGrade = damo ? STAGE_TO_GRADE[damo.growthStage] ?? "C" : "C";
     return {
       id: prev?.id ?? `prefill-upload-${index + 1}`,
       cycleId,
       productId: product.productId,
       productCode: prev?.productCode ?? product.productId,
       productName: product.productName,
-      grade: prev?.grade ?? fallbackGrade,
+      // 分层默认空＝未填写（仅占位，由运营选择后才纳入计算）。
+      grade: prev?.grade ?? "",
       monthlyGsvOpportunity:
         prev?.monthlyGsvOpportunity ?? Math.max(0, product.paymentAmount - product.refundAmount),
       grossMarginRate: prev?.grossMarginRate ?? 0,
@@ -470,13 +465,16 @@ export async function runCalculation(cycleId?: string): Promise<CalcRun> {
     prefillItems = state.prefillItems.filter((item) => item.cycleId === cid);
   }
 
+  // 仅「已填写」(分层+毛利率+月GSV机会齐全) 的商品进入三阶计算；未填写的仅占位展示，不参与。
+  const readyPrefillItems = prefillItems.filter(isPrefillReady);
+
   state.calcRun = runThreeStageCalculation({
     cycleId: cid,
     productSourceRows,
     damoProductRows,
     promotionProductRows,
     audienceSourceRows,
-    prefillItems,
+    prefillItems: readyPrefillItems,
     marginMatrix: growthProfitConfigToMarginMatrix(state.growthProfitConfig)
   });
   pushVersion(state, {

@@ -170,7 +170,6 @@ function LoginView() {
               <button type="submit" className="auth-submit" disabled={busy}>
                 {busy ? "登录中…" : "登录"}
               </button>
-              <p className="auth-hint">演示账号：admin / admin123 · tenant / tenant123</p>
             </form>
           ) : (
             <form className="auth-form" onSubmit={submitRegister}>
@@ -184,13 +183,16 @@ function LoginView() {
                 />
               </label>
               <label>
-                账号
+                手机号
                 <input
                   value={regUsername}
-                  onChange={(event) => setRegUsername(event.target.value)}
-                  autoComplete="username"
-                  placeholder="至少 3 个字符"
+                  onChange={(event) => setRegUsername(event.target.value.replace(/\D/g, ""))}
+                  autoComplete="tel"
+                  inputMode="numeric"
+                  maxLength={11}
+                  placeholder="请输入 11 位手机号"
                 />
+                <small className="auth-field-hint">用于登录及辅助找回密码</small>
               </label>
               <label>
                 密码

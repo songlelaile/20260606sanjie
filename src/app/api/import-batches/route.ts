@@ -120,8 +120,10 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE() {
-  await clearImportBatches();
+export async function DELETE(request: Request) {
+  // keepPrefill=1：上传前换源数据，保留运营已填参数；否则为主动清空，连参数一起从零。
+  const keepPrefill = new URL(request.url).searchParams.get("keepPrefill") === "1";
+  await clearImportBatches({ keepPrefill });
   return NextResponse.json({ data: { batches: [] } });
 }
 

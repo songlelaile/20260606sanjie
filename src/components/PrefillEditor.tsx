@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import type { PrefillItem, ProductGrade } from "@/lib/types/domain";
 import { formatMoney } from "@/lib/format";
 import { decimalToPercentInput, percentInputToDecimal } from "@/lib/percent-input";
+import { isPrefillReady } from "@/lib/prefill-status";
 
 export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; initialItems: PrefillItem[] }) {
   const router = useRouter();
   const [items, setItems] = useState(initialItems);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const readyCount = items.filter(isPrefillReady).length;
 
   function updateItem(id: string, patch: Partial<PrefillItem>) {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -47,7 +49,10 @@ export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; init
       <div className="panel-toolbar">
         <div>
           <strong>可编辑预填写参数</strong>
-          <span>共 {items.length} 个商品，填写月GSV机会等参数后保存即重算并进入看板</span>
+          <span>
+            共 {items.length} 个商品，已填写 <b>{readyCount}</b> 个纳入计算；
+            未填写（分层/毛利率/月GSV机会缺项）仅占位，不参与三阶计算。
+          </span>
         </div>
         <button type="button" onClick={save} disabled={saving}>
           <Save size={17} />
@@ -62,11 +67,14 @@ export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; init
               <th>分层</th>
               <th>月GSV机会</th>
               <th>毛利率</th>
+              <th>状态</th>
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
+            {items.map((item) => {
+              const ready = isPrefillReady(item);
+              return (
+              <tr key={item.id} className={ready ? undefined : "row-unfilled"}>
                 <td>
                   <strong>{item.productId}</strong>
                   <span>{item.productName}</span>
@@ -74,8 +82,11 @@ export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; init
                 <td>
                   <select
                     value={item.grade}
-                    onChange={(event) => updateItem(item.id, { grade: event.target.value as ProductGrade })}
+                    onChange={(event) =>
+                      updateItem(item.id, { grade: event.target.value as ProductGrade | "" })
+                    }
                   >
+                    <option value="">未填写</option>
                     {["S", "A", "B", "C"].map((grade) => (
                       <option key={grade} value={grade}>
                         {grade}
@@ -86,20 +97,22 @@ export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; init
                 <td>
                   <input
                     type="number"
-                    value={item.monthlyGsvOpportunity}
+                    value={item.monthlyGsvOpportunity || ""}
+                    placeholder="未填"
                     onChange={(event) =>
                       updateItem(item.id, { monthlyGsvOpportunity: Number(event.target.value) })
                     }
                     aria-label={`${item.productName} 月GSV机会`}
                   />
-                  <small>{formatMoney(item.monthlyGsvOpportunity)}</small>
+                  <small>{item.monthlyGsvOpportunity > 0 ? formatMoney(item.monthlyGsvOpportunity) : "—"}</small>
                 </td>
                 <td>
                   <label className="percent-field">
                     <input
                       type="number"
                       step="0.1"
-                      value={decimalToPercentInput(item.grossMarginRate)}
+                      value={item.grossMarginRate > 0 ? decimalToPercentInput(item.grossMarginRate) : ""}
+                      placeholder="未填"
                       onChange={(event) =>
                         updateItem(item.id, { grossMarginRate: percentInputToDecimal(event.target.value) })
                       }
@@ -108,8 +121,14 @@ export function PrefillEditor({ cycleId, initialItems }: { cycleId: string; init
                     <span>%</span>
                   </label>
                 </td>
+                <td>
+                  <span className={ready ? "pill-ready" : "pill-pending"}>
+                    {ready ? "✓ 纳入计算" : "待填写"}
+                  </span>
+                </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
