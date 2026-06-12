@@ -7,6 +7,9 @@ export async function POST(request: Request) {
     | { username?: string; password?: string }
     | null;
   const account = await findAccount(body?.username?.trim() ?? "", body?.password ?? "");
+  if (account === "disabled") {
+    return NextResponse.json({ error: "该账号已被禁用，请联系管理员" }, { status: 403 });
+  }
   if (!account) {
     return NextResponse.json({ error: "账号或密码错误" }, { status: 401 });
   }

@@ -2,10 +2,13 @@
 
 import clsx from "clsx";
 import {
+  Ban,
   Copy,
   History,
+  KeyRound,
   LogOut,
   Trash2,
+  UserRoundCheck,
   UserRoundPlus,
   UsersRound
 } from "lucide-react";
@@ -33,7 +36,7 @@ export function ManagementConsole({
 }) {
   const [activeTab, setActiveTab] = useState<ManagementTab>("history");
   const [invites, setInvites] = useState(initialInvites);
-  const [users] = useState(initialUsers);
+  const [users, setUsers] = useState(initialUsers);
   const [note, setNote] = useState("");
   const [maxUses, setMaxUses] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -85,6 +88,68 @@ export function ManagementConsole({
       setMessage(`已删除邀请码 ${invite.code}`);
     } else {
       setMessage("删除失败，请刷新后重试");
+    }
+    setBusy(false);
+  }
+
+  async function toggleUserStatus(user: ManagedUser) {
+    const nextStatus = user.status === "disabled" ? "active" : "disabled";
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/managed-users/${user.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: nextStatus })
+    });
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (response.ok) {
+      setUsers((current) =>
+        current.map((item) => (item.id === user.id ? { ...item, status: nextStatus } : item))
+      );
+      setMessage(
+        nextStatus === "disabled"
+          ? `已禁用 ${user.name}，该账号将无法登录`
+          : `已启用 ${user.name}`
+      );
+    } else {
+      setMessage(payload?.error ?? "操作失败，请刷新后重试");
+    }
+    setBusy(false);
+  }
+
+  async function resetPassword(user: ManagedUser) {
+    if (!window.confirm(`确定重置「${user.name}（${user.username}）」的密码？原密码将立即失效。`)) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/managed-users/${user.id}/reset-password`, { method: "POST" });
+    const payload = (await response.json().catch(() => null)) as
+      | { data?: { password: string }; error?: string }
+      | null;
+    if (response.ok && payload?.data?.password) {
+      const newPassword = payload.data.password;
+      await navigator.clipboard.writeText(newPassword).catch(() => {});
+      setMessage(`已重置 ${user.name} 的密码：${newPassword}（已复制到剪贴板，仅显示这一次，请尽快告知用户）`);
+    } else {
+      setMessage(payload?.error ?? "重置失败，请刷新后重试");
+    }
+    setBusy(false);
+  }
+
+  async function removeUser(user: ManagedUser) {
+    if (!window.confirm(`确定删除用户「${user.name}（${user.username}）」？删除后该账号立即失效，且不可恢复。`)) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/managed-users/${user.id}`, { method: "DELETE" });
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    if (response.ok) {
+      setUsers((current) => current.filter((item) => item.id !== user.id));
+      setMessage(`已删除用户 ${user.name}`);
+    } else {
+      setMessage(payload?.error ?? "删除失败，请刷新后重试");
     }
     setBusy(false);
   }
@@ -218,6 +283,7 @@ export function ManagementConsole({
               <span>{users.length} 个账号可访问当前租户</span>
             </div>
           </div>
+          {message ? <p className="management-message">{message}</p> : null}
           <div className="table-wrap">
             <table className="management-table user-table">
               <thead>
@@ -229,11 +295,14 @@ export function ManagementConsole({
                   <th>状态</th>
                   <th>创建时间</th>
                   <th>最近活跃</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
-                  <tr key={user.id}>
+                {users.map((user) => {
+                  const isAdminAccount = user.role === "owner" || user.role === "admin";
+                  return (
+                  <tr key={user.id} className={user.status === "disabled" ? "row-disabled" : undefined}>
                     <td>
                       <strong>{user.name}</strong>
                       <span>{user.email}</span>
@@ -241,11 +310,60 @@ export function ManagementConsole({
                     <td>{user.username}</td>
                     <td>{roleLabel(user.role)}</td>
                     <td>{user.shopName}</td>
-                    <td>{statusLabel(user.status)}</td>
+                    <td>
+                      <span className={clsx("user-status-pill", user.status)}>
+                        {statusLabel(user.status)}
+                      </span>
+                    </td>
                     <td>{formatFullDateTime(user.createdAt)}</td>
                     <td>{formatFullDateTime(user.lastActiveAt)}</td>
+                    <td>
+                      {isAdminAccount ? (
+                        <span className="user-action-none">—</span>
+                      ) : (
+                        <div className="user-actions">
+                          <button
+                            type="button"
+                            className="copy-link-button"
+                            disabled={busy}
+                            onClick={() => resetPassword(user)}
+                          >
+                            <KeyRound size={14} />
+                            重置密码
+                          </button>
+                          <button
+                            type="button"
+                            className={user.status === "disabled" ? "copy-link-button" : "danger-outline-button"}
+                            disabled={busy}
+                            onClick={() => toggleUserStatus(user)}
+                          >
+                            {user.status === "disabled" ? (
+                              <>
+                                <UserRoundCheck size={14} />
+                                启用
+                              </>
+                            ) : (
+                              <>
+                                <Ban size={14} />
+                                禁用
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="danger-outline-button"
+                            disabled={busy}
+                            onClick={() => removeUser(user)}
+                          >
+                            <Trash2 size={14} />
+                            删除
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

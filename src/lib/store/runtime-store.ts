@@ -7,7 +7,7 @@ import {
 } from "@/lib/algorithm/three-stage";
 import { prisma } from "@/lib/db";
 import { isPrefillReady } from "@/lib/prefill-status";
-import { requireTenantId } from "@/lib/session-server";
+import { getServerSession, requireTenantId } from "@/lib/session-server";
 import { mapImportedRows, type MappedSourceRows } from "@/lib/imports/map-rows";
 import {
   pruneAdminVersionSnapshots,
@@ -587,6 +587,72 @@ export async function getManagedUsers(): Promise<ManagedUser[]> {
     createdAt: u.createdAt.toISOString(),
     lastActiveAt: u.lastActiveAt.toISOString()
   }));
+}
+
+type ManagedUserActionResult =
+  | { ok: true }
+  | { ok: false; error: string; status: number };
+
+/** 校验目标用户可被当前管理员操作：同租户、非本人、非管理员账号。 */
+async function guardManagedUserAction(id: string): Promise<ManagedUserActionResult> {
+  const tenantId = await requireTenantId();
+  const session = await getServerSession();
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user || user.tenantId !== tenantId) {
+    return { ok: false, error: "用户不存在", status: 404 };
+  }
+  if (session && user.username === session.username) {
+    return { ok: false, error: "不能对当前登录的账号执行此操作", status: 400 };
+  }
+  if (user.authRole === "admin") {
+    return { ok: false, error: "不能操作管理员账号", status: 403 };
+  }
+  return { ok: true };
+}
+
+/** 禁用/启用租户成员。禁用后该账号无法登录。 */
+export async function setManagedUserStatus(
+  id: string,
+  status: "active" | "disabled"
+): Promise<ManagedUserActionResult> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  await prisma.user.update({ where: { id }, data: { status } });
+  return { ok: true };
+}
+
+/** 删除租户成员（硬删除，账号即刻失效）。 */
+export async function deleteManagedUser(id: string): Promise<ManagedUserActionResult> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  await prisma.user.delete({ where: { id } });
+  return { ok: true };
+}
+
+/**
+ * 重置租户成员密码：生成 10 位临时密码并写库，明文仅随本次响应返回一次。
+ * （沿用演示版明文密码存储；生产应改加盐哈希并强制首登修改。）
+ */
+export async function resetManagedUserPassword(
+  id: string
+): Promise<{ ok: true; password: string } | { ok: false; error: string; status: number }> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  // 去掉易混淆字符（0O1lI），降低口头/抄写传达出错率。
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const { randomInt } = await import("node:crypto");
+  let password = "";
+  for (let index = 0; index < 10; index += 1) {
+    password += alphabet[randomInt(alphabet.length)];
+  }
+  await prisma.user.update({ where: { id }, data: { password } });
+  return { ok: true, password };
 }
 
 // ——————————————————————————————————————————————————————————————

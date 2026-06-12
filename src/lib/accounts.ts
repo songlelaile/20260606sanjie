@@ -10,11 +10,20 @@ export interface AuthAccount {
   tenantId: string;
 }
 
-/** 登录校验：按用户名查库并比对密码（演示用明文比对；生产应改加盐哈希）。 */
-export async function findAccount(username: string, password: string): Promise<AuthAccount | null> {
+/**
+ * 登录校验：按用户名查库并比对密码（演示用明文比对；生产应改加盐哈希）。
+ * 返回 "disabled" 表示账号密码正确但已被管理员禁用。
+ */
+export async function findAccount(
+  username: string,
+  password: string
+): Promise<AuthAccount | "disabled" | null> {
   const user = await prisma.user.findUnique({ where: { username: username.trim() } });
   if (!user || user.password !== password) {
     return null;
+  }
+  if (user.status === "disabled") {
+    return "disabled";
   }
   await prisma.user.update({ where: { id: user.id }, data: { lastActiveAt: new Date() } });
   return {
