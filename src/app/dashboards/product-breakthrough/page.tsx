@@ -24,7 +24,7 @@ export default async function ProductBreakthroughPage() {
           <span className="table-count">共 {items.length} 个商品</span>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="breakthrough-table">
             <thead>
               <tr>
                 <th>商品</th>

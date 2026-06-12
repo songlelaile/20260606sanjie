@@ -348,6 +348,38 @@ button:disabled {
   white-space: nowrap;
 }
 
+/* —— 单品突破：商品/解决方案占宽，周期/评级/评分/编码紧凑不换行 —— */
+.breakthrough-table {
+  min-width: 1120px;
+}
+
+.breakthrough-table th:nth-child(1) {
+  width: 230px;
+}
+
+.breakthrough-table th:nth-child(2),
+.breakthrough-table th:nth-child(3),
+.breakthrough-table th:nth-child(4),
+.breakthrough-table th:nth-child(5) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.breakthrough-table td:nth-child(2),
+.breakthrough-table td:nth-child(3),
+.breakthrough-table td:nth-child(4),
+.breakthrough-table td:nth-child(5) {
+  white-space: nowrap;
+}
+
+.breakthrough-table th:nth-child(6) {
+  width: 210px;
+}
+
+.breakthrough-table td:nth-child(7) {
+  line-height: 1.65;
+}
+
 .empty-table-cell {
   color: var(--muted);
   height: 72px;

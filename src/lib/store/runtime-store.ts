@@ -434,10 +434,9 @@ function derivePrefillItems(
       productId: product.productId,
       productCode: prev?.productCode ?? product.productId,
       productName: product.productName,
-      // 分层默认空＝未填写（仅占位，由运营选择后才纳入计算）。
+      // 分层/月GSV机会/毛利率默认均为未填写（空或 0 仅占位），由运营填写后才纳入三阶计算。
       grade: prev?.grade ?? "",
-      monthlyGsvOpportunity:
-        prev?.monthlyGsvOpportunity ?? Math.max(0, product.paymentAmount - product.refundAmount),
+      monthlyGsvOpportunity: prev?.monthlyGsvOpportunity ?? 0,
       grossMarginRate: prev?.grossMarginRate ?? 0,
       paidVisitorRatio: prev?.paidVisitorRatio ?? 0.3,
       audienceStrategy: prev?.audienceStrategy,
