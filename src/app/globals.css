@@ -730,29 +730,95 @@ button:disabled {
   min-width: 1060px;
 }
 
-.management-table th:nth-child(1),
-.management-table td:nth-child(1) {
+/* 邀请码表：码/链接/用量/时间紧凑，说明占余宽 */
+.invite-table th:nth-child(1),
+.invite-table td:nth-child(1) {
   width: 140px;
 }
 
-.management-table th:nth-child(2),
-.management-table td:nth-child(2) {
+.invite-table th:nth-child(2),
+.invite-table td:nth-child(2) {
   width: 210px;
 }
 
-.management-table th:nth-child(3),
-.management-table td:nth-child(3) {
+.invite-table th:nth-child(3),
+.invite-table td:nth-child(3) {
   width: 74px;
 }
 
-.management-table th:nth-child(4),
-.management-table td:nth-child(4) {
-  width: 210px;
+.invite-table th:nth-child(4),
+.invite-table td:nth-child(4) {
+  width: 180px;
+  white-space: nowrap;
 }
 
-.management-table th:nth-child(6),
-.management-table td:nth-child(6) {
-  width: 86px;
+.invite-table th:nth-child(6),
+.invite-table td:nth-child(6) {
+  width: 96px;
+}
+
+/* 用户表：时间列不换行，操作列容纳三个按钮，店铺占余宽 */
+.user-table {
+  min-width: 1200px;
+}
+
+.user-table th:nth-child(1),
+.user-table td:nth-child(1) {
+  width: 180px;
+}
+
+.user-table th:nth-child(2),
+.user-table td:nth-child(2) {
+  width: 130px;
+}
+
+.user-table th:nth-child(3),
+.user-table td:nth-child(3) {
+  width: 64px;
+}
+
+.user-table th:nth-child(5),
+.user-table td:nth-child(5) {
+  width: 80px;
+}
+
+.user-table th:nth-child(6),
+.user-table td:nth-child(6),
+.user-table th:nth-child(7),
+.user-table td:nth-child(7) {
+  width: 165px;
+  white-space: nowrap;
+}
+
+.user-table th:nth-child(8),
+.user-table td:nth-child(8) {
+  width: 280px;
+}
+
+/* 历史数据清单：时间/区间不换行，五个数量列紧凑，备注占余宽 */
+.history-table th:nth-child(1),
+.history-table td:nth-child(1) {
+  width: 170px;
+  white-space: nowrap;
+}
+
+.history-table th:nth-child(2),
+.history-table td:nth-child(2) {
+  width: 195px;
+  white-space: nowrap;
+}
+
+.history-table th:nth-child(3),
+.history-table td:nth-child(3),
+.history-table th:nth-child(4),
+.history-table td:nth-child(4),
+.history-table th:nth-child(5),
+.history-table td:nth-child(5),
+.history-table th:nth-child(6),
+.history-table td:nth-child(6),
+.history-table th:nth-child(7),
+.history-table td:nth-child(7) {
+  width: 90px;
 }
 
 .management-table th:last-child,
