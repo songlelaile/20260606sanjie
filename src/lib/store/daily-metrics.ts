@@ -148,3 +148,119 @@ export async function aggregateProductForCycle(
     };
   });
 }
+
+// ——————————————————————————————————————————————————————————————
+// 前后对比用聚合（v2 阶段3）
+// ——————————————————————————————————————————————————————————————
+
+/** ISO 日期加减天数。 */
+export function addDays(iso: string, days: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+export interface WindowSum {
+  paymentAmount: number;
+  refundAmount: number;
+  visitors: number;
+  paymentBuyers: number;
+}
+
+const EMPTY_SUM: WindowSum = { paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+
+function accumulate(target: WindowSum, r: { paymentAmount: number; refundAmount: number; visitors: number; paymentBuyers: number }) {
+  target.paymentAmount += r.paymentAmount;
+  target.refundAmount += r.refundAmount;
+  target.visitors += r.visitors;
+  target.paymentBuyers += r.paymentBuyers;
+}
+
+/** 窗口内（商品集为空=整店）求和。 */
+export async function sumProductWindow(
+  tenantId: string,
+  productIds: string[] | null,
+  start: string,
+  end: string
+): Promise<WindowSum> {
+  const rows = await prisma.dailyProductMetric.findMany({
+    where: {
+      tenantId,
+      date: { gte: start, lte: end },
+      ...(productIds && productIds.length > 0 ? { productId: { in: productIds } } : {})
+    },
+    select: { paymentAmount: true, refundAmount: true, visitors: true, paymentBuyers: true }
+  });
+  const sum = { ...EMPTY_SUM };
+  for (const r of rows) accumulate(sum, r);
+  return sum;
+}
+
+/** 窗口内按商品分组求和（lens B 用）。 */
+export async function sumProductWindowByProduct(
+  tenantId: string,
+  productIds: string[] | null,
+  start: string,
+  end: string
+): Promise<Map<string, WindowSum>> {
+  const rows = await prisma.dailyProductMetric.findMany({
+    where: {
+      tenantId,
+      date: { gte: start, lte: end },
+      ...(productIds && productIds.length > 0 ? { productId: { in: productIds } } : {})
+    },
+    select: { productId: true, paymentAmount: true, refundAmount: true, visitors: true, paymentBuyers: true }
+  });
+  const byId = new Map<string, WindowSum>();
+  for (const r of rows) {
+    let acc = byId.get(r.productId);
+    if (!acc) {
+      acc = { ...EMPTY_SUM };
+      byId.set(r.productId, acc);
+    }
+    accumulate(acc, r);
+  }
+  return byId;
+}
+
+export interface StoreTrendPoint {
+  date: string;
+  netSales: number;
+  paymentAmount: number;
+  refundAmount: number;
+  visitors: number;
+  paymentBuyers: number;
+}
+
+/** 整店按天趋势（商品集为空=整店；否则限定商品集），日期升序。 */
+export async function storeDailyTrend(
+  tenantId: string,
+  start: string,
+  end: string,
+  productIds?: string[] | null
+): Promise<StoreTrendPoint[]> {
+  const rows = await prisma.dailyProductMetric.findMany({
+    where: {
+      tenantId,
+      date: { gte: start, lte: end },
+      ...(productIds && productIds.length > 0 ? { productId: { in: productIds } } : {})
+    },
+    select: { date: true, paymentAmount: true, refundAmount: true, visitors: true, paymentBuyers: true },
+    orderBy: { date: "asc" }
+  });
+  const byDate = new Map<string, StoreTrendPoint>();
+  for (const r of rows) {
+    let p = byDate.get(r.date);
+    if (!p) {
+      p = { date: r.date, netSales: 0, paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+      byDate.set(r.date, p);
+    }
+    p.paymentAmount += r.paymentAmount;
+    p.refundAmount += r.refundAmount;
+    p.visitors += r.visitors;
+    p.paymentBuyers += r.paymentBuyers;
+    p.netSales = p.paymentAmount - p.refundAmount;
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}

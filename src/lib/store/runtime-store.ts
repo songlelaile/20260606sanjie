@@ -10,9 +10,14 @@ import { isPrefillReady } from "@/lib/prefill-status";
 import { getServerSession, requireTenantId } from "@/lib/session-server";
 import { mapImportedRows, mapProductDailyRows, type MappedSourceRows } from "@/lib/imports/map-rows";
 import {
+  addDays,
   aggregateProductForCycle,
   clearDailyProductMetrics,
-  upsertDailyProductMetrics
+  storeDailyTrend,
+  sumProductWindow,
+  sumProductWindowByProduct,
+  upsertDailyProductMetrics,
+  type WindowSum
 } from "@/lib/store/daily-metrics";
 import {
   pruneAdminVersionSnapshots,
@@ -23,8 +28,11 @@ import {
 import type {
   AnalysisCycle,
   CalcRun,
+  ComparisonMetric,
   DamoProductRow,
   GrowthProfitConfigRow,
+  Intervention,
+  InterventionComparison,
   InviteCode,
   ImportBatch,
   ImportValidationResult,
@@ -939,4 +947,134 @@ function pruneHistoryReportsByMonths(
 
 function formatMegabytes(bytes: number) {
   return `${Number((bytes / (1024 * 1024)).toFixed(1))}MB`;
+}
+
+// ——————————————————————————————————————————————————————————————
+// v2 阶段3：优化动作前后对比引擎（三口径）
+// ——————————————————————————————————————————————————————————————
+
+function comparisonMetric(
+  key: string,
+  label: string,
+  unit: ComparisonMetric["unit"],
+  before: number,
+  after: number,
+  higherIsBetter: boolean
+): ComparisonMetric {
+  const delta = after - before;
+  const deltaPct = before !== 0 ? delta / Math.abs(before) : after !== 0 ? (after > 0 ? 1 : -1) : 0;
+  return { key, label, unit, before, after, delta, deltaPct, higherIsBetter };
+}
+
+/** 由前后窗求和构造口径A指标：可加和项取"日均"（窗口长度不同也可比），费率/客单价为强度量不受窗长影响。 */
+function buildLensAMetrics(
+  before: WindowSum,
+  after: WindowSum,
+  beforeDays: number,
+  afterDays: number
+): ComparisonMetric[] {
+  const net = (s: WindowSum) => s.paymentAmount - s.refundAmount;
+  const conv = (s: WindowSum) => (s.visitors > 0 ? s.paymentBuyers / s.visitors : 0);
+  const aov = (s: WindowSum) => (s.paymentBuyers > 0 ? s.paymentAmount / s.paymentBuyers : 0);
+  const refundRate = (s: WindowSum) => (s.paymentAmount > 0 ? s.refundAmount / s.paymentAmount : 0);
+  const bd = beforeDays > 0 ? beforeDays : 1;
+  const ad = afterDays > 0 ? afterDays : 1;
+  return [
+    comparisonMetric("netSales", "日均净销额", "money", net(before) / bd, net(after) / ad, true),
+    comparisonMetric("paymentAmount", "日均销售额", "money", before.paymentAmount / bd, after.paymentAmount / ad, true),
+    comparisonMetric("refundAmount", "日均退款额", "money", before.refundAmount / bd, after.refundAmount / ad, false),
+    comparisonMetric("visitors", "日均访客", "int", before.visitors / bd, after.visitors / ad, true),
+    comparisonMetric("paymentBuyers", "日均支付买家", "int", before.paymentBuyers / bd, after.paymentBuyers / ad, true),
+    comparisonMetric("conversion", "支付转化率", "rate", conv(before), conv(after), true),
+    comparisonMetric("aov", "客单价", "money", aov(before), aov(after), true),
+    comparisonMetric("refundRate", "退款率", "rate", refundRate(before), refundRate(after), false)
+  ];
+}
+
+/**
+ * 计算一个优化动作的前后对比（三口径）。动作日 D 计入"后窗"（变更当天即生效）。
+ * 前窗 [D-before, D-1]，后窗 [D, D+after-1]。productIds 为空=整店。
+ */
+export async function buildInterventionComparison(
+  id: string,
+  beforeDays = 7,
+  afterDays = 7
+): Promise<InterventionComparison | null> {
+  const { tenantId, state } = await ctx();
+  const iv = await prisma.intervention.findUnique({ where: { id } });
+  if (!iv || iv.tenantId !== tenantId) {
+    return null;
+  }
+  const affected = Array.isArray(iv.productIds) ? (iv.productIds as string[]) : [];
+  const scopeIds = affected.length > 0 ? affected : null;
+
+  const beforeStart = addDays(iv.date, -beforeDays);
+  const beforeEnd = addDays(iv.date, -1);
+  const afterStart = iv.date;
+  const afterEnd = addDays(iv.date, afterDays - 1);
+
+  // 口径 A：真实经营前后（日均/费率）
+  const beforeSum = await sumProductWindow(tenantId, scopeIds, beforeStart, beforeEnd);
+  const afterSum = await sumProductWindow(tenantId, scopeIds, afterStart, afterEnd);
+  const metrics = buildLensAMetrics(beforeSum, afterSum, beforeDays, afterDays);
+
+  // 口径 B：计划 vs 实际（按受影响商品；整店则取所有有计划的商品）
+  const cid = state.context.cycle.id;
+  const planById = new Map(
+    state.prefillItems.filter((p) => p.cycleId === cid).map((p) => [p.productId, p])
+  );
+  const targetIds = affected.length > 0 ? affected : [...planById.keys()];
+  const afterByProduct = await sumProductWindowByProduct(
+    tenantId,
+    targetIds.length > 0 ? targetIds : null,
+    afterStart,
+    afterEnd
+  );
+  const lensBRows = targetIds
+    .map((pid) => {
+      const plan = planById.get(pid);
+      const a = afterByProduct.get(pid) ?? { paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+      const actualNet = a.paymentAmount - a.refundAmount;
+      const actualMonthlyGsv = afterDays > 0 ? (actualNet / afterDays) * 30 : 0;
+      const planMonthlyGsv = plan?.monthlyGsvOpportunity ?? 0;
+      return {
+        productId: pid,
+        productName: plan?.productName ?? pid,
+        planMonthlyGsv,
+        actualMonthlyGsv,
+        attainmentPct: planMonthlyGsv > 0 ? actualMonthlyGsv / planMonthlyGsv : 0
+      };
+    })
+    .filter((r) => r.planMonthlyGsv > 0 || r.actualMonthlyGsv > 0)
+    .sort((l, r) => r.actualMonthlyGsv - l.actualMonthlyGsv);
+
+  // 口径 C：整店（或商品集）按天趋势，覆盖 [前窗起, 后窗止]
+  const trend = await storeDailyTrend(tenantId, beforeStart, afterEnd, scopeIds);
+
+  const intervention: Intervention = {
+    id: iv.id,
+    date: iv.date,
+    title: iv.title,
+    note: iv.note,
+    category: iv.category,
+    productIds: affected,
+    createdBy: iv.createdBy,
+    createdAt: iv.createdAt.toISOString()
+  };
+
+  return {
+    intervention,
+    window: { beforeStart, beforeEnd, afterStart, afterEnd, beforeDays, afterDays },
+    lensA: { productScope: affected.length > 0 ? `${affected.length} 个商品` : "整店", metrics },
+    lensB: { rows: lensBRows },
+    lensC: {
+      interventionDate: iv.date,
+      series: trend.map((p) => ({
+        date: p.date,
+        netSales: p.netSales,
+        visitors: p.visitors,
+        paymentBuyers: p.paymentBuyers
+      }))
+    }
+  };
 }

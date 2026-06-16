@@ -6,6 +6,7 @@ import {
   Copy,
   History,
   KeyRound,
+  LineChart,
   LogOut,
   Trash2,
   UserRoundCheck,
@@ -14,24 +15,28 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ManagementHistoryPanel } from "@/components/management/ManagementHistoryPanel";
+import { ReviewConsole } from "@/components/management/ReviewConsole";
 import type {
+  Intervention,
   InviteCode,
   ManagementHistoryState,
   ManagedUser,
   User
 } from "@/lib/types/domain";
 
-type ManagementTab = "invites" | "users" | "history";
+type ManagementTab = "invites" | "users" | "review" | "history";
 
 export function ManagementConsole({
   initialInvites,
   initialUsers,
   initialHistory,
+  initialInterventions,
   currentUser
 }: {
   initialInvites: InviteCode[];
   initialUsers: ManagedUser[];
   initialHistory: ManagementHistoryState;
+  initialInterventions: Intervention[];
   currentUser: User;
 }) {
   const [activeTab, setActiveTab] = useState<ManagementTab>("history");
@@ -174,6 +179,14 @@ export function ManagementConsole({
           >
             <UsersRound size={17} />
             用户列表
+          </button>
+          <button
+            type="button"
+            className={clsx("management-tab", activeTab === "review" && "active")}
+            onClick={() => setActiveTab("review")}
+          >
+            <LineChart size={17} />
+            经营复盘
           </button>
           <button
             type="button"
@@ -369,6 +382,8 @@ export function ManagementConsole({
           </div>
         </section>
       ) : null}
+
+      {activeTab === "review" ? <ReviewConsole interventions={initialInterventions} /> : null}
 
       {activeTab === "history" ? <ManagementHistoryPanel initialHistory={initialHistory} /> : null}
     </section>

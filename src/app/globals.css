@@ -1877,6 +1877,206 @@ td small {
   opacity: 0.8;
 }
 
+/* —— 经营复盘（三口径对比）—— */
+.review-console {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.review-action-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 640px;
+  overflow-y: auto;
+}
+
+.review-action-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--ink);
+  min-height: auto;
+}
+
+.review-action-item.active {
+  border-color: var(--brand);
+  background: rgba(246, 198, 95, 0.08);
+}
+
+.review-action-date {
+  font-size: 12px;
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.review-action-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.review-action-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.review-window-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.review-window-controls input {
+  width: 56px;
+  min-height: 34px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.review-body {
+  padding: 8px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.review-window-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.review-lens h3 {
+  font-size: 15px;
+  margin: 0 0 12px;
+  color: var(--ink);
+}
+
+.review-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 16px 18px;
+  margin: 0;
+}
+
+.review-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.review-metric {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.review-metric.good {
+  border-left-color: var(--good);
+}
+
+.review-metric.bad {
+  border-left-color: var(--bad);
+}
+
+.review-metric.flat {
+  border-left-color: var(--line-strong);
+}
+
+.review-metric-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-metric-values {
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.review-metric-values strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.review-metric-delta {
+  font-size: 12px;
+}
+
+.review-metric.good .review-metric-delta {
+  color: var(--good);
+}
+
+.review-metric.bad .review-metric-delta {
+  color: var(--bad);
+}
+
+.review-metric.flat .review-metric-delta {
+  color: var(--muted);
+}
+
+.trend-chart-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.trend-chart-toolbar button {
+  min-height: 30px;
+  padding: 0 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.trend-chart-toolbar button.is-active {
+  background: var(--brand);
+  color: #182007;
+  border-color: #caa34d;
+}
+
+.trend-chart-canvas {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 6px 4px;
+}
+
+@media (max-width: 900px) {
+  .review-console {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* —— 优化动作标记 —— */
 .intervention-panel {
   margin-top: 18px;

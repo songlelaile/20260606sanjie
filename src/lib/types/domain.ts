@@ -345,6 +345,51 @@ export interface Intervention {
   createdAt: string;
 }
 
+/** 对比口径 A：单个真实经营指标的前后变化。 */
+export interface ComparisonMetric {
+  key: string;
+  label: string;
+  unit: "money" | "int" | "rate"; // rate=0~1 百分比
+  before: number;
+  after: number;
+  delta: number;
+  deltaPct: number; // 相对变化（after-before)/|before|
+  higherIsBetter: boolean;
+}
+
+/** 对比口径 B：单商品的计划 vs 实际。 */
+export interface PlanActualRow {
+  productId: string;
+  productName: string;
+  planMonthlyGsv: number; // 预填的月GSV机会
+  actualMonthlyGsv: number; // 后窗净销额折算月度
+  attainmentPct: number; // 达成率
+}
+
+/** 整店/商品集按天趋势点（对比口径 C）。 */
+export interface DailyTrendPoint {
+  date: string;
+  netSales: number;
+  visitors: number;
+  paymentBuyers: number;
+}
+
+/** 一个优化动作的前后对比结果（三口径）。 */
+export interface InterventionComparison {
+  intervention: Intervention;
+  window: {
+    beforeStart: string;
+    beforeEnd: string;
+    afterStart: string;
+    afterEnd: string;
+    beforeDays: number;
+    afterDays: number;
+  };
+  lensA: { productScope: string; metrics: ComparisonMetric[] };
+  lensB: { rows: PlanActualRow[] };
+  lensC: { interventionDate: string; series: DailyTrendPoint[] };
+}
+
 export interface ManagementHistoryState {
   records: ManagementHistoryRecord[];
   reports: ManagementHistoryReport[];
