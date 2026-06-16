@@ -13,7 +13,12 @@ function validatePrefillItems(items: unknown[]): string | null {
     if (typeof item.id !== "string" || item.id === "") {
       return "每条记录必须包含合法的 id";
     }
-    if (item.grade !== undefined && !VALID_GRADES.includes(item.grade as ProductGrade)) {
+    // 允许空串 ""＝未填写（仅占位、不参与计算）；非空时必须是 S/A/B/C。
+    if (
+      item.grade !== undefined &&
+      item.grade !== "" &&
+      !VALID_GRADES.includes(item.grade as ProductGrade)
+    ) {
       return `商品 ${item.id} 的分层必须是 S/A/B/C 之一`;
     }
     if (
