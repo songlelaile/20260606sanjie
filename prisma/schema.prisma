@@ -87,3 +87,18 @@ model DailyProductMetric {
   @@unique([tenantId, productId, date])
   @@index([tenantId, date])
 }
+
+// 运营手动标记的"优化动作"（v2 前后对比锚点）。date=动作发生日；productIds=受影响商品(空=整店)。
+model Intervention {
+  id         String   @id @default(cuid())
+  tenantId   String
+  date       String // 归一化 ISO YYYY-MM-DD
+  title      String
+  note       String   @default("")
+  category   String   @default("")
+  productIds Json     @default("[]")
+  createdBy  String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([tenantId, date])
+}

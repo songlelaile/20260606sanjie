@@ -333,6 +333,18 @@ export interface VersionSnapshot {
   summary: string;
 }
 
+/** 运营手动标记的"优化动作"（v2 前后对比锚点）。 */
+export interface Intervention {
+  id: string;
+  date: string; // ISO YYYY-MM-DD，动作发生日
+  title: string;
+  note: string;
+  category: string; // 预算/主图/价格/人群/详情/其他
+  productIds: string[]; // 受影响商品；空数组=整店
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface ManagementHistoryState {
   records: ManagementHistoryRecord[];
   reports: ManagementHistoryReport[];

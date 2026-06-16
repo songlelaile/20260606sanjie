@@ -1877,6 +1877,118 @@ td small {
   opacity: 0.8;
 }
 
+/* —— 优化动作标记 —— */
+.intervention-panel {
+  margin-top: 18px;
+}
+
+.intervention-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.intervention-form-row {
+  display: grid;
+  grid-template-columns: 160px 130px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.intervention-form label,
+.intervention-products-head span {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.intervention-form input,
+.intervention-form select,
+.intervention-form textarea {
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.intervention-form textarea {
+  resize: vertical;
+  min-height: 52px;
+}
+
+.intervention-form input:focus,
+.intervention-form select:focus,
+.intervention-form textarea:focus {
+  outline: none;
+  border-color: var(--brand);
+}
+
+.intervention-products-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.intervention-search {
+  max-width: 220px;
+  min-height: 34px !important;
+}
+
+.intervention-products-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 4px 14px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+}
+
+.intervention-product-item {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.intervention-product-item input {
+  min-height: auto !important;
+  width: 15px;
+  height: 15px;
+}
+
+.intervention-product-item strong {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.intervention-empty-products {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}
+
+.intervention-submit {
+  align-self: flex-start;
+  padding: 0 20px;
+}
+
+.intervention-table .nowrap {
+  white-space: nowrap;
+}
+
 /* —— 用户列表：状态徽章与操作 —— */
 .user-status-pill {
   display: inline-block;
