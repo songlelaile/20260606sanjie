@@ -24,6 +24,41 @@ const LIFECYCLES: Lifecycle[] = [
   "平销期"
 ];
 
+/** 分日商品指标（落 DailyProductMetric 表的输入）。 */
+export interface DailyProductMetricInput {
+  productId: string;
+  date: string; // 归一化 ISO YYYY-MM-DD
+  productName: string;
+  visitors: number;
+  views: number;
+  averageStaySeconds: number;
+  bounceRate: number;
+  paymentBuyers: number;
+  paymentAmount: number;
+  productPaymentConversionRate: number;
+  refundAmount: number;
+  searchGuidedPaymentConversionRate: number;
+  searchGuidedVisitors: number;
+}
+
+/** 把各种日期写法（2026-05-01 / 2026/5/1 / 2026.05.01 / 20260501 / 带时分秒）归一化为 ISO。无法识别返回 ""。 */
+export function normalizeDate(value: unknown): string {
+  const text = stringifyCell(value).trim();
+  if (!text) {
+    return "";
+  }
+  const datePart = text.split(/[\sT]/)[0];
+  const sep = datePart.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (sep) {
+    return `${sep[1]}-${sep[2].padStart(2, "0")}-${sep[3].padStart(2, "0")}`;
+  }
+  const compact = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compact) {
+    return `${compact[1]}-${compact[2]}-${compact[3]}`;
+  }
+  return "";
+}
+
 export function parseNumericCell(value: unknown): number {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
@@ -177,6 +212,33 @@ export function mapProductSourceRows(headers: string[], rows: unknown[][]): Prod
       searchGuidedVisitors: 0
     }));
   return dedupeByFirst(mapped, (item) => item.productId);
+}
+
+/**
+ * 分日商品源映射：保留每商品每日一行（按 productId+date 去重保首行），不再压成每商品一行。
+ * 无法识别统计日期的行丢弃（分日表必须有日期）。
+ */
+export function mapProductDailyRows(headers: string[], rows: unknown[][]): DailyProductMetricInput[] {
+  const { text, num } = columnReaders(headers);
+  const mapped = rows
+    .filter((row) => isDataRow(text(row, "商品ID")))
+    .map((row) => ({
+      productId: text(row, "商品ID"),
+      date: normalizeDate(text(row, "统计日期")),
+      productName: text(row, "商品名称"),
+      visitors: num(row, "商品访客数"),
+      views: num(row, "商品浏览量"),
+      averageStaySeconds: num(row, "平均停留时长"),
+      bounceRate: num(row, "商品详情页跳出率"),
+      paymentBuyers: num(row, "支付买家数"),
+      paymentAmount: num(row, "支付金额"),
+      productPaymentConversionRate: num(row, "商品支付转化率"),
+      refundAmount: num(row, "成功退款金额"),
+      searchGuidedPaymentConversionRate: num(row, "搜索引导支付转化率"),
+      searchGuidedVisitors: num(row, "搜索引导访客数")
+    }))
+    .filter((item) => item.date !== "");
+  return dedupeByFirst(mapped, (item) => `${item.productId} ${item.date}`);
 }
 
 export function mapDamoProductRows(headers: string[], rows: unknown[][]): DamoProductRow[] {

@@ -61,3 +61,29 @@ model Workspace {
   data      Json
   updatedAt DateTime @updatedAt
 }
+
+// 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，
+// ISO 字典序=时间序，便于按区间查询；(tenantId, productId, date) 唯一，重传同日覆盖。
+model DailyProductMetric {
+  id        String @id @default(cuid())
+  tenantId  String
+  productId String
+  date      String
+
+  productName                       String @default("")
+  visitors                          Int    @default(0)
+  views                             Int    @default(0)
+  averageStaySeconds                Float  @default(0)
+  bounceRate                        Float  @default(0)
+  paymentBuyers                     Int    @default(0)
+  paymentAmount                     Float  @default(0)
+  productPaymentConversionRate      Float  @default(0)
+  refundAmount                      Float  @default(0)
+  searchGuidedPaymentConversionRate Float  @default(0)
+  searchGuidedVisitors              Int    @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, productId, date])
+  @@index([tenantId, date])
+}

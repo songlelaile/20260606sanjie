@@ -8,7 +8,12 @@ import {
 import { prisma } from "@/lib/db";
 import { isPrefillReady } from "@/lib/prefill-status";
 import { getServerSession, requireTenantId } from "@/lib/session-server";
-import { mapImportedRows, type MappedSourceRows } from "@/lib/imports/map-rows";
+import { mapImportedRows, mapProductDailyRows, type MappedSourceRows } from "@/lib/imports/map-rows";
+import {
+  aggregateProductForCycle,
+  clearDailyProductMetrics,
+  upsertDailyProductMetrics
+} from "@/lib/store/daily-metrics";
 import {
   pruneAdminVersionSnapshots,
   pruneHistoryRecordsByMonths,
@@ -212,10 +217,11 @@ export async function clearImportBatches(options?: { keepPrefill?: boolean }): P
   state.imports = [];
   state.uploadedSources = {};
   // keepPrefill：上传新数据前的"换一批源数据"。保留运营已填的分层/毛利率等参数，
-  // 重新上传时按 productId 沿用（满足"多次依照已有数据展示"）。
-  // 不传 keepPrefill：运营主动「清空源数据」，连预填参数一并清空，回到从零体验。
+  // 重新上传时按 productId 沿用（满足"多次依照已有数据展示"）。分日表保留累积，靠 upsert 覆盖同日。
+  // 不传 keepPrefill：运营主动「清空源数据」，连预填参数和分日明细一并清空，回到从零体验。
   if (!options?.keepPrefill) {
     state.prefillItems = [];
+    await clearDailyProductMetrics(tenantId);
   }
   state.currentTenantDatasetId = null;
   state.currentTenantDatasetBytes = 0;
@@ -282,10 +288,16 @@ export async function addImportBatch(input: {
     )
   ];
   if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
-    state.uploadedSources = {
-      ...state.uploadedSources,
-      ...mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows)
-    };
+    if (input.reportType === "product_source") {
+      // 商品源落 v2 分日表（按日 upsert 累积），不再进 blob。
+      const daily = mapProductDailyRows(input.parsedHeaders, input.parsedRows);
+      await upsertDailyProductMetrics(tenantId, daily);
+    } else {
+      state.uploadedSources = {
+        ...state.uploadedSources,
+        ...mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows)
+      };
+    }
   }
   pushVersion(state, {
     id: `version-import-${Date.now()}`,
@@ -450,13 +462,14 @@ function derivePrefillItems(
 export async function runCalculation(cycleId?: string): Promise<CalcRun> {
   const { tenantId, state } = await ctx();
   const cid = cycleId ?? state.context.cycle.id;
-  const productSourceRows = state.uploadedSources.product_source ?? [];
+  // 商品源走 v2 分日表 → 周期聚合；其余三类暂仍读 blob（后续阶段再分日化）。
+  const productSourceRows = await aggregateProductForCycle(tenantId);
   const damoProductRows = state.uploadedSources.damo_product_source ?? [];
   const promotionProductRows = state.uploadedSources.promotion_product_source ?? [];
   const audienceSourceRows = state.uploadedSources.audience_source ?? [];
 
   let prefillItems: PrefillItem[];
-  if (state.uploadedSources.product_source) {
+  if (productSourceRows.length > 0) {
     prefillItems = derivePrefillItems(cid, productSourceRows, damoProductRows, state.prefillItems);
     const others = state.prefillItems.filter((item) => item.cycleId !== cid);
     state.prefillItems = [...others, ...prefillItems];
