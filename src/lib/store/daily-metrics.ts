@@ -9,32 +9,65 @@ import type { ProductSourceRow } from "@/lib/types/domain";
  * - 读：把窗口内分日数据聚合成"每商品一行"的 ProductSourceRow，喂给现有三阶算法。
  */
 
-/** upsert 一批分日商品指标。同一批内按 (productId,date) 已去重。 */
+const UPSERT_CHUNK = 800;
+
+/**
+ * upsert 一批分日商品指标（同一批内按 (productId,date) 已去重）。
+ * 批量化：分块用事务 deleteMany(按精确键集) + createMany，避免逐行 N 次往返。
+ */
 export async function upsertDailyProductMetrics(
   tenantId: string,
   rows: DailyProductMetricInput[]
 ): Promise<number> {
-  for (const row of rows) {
-    const data = {
-      productName: row.productName,
-      visitors: Math.round(row.visitors),
-      views: Math.round(row.views),
-      averageStaySeconds: row.averageStaySeconds,
-      bounceRate: row.bounceRate,
-      paymentBuyers: Math.round(row.paymentBuyers),
-      paymentAmount: row.paymentAmount,
-      productPaymentConversionRate: row.productPaymentConversionRate,
-      refundAmount: row.refundAmount,
-      searchGuidedPaymentConversionRate: row.searchGuidedPaymentConversionRate,
-      searchGuidedVisitors: Math.round(row.searchGuidedVisitors)
-    };
-    await prisma.dailyProductMetric.upsert({
-      where: { tenantId_productId_date: { tenantId, productId: row.productId, date: row.date } },
-      create: { tenantId, productId: row.productId, date: row.date, ...data },
-      update: data
-    });
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK);
+    await prisma.$transaction([
+      prisma.dailyProductMetric.deleteMany({
+        where: {
+          tenantId,
+          OR: chunk.map((r) => ({ productId: r.productId, date: r.date }))
+        }
+      }),
+      prisma.dailyProductMetric.createMany({
+        data: chunk.map((r) => ({
+          tenantId,
+          productId: r.productId,
+          date: r.date,
+          productName: r.productName,
+          visitors: Math.round(r.visitors),
+          views: Math.round(r.views),
+          averageStaySeconds: r.averageStaySeconds,
+          bounceRate: r.bounceRate,
+          paymentBuyers: Math.round(r.paymentBuyers),
+          paymentAmount: r.paymentAmount,
+          productPaymentConversionRate: r.productPaymentConversionRate,
+          refundAmount: r.refundAmount,
+          searchGuidedPaymentConversionRate: r.searchGuidedPaymentConversionRate,
+          searchGuidedVisitors: Math.round(r.searchGuidedVisitors)
+        }))
+      })
+    ]);
   }
   return rows.length;
+}
+
+/**
+ * 保留最近 keepDays 天（相对该租户已有数据的最新日期），清掉更早的分日明细。
+ * keepDays<=0 表示永久保留。返回删除行数。
+ */
+export async function pruneDailyProductMetrics(tenantId: string, keepDays: number): Promise<number> {
+  if (!keepDays || keepDays <= 0) {
+    return 0;
+  }
+  const range = await getProductDailyDateRange(tenantId);
+  if (!range) {
+    return 0;
+  }
+  const cutoff = addDays(range.end, -(keepDays - 1)); // 保留 [end-keepDays+1, end]
+  const result = await prisma.dailyProductMetric.deleteMany({
+    where: { tenantId, date: { lt: cutoff } }
+  });
+  return result.count;
 }
 
 /** 清空某租户全部分日商品指标（主动「清空源数据」时调用）。 */

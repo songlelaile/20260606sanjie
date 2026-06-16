@@ -13,6 +13,8 @@ import {
   addDays,
   aggregateProductForCycle,
   clearDailyProductMetrics,
+  getProductDailyDateRange,
+  pruneDailyProductMetrics,
   storeDailyTrend,
   sumProductWindow,
   sumProductWindowByProduct,
@@ -78,7 +80,10 @@ interface WorkspaceData {
   historyRecords: ManagementHistoryRecord[];
   historyReports: ManagementHistoryReport[];
   historyRetention: ManagementHistoryRetention;
+  dailyRetentionDays?: number; // 分日明细保留天数（相对最新日期）；缺省视为 365，<=0 永久
 }
+
+export const DEFAULT_DAILY_RETENTION_DAYS = 365;
 
 const initialGrowthProfitConfig = matrixToGrowthProfitConfig(marginMatrix);
 
@@ -219,6 +224,25 @@ export async function getRetentionStatus() {
   };
 }
 
+/** 分日数据概况 + 保留设置（导入页展示）。 */
+export async function getDailyDataStatus(): Promise<{
+  range: { start: string; end: string; days: number } | null;
+  retentionDays: number;
+}> {
+  const { tenantId, state } = await ctx();
+  const range = await getProductDailyDateRange(tenantId);
+  return { range, retentionDays: state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS };
+}
+
+/** 设置分日保留天数（0=永久），并立即按新策略清理一次。 */
+export async function setDailyRetentionDays(days: number): Promise<number> {
+  const { tenantId, state } = await ctx();
+  const clean = Number.isFinite(days) ? Math.max(0, Math.min(3650, Math.round(days))) : DEFAULT_DAILY_RETENTION_DAYS;
+  state.dailyRetentionDays = clean;
+  await saveWorkspace(tenantId, state);
+  return pruneDailyProductMetrics(tenantId, clean);
+}
+
 export async function clearImportBatches(options?: { keepPrefill?: boolean }): Promise<void> {
   const { tenantId, state } = await ctx();
   const now = new Date().toISOString();
@@ -297,9 +321,10 @@ export async function addImportBatch(input: {
   ];
   if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
     if (input.reportType === "product_source") {
-      // 商品源落 v2 分日表（按日 upsert 累积），不再进 blob。
+      // 商品源落 v2 分日表（按日 upsert 累积），不再进 blob；随后按保留策略清理过旧明细。
       const daily = mapProductDailyRows(input.parsedHeaders, input.parsedRows);
       await upsertDailyProductMetrics(tenantId, daily);
+      await pruneDailyProductMetrics(tenantId, state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS);
     } else {
       state.uploadedSources = {
         ...state.uploadedSources,

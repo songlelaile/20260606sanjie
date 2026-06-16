@@ -1877,6 +1877,68 @@ td small {
   opacity: 0.8;
 }
 
+/* —— 分日数据底座面板 —— */
+.daily-data-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.daily-data-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--brand);
+}
+
+.daily-data-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.daily-data-head span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.daily-data-retention {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.daily-data-retention label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.daily-data-retention input {
+  width: 72px;
+  min-height: 34px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.daily-data-hint {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 200px;
+}
+
 /* —— 经营复盘（三口径对比）—— */
 .review-console {
   display: grid;
