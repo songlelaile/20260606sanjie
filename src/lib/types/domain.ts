@@ -349,12 +349,14 @@ export interface Intervention {
 export interface ComparisonMetric {
   key: string;
   label: string;
-  unit: "money" | "int" | "rate"; // rate=0~1 百分比
+  unit: "money" | "int" | "rate" | "ratio"; // rate=0~1 百分比；ratio=倍数(如ROI 3.5)
   before: number;
   after: number;
   delta: number;
   deltaPct: number; // 相对变化（after-before)/|before|
   higherIsBetter: boolean;
+  neutral?: boolean; // 中性指标（如推广花费=投入杠杆，不判好坏）
+  group?: "经营" | "广告"; // 分组展示
 }
 
 /** 对比口径 B：单商品的计划 vs 实际。 */

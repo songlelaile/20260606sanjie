@@ -2036,6 +2036,13 @@ td small {
   color: var(--ink);
 }
 
+.review-subhead {
+  font-size: 13px;
+  margin: 14px 0 8px;
+  color: var(--brand);
+  font-weight: 600;
+}
+
 .review-empty {
   color: var(--muted);
   font-size: 13px;

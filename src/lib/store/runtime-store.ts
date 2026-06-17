@@ -26,9 +26,11 @@ import {
   storeDailyTrend,
   sumProductWindow,
   sumProductWindowByProduct,
+  sumPromotionWindow,
   upsertDailyAudienceMetrics,
   upsertDailyProductMetrics,
   upsertDailyPromotionMetrics,
+  type PromotionWindowSum,
   type WindowSum
 } from "@/lib/store/daily-metrics";
 import {
@@ -1042,6 +1044,24 @@ function buildLensAMetrics(
     comparisonMetric("conversion", "支付转化率", "rate", conv(before), conv(after), true),
     comparisonMetric("aov", "客单价", "money", aov(before), aov(after), true),
     comparisonMetric("refundRate", "退款率", "rate", refundRate(before), refundRate(after), false)
+  ].map((m) => ({ ...m, group: "经营" as const }));
+}
+
+/** 广告口径：日均推广花费(中性)、推广ROI(花费加权)、点击成本(CPC)。 */
+function buildAdMetrics(
+  before: PromotionWindowSum,
+  after: PromotionWindowSum,
+  beforeDays: number,
+  afterDays: number
+): ComparisonMetric[] {
+  const bd = beforeDays > 0 ? beforeDays : 1;
+  const ad = afterDays > 0 ? afterDays : 1;
+  const roi = (s: PromotionWindowSum) => (s.cost > 0 ? s.roiCost / s.cost : 0);
+  const cpc = (s: PromotionWindowSum) => (s.clicks > 0 ? s.cost / s.clicks : 0);
+  return [
+    { ...comparisonMetric("adCost", "日均推广花费", "money", before.cost / bd, after.cost / ad, true), neutral: true, group: "广告" as const },
+    { ...comparisonMetric("adRoi", "推广ROI", "ratio", roi(before), roi(after), true), group: "广告" as const },
+    { ...comparisonMetric("cpc", "点击成本", "money", cpc(before), cpc(after), false), group: "广告" as const }
   ];
 }
 
@@ -1067,10 +1087,20 @@ export async function buildInterventionComparison(
   const afterStart = iv.date;
   const afterEnd = addDays(iv.date, afterDays - 1);
 
-  // 口径 A：真实经营前后（日均/费率）
-  const beforeSum = await sumProductWindow(tenantId, scopeIds, beforeStart, beforeEnd);
-  const afterSum = await sumProductWindow(tenantId, scopeIds, afterStart, afterEnd);
+  // 口径 A：真实经营前后（日均/费率）+ 广告维度（推广花费/ROI/CPC）
+  const [beforeSum, afterSum, beforePromo, afterPromo] = await Promise.all([
+    sumProductWindow(tenantId, scopeIds, beforeStart, beforeEnd),
+    sumProductWindow(tenantId, scopeIds, afterStart, afterEnd),
+    sumPromotionWindow(tenantId, scopeIds, beforeStart, beforeEnd),
+    sumPromotionWindow(tenantId, scopeIds, afterStart, afterEnd)
+  ]);
   const metrics = buildLensAMetrics(beforeSum, afterSum, beforeDays, afterDays);
+  // 有推广数据才追加广告卡片，避免无投放租户出现一排 0。
+  const hasPromo =
+    beforePromo.cost + afterPromo.cost + beforePromo.impressions + afterPromo.impressions > 0;
+  if (hasPromo) {
+    metrics.push(...buildAdMetrics(beforePromo, afterPromo, beforeDays, afterDays));
+  }
 
   // 口径 B：计划 vs 实际（按受影响商品；整店则取所有有计划的商品）
   const cid = state.context.cycle.id;

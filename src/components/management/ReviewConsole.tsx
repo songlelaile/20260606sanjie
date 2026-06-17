@@ -7,6 +7,7 @@ import type { ComparisonMetric, Intervention, InterventionComparison } from "@/l
 
 function fmt(value: number, unit: ComparisonMetric["unit"]): string {
   if (unit === "rate") return `${(value * 100).toFixed(1)}%`;
+  if (unit === "ratio") return value.toFixed(2);
   if (unit === "money") {
     // 小额（如客单价）保留 1 位小数，避免 2.5 被显示成 3；大额取整。
     const rounded = Math.abs(value) < 100 ? Number(value.toFixed(1)) : Math.round(value);
@@ -15,11 +16,28 @@ function fmt(value: number, unit: ComparisonMetric["unit"]): string {
   return Math.round(value).toLocaleString();
 }
 
-/** 变化是好是坏：按指标的 higherIsBetter 判断符号方向。 */
+/** 变化是好是坏：中性指标恒为 flat；否则按 higherIsBetter 判断符号方向。 */
 function tone(metric: ComparisonMetric): "good" | "bad" | "flat" {
-  if (Math.abs(metric.delta) < 1e-9) return "flat";
+  if (metric.neutral || Math.abs(metric.delta) < 1e-9) return "flat";
   const up = metric.delta > 0;
   return up === metric.higherIsBetter ? "good" : "bad";
+}
+
+function MetricCard({ m }: { m: ComparisonMetric }) {
+  const t = tone(m);
+  return (
+    <div className={clsx("review-metric", t)}>
+      <span className="review-metric-label">{m.label}</span>
+      <span className="review-metric-values">
+        {fmt(m.before, m.unit)} → <strong>{fmt(m.after, m.unit)}</strong>
+      </span>
+      <span className="review-metric-delta">
+        {m.delta >= 0 ? "+" : ""}
+        {fmt(m.delta, m.unit)}（{m.deltaPct >= 0 ? "+" : ""}
+        {(m.deltaPct * 100).toFixed(1)}%）
+      </span>
+    </div>
+  );
 }
 
 export function ReviewConsole({ interventions }: { interventions: Intervention[] }) {
@@ -139,23 +157,24 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
             <div className="review-lens">
               <h3>① 真实经营变化（{comparison.lensA.productScope}）</h3>
               <div className="review-metric-grid">
-                {comparison.lensA.metrics.map((m) => {
-                  const t = tone(m);
-                  return (
-                    <div key={m.key} className={clsx("review-metric", t)}>
-                      <span className="review-metric-label">{m.label}</span>
-                      <span className="review-metric-values">
-                        {fmt(m.before, m.unit)} → <strong>{fmt(m.after, m.unit)}</strong>
-                      </span>
-                      <span className="review-metric-delta">
-                        {m.delta >= 0 ? "+" : ""}
-                        {fmt(m.delta, m.unit)}（{m.deltaPct >= 0 ? "+" : ""}
-                        {(m.deltaPct * 100).toFixed(1)}%）
-                      </span>
-                    </div>
-                  );
-                })}
+                {comparison.lensA.metrics
+                  .filter((m) => m.group !== "广告")
+                  .map((m) => (
+                    <MetricCard key={m.key} m={m} />
+                  ))}
               </div>
+              {comparison.lensA.metrics.some((m) => m.group === "广告") ? (
+                <>
+                  <h4 className="review-subhead">广告投放</h4>
+                  <div className="review-metric-grid">
+                    {comparison.lensA.metrics
+                      .filter((m) => m.group === "广告")
+                      .map((m) => (
+                        <MetricCard key={m.key} m={m} />
+                      ))}
+                  </div>
+                </>
+              ) : null}
             </div>
 
             <div className="review-lens">

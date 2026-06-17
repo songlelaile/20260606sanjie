@@ -330,6 +330,36 @@ export async function upsertDailyPromotionMetrics(
   return rows.length;
 }
 
+export interface PromotionWindowSum {
+  cost: number;
+  clicks: number;
+  impressions: number;
+  roiCost: number; // Σ(roi×cost)，用于花费加权 ROI
+}
+
+/** 窗口内推广汇总（subjectIds 为空=全部主体）——加权 ROI 需 Σ(roi×cost)，用 raw。 */
+export async function sumPromotionWindow(
+  tenantId: string,
+  subjectIds: string[] | null,
+  start: string,
+  end: string
+): Promise<PromotionWindowSum> {
+  const subjectClause =
+    subjectIds && subjectIds.length > 0
+      ? Prisma.sql`AND "subjectId" IN (${Prisma.join(subjectIds)})`
+      : Prisma.empty;
+  const rows = await prisma.$queryRaw<PromotionWindowSum[]>(Prisma.sql`
+    SELECT
+      COALESCE(SUM("cost"), 0)::float8 AS "cost",
+      COALESCE(SUM("clicks"), 0)::float8 AS "clicks",
+      COALESCE(SUM("impressions"), 0)::float8 AS "impressions",
+      COALESCE(SUM("roi" * "cost"), 0)::float8 AS "roiCost"
+    FROM "DailyPromotionMetric"
+    WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
+  `);
+  return rows[0] ?? { cost: 0, clicks: 0, impressions: 0, roiCost: 0 };
+}
+
 interface PromoRawRow {
   subjectId: string;
   subjectName: string | null;
