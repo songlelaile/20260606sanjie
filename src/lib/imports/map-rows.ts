@@ -41,6 +41,33 @@ export interface DailyProductMetricInput {
   searchGuidedVisitors: number;
 }
 
+/** 分日推广宝贝指标（落 DailyPromotionMetric 表的输入）。 */
+export interface DailyPromotionMetricInput {
+  subjectId: string;
+  date: string;
+  subjectName: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  roi: number;
+}
+
+/** 分日人群指标（落 DailyAudienceMetric 表的输入）。 */
+export interface DailyAudienceMetricInput {
+  date: string;
+  sceneId: string;
+  sceneName: string;
+  planId: string;
+  planName: string;
+  audienceName: string;
+  subjectId: string;
+  subjectName: string;
+  clicks: number;
+  roi: number;
+  guidedPotentialCustomerRatio: number;
+  newCustomerRatio: number;
+}
+
 /** 把各种日期写法（2026-05-01 / 2026/5/1 / 2026.05.01 / 20260501 / 带时分秒）归一化为 ISO。无法识别返回 ""。 */
 export function normalizeDate(value: unknown): string {
   const text = stringifyCell(value).trim();
@@ -285,6 +312,50 @@ export function mapPromotionRows(headers: string[], rows: unknown[][]): Promotio
       };
     });
   return mergePromotionRows(mapped);
+}
+
+/** 分日推广映射：保留每主体每日一行（按 subjectId+date 去重保首行）。无日期行丢弃。 */
+export function mapPromotionDailyRows(headers: string[], rows: unknown[][]): DailyPromotionMetricInput[] {
+  const { text, num } = columnReaders(headers);
+  const mapped = rows
+    .filter((row) => isDataRow(text(row, "主体ID")))
+    .map((row) => ({
+      subjectId: text(row, "主体ID"),
+      date: normalizeDate(text(row, "日期")),
+      subjectName: text(row, "主体名称"),
+      impressions: num(row, "展现量"),
+      clicks: num(row, "点击量"),
+      cost: num(row, "花费"),
+      roi: num(row, "投入产出比")
+    }))
+    .filter((item) => item.date !== "");
+  return dedupeByFirst(mapped, (item) => `${item.subjectId} ${item.date}`);
+}
+
+/** 分日人群映射：粒度 (date, planId, audienceName, subjectId)，按该键去重保首行。无日期行丢弃。 */
+export function mapAudienceDailyRows(headers: string[], rows: unknown[][]): DailyAudienceMetricInput[] {
+  const { text, num } = columnReaders(headers);
+  const mapped = rows
+    .filter((row) => isDataRow(text(row, "计划ID")))
+    .map((row) => ({
+      date: normalizeDate(text(row, "日期")),
+      sceneId: text(row, "场景ID"),
+      sceneName: text(row, "场景名字"),
+      planId: text(row, "计划ID"),
+      planName: text(row, "计划名字"),
+      audienceName: text(row, "人群名字"),
+      subjectId: text(row, "主体ID"),
+      subjectName: text(row, "主体名称"),
+      clicks: num(row, "点击量"),
+      roi: num(row, "投入产出比"),
+      guidedPotentialCustomerRatio: num(row, "引导访问潜客占比"),
+      newCustomerRatio: num(row, "成交新客占比")
+    }))
+    .filter((item) => item.date !== "");
+  return dedupeByFirst(
+    mapped,
+    (item) => `${item.date} ${item.planId} ${item.audienceName} ${item.subjectId}`
+  );
 }
 
 export function mapAudienceRows(headers: string[], rows: unknown[][]): AudienceSourceRow[] {

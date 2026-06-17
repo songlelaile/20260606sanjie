@@ -88,6 +88,45 @@ model DailyProductMetric {
   @@index([tenantId, date])
 }
 
+// 分日推广宝贝指标（v2）。(tenantId, subjectId, date) 唯一，重传同日覆盖。
+model DailyPromotionMetric {
+  id          String @id @default(cuid())
+  tenantId    String
+  subjectId   String
+  date        String
+  subjectName String @default("")
+  impressions Int    @default(0)
+  clicks      Int    @default(0)
+  cost        Float  @default(0)
+  roi         Float  @default(0)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, subjectId, date])
+  @@index([tenantId, date])
+}
+
+// 分日人群指标（v2）。粒度 (date, planId, audienceName, subjectId)。
+model DailyAudienceMetric {
+  id                          String @id @default(cuid())
+  tenantId                    String
+  date                        String
+  sceneId                     String @default("")
+  sceneName                   String @default("")
+  planId                      String
+  planName                    String @default("")
+  audienceName                String
+  subjectId                   String
+  subjectName                 String @default("")
+  clicks                      Int    @default(0)
+  roi                         Float  @default(0)
+  guidedPotentialCustomerRatio Float @default(0)
+  newCustomerRatio            Float  @default(0)
+  updatedAt                   DateTime @updatedAt
+
+  @@unique([tenantId, date, planId, audienceName, subjectId])
+  @@index([tenantId, date])
+}
+
 // 运营手动标记的"优化动作"（v2 前后对比锚点）。date=动作发生日；productIds=受影响商品(空=整店)。
 model Intervention {
   id         String   @id @default(cuid())

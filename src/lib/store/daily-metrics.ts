@@ -1,8 +1,12 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import type { DailyProductMetricInput } from "@/lib/imports/map-rows";
-import type { ProductSourceRow } from "@/lib/types/domain";
+import type {
+  DailyAudienceMetricInput,
+  DailyProductMetricInput,
+  DailyPromotionMetricInput
+} from "@/lib/imports/map-rows";
+import type { AudienceSourceRow, ProductSourceRow, PromotionProductRow } from "@/lib/types/domain";
 
 /** 复用的 where 片段：租户 + 可选日期区间 + 可选商品集（下推到 SQL）。 */
 function dailyWhere(
@@ -293,4 +297,223 @@ export async function storeDailyTrend(
       netSales: paymentAmount - refundAmount
     };
   });
+}
+
+// ——————————————————————————————————————————————————————————————
+// 分日推广宝贝（v2）：写入 + 聚合（SQL 下推）+ 保留/清理
+// ——————————————————————————————————————————————————————————————
+
+export async function upsertDailyPromotionMetrics(
+  tenantId: string,
+  rows: DailyPromotionMetricInput[]
+): Promise<number> {
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK);
+    await prisma.$transaction([
+      prisma.dailyPromotionMetric.deleteMany({
+        where: { tenantId, OR: chunk.map((r) => ({ subjectId: r.subjectId, date: r.date })) }
+      }),
+      prisma.dailyPromotionMetric.createMany({
+        data: chunk.map((r) => ({
+          tenantId,
+          subjectId: r.subjectId,
+          date: r.date,
+          subjectName: r.subjectName,
+          impressions: Math.round(r.impressions),
+          clicks: Math.round(r.clicks),
+          cost: r.cost,
+          roi: r.roi
+        }))
+      })
+    ]);
+  }
+  return rows.length;
+}
+
+interface PromoRawRow {
+  subjectId: string;
+  subjectName: string | null;
+  lastDate: string;
+  impressions: number;
+  clicks: number;
+  cost: number;
+  roiCost: number;
+}
+
+/** 按主体聚合推广：展现/点击/花费 SUM；ctr/客单点击/ROI 重算（ROI 花费加权）。 */
+export async function aggregatePromotionForCycle(
+  tenantId: string,
+  range?: { start: string; end: string }
+): Promise<PromotionProductRow[]> {
+  const dateClause =
+    range !== undefined
+      ? Prisma.sql`AND "date" >= ${range.start} AND "date" <= ${range.end}`
+      : Prisma.empty;
+  const rows = await prisma.$queryRaw<PromoRawRow[]>(Prisma.sql`
+    SELECT
+      "subjectId",
+      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
+      MAX("date") AS "lastDate",
+      SUM("impressions")::float8 AS "impressions",
+      SUM("clicks")::float8 AS "clicks",
+      SUM("cost")::float8 AS "cost",
+      SUM("roi" * "cost")::float8 AS "roiCost"
+    FROM "DailyPromotionMetric"
+    WHERE "tenantId" = ${tenantId} ${dateClause}
+    GROUP BY "subjectId"
+  `);
+  return rows.map((r) => ({
+    date: r.lastDate,
+    subjectId: r.subjectId,
+    subjectName: r.subjectName ?? r.subjectId,
+    impressions: r.impressions,
+    clicks: r.clicks,
+    cost: r.cost,
+    ctr: r.impressions > 0 ? r.clicks / r.impressions : 0,
+    averageClickCost: r.clicks > 0 ? r.cost / r.clicks : 0,
+    roi: r.cost > 0 ? r.roiCost / r.cost : 0
+  }));
+}
+
+// ——————————————————————————————————————————————————————————————
+// 分日人群（v2）：写入 + 聚合（SQL 下推）+ 保留/清理
+// ——————————————————————————————————————————————————————————————
+
+export async function upsertDailyAudienceMetrics(
+  tenantId: string,
+  rows: DailyAudienceMetricInput[]
+): Promise<number> {
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    const chunk = rows.slice(i, i + UPSERT_CHUNK);
+    await prisma.$transaction([
+      prisma.dailyAudienceMetric.deleteMany({
+        where: {
+          tenantId,
+          OR: chunk.map((r) => ({
+            date: r.date,
+            planId: r.planId,
+            audienceName: r.audienceName,
+            subjectId: r.subjectId
+          }))
+        }
+      }),
+      prisma.dailyAudienceMetric.createMany({
+        data: chunk.map((r) => ({
+          tenantId,
+          date: r.date,
+          sceneId: r.sceneId,
+          sceneName: r.sceneName,
+          planId: r.planId,
+          planName: r.planName,
+          audienceName: r.audienceName,
+          subjectId: r.subjectId,
+          subjectName: r.subjectName,
+          clicks: Math.round(r.clicks),
+          roi: r.roi,
+          guidedPotentialCustomerRatio: r.guidedPotentialCustomerRatio,
+          newCustomerRatio: r.newCustomerRatio
+        }))
+      })
+    ]);
+  }
+  return rows.length;
+}
+
+interface AudienceRawRow {
+  planId: string;
+  audienceName: string;
+  subjectId: string;
+  sceneId: string | null;
+  sceneName: string | null;
+  planName: string | null;
+  subjectName: string | null;
+  minDate: string;
+  maxDate: string;
+  clicks: number;
+  roiClicks: number;
+  guidedW: number;
+  newW: number;
+}
+
+/** 按 (计划,人群,主体) 聚合人群：点击 SUM；ROI/各比率按点击加权；dateRange=最小~最大日。 */
+export async function aggregateAudienceForCycle(
+  tenantId: string,
+  range?: { start: string; end: string }
+): Promise<AudienceSourceRow[]> {
+  const dateClause =
+    range !== undefined
+      ? Prisma.sql`AND "date" >= ${range.start} AND "date" <= ${range.end}`
+      : Prisma.empty;
+  const rows = await prisma.$queryRaw<AudienceRawRow[]>(Prisma.sql`
+    SELECT
+      "planId", "audienceName", "subjectId",
+      (array_agg("sceneId" ORDER BY "date" DESC))[1] AS "sceneId",
+      (array_agg("sceneName" ORDER BY "date" DESC))[1] AS "sceneName",
+      (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
+      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
+      MIN("date") AS "minDate", MAX("date") AS "maxDate",
+      SUM("clicks")::float8 AS "clicks",
+      SUM("roi" * "clicks")::float8 AS "roiClicks",
+      SUM("guidedPotentialCustomerRatio" * "clicks")::float8 AS "guidedW",
+      SUM("newCustomerRatio" * "clicks")::float8 AS "newW"
+    FROM "DailyAudienceMetric"
+    WHERE "tenantId" = ${tenantId} ${dateClause}
+    GROUP BY "planId", "audienceName", "subjectId"
+  `);
+  return rows.map((r) => {
+    const w = r.clicks > 0 ? r.clicks : 1;
+    return {
+      dateRange: r.minDate === r.maxDate ? r.minDate : `${r.minDate}~${r.maxDate}`,
+      sceneId: r.sceneId ?? "",
+      sceneName: r.sceneName ?? "",
+      planId: r.planId,
+      planName: r.planName ?? "",
+      audienceName: r.audienceName,
+      subjectId: r.subjectId,
+      subjectName: r.subjectName ?? r.subjectId,
+      clicks: r.clicks,
+      roi: r.roiClicks / w,
+      guidedVisitorCount: 0,
+      guidedPotentialCustomerRatio: r.guidedW / w,
+      newCustomerCount: 0,
+      newCustomerRatio: r.newW / w
+    };
+  });
+}
+
+// ——————————————————————————————————————————————————————————————
+// 全部分日表统一的清理/保留
+// ——————————————————————————————————————————————————————————————
+
+/** 主动「清空源数据」：清掉该租户三张分日表。 */
+export async function clearAllDailyMetrics(tenantId: string): Promise<void> {
+  await prisma.$transaction([
+    prisma.dailyProductMetric.deleteMany({ where: { tenantId } }),
+    prisma.dailyPromotionMetric.deleteMany({ where: { tenantId } }),
+    prisma.dailyAudienceMetric.deleteMany({ where: { tenantId } })
+  ]);
+}
+
+/** 按保留天数清理三张分日表（各自相对自己的最新日期）。 */
+export async function pruneAllDailyMetrics(tenantId: string, keepDays: number): Promise<void> {
+  if (!keepDays || keepDays <= 0) {
+    return;
+  }
+  await pruneDailyProductMetrics(tenantId, keepDays);
+  await prunePromotion(tenantId, keepDays);
+  await pruneAudience(tenantId, keepDays);
+}
+
+async function prunePromotion(tenantId: string, keepDays: number): Promise<void> {
+  const bounds = await prisma.dailyPromotionMetric.aggregate({ where: { tenantId }, _max: { date: true } });
+  if (!bounds._max.date) return;
+  const cutoff = addDays(bounds._max.date, -(keepDays - 1));
+  await prisma.dailyPromotionMetric.deleteMany({ where: { tenantId, date: { lt: cutoff } } });
+}
+
+async function pruneAudience(tenantId: string, keepDays: number): Promise<void> {
+  const bounds = await prisma.dailyAudienceMetric.aggregate({ where: { tenantId }, _max: { date: true } });
+  if (!bounds._max.date) return;
+  const cutoff = addDays(bounds._max.date, -(keepDays - 1));
+  await prisma.dailyAudienceMetric.deleteMany({ where: { tenantId, date: { lt: cutoff } } });
 }

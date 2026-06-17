@@ -8,17 +8,27 @@ import {
 import { prisma } from "@/lib/db";
 import { isPrefillReady } from "@/lib/prefill-status";
 import { getServerSession, requireTenantId } from "@/lib/session-server";
-import { mapImportedRows, mapProductDailyRows, type MappedSourceRows } from "@/lib/imports/map-rows";
+import {
+  mapAudienceDailyRows,
+  mapImportedRows,
+  mapProductDailyRows,
+  mapPromotionDailyRows,
+  type MappedSourceRows
+} from "@/lib/imports/map-rows";
 import {
   addDays,
+  aggregateAudienceForCycle,
   aggregateProductForCycle,
-  clearDailyProductMetrics,
+  aggregatePromotionForCycle,
+  clearAllDailyMetrics,
   getProductDailyDateRange,
-  pruneDailyProductMetrics,
+  pruneAllDailyMetrics,
   storeDailyTrend,
   sumProductWindow,
   sumProductWindowByProduct,
+  upsertDailyAudienceMetrics,
   upsertDailyProductMetrics,
+  upsertDailyPromotionMetrics,
   type WindowSum
 } from "@/lib/store/daily-metrics";
 import {
@@ -240,7 +250,8 @@ export async function setDailyRetentionDays(days: number): Promise<number> {
   const clean = Number.isFinite(days) ? Math.max(0, Math.min(3650, Math.round(days))) : DEFAULT_DAILY_RETENTION_DAYS;
   state.dailyRetentionDays = clean;
   await saveWorkspace(tenantId, state);
-  return pruneDailyProductMetrics(tenantId, clean);
+  await pruneAllDailyMetrics(tenantId, clean);
+  return 0;
 }
 
 export async function clearImportBatches(options?: { keepPrefill?: boolean }): Promise<void> {
@@ -253,7 +264,7 @@ export async function clearImportBatches(options?: { keepPrefill?: boolean }): P
   // 不传 keepPrefill：运营主动「清空源数据」，连预填参数和分日明细一并清空，回到从零体验。
   if (!options?.keepPrefill) {
     state.prefillItems = [];
-    await clearDailyProductMetrics(tenantId);
+    await clearAllDailyMetrics(tenantId);
   }
   state.currentTenantDatasetId = null;
   state.currentTenantDatasetBytes = 0;
@@ -320,12 +331,28 @@ export async function addImportBatch(input: {
     )
   ];
   if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
+    // 商品/推广/人群落 v2 分日表（按日 upsert 累积），不进 blob；达摩盘无日期、保持快照留 blob。
+    const retention = state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS;
     if (input.reportType === "product_source") {
-      // 商品源落 v2 分日表（按日 upsert 累积），不再进 blob；随后按保留策略清理过旧明细。
-      const daily = mapProductDailyRows(input.parsedHeaders, input.parsedRows);
-      await upsertDailyProductMetrics(tenantId, daily);
-      await pruneDailyProductMetrics(tenantId, state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS);
+      await upsertDailyProductMetrics(
+        tenantId,
+        mapProductDailyRows(input.parsedHeaders, input.parsedRows)
+      );
+      await pruneAllDailyMetrics(tenantId, retention);
+    } else if (input.reportType === "promotion_product_source") {
+      await upsertDailyPromotionMetrics(
+        tenantId,
+        mapPromotionDailyRows(input.parsedHeaders, input.parsedRows)
+      );
+      await pruneAllDailyMetrics(tenantId, retention);
+    } else if (input.reportType === "audience_source") {
+      await upsertDailyAudienceMetrics(
+        tenantId,
+        mapAudienceDailyRows(input.parsedHeaders, input.parsedRows)
+      );
+      await pruneAllDailyMetrics(tenantId, retention);
     } else {
+      // damo_product_source：当期快照，留 blob。
       state.uploadedSources = {
         ...state.uploadedSources,
         ...mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows)
@@ -495,11 +522,13 @@ function derivePrefillItems(
 export async function runCalculation(cycleId?: string): Promise<CalcRun> {
   const { tenantId, state } = await ctx();
   const cid = cycleId ?? state.context.cycle.id;
-  // 商品源走 v2 分日表 → 周期聚合；其余三类暂仍读 blob（后续阶段再分日化）。
-  const productSourceRows = await aggregateProductForCycle(tenantId);
+  // 商品/推广/人群走 v2 分日表 → 周期聚合；达摩盘是快照仍读 blob。
+  const [productSourceRows, promotionProductRows, audienceSourceRows] = await Promise.all([
+    aggregateProductForCycle(tenantId),
+    aggregatePromotionForCycle(tenantId),
+    aggregateAudienceForCycle(tenantId)
+  ]);
   const damoProductRows = state.uploadedSources.damo_product_source ?? [];
-  const promotionProductRows = state.uploadedSources.promotion_product_source ?? [];
-  const audienceSourceRows = state.uploadedSources.audience_source ?? [];
 
   let prefillItems: PrefillItem[];
   if (productSourceRows.length > 0) {
