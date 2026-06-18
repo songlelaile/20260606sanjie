@@ -515,11 +515,16 @@ export interface AudienceWindowGroup {
   planId: string;
   planName: string | null;
   audienceName: string;
+  subjectId: string;
+  subjectName: string | null;
   clicks: number;
   roiClicks: number; // Σ(roi×clicks)，点击加权 ROI
 }
 
-/** 窗口内按 (计划,人群) 聚合（subjectIds 为空=全部主体）——点击加权 ROI 需 Σ(roi×clicks)，用 raw。 */
+/**
+ * 窗口内按 (计划,人群,主体) 聚合（subjectIds 为空=全部主体）——点击加权 ROI 需 Σ(roi×clicks)，用 raw。
+ * 必须含 subjectId：分日唯一键含 subjectId，不分会把不同主体的同名人群错并。
+ */
 export async function sumAudienceWindowByGroup(
   tenantId: string,
   subjectIds: string[] | null,
@@ -532,13 +537,14 @@ export async function sumAudienceWindowByGroup(
       : Prisma.empty;
   return prisma.$queryRaw<AudienceWindowGroup[]>(Prisma.sql`
     SELECT
-      "planId", "audienceName",
+      "planId", "audienceName", "subjectId",
       (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
+      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
       SUM("clicks")::float8 AS "clicks",
       SUM("roi" * "clicks")::float8 AS "roiClicks"
     FROM "DailyAudienceMetric"
     WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
-    GROUP BY "planId", "audienceName"
+    GROUP BY "planId", "audienceName", "subjectId"
   `);
 }
 

@@ -1,9 +1,9 @@
 "use client";
 
 import clsx from "clsx";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DailyTrendChart } from "@/components/DailyTrendChart";
-import { MetricCard, deltaCell } from "@/components/comparison-ui";
+import { MetricCard, deltaCell, deltaPctLabel } from "@/components/comparison-ui";
 import type {
   AudienceComparison,
   Intervention,
@@ -26,47 +26,73 @@ export function ActionComparison({ view }: { view: View }) {
   const [product, setProduct] = useState<ProductComparison | null>(null);
   const [audience, setAudience] = useState<AudienceComparison | null>(null);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [loadedList, setLoadedList] = useState(false);
+  const reqRef = useRef(0); // 最新请求序号：丢弃过期响应（防快速切换竞态）
 
   useEffect(() => {
+    let alive = true;
     (async () => {
-      const res = await fetch("/api/interventions");
-      const payload = (await res.json().catch(() => null)) as
-        | { data?: { interventions: Intervention[] } }
-        | null;
-      const list = payload?.data?.interventions ?? [];
-      setInterventions(list);
-      setLoadedList(true);
-      if (list[0]) {
-        setSelectedId(list[0].id);
-        void load(list[0].id, 7, 7);
+      try {
+        const res = await fetch("/api/interventions");
+        if (!res.ok) throw new Error(`加载动作列表失败 (${res.status})`);
+        const payload = (await res.json()) as { data?: { interventions: Intervention[] } };
+        const list = payload.data?.interventions ?? [];
+        if (!alive) return;
+        setInterventions(list);
+        setLoadedList(true);
+        if (list[0]) {
+          setSelectedId(list[0].id);
+          void load(list[0].id, 7, 7);
+        }
+      } catch (e) {
+        if (alive) {
+          setLoadedList(true);
+          setError(e instanceof Error ? e.message : "加载失败");
+        }
       }
     })();
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load(id: string, before = beforeDays, after = afterDays) {
     if (!id) return;
+    const reqId = ++reqRef.current;
     setBusy(true);
+    setError("");
     setOverview(null);
     setProduct(null);
     setAudience(null);
-    const res = await fetch(
-      `/api/interventions/${id}/comparison?view=${view}&before=${before}&after=${after}`
-    );
-    const payload = (await res.json().catch(() => null)) as
-      | {
-          data?: {
-            comparison?: InterventionComparison;
-            product?: ProductComparison;
-            audience?: AudienceComparison;
-          };
-        }
-      | null;
-    setBusy(false);
-    if (payload?.data?.comparison) setOverview(payload.data.comparison);
-    if (payload?.data?.product) setProduct(payload.data.product);
-    if (payload?.data?.audience) setAudience(payload.data.audience);
+    try {
+      const res = await fetch(
+        `/api/interventions/${id}/comparison?view=${view}&before=${before}&after=${after}`
+      );
+      const payload = (await res.json().catch(() => null)) as
+        | {
+            data?: {
+              comparison?: InterventionComparison;
+              product?: ProductComparison;
+              audience?: AudienceComparison;
+            };
+            error?: string;
+          }
+        | null;
+      if (reqId !== reqRef.current) return; // 已有更新的请求，丢弃本次过期响应
+      if (!res.ok) {
+        setError(payload?.error ?? `加载对比失败 (${res.status})`);
+        return;
+      }
+      if (payload?.data?.comparison) setOverview(payload.data.comparison);
+      if (payload?.data?.product) setProduct(payload.data.product);
+      if (payload?.data?.audience) setAudience(payload.data.audience);
+    } catch {
+      if (reqId === reqRef.current) setError("网络错误，请重试");
+    } finally {
+      if (reqId === reqRef.current) setBusy(false);
+    }
   }
 
   if (loadedList && interventions.length === 0) {
@@ -115,6 +141,8 @@ export function ActionComparison({ view }: { view: View }) {
         </div>
       </div>
 
+      {error ? <p className="merge-line error" style={{ padding: "0 18px" }}>{error}</p> : null}
+
       {win ? (
         <p className="review-window-note">
           前窗 {win.beforeStart} ~ {win.beforeEnd}　·　后窗 {win.afterStart} ~ {win.afterEnd}
@@ -136,18 +164,18 @@ export function ActionComparison({ view }: { view: View }) {
         <ComparisonTable
           empty={product.rows.length === 0 ? "受影响商品在该区间暂无分日数据。" : null}
           head={["商品", "日均净销额", "支付转化率", "客单价"]}
-          rows={product.rows.map((r) => {
-            const net = deltaCell(r.netBefore, r.netAfter, "money", true);
-            const conv = deltaCell(r.convBefore, r.convAfter, "rate", true);
-            const aov = deltaCell(r.aovBefore, r.aovAfter, "money", true);
-            return {
-              key: r.productId,
-              label: r.productId,
-              sub: r.productName,
-              cells: [net, conv, aov],
-              deltaPct: r.netDeltaPct
-            };
-          })}
+          rows={product.rows.map((r) => ({
+            key: r.productId,
+            label: r.productId,
+            sub: r.productName,
+            cells: [
+              deltaCell(r.netBefore, r.netAfter, "money", true),
+              deltaCell(r.convBefore, r.convAfter, "rate", true),
+              deltaCell(r.aovBefore, r.aovAfter, "money", true)
+            ],
+            deltaLabel: deltaPctLabel(r.netBefore, r.netAfter, r.netDeltaPct),
+            deltaUp: r.netAfter >= r.netBefore
+          }))}
         />
       ) : null}
 
@@ -155,17 +183,17 @@ export function ActionComparison({ view }: { view: View }) {
         <ComparisonTable
           empty={audience.rows.length === 0 ? "该区间暂无人群分日数据。" : null}
           head={["计划 · 人群", "日均点击", "ROI"]}
-          rows={audience.rows.map((r, i) => {
-            const clicks = deltaCell(r.clicksBefore, r.clicksAfter, "int", true);
-            const roi = deltaCell(r.roiBefore, r.roiAfter, "ratio", true);
-            return {
-              key: `${r.planName}-${r.audienceName}-${i}`,
-              label: r.audienceName,
-              sub: r.planName,
-              cells: [clicks, roi],
-              deltaPct: r.clicksDeltaPct
-            };
-          })}
+          rows={audience.rows.map((r) => ({
+            key: r.key,
+            label: r.audienceName,
+            sub: `${r.planName} · ${r.subjectName}`,
+            cells: [
+              deltaCell(r.clicksBefore, r.clicksAfter, "int", true),
+              deltaCell(r.roiBefore, r.roiAfter, "ratio", true)
+            ],
+            deltaLabel: deltaPctLabel(r.clicksBefore, r.clicksAfter, r.clicksDeltaPct),
+            deltaUp: r.clicksAfter >= r.clicksBefore
+          }))}
         />
       ) : null}
 
@@ -186,7 +214,7 @@ function ComparisonTable({
   empty
 }: {
   head: string[];
-  rows: { key: string; label: string; sub: string; cells: Cell[]; deltaPct: number }[];
+  rows: { key: string; label: string; sub: string; cells: Cell[]; deltaLabel: string; deltaUp: boolean }[];
   empty: string | null;
 }) {
   if (empty) return <p className="review-empty">{empty}</p>;
@@ -216,10 +244,7 @@ function ComparisonTable({
                 </td>
               ))}
               <td>
-                <span className={clsx("cmp-deltapct", r.deltaPct >= 0 ? "cmp-good" : "cmp-bad")}>
-                  {r.deltaPct >= 0 ? "+" : ""}
-                  {(r.deltaPct * 100).toFixed(1)}%
-                </span>
+                <span className={clsx("cmp-deltapct", r.deltaUp ? "cmp-good" : "cmp-bad")}>{r.deltaLabel}</span>
               </td>
             </tr>
           ))}

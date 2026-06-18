@@ -20,6 +20,24 @@ export function metricTone(metric: ComparisonMetric): "good" | "bad" | "flat" {
   return metric.delta > 0 === metric.higherIsBetter ? "good" : "bad";
 }
 
+const EPS = 1e-9;
+
+/** 变化文案：前窗为 0、后窗有值 → "新增"（避免误导的 +100%）；否则带符号绝对+相对。 */
+export function deltaText(before: number, after: number, delta: number, deltaPct: number, unit: ComparisonMetric["unit"]): string {
+  if (Math.abs(before) < EPS && Math.abs(after) >= EPS) {
+    return "新增";
+  }
+  return `${delta >= 0 ? "+" : ""}${fmtMetric(delta, unit)}（${deltaPct >= 0 ? "+" : ""}${(deltaPct * 100).toFixed(1)}%）`;
+}
+
+/** 表格主指标变化标签（前窗0且后窗有值 → "新增"）。 */
+export function deltaPctLabel(before: number, after: number, deltaPct: number): string {
+  if (Math.abs(before) < EPS && Math.abs(after) >= EPS) {
+    return "新增";
+  }
+  return `${deltaPct >= 0 ? "+" : ""}${(deltaPct * 100).toFixed(1)}%`;
+}
+
 export function MetricCard({ m }: { m: ComparisonMetric }) {
   const t = metricTone(m);
   return (
@@ -28,11 +46,7 @@ export function MetricCard({ m }: { m: ComparisonMetric }) {
       <span className="review-metric-values">
         {fmtMetric(m.before, m.unit)} → <strong>{fmtMetric(m.after, m.unit)}</strong>
       </span>
-      <span className="review-metric-delta">
-        {m.delta >= 0 ? "+" : ""}
-        {fmtMetric(m.delta, m.unit)}（{m.deltaPct >= 0 ? "+" : ""}
-        {(m.deltaPct * 100).toFixed(1)}%）
-      </span>
+      <span className="review-metric-delta">{deltaText(m.before, m.after, m.delta, m.deltaPct, m.unit)}</span>
     </div>
   );
 }

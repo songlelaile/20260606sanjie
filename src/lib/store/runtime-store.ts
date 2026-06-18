@@ -1265,10 +1265,19 @@ export async function buildProductComparison(
     };
   });
   rows.sort((l, r) => r.netAfter - l.netAfter);
-  if (affected.length === 0) {
-    rows = rows.slice(0, 30); // 整店动作只看后窗销额 Top30
+  let scope: string;
+  if (affected.length > 0) {
+    scope = `${affected.length} 个商品`;
+  } else {
+    const total = rows.length;
+    if (total > 30) {
+      rows = rows.slice(0, 30);
+      scope = `整店 Top30（共 ${total} 个）`;
+    } else {
+      scope = `整店 ${total} 个商品`;
+    }
   }
-  return { intervention, window, scope: affected.length > 0 ? `${affected.length} 个商品` : "整店 Top30", rows };
+  return { intervention, window, scope, rows };
 }
 
 /** 人群计划视角：受影响主体（整店则全部）的 (计划·人群) 动作前后变化（点击 Top30）。 */
@@ -1286,9 +1295,10 @@ export async function buildAudienceComparison(
     sumAudienceWindowByGroup(tenantId, scopeIds, window.beforeStart, window.beforeEnd),
     sumAudienceWindowByGroup(tenantId, scopeIds, window.afterStart, window.afterEnd)
   ]);
-  const key = (planId: string, audienceName: string) => `${planId}|||${audienceName}`;
-  const beforeMap = new Map(beforeG.map((g) => [key(g.planId, g.audienceName), g]));
-  const afterMap = new Map(afterG.map((g) => [key(g.planId, g.audienceName), g]));
+  const keyOf = (planId: string, audienceName: string, subjectId: string) =>
+    `${planId}|||${audienceName}|||${subjectId}`;
+  const beforeMap = new Map(beforeG.map((g) => [keyOf(g.planId, g.audienceName, g.subjectId), g]));
+  const afterMap = new Map(afterG.map((g) => [keyOf(g.planId, g.audienceName, g.subjectId), g]));
   const keys = new Set<string>([...beforeMap.keys(), ...afterMap.keys()]);
   const bd = beforeDays > 0 ? beforeDays : 1;
   const ad = afterDays > 0 ? afterDays : 1;
@@ -1300,8 +1310,10 @@ export async function buildAudienceComparison(
       const clicksBefore = (b?.clicks ?? 0) / bd;
       const clicksAfter = (a?.clicks ?? 0) / ad;
       return {
+        key: k,
         planName: ref.planName ?? ref.planId,
         audienceName: ref.audienceName,
+        subjectName: ref.subjectName ?? ref.subjectId,
         clicksBefore,
         clicksAfter,
         clicksDeltaPct: rel(clicksAfter, clicksBefore),

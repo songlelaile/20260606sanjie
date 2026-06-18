@@ -414,10 +414,12 @@ export interface ProductComparison {
   rows: ProductComparisonRow[];
 }
 
-/** 人群计划：单(计划·人群)的动作前后变化（日均点击/ROI）。 */
+/** 人群计划：单(计划·人群·主体)的动作前后变化（日均点击/ROI）。 */
 export interface AudienceComparisonRow {
+  key: string; // planId|||audienceName|||subjectId，稳定唯一
   planName: string;
   audienceName: string;
+  subjectName: string;
   clicksBefore: number;
   clicksAfter: number;
   clicksDeltaPct: number;
