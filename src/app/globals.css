@@ -578,6 +578,12 @@ button:disabled {
   padding-right: 236px;
 }
 
+.timeline-empty {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .source-table-panel {
   margin-top: 18px;
 }

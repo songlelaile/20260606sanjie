@@ -246,19 +246,27 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
             </StatusPill>
             <span>{timeline.summary}</span>
           </div>
-          {timeline.rows.map((row) => (
-            <div className="timeline-bar-row" key={row.label}>
-              <span>{row.label}</span>
-              <div>
-                <i style={{ width: `${row.coverage}%` }} />
+          {timeline.hasAny ? (
+            <>
+              {timeline.rows
+                .filter((row) => row.hasData)
+                .map((row) => (
+                  <div className="timeline-bar-row" key={row.label}>
+                    <span>{row.label}</span>
+                    <div>
+                      <i style={{ width: `${row.coverage}%` }} />
+                    </div>
+                    <small>{row.range}</small>
+                  </div>
+                ))}
+              <div className="timeline-axis">
+                <span>{timeline.start}</span>
+                <span>{timeline.end}</span>
               </div>
-              <small>{row.range}</small>
-            </div>
-          ))}
-          <div className="timeline-axis">
-            <span>{timeline.start}</span>
-            <span>{timeline.end}</span>
-          </div>
+            </>
+          ) : (
+            <p className="timeline-empty">暂无已导入的源表，上传后这里显示各源的数据区间。</p>
+          )}
         </div>
       </section>
 
@@ -367,7 +375,8 @@ function buildTimeline(batches: ImportBatch[]) {
       range: batch ? `${range.start} ~ ${range.end}` : "待上传",
       coverage: batch?.validation.ok ? 100 : batch ? 42 : 0,
       start: range.start,
-      end: range.end
+      end: range.end,
+      hasData: Boolean(batch)
     };
   });
   const uploadedRows = rows.filter((row) => row.start !== "待上传");
@@ -386,6 +395,7 @@ function buildTimeline(batches: ImportBatch[]) {
     commonRange.end === unionRange.end;
   return {
     rows,
+    hasAny: uploadedRows.length > 0,
     start,
     end,
     aligned,
