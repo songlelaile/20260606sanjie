@@ -511,6 +511,37 @@ export async function aggregateAudienceForCycle(
   });
 }
 
+export interface AudienceWindowGroup {
+  planId: string;
+  planName: string | null;
+  audienceName: string;
+  clicks: number;
+  roiClicks: number; // Σ(roi×clicks)，点击加权 ROI
+}
+
+/** 窗口内按 (计划,人群) 聚合（subjectIds 为空=全部主体）——点击加权 ROI 需 Σ(roi×clicks)，用 raw。 */
+export async function sumAudienceWindowByGroup(
+  tenantId: string,
+  subjectIds: string[] | null,
+  start: string,
+  end: string
+): Promise<AudienceWindowGroup[]> {
+  const subjectClause =
+    subjectIds && subjectIds.length > 0
+      ? Prisma.sql`AND "subjectId" IN (${Prisma.join(subjectIds)})`
+      : Prisma.empty;
+  return prisma.$queryRaw<AudienceWindowGroup[]>(Prisma.sql`
+    SELECT
+      "planId", "audienceName",
+      (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
+      SUM("clicks")::float8 AS "clicks",
+      SUM("roi" * "clicks")::float8 AS "roiClicks"
+    FROM "DailyAudienceMetric"
+    WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
+    GROUP BY "planId", "audienceName"
+  `);
+}
+
 // ——————————————————————————————————————————————————————————————
 // 全部分日表统一的清理/保留
 // ——————————————————————————————————————————————————————————————

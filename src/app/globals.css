@@ -2093,6 +2093,83 @@ td small {
   min-width: 200px;
 }
 
+/* —— 动作前后对比（嵌入各看板）—— */
+.action-comparison {
+  margin-top: 20px;
+}
+
+.action-comparison-bar {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.action-comparison-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.action-comparison-controls select {
+  min-height: 36px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 0 10px;
+  max-width: 320px;
+}
+
+.action-comparison-controls label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.action-comparison-controls input {
+  width: 54px;
+  min-height: 34px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  text-align: center;
+}
+
+.action-comparison-body {
+  padding: 8px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.action-comparison .review-window-note {
+  padding: 0 18px;
+}
+
+.comparison-table .cmp-cell {
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.cmp-good {
+  color: var(--good);
+}
+
+.cmp-bad {
+  color: var(--bad);
+}
+
+.cmp-flat {
+  color: var(--ink);
+}
+
+.cmp-deltapct {
+  font-weight: 600;
+}
+
 /* —— 经营复盘（三口径对比）—— */
 .review-console {
   display: grid;

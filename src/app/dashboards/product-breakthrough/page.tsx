@@ -1,3 +1,4 @@
+import { ActionComparison } from "@/components/ActionComparison";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusPill } from "@/components/StatusPill";
 import { formatNumber } from "@/lib/format";
@@ -72,6 +73,7 @@ export default async function ProductBreakthroughPage() {
           </table>
         </div>
       </section>
+      <ActionComparison view="product" />
     </>
   );
 }

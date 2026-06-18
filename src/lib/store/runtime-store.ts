@@ -24,6 +24,7 @@ import {
   getProductDailyDateRange,
   pruneAllDailyMetrics,
   storeDailyTrend,
+  sumAudienceWindowByGroup,
   sumProductWindow,
   sumProductWindowByProduct,
   sumPromotionWindow,
@@ -41,13 +42,16 @@ import {
 } from "@/lib/retention-policy";
 import type {
   AnalysisCycle,
+  AudienceComparison,
   CalcRun,
   ComparisonMetric,
+  ComparisonWindow,
   DamoProductRow,
   GrowthProfitConfigRow,
   Intervention,
   InterventionComparison,
   InviteCode,
+  ProductComparison,
   ImportBatch,
   ImportValidationResult,
   Lifecycle,
@@ -1169,4 +1173,143 @@ export async function buildInterventionComparison(
       }))
     }
   };
+}
+
+/** 公共：加载动作 + 计算前后窗 + 作用域；找不到返回 null。 */
+async function loadInterventionWindow(
+  id: string,
+  beforeDays: number,
+  afterDays: number
+): Promise<{
+  tenantId: string;
+  state: WorkspaceData;
+  affected: string[];
+  scopeIds: string[] | null;
+  window: ComparisonWindow;
+  intervention: Intervention;
+} | null> {
+  const { tenantId, state } = await ctx();
+  const iv = await prisma.intervention.findUnique({ where: { id } });
+  if (!iv || iv.tenantId !== tenantId) {
+    return null;
+  }
+  const affected = Array.isArray(iv.productIds) ? (iv.productIds as string[]) : [];
+  const window: ComparisonWindow = {
+    beforeStart: addDays(iv.date, -beforeDays),
+    beforeEnd: addDays(iv.date, -1),
+    afterStart: iv.date,
+    afterEnd: addDays(iv.date, afterDays - 1),
+    beforeDays,
+    afterDays
+  };
+  return {
+    tenantId,
+    state,
+    affected,
+    scopeIds: affected.length > 0 ? affected : null,
+    window,
+    intervention: {
+      id: iv.id,
+      date: iv.date,
+      title: iv.title,
+      note: iv.note,
+      category: iv.category,
+      productIds: affected,
+      createdBy: iv.createdBy,
+      createdAt: iv.createdAt.toISOString()
+    }
+  };
+}
+
+const rel = (after: number, before: number) =>
+  before !== 0 ? (after - before) / Math.abs(before) : after !== 0 ? (after > 0 ? 1 : -1) : 0;
+
+/** 单品突破视角：受影响商品（整店则取后窗销额 Top30）的动作前后变化。 */
+export async function buildProductComparison(
+  id: string,
+  beforeDays = 7,
+  afterDays = 7
+): Promise<ProductComparison | null> {
+  const ctxw = await loadInterventionWindow(id, beforeDays, afterDays);
+  if (!ctxw) {
+    return null;
+  }
+  const { tenantId, state, affected, scopeIds, window, intervention } = ctxw;
+  const [beforeByP, afterByP] = await Promise.all([
+    sumProductWindowByProduct(tenantId, scopeIds, window.beforeStart, window.beforeEnd),
+    sumProductWindowByProduct(tenantId, scopeIds, window.afterStart, window.afterEnd)
+  ]);
+  const cid = state.context.cycle.id;
+  const nameById = new Map(
+    state.prefillItems.filter((p) => p.cycleId === cid).map((p) => [p.productId, p.productName])
+  );
+  const ids = new Set<string>([...beforeByP.keys(), ...afterByP.keys()]);
+  const bd = beforeDays > 0 ? beforeDays : 1;
+  const ad = afterDays > 0 ? afterDays : 1;
+  const zero = { paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+  let rows = [...ids].map((pid) => {
+    const b = beforeByP.get(pid) ?? zero;
+    const a = afterByP.get(pid) ?? zero;
+    const netBefore = (b.paymentAmount - b.refundAmount) / bd;
+    const netAfter = (a.paymentAmount - a.refundAmount) / ad;
+    return {
+      productId: pid,
+      productName: nameById.get(pid) ?? pid,
+      netBefore,
+      netAfter,
+      netDeltaPct: rel(netAfter, netBefore),
+      convBefore: b.visitors > 0 ? b.paymentBuyers / b.visitors : 0,
+      convAfter: a.visitors > 0 ? a.paymentBuyers / a.visitors : 0,
+      aovBefore: b.paymentBuyers > 0 ? b.paymentAmount / b.paymentBuyers : 0,
+      aovAfter: a.paymentBuyers > 0 ? a.paymentAmount / a.paymentBuyers : 0
+    };
+  });
+  rows.sort((l, r) => r.netAfter - l.netAfter);
+  if (affected.length === 0) {
+    rows = rows.slice(0, 30); // 整店动作只看后窗销额 Top30
+  }
+  return { intervention, window, scope: affected.length > 0 ? `${affected.length} 个商品` : "整店 Top30", rows };
+}
+
+/** 人群计划视角：受影响主体（整店则全部）的 (计划·人群) 动作前后变化（点击 Top30）。 */
+export async function buildAudienceComparison(
+  id: string,
+  beforeDays = 7,
+  afterDays = 7
+): Promise<AudienceComparison | null> {
+  const ctxw = await loadInterventionWindow(id, beforeDays, afterDays);
+  if (!ctxw) {
+    return null;
+  }
+  const { tenantId, scopeIds, window, intervention } = ctxw;
+  const [beforeG, afterG] = await Promise.all([
+    sumAudienceWindowByGroup(tenantId, scopeIds, window.beforeStart, window.beforeEnd),
+    sumAudienceWindowByGroup(tenantId, scopeIds, window.afterStart, window.afterEnd)
+  ]);
+  const key = (planId: string, audienceName: string) => `${planId}|||${audienceName}`;
+  const beforeMap = new Map(beforeG.map((g) => [key(g.planId, g.audienceName), g]));
+  const afterMap = new Map(afterG.map((g) => [key(g.planId, g.audienceName), g]));
+  const keys = new Set<string>([...beforeMap.keys(), ...afterMap.keys()]);
+  const bd = beforeDays > 0 ? beforeDays : 1;
+  const ad = afterDays > 0 ? afterDays : 1;
+  const rows = [...keys]
+    .map((k) => {
+      const b = beforeMap.get(k);
+      const a = afterMap.get(k);
+      const ref = a ?? b!;
+      const clicksBefore = (b?.clicks ?? 0) / bd;
+      const clicksAfter = (a?.clicks ?? 0) / ad;
+      return {
+        planName: ref.planName ?? ref.planId,
+        audienceName: ref.audienceName,
+        clicksBefore,
+        clicksAfter,
+        clicksDeltaPct: rel(clicksAfter, clicksBefore),
+        roiBefore: b && b.clicks > 0 ? b.roiClicks / b.clicks : 0,
+        roiAfter: a && a.clicks > 0 ? a.roiClicks / a.clicks : 0
+      };
+    })
+    .sort((l, r) => r.clicksAfter - l.clicksAfter)
+    .slice(0, 30);
+  return { intervention, window, rows };
 }

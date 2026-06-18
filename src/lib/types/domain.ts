@@ -376,20 +376,59 @@ export interface DailyTrendPoint {
   paymentBuyers: number;
 }
 
+export interface ComparisonWindow {
+  beforeStart: string;
+  beforeEnd: string;
+  afterStart: string;
+  afterEnd: string;
+  beforeDays: number;
+  afterDays: number;
+}
+
 /** 一个优化动作的前后对比结果（三口径）。 */
 export interface InterventionComparison {
   intervention: Intervention;
-  window: {
-    beforeStart: string;
-    beforeEnd: string;
-    afterStart: string;
-    afterEnd: string;
-    beforeDays: number;
-    afterDays: number;
-  };
+  window: ComparisonWindow;
   lensA: { productScope: string; metrics: ComparisonMetric[] };
   lensB: { rows: PlanActualRow[] };
   lensC: { interventionDate: string; series: DailyTrendPoint[] };
+}
+
+/** 单品突破：单商品的动作前后变化（日均净销额/转化率/客单价）。 */
+export interface ProductComparisonRow {
+  productId: string;
+  productName: string;
+  netBefore: number;
+  netAfter: number;
+  netDeltaPct: number;
+  convBefore: number;
+  convAfter: number;
+  aovBefore: number;
+  aovAfter: number;
+}
+
+export interface ProductComparison {
+  intervention: Intervention;
+  window: ComparisonWindow;
+  scope: string;
+  rows: ProductComparisonRow[];
+}
+
+/** 人群计划：单(计划·人群)的动作前后变化（日均点击/ROI）。 */
+export interface AudienceComparisonRow {
+  planName: string;
+  audienceName: string;
+  clicksBefore: number;
+  clicksAfter: number;
+  clicksDeltaPct: number;
+  roiBefore: number;
+  roiAfter: number;
+}
+
+export interface AudienceComparison {
+  intervention: Intervention;
+  window: ComparisonWindow;
+  rows: AudienceComparisonRow[];
 }
 
 export interface ManagementHistoryState {

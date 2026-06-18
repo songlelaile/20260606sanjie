@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { buildInterventionComparison } from "@/lib/store/runtime-store";
+import {
+  buildAudienceComparison,
+  buildInterventionComparison,
+  buildProductComparison
+} from "@/lib/store/runtime-store";
 
 function clampDays(value: string | null, fallback: number): number {
   const n = Number(value);
@@ -7,11 +11,30 @@ function clampDays(value: string | null, fallback: number): number {
   return Math.min(90, Math.max(1, Math.round(n)));
 }
 
+/**
+ * 优化动作前后对比。view 决定视角：
+ *  - overview（默认）：三口径（经营复盘/综合看板用）
+ *  - product：单品突破——逐商品前后变化
+ *  - audience：人群计划——逐(计划·人群)前后变化
+ */
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const url = new URL(request.url);
   const beforeDays = clampDays(url.searchParams.get("before"), 7);
   const afterDays = clampDays(url.searchParams.get("after"), 7);
+  const view = url.searchParams.get("view") ?? "overview";
+
+  if (view === "product") {
+    const data = await buildProductComparison(id, beforeDays, afterDays);
+    if (!data) return NextResponse.json({ error: "动作不存在" }, { status: 404 });
+    return NextResponse.json({ data: { product: data } });
+  }
+  if (view === "audience") {
+    const data = await buildAudienceComparison(id, beforeDays, afterDays);
+    if (!data) return NextResponse.json({ error: "动作不存在" }, { status: 404 });
+    return NextResponse.json({ data: { audience: data } });
+  }
+
   const comparison = await buildInterventionComparison(id, beforeDays, afterDays);
   if (!comparison) {
     return NextResponse.json({ error: "动作不存在" }, { status: 404 });

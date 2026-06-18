@@ -1,3 +1,4 @@
+import { ActionComparison } from "@/components/ActionComparison";
 import { KpiGrid } from "@/components/KpiGrid";
 import { PageHeader } from "@/components/PageHeader";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
@@ -85,6 +86,7 @@ export default async function ManagementDashboardPage() {
           </table>
         </div>
       </section>
+      <ActionComparison view="overview" />
     </>
   );
 }
