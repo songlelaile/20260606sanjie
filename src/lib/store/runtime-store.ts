@@ -302,14 +302,18 @@ export async function addImportBatch(input: {
   validation: ImportValidationResult;
   parsedHeaders?: string[];
   parsedRows?: unknown[][];
+  // 分日合并导入（生意参谋多日表）走分日 upsert、天然累积，不受"仅保留最新一次数据集"约束。
+  skipDatasetGuard?: boolean;
 }): Promise<ImportBatch> {
   const { tenantId, state } = await ctx();
-  const preflightError = validateImportDatasetWriteOn(state, {
-    datasetId: input.datasetId,
-    datasetTotalBytes: input.datasetTotalBytes
-  });
-  if (preflightError) {
-    throw new ImportRetentionError(preflightError.message, preflightError.status);
+  if (!input.skipDatasetGuard) {
+    const preflightError = validateImportDatasetWriteOn(state, {
+      datasetId: input.datasetId,
+      datasetTotalBytes: input.datasetTotalBytes
+    });
+    if (preflightError) {
+      throw new ImportRetentionError(preflightError.message, preflightError.status);
+    }
   }
 
   const batch: ImportBatch = {
@@ -324,8 +328,12 @@ export async function addImportBatch(input: {
     createdAt: new Date().toISOString(),
     validation: input.validation
   };
-  state.currentTenantDatasetId = input.datasetId;
-  state.currentTenantDatasetBytes = input.datasetTotalBytes;
+  // 分日合并不参与"单数据集"跟踪（数据在分日表，按日累积），避免改 currentTenantDatasetId 后
+  // 让下一次普通上传误触 409 守卫。
+  if (!input.skipDatasetGuard) {
+    state.currentTenantDatasetId = input.datasetId;
+    state.currentTenantDatasetBytes = input.datasetTotalBytes;
+  }
   state.imports = [
     batch,
     ...state.imports.filter(

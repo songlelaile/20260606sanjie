@@ -1877,6 +1877,154 @@ td small {
   opacity: 0.8;
 }
 
+/* —— 生意参谋多日表合并 —— */
+.merge-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.merge-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.merge-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.merge-head strong {
+  font-size: 17px;
+}
+
+.merge-desc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.merge-desc b {
+  color: var(--ink);
+}
+
+.merge-dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 110px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--brand);
+  cursor: pointer;
+  padding: 16px;
+}
+
+.merge-dropzone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.merge-dropzone-title {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.merge-dropzone-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.merge-fields {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(160px, 1fr);
+  gap: 12px;
+}
+
+.merge-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.merge-fields input {
+  min-height: 38px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 0 12px;
+}
+
+.merge-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.merge-report {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.merge-summary {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.merge-summary b {
+  color: var(--ink);
+}
+
+.merge-line {
+  font-size: 13px;
+  margin: 0;
+}
+
+.merge-line.error {
+  color: var(--bad);
+}
+
+.merge-line.warn {
+  color: var(--warn);
+}
+
+.merge-ok {
+  font-size: 13px;
+  margin: 0;
+  color: var(--good);
+}
+
+@media (max-width: 760px) {
+  .merge-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* —— 分日数据底座面板 —— */
 .daily-data-panel {
   background: var(--surface);

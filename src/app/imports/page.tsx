@@ -1,6 +1,7 @@
 import { DailyDataPanel } from "@/components/DailyDataPanel";
 import { InterventionPanel } from "@/components/InterventionPanel";
 import { PageHeader } from "@/components/PageHeader";
+import { ShengyiMergePanel } from "@/components/ShengyiMergePanel";
 import { SourceDataConsole } from "@/components/SourceDataConsole";
 import { getInterventions } from "@/lib/store/interventions";
 import {
@@ -33,6 +34,7 @@ export default async function ImportsPage() {
         initialRange={dailyStatus.range}
         initialRetentionDays={dailyStatus.retentionDays}
       />
+      <ShengyiMergePanel />
       <SourceDataConsole initialBatches={batches} />
       <InterventionPanel initialInterventions={interventions} products={products} />
     </>

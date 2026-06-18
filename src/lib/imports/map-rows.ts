@@ -77,13 +77,25 @@ export function normalizeDate(value: unknown): string {
   const datePart = text.split(/[\sT]/)[0];
   const sep = datePart.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
   if (sep) {
-    return `${sep[1]}-${sep[2].padStart(2, "0")}-${sep[3].padStart(2, "0")}`;
+    return validIso(Number(sep[1]), Number(sep[2]), Number(sep[3]));
   }
   const compact = datePart.match(/^(\d{4})(\d{2})(\d{2})$/);
   if (compact) {
-    return `${compact[1]}-${compact[2]}-${compact[3]}`;
+    return validIso(Number(compact[1]), Number(compact[2]), Number(compact[3]));
   }
   return "";
+}
+
+/** 校验真实存在的日期（拒绝 13 月、2 月 30 日等），返回 ISO 或 ""。 */
+function validIso(y: number, m: number, d: number): string {
+  if (m < 1 || m > 12 || d < 1 || d > 31) {
+    return "";
+  }
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() + 1 !== m || dt.getUTCDate() !== d) {
+    return "";
+  }
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
 export function parseNumericCell(value: unknown): number {
