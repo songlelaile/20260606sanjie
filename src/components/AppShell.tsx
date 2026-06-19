@@ -1,7 +1,16 @@
 "use client";
 
 import clsx from "clsx";
-import { BarChart3, Brain, DatabaseZap, LineChart, LogOut, Settings2, Target } from "lucide-react";
+import {
+  BarChart3,
+  Brain,
+  DatabaseZap,
+  LineChart,
+  LogOut,
+  Puzzle,
+  Settings2,
+  Target
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -12,7 +21,8 @@ const TENANT_NAV = [
   { href: "/dashboards/product-breakthrough", label: "单品突破", icon: Target },
   { href: "/dashboards/audience-plan", label: "人群计划", icon: LineChart },
   { href: "/imports", label: "数据导入", icon: DatabaseZap },
-  { href: "/prefill", label: "预填写表", icon: Settings2 }
+  { href: "/prefill", label: "预填写表", icon: Settings2 },
+  { href: "/tools", label: "采集工具", icon: Puzzle }
 ];
 
 // 管理版 = 租户版全部功能 + 多一个「管理」入口

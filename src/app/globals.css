@@ -3032,3 +3032,265 @@ button.review-metric {
   color: var(--ink);
   border-color: var(--line-strong);
 }
+
+/* ───────────────── 采集工具页 /tools ───────────────── */
+.tool-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 20px 22px 22px;
+}
+
+.tool-card-head {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.tool-card-icon {
+  align-items: center;
+  background: rgba(246, 198, 95, 0.12);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  color: var(--brand);
+  display: inline-flex;
+  height: 52px;
+  justify-content: center;
+  width: 52px;
+}
+
+.tool-card-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.tool-card-title h2 {
+  color: #fff5d4;
+  font-size: 20px;
+  line-height: 1.2;
+  margin: 0 0 8px;
+}
+
+.tool-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tool-badge {
+  align-items: center;
+  background: var(--brand);
+  border-radius: 999px;
+  color: #182007;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 3px 11px;
+}
+
+.tool-badge-soft {
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.tool-download-btn {
+  min-height: 42px;
+  font-weight: 800;
+}
+
+.tool-lead {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.65;
+  margin: 0;
+  padding-top: 16px;
+}
+
+.tool-block {
+  margin-top: 22px;
+}
+
+.tool-block-label {
+  align-items: center;
+  color: var(--brand);
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 7px;
+  letter-spacing: 0;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+.tool-hint {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+  padding: 11px 14px;
+}
+
+.tool-feature-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tool-feature {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 15px;
+}
+
+.tool-feature strong {
+  color: #fff5d4;
+  font-size: 14px;
+}
+
+.tool-feature span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tool-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tool-step {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+}
+
+.tool-step-no {
+  align-items: center;
+  background: var(--brand);
+  border-radius: 50%;
+  color: #182007;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 800;
+  height: 24px;
+  justify-content: center;
+  margin-top: 1px;
+  width: 24px;
+}
+
+.tool-steps-plain .tool-step-no {
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  color: var(--brand);
+}
+
+.tool-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tool-step-body strong {
+  color: #fff5d4;
+  font-size: 14px;
+}
+
+.tool-step-body span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.62;
+}
+
+.tool-code {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  display: inline-flex;
+  gap: 10px;
+  margin-top: 2px;
+  padding: 5px 6px 5px 12px;
+  width: fit-content;
+}
+
+.tool-code code {
+  color: var(--brand);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.tool-code-copy {
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+}
+
+.tool-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.tool-note {
+  align-items: flex-start;
+  background: rgba(47, 93, 67, 0.28);
+  border: 1px solid #35765e;
+  border-radius: 8px;
+  color: #d7f3df;
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px 14px;
+}
+
+.tool-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.tool-note strong {
+  color: #fff5d4;
+}
+
+.tool-note-warn {
+  background: rgba(243, 199, 96, 0.12);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+@media (max-width: 720px) {
+  .tool-feature-grid {
+    grid-template-columns: 1fr;
+  }
+  .tool-download-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

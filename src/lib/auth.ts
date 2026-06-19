@@ -22,10 +22,10 @@ export const ROLE_HOME: Record<Role, string> = {
 
 /** 每个角色可访问的页面路由前缀。 */
 const ROLE_ALLOWED_PREFIXES: Record<Role, string[]> = {
-  // 租户版：运营日常（看板 + 数据导入 + 预填写）
-  tenant: ["/dashboards", "/imports", "/prefill"],
+  // 租户版：运营日常（看板 + 数据导入 + 预填写 + 采集工具）
+  tenant: ["/dashboards", "/imports", "/prefill", "/tools"],
   // 管理版：在租户版全部功能之上，额外多一个「管理」（及管理后台/版本留痕）。
-  admin: ["/dashboards", "/imports", "/prefill", "/management", "/admin", "/versions"]
+  admin: ["/dashboards", "/imports", "/prefill", "/tools", "/management", "/admin", "/versions"]
 };
 
 export function canAccess(role: Role, pathname: string): boolean {
