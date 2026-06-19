@@ -5,6 +5,7 @@ import {
   BarChart3,
   Brain,
   DatabaseZap,
+  Download,
   History,
   LineChart,
   Settings2,
@@ -21,7 +22,8 @@ const navItems = [
   { href: "/imports", label: "数据导入", icon: DatabaseZap },
   { href: "/prefill", label: "预填写表", icon: Settings2 },
   { href: "/versions", label: "版本留痕", icon: History },
-  { href: "/management", label: "管理", icon: Brain }
+  { href: "/management", label: "管理", icon: Brain },
+  { href: "/tools/keyword-collector", label: "关键词采集工具", icon: Download }
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {

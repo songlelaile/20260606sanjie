@@ -1594,3 +1594,64 @@ td small {
     font-size: 24px;
   }
 }
+
+/* ===== 关键词采集工具页 (/tools/keyword-collector) ===== */
+.kw-tool .kw-features {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 18px 0;
+}
+@media (max-width: 720px) {
+  .kw-tool .kw-features {
+    grid-template-columns: 1fr;
+  }
+}
+.kw-tool .kw-feat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px 18px;
+}
+.kw-tool .kw-feat strong {
+  color: var(--brand);
+  font-size: 15px;
+}
+.kw-tool .kw-feat span {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.kw-tool .kw-panel {
+  padding: 20px 22px;
+  margin-bottom: 18px;
+}
+.kw-tool .kw-dl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+.kw-tool .kw-ver {
+  color: var(--muted);
+  font-size: 12px;
+}
+.kw-tool .kw-steps {
+  margin: 8px 0 0;
+  padding-left: 22px;
+  color: var(--ink);
+}
+.kw-tool .kw-steps li {
+  margin: 6px 0;
+  line-height: 1.7;
+}
+.kw-tool .kw-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.75;
+}
