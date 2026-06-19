@@ -26,7 +26,20 @@ export async function POST(request: Request) {
   const { cycle } = await getWorkspaceContext();
 
   if (contentType.includes("multipart/form-data")) {
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      // 大文件请求体若被代理/服务器截断，formData() 会抛 "expected boundary after body"。
+      // 兜成明确的 413，而非不透明 500，便于前端提示「文件过大/上传中断」。
+      formData = await request.formData();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "文件上传中断或超过服务器请求体上限，请减小单次上传体积，或调大上传服务的 body 上限（生产环境为 nginx client_max_body_size）后重试。"
+        },
+        { status: 413 }
+      );
+    }
     const reportType = formData.get("reportType");
     const file = formData.get("file");
     if (!isReportType(reportType) || !(file instanceof File)) {

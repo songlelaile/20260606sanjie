@@ -329,7 +329,8 @@ export async function getRetentionStatus() {
       datasetId: state.currentTenantDatasetId,
       savedBytes: state.currentTenantDatasetBytes,
       savedBatchCount: state.imports.length,
-      mustClearBeforeNewUpload: state.imports.length > 0
+      // 每个源类型各留最新，可独立上传，无需先清空。
+      mustClearBeforeNewUpload: false
     },
     adminRollback: {
       shopCount: versionsByShop.size,
@@ -404,8 +405,7 @@ export async function addImportBatch(input: {
 }): Promise<ImportBatch> {
   const { tenantId, state } = await ctx();
   if (!input.skipDatasetGuard) {
-    const preflightError = validateImportDatasetWriteOn(state, {
-      datasetId: input.datasetId,
+    const preflightError = validateImportDatasetWriteOn({
       datasetTotalBytes: input.datasetTotalBytes
     });
     if (preflightError) {
@@ -431,12 +431,8 @@ export async function addImportBatch(input: {
     state.currentTenantDatasetId = input.datasetId;
     state.currentTenantDatasetBytes = input.datasetTotalBytes;
   }
-  state.imports = [
-    batch,
-    ...state.imports.filter(
-      (item) => item.datasetId === input.datasetId && item.reportType !== input.reportType
-    )
-  ];
+  // 每个源类型各留最新一份（与数据集/其它源无关）：上传某类型只替换该类型，其它源保留。
+  state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
   if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
     // 商品/推广/人群落 v2 分日表（按日 upsert 累积），不进 blob；达摩盘无日期、保持快照留 blob。
     const retention = state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS;
@@ -482,24 +478,11 @@ export async function addImportBatch(input: {
   return batch;
 }
 
-function validateImportDatasetWriteOn(
-  state: WorkspaceData,
-  input: { datasetId: string; datasetTotalBytes: number }
-) {
+function validateImportDatasetWriteOn(input: { datasetTotalBytes: number }) {
+  // 仅校验单次上传体积上限；不再要求"先清空"——每个源类型各留最新一份，可任意单独上传、不分先后、互不覆盖。
   const sizeError = validateTenantDatasetSize(input.datasetTotalBytes);
   if (sizeError) {
     return { ok: false as const, status: 413, message: sizeError };
-  }
-  if (
-    state.currentTenantDatasetId !== null &&
-    state.currentTenantDatasetId !== input.datasetId &&
-    state.imports.length > 0
-  ) {
-    return {
-      ok: false as const,
-      status: 409,
-      message: "租户端仅保存最新一次源数据。请先点击“清空源数据”，再上传新的数据集。"
-    };
   }
   return null;
 }
@@ -509,8 +492,7 @@ export async function validateImportDatasetWrite(input: {
   datasetId: string;
   datasetTotalBytes: number;
 }) {
-  const { state } = await ctx();
-  return validateImportDatasetWriteOn(state, input);
+  return validateImportDatasetWriteOn(input);
 }
 
 export async function getImportBatch(id: string): Promise<ImportBatch | undefined> {

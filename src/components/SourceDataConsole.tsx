@@ -8,7 +8,7 @@ import {
   UploadCloud,
   X
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { reportContracts } from "@/lib/imports/contracts";
 import { formatNumber } from "@/lib/format";
@@ -63,11 +63,35 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
     tone: "warn" | "bad";
   } | null>(null);
 
+  // router.refresh()（本组件上传后、或合并面板应用后）会让服务端重新下发 initialBatches → 同步到本地，
+  // 使「商品源数据」等槽位在已有数据时变绿。
+  useEffect(() => {
+    setBatches(initialBatches);
+  }, [initialBatches]);
+
+  // 服务端已存在的源表（按 reportType）：用于把对应上传槽标绿，表示"已有数据"。
+  const existingByType = useMemo(() => {
+    const map = new Map<ReportType, ImportBatch>();
+    for (const batch of batches) {
+      if (!map.has(batch.reportType)) map.set(batch.reportType, batch);
+    }
+    return map;
+  }, [batches]);
+
   const timeline = useMemo(() => buildTimeline(batches), [batches]);
   const selectedBytes = useMemo(
     () => Object.values(files).reduce((total, file) => total + (file?.size ?? 0), 0),
     [files]
   );
+
+  // 从服务端拉全量源表列表，回填本地 batches（驱动各源槽的"已有数据"绿态）。
+  async function refreshBatches() {
+    const res = await fetch("/api/import-batches");
+    const json = (await res.json().catch(() => null)) as { data?: { batches?: ImportBatch[] } } | null;
+    if (json?.data?.batches) {
+      setBatches(json.data.batches);
+    }
+  }
 
   async function uploadAndRecalculate() {
     const selectedEntries = Object.entries(files) as Array<[ReportType, File]>;
@@ -92,74 +116,88 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
 
     setBusy(true);
     setNotice("");
-    // 租户端仅保留最新一次源数据：上传前自动清空旧的原始数据。
-    // keepPrefill=1 → 保留运营已填的分层/毛利率等参数，重新上传按 productId 沿用（多次依照已有数据展示）。
-    if (batches.length > 0) {
-      await fetch("/api/import-batches?keepPrefill=1", { method: "DELETE" });
-      setBatches([]);
-    }
-    const uploaded: ImportBatch[] = [];
-    const failures: string[] = [];
-    const validationErrors: string[] = [];
-    const warnings: string[] = [];
-    const datasetId = createDatasetId();
+    // try/finally 保证无论上传/重算成功或抛错，busy 都会复位，不会一直卡在「处理中」。
+    try {
+      // 每个源类型各留最新一份：可单独上传任一源、不分先后、不覆盖其它源，上传前无需清空。
+      const uploaded: ImportBatch[] = [];
+      const failures: string[] = [];
+      const validationErrors: string[] = [];
+      const warnings: string[] = [];
+      const datasetId = createDatasetId();
 
-    for (const [reportType, file] of selectedEntries) {
-      const formData = new FormData();
-      formData.set("reportType", reportType);
-      formData.set("datasetId", datasetId);
-      formData.set("datasetTotalBytes", String(selectedBytes));
-      formData.set("fileSizeBytes", String(file.size));
-      formData.set("file", file);
-      const response = await fetch("/api/import-batches", {
-        method: "POST",
-        body: formData
-      });
-      const payload = (await response.json()) as { data?: { batch: ImportBatch }; error?: string };
-      if (payload.data?.batch) {
-        const batch = payload.data.batch;
-        uploaded.push(batch);
-        if (!batch.validation.ok) {
-          validationErrors.push(...batch.validation.errors);
+      for (const [reportType, file] of selectedEntries) {
+        const formData = new FormData();
+        formData.set("reportType", reportType);
+        formData.set("datasetId", datasetId);
+        formData.set("datasetTotalBytes", String(selectedBytes));
+        formData.set("fileSizeBytes", String(file.size));
+        formData.set("file", file);
+        const response = await fetch("/api/import-batches", { method: "POST", body: formData });
+        const payload = (await response.json().catch(() => null)) as
+          | { data?: { batch: ImportBatch }; error?: string }
+          | null;
+        if (payload?.data?.batch) {
+          const batch = payload.data.batch;
+          uploaded.push(batch);
+          if (!batch.validation.ok) {
+            validationErrors.push(...batch.validation.errors);
+          }
+          warnings.push(...batch.validation.warnings);
+        } else {
+          failures.push(payload?.error ?? `${file.name} 上传失败 (${response.status})`);
         }
-        warnings.push(...batch.validation.warnings);
-      } else {
-        failures.push(payload.error ?? `${file.name} 上传失败`);
       }
-    }
 
-    setBatches(uploaded);
+      // 拉全量源表列表（旧+新）回填，让所有源槽即时反映，后续上传无需手动刷新页面。
+      await refreshBatches();
 
-    // 仅当上传失败或校验未通过(error)时才阻断重算；
-    // “已自动归并、未闭合引号”等提示(warning)不阻断，照常重算。
-    const blocking = [...failures, ...validationErrors];
-    if (blocking.length > 0) {
+      // 仅当上传失败或校验未通过(error)时才阻断重算；
+      // “已自动归并、未闭合引号”等提示(warning)不阻断，照常重算。
+      const blocking = [...failures, ...validationErrors];
+      if (blocking.length > 0) {
+        // 区分「传输层上传失败(413/500/网络)」与「内容校验未通过」，文案不同更准确。
+        setDialog({
+          title: failures.length > 0 ? "部分源表上传失败" : "部分源表未通过校验",
+          lines: blocking,
+          tone: "bad"
+        });
+        return;
+      }
+
+      // 不再写死 cycleId：由服务端按当前租户的分析周期处理（多租户隔离）。
+      const calc = await fetch("/api/calc-runs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({})
+      });
+      if (!calc.ok) {
+        const err = (await calc.json().catch(() => null)) as { error?: string } | null;
+        setDialog({
+          title: "已上传但重算失败",
+          lines: [err?.error ?? `重算接口返回 ${calc.status}`, "源表已保存，可稍后重试或到看板手动重算。"],
+          tone: "bad"
+        });
+        return;
+      }
+      setFiles({});
+      router.refresh();
+      if (warnings.length > 0) {
+        setDialog({
+          title: "已上传并重算",
+          lines: [...warnings, "看板已按新数据重算，切换到看板页即可查看。"],
+          tone: "warn"
+        });
+      } else {
+        setNotice(`已上传 ${uploaded.length} 份源表并重算，切换到看板页查看结果。`);
+      }
+    } catch (e) {
       setDialog({
-        title: "部分源表未通过校验",
-        lines: blocking,
+        title: "上传失败",
+        lines: [e instanceof Error ? e.message : "网络错误，请重试。"],
         tone: "bad"
       });
+    } finally {
       setBusy(false);
-      return;
-    }
-
-    // 不再写死 cycleId：由服务端按当前租户的分析周期处理（多租户隔离）。
-    await fetch("/api/calc-runs", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({})
-    });
-    setFiles({});
-    setBusy(false);
-    router.refresh();
-    if (warnings.length > 0) {
-      setDialog({
-        title: "已上传并重算",
-        lines: [...warnings, "看板已按新数据重算，切换到看板页即可查看。"],
-        tone: "warn"
-      });
-    } else {
-      setNotice(`已上传 ${uploaded.length} 份源表并重算，切换到看板页查看结果。`);
     }
   }
 
@@ -185,23 +223,32 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
           </small>
         </div>
         <div className="source-upload-grid">
-          {sourceSlots.map((slot) => (
-            <label className="source-upload-slot" key={slot.reportType}>
-              <span>{slot.title}</span>
-              <strong>{files[slot.reportType]?.name ?? "选择文件"}</strong>
-              <small>{slot.format}</small>
-              <input
-                type="file"
-                accept={slot.accept}
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) {
-                    setFiles((current) => ({ ...current, [slot.reportType]: file }));
-                  }
-                }}
-              />
-            </label>
-          ))}
+          {sourceSlots.map((slot) => {
+            const picked = files[slot.reportType];
+            const existing = existingByType.get(slot.reportType);
+            return (
+              <label
+                className={existing ? "source-upload-slot has-data" : "source-upload-slot"}
+                key={slot.reportType}
+              >
+                <span>{slot.title}</span>
+                <strong>
+                  {picked?.name ?? (existing ? `已有数据 · ${existing.fileName}` : "选择文件")}
+                </strong>
+                <small>{slot.format}</small>
+                <input
+                  type="file"
+                  accept={slot.accept}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      setFiles((current) => ({ ...current, [slot.reportType]: file }));
+                    }
+                  }}
+                />
+              </label>
+            );
+          })}
         </div>
         <div className="source-actions">
           <button type="button" onClick={uploadAndRecalculate} disabled={busy}>

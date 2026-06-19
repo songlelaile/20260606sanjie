@@ -128,9 +128,12 @@ export function ShengyiMergePanel() {
         <button type="button" className="outline-button" onClick={() => run(true)} disabled={busy}>
           {busy ? "处理中…" : "预检"}
         </button>
-        <button type="button" onClick={() => run(false)} disabled={busy || (report !== null && !report.ok)}>
-          执行合并并应用为商品维度源表
-        </button>
+        {/* 合并按钮预检通过后才跳出，强制先预检 */}
+        {report?.ok ? (
+          <button type="button" onClick={() => run(false)} disabled={busy}>
+            执行合并并应用为商品维度源表
+          </button>
+        ) : null}
         <button type="button" className="outline-button" onClick={clearAll} disabled={busy}>
           清除
         </button>
