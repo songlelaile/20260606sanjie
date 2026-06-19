@@ -15,6 +15,9 @@ import {
   mapImportedRows,
   mapProductDailyRows,
   mapPromotionDailyRows,
+  type DailyAudienceMetricInput,
+  type DailyProductMetricInput,
+  type DailyPromotionMetricInput,
   type MappedSourceRows
 } from "@/lib/imports/map-rows";
 import {
@@ -472,6 +475,84 @@ export async function addImportBatch(input: {
     createdBy: state.context.user.name,
     summary: input.validation.ok
       ? `当前租户数据集 ${formatMegabytes(input.datasetTotalBytes)}，识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体。`
+      : input.validation.errors.join("；")
+  });
+  await saveWorkspace(tenantId, state);
+  return batch;
+}
+
+/**
+ * 分批导入（大文件）：浏览器端已解析+映射成分日行，这里只把一批 upsert 到对应日表。
+ * 不建记录、不重算（由 finalizeImportBatch 收尾），可被调用很多次（每批一次）。
+ */
+export async function ingestDailyRows(reportType: ReportType, rows: unknown[]): Promise<number> {
+  const tenantId = await requireTenantId();
+  if (reportType === "product_source") {
+    return upsertDailyProductMetrics(tenantId, rows as DailyProductMetricInput[]);
+  }
+  if (reportType === "promotion_product_source") {
+    return upsertDailyPromotionMetrics(tenantId, rows as DailyPromotionMetricInput[]);
+  }
+  if (reportType === "audience_source") {
+    return upsertDailyAudienceMetrics(tenantId, rows as DailyAudienceMetricInput[]);
+  }
+  return 0;
+}
+
+/**
+ * 分批导入收尾：分日行已 ingest 完，这里建 ImportBatch 记录 + 体积守卫的数据集跟踪 + 保留清理 + 版本留痕。
+ * 达摩盘无日期 → 走快照存 blob（damoSourceRows，全量一批传来）。每个源类型各留最新一份。
+ */
+export async function finalizeImportBatch(input: {
+  cycleId: string;
+  datasetId: string;
+  datasetTotalBytes: number;
+  reportType: ReportType;
+  fileName: string;
+  fileSizeBytes: number;
+  validation: ImportValidationResult;
+  /** 实际入库的映射行数（人群/推广会把多原始行并成更少键）；缺省回落识别行数。 */
+  ingestedRowCount?: number;
+  damoSourceRows?: DamoProductRow[];
+}): Promise<ImportBatch> {
+  const { tenantId, state } = await ctx();
+  const batch: ImportBatch = {
+    id: `import-${input.reportType}-${Date.now()}`,
+    cycleId: input.cycleId,
+    datasetId: input.datasetId,
+    reportType: input.reportType,
+    fileName: input.fileName,
+    fileSizeBytes: input.fileSizeBytes,
+    status: input.validation.ok ? "validated" : "failed",
+    rowCount: input.ingestedRowCount ?? input.validation.rowCount,
+    createdAt: new Date().toISOString(),
+    validation: input.validation
+  };
+  state.currentTenantDatasetId = input.datasetId;
+  state.currentTenantDatasetBytes = input.datasetTotalBytes;
+  state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
+  if (input.reportType === "damo_product_source") {
+    // 达摩盘快照入 blob（无日期，不进分日表）；仅校验通过才覆盖，避免坏数据冲掉既有快照。
+    if (input.validation.ok && input.damoSourceRows) {
+      state.uploadedSources = {
+        ...state.uploadedSources,
+        damo_product_source: input.damoSourceRows
+      };
+    }
+  } else if (input.validation.ok) {
+    // 商品/推广/人群分日行已 ingest 入库，这里按保留策略清理一次。
+    await pruneAllDailyMetrics(tenantId, state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS);
+  }
+  pushVersion(state, {
+    id: `version-import-${Date.now()}`,
+    cycleId: input.cycleId,
+    shopId: state.context.shop.id,
+    kind: "import",
+    title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
+    createdAt: batch.createdAt,
+    createdBy: state.context.user.name,
+    summary: input.validation.ok
+      ? `识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体（分批上传）。`
       : input.validation.errors.join("；")
   });
   await saveWorkspace(tenantId, state);

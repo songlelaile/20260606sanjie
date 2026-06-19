@@ -10,13 +10,20 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { reportContracts } from "@/lib/imports/contracts";
+import { locateHeaderRow, reportContracts, validateImportRows } from "@/lib/imports/contracts";
+import {
+  mapAudienceDailyRows,
+  mapDamoProductRows,
+  mapProductDailyRows,
+  mapPromotionDailyRows
+} from "@/lib/imports/map-rows";
+import { parseWorkbookUpload } from "@/lib/imports/parse-workbook";
 import { formatNumber } from "@/lib/format";
 import {
   formatStorageSize,
   validateTenantDatasetSize
 } from "@/lib/retention-policy";
-import type { ImportBatch, ReportType } from "@/lib/types/domain";
+import type { ImportBatch, ImportValidationResult, ReportType } from "@/lib/types/domain";
 import { StatusPill } from "@/components/StatusPill";
 
 const sourceSlots: Array<{
@@ -123,28 +130,35 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
       const failures: string[] = [];
       const validationErrors: string[] = [];
       const warnings: string[] = [];
-      const datasetId = createDatasetId();
 
       for (const [reportType, file] of selectedEntries) {
-        const formData = new FormData();
-        formData.set("reportType", reportType);
-        formData.set("datasetId", datasetId);
-        formData.set("datasetTotalBytes", String(selectedBytes));
-        formData.set("fileSizeBytes", String(file.size));
-        formData.set("file", file);
-        const response = await fetch("/api/import-batches", { method: "POST", body: formData });
-        const payload = (await response.json().catch(() => null)) as
-          | { data?: { batch: ImportBatch }; error?: string }
-          | null;
-        if (payload?.data?.batch) {
-          const batch = payload.data.batch;
-          uploaded.push(batch);
-          if (!batch.validation.ok) {
-            validationErrors.push(...batch.validation.errors);
+        try {
+          // —— 浏览器端解析+映射：不上传原始大文件，绕开任何 body 上限 ——
+          const parsed = await parseWorkbookUpload(file);
+          const { headers, rows } = locateHeaderRow(parsed.matrix, reportType);
+          const validation = validateImportRows(reportType, headers, rows);
+          if (parsed.warnings.length > 0) {
+            validation.warnings = [...validation.warnings, ...parsed.warnings];
           }
-          warnings.push(...batch.validation.warnings);
-        } else {
-          failures.push(payload?.error ?? `${file.name} 上传失败 (${response.status})`);
+          warnings.push(...validation.warnings);
+          if (!validation.ok) {
+            validationErrors.push(...validation.errors);
+            continue;
+          }
+          const mapped = mapRowsForType(reportType, headers, rows);
+          // 分日源全部日期不可识别 → 映射后 0 行；不建"通过"记录、不入库，明确报错。
+          if (reportType !== "damo_product_source" && mapped.length === 0) {
+            validationErrors.push(`${file.name}：无可识别统计日期的有效数据行（请确认日期列格式）`);
+            continue;
+          }
+          const batch = await ingestInBatches(reportType, file, mapped, selectedBytes, validation);
+          if (batch) {
+            uploaded.push(batch);
+          } else {
+            failures.push(`${file.name} 分批上传失败`);
+          }
+        } catch (e) {
+          failures.push(`${file.name}：${e instanceof Error ? e.message : "处理失败"}`);
         }
       }
 
@@ -399,6 +413,77 @@ function createDatasetId() {
     return `dataset-${crypto.randomUUID()}`;
   }
   return `dataset-${Date.now()}`;
+}
+
+/** 浏览器端把表头+数据行映射成可入库的行（商品/推广/人群→分日行；达摩盘→货品快照行）。 */
+function mapRowsForType(reportType: ReportType, headers: string[], rows: unknown[][]): unknown[] {
+  if (reportType === "product_source") return mapProductDailyRows(headers, rows);
+  if (reportType === "promotion_product_source") return mapPromotionDailyRows(headers, rows);
+  if (reportType === "audience_source") return mapAudienceDailyRows(headers, rows);
+  if (reportType === "damo_product_source") return mapDamoProductRows(headers, rows);
+  return [];
+}
+
+const INGEST_CHUNK = 5000;
+
+/**
+ * 把映射后的行分批 POST 到 /ingest，末批收尾返回 batch。
+ * 达摩盘是整批快照(整批落 blob)，不能按行拆批 → 一次传完，避免只存到最后一批。
+ * 每批对瞬时错误(网络/5xx)重试 3 次，降低"中途失败留半份数据"的概率。
+ */
+async function ingestInBatches(
+  reportType: ReportType,
+  file: File,
+  mapped: unknown[],
+  datasetTotalBytes: number,
+  validation: ImportValidationResult
+): Promise<ImportBatch | null> {
+  const sessionId = createDatasetId();
+  const chunkSize = reportType === "damo_product_source" ? Math.max(1, mapped.length) : INGEST_CHUNK;
+  const total = Math.max(1, Math.ceil(mapped.length / chunkSize));
+  let batch: ImportBatch | null = null;
+  for (let i = 0; i < total; i += 1) {
+    const chunk = mapped.slice(i * chunkSize, (i + 1) * chunkSize);
+    const isLast = i === total - 1;
+    const body = JSON.stringify({
+      sessionId,
+      reportType,
+      fileName: file.name,
+      fileSizeBytes: file.size,
+      datasetTotalBytes,
+      rows: chunk,
+      index: i,
+      total,
+      validation: isLast ? validation : undefined,
+      ingestedRowCount: isLast ? mapped.length : undefined
+    });
+    type IngestResp = { data?: { batch?: ImportBatch }; error?: string } | null;
+    let json: IngestResp = null;
+    let lastErr = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await fetch("/api/import-batches/ingest", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body
+        });
+        json = (await res.json().catch(() => null)) as IngestResp;
+        if (res.ok) {
+          lastErr = "";
+          break;
+        }
+        lastErr = json?.error ?? `第 ${i + 1}/${total} 批失败 (${res.status})`;
+        // 4xx 是确定性错误（体积/校验/参数），不重试。
+        if (res.status >= 400 && res.status < 500) break;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : "网络错误";
+      }
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    }
+    if (lastErr) throw new Error(lastErr);
+    if (json?.data?.batch) batch = json.data.batch;
+  }
+  return batch;
 }
 
 function buildTimeline(batches: ImportBatch[]) {
