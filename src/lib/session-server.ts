@@ -9,7 +9,7 @@ import { SESSION_COOKIE, parseSession, type Session } from "./auth";
  */
 export const getServerSession = cache(async (): Promise<Session | null> => {
   const store = await cookies();
-  return parseSession(store.get(SESSION_COOKIE)?.value);
+  return await parseSession(store.get(SESSION_COOKIE)?.value);
 });
 
 /** 取当前租户 id；未登录时抛错（受 middleware 保护的路由不会触发）。 */

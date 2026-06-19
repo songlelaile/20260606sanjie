@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const store = await cookies();
-  const session = parseSession(store.get(SESSION_COOKIE)?.value);
+  const session = await parseSession(store.get(SESSION_COOKIE)?.value);
 
   return (
     <html lang="zh-CN">

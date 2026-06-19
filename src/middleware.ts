@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 登录页与认证接口放行
@@ -9,7 +9,7 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const session = parseSession(request.cookies.get(SESSION_COOKIE)?.value);
+  const session = await parseSession(request.cookies.get(SESSION_COOKIE)?.value);
 
   // 未登录：API 返回 401，页面跳转登录
   if (!session) {

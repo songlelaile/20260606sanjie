@@ -16,20 +16,18 @@ export async function POST(request: Request) {
   const response = NextResponse.json({
     data: { role: account.role, name: account.name, home: ROLE_HOME[account.role] }
   });
-  response.cookies.set(
-    SESSION_COOKIE,
-    serializeSession({
-      username: account.username,
-      role: account.role,
-      name: account.name,
-      tenantId: account.tenantId
-    }),
-    {
-      httpOnly: true,
-      sameSite: "lax",
-      path: "/",
-      maxAge: 60 * 60 * 8
-    }
-  );
+  const sessionCookie = await serializeSession({
+    username: account.username,
+    role: account.role,
+    name: account.name,
+    tenantId: account.tenantId
+  });
+  response.cookies.set(SESSION_COOKIE, sessionCookie, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 8
+  });
   return response;
 }

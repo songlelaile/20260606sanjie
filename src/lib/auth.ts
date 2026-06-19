@@ -37,16 +37,82 @@ export function canAccess(role: Role, pathname: string): boolean {
   );
 }
 
-export function serializeSession(session: Session): string {
-  return encodeURIComponent(JSON.stringify(session));
+// ───── 会话 cookie 完整性保护（HMAC-SHA256 签名）─────
+// cookie 形如 `<hex签名>.<URL编码的JSON>`：签名用服务端密钥对 payload 计算，
+// parseSession 先验签再信任，验签失败一律当未登录（杜绝伪造 role/tenantId 越权）。
+// 用 Web Crypto，client / server / 中间件 edge 运行时均可用；仅在调用时执行，不在模块加载期跑。
+// ⚠️ 生产必须设置 SESSION_SECRET 环境变量；缺省的开发回退值是公开的，等于无保护。
+const SESSION_SECRET = process.env.SESSION_SECRET ?? "sanjie-dev-insecure-secret-change-me";
+
+const sessionEncoder = new TextEncoder();
+let hmacKeyPromise: Promise<CryptoKey> | null = null;
+
+function getHmacKey(): Promise<CryptoKey> {
+  if (!hmacKeyPromise) {
+    hmacKeyPromise = crypto.subtle.importKey(
+      "raw",
+      sessionEncoder.encode(SESSION_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+  }
+  return hmacKeyPromise;
 }
 
-export function parseSession(value: string | undefined): Session | null {
+function toHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function signPayload(payload: string): Promise<string> {
+  const key = await getHmacKey();
+  const sig = await crypto.subtle.sign("HMAC", key, sessionEncoder.encode(payload));
+  return toHex(sig);
+}
+
+/** 定长常量时间比较，避免签名校验泄露时序信息。 */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+export async function serializeSession(session: Session): Promise<string> {
+  const payload = encodeURIComponent(JSON.stringify(session));
+  const sig = await signPayload(payload);
+  return `${sig}.${payload}`;
+}
+
+export async function parseSession(value: string | undefined): Promise<Session | null> {
   if (!value) {
     return null;
   }
+  const dot = value.indexOf(".");
+  // 无分隔符 = 旧的无签名明文 cookie → 硬切，直接当未登录。
+  if (dot <= 0) {
+    return null;
+  }
+  const sig = value.slice(0, dot);
+  const payload = value.slice(dot + 1);
+  let expected: string;
   try {
-    const parsed = JSON.parse(decodeURIComponent(value)) as Partial<Session>;
+    expected = await signPayload(payload);
+  } catch {
+    return null;
+  }
+  // 验签失败（被篡改 / 旧 cookie / 密钥轮换）→ 一律当未登录。
+  if (!timingSafeEqual(sig, expected)) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(decodeURIComponent(payload)) as Partial<Session>;
     if (
       (parsed.role === "tenant" || parsed.role === "admin") &&
       typeof parsed.username === "string" &&
