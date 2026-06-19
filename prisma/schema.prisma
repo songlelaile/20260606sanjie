@@ -20,6 +20,7 @@ model Tenant {
   users     User[]
   invites   InviteCode[]
   workspace Workspace?
+  calcRun   CalcRun?
 }
 
 model User {
@@ -60,6 +61,21 @@ model Workspace {
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   data      Json
   updatedAt DateTime @updatedAt
+}
+
+// 三阶计算结果（每租户一份）。原先内嵌 Workspace.data blob（占 ~96%，audiencePlans 最大），
+// 外置成独立表 + 分段列：每个看板用 Prisma select 只取自己的切片，且日常 mutation 不再重写它。
+model CalcRun {
+  tenantId            String   @id
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  runId               String   @default("")
+  cycleId             String   @default("")
+  createdAt           String   @default("")
+  investmentResults   Json     @default("[]")
+  breakthroughResults Json     @default("[]")
+  audiencePlans       Json     @default("[]")
+  managementDashboard Json     @default("{}")
+  updatedAt           DateTime @updatedAt
 }
 
 // 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，
@@ -125,6 +141,9 @@ model DailyAudienceMetric {
 
   @@unique([tenantId, date, planId, audienceName, subjectId])
   @@index([tenantId, date])
+  // 按主体(=商品)筛选的窗口查询（受影响商品的人群对比）：唯一键以 date 起头，subjectId 落在末位无法裁剪；
+  // 此索引让 subjectId IN 直接定位，避免读全窗口再丢弃 95% 行。
+  @@index([tenantId, subjectId, date])
 }
 
 // 运营手动标记的"优化动作"（v2 前后对比锚点）。date=动作发生日；productIds=受影响商品(空=整店)。

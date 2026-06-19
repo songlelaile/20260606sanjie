@@ -1,12 +1,12 @@
 import { ActionComparison } from "@/components/ActionComparison";
 import { AudiencePlanTable } from "@/components/AudiencePlanTable";
 import { PageHeader } from "@/components/PageHeader";
-import { getLatestCalcRun } from "@/lib/store/runtime-store";
+import { getAudiencePlans } from "@/lib/store/runtime-store";
 
 export const dynamic = "force-dynamic";
 
 export default async function AudiencePlanPage() {
-  const items = (await getLatestCalcRun()).audiencePlans;
+  const items = await getAudiencePlans();
 
   return (
     <>

@@ -2,8 +2,8 @@
 
 import clsx from "clsx";
 import { useEffect, useRef, useState } from "react";
-import { DailyTrendChart } from "@/components/DailyTrendChart";
-import { MetricCard, deltaCell, deltaPctLabel } from "@/components/comparison-ui";
+import { DailyTrendChart, useTrendSelection } from "@/components/DailyTrendChart";
+import { FunnelChain, StagedMetricGrid, deltaCell, deltaPctLabel } from "@/components/comparison-ui";
 import type {
   AudienceComparison,
   Intervention,
@@ -28,6 +28,7 @@ export function ActionComparison({ view }: { view: View }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loadedList, setLoadedList] = useState(false);
+  const trend = useTrendSelection(); // 趋势图选中态：指标卡下钻与图表共享
   const reqRef = useRef(0); // 最新请求序号：丢弃过期响应（防快速切换竞态）
 
   useEffect(() => {
@@ -151,30 +152,50 @@ export function ActionComparison({ view }: { view: View }) {
 
       {view === "overview" && overview ? (
         <div className="action-comparison-body">
-          <div className="review-metric-grid">
-            {overview.lensA.metrics.map((m) => (
-              <MetricCard key={m.key} m={m} />
-            ))}
-          </div>
-          <DailyTrendChart series={overview.lensC.series} interventionDate={overview.lensC.interventionDate} />
+          <FunnelChain steps={overview.lensA.chain} />
+          <StagedMetricGrid
+            metrics={overview.lensA.metrics}
+            chartLink={{ activeKeys: new Set(trend.selected), onToggle: trend.toggle }}
+          />
+          <DailyTrendChart
+            series={overview.lensC.series}
+            interventionDate={overview.lensC.interventionDate}
+            selection={trend}
+          />
         </div>
       ) : null}
 
       {view === "product" && product ? (
         <ComparisonTable
           empty={product.rows.length === 0 ? "受影响商品在该区间暂无分日数据。" : null}
-          head={["商品", "日均净销额", "支付转化率", "客单价"]}
+          head={[
+            "商品",
+            "日均净销额",
+            "日均访客",
+            "支付转化率",
+            "客单价",
+            "退款率",
+            ...(product.hasPromo ? ["日均推广花费", "推广ROI"] : [])
+          ]}
           rows={product.rows.map((r) => ({
             key: r.productId,
             label: r.productId,
             sub: r.productName,
             cells: [
               deltaCell(r.netBefore, r.netAfter, "money", true),
+              deltaCell(r.visitorsBefore, r.visitorsAfter, "int", true),
               deltaCell(r.convBefore, r.convAfter, "rate", true),
-              deltaCell(r.aovBefore, r.aovAfter, "money", true)
+              deltaCell(r.aovBefore, r.aovAfter, "money", true),
+              deltaCell(r.refundRateBefore, r.refundRateAfter, "rate", false),
+              ...(product.hasPromo
+                ? [
+                    deltaCell(r.adCostBefore, r.adCostAfter, "money", true, true),
+                    deltaCell(r.adRoiBefore, r.adRoiAfter, "ratio", true)
+                  ]
+                : [])
             ],
             deltaLabel: deltaPctLabel(r.netBefore, r.netAfter, r.netDeltaPct),
-            deltaUp: r.netAfter >= r.netBefore
+            deltaTone: mainTone(r.netBefore, r.netAfter)
           }))}
         />
       ) : null}
@@ -182,17 +203,19 @@ export function ActionComparison({ view }: { view: View }) {
       {view === "audience" && audience ? (
         <ComparisonTable
           empty={audience.rows.length === 0 ? "该区间暂无人群分日数据。" : null}
-          head={["计划 · 人群", "日均点击", "ROI"]}
+          head={["计划 · 人群", "日均点击", "ROI", "引导潜客占比", "成交新客占比"]}
           rows={audience.rows.map((r) => ({
             key: r.key,
             label: r.audienceName,
             sub: `${r.planName} · ${r.subjectName}`,
             cells: [
               deltaCell(r.clicksBefore, r.clicksAfter, "int", true),
-              deltaCell(r.roiBefore, r.roiAfter, "ratio", true)
+              deltaCell(r.roiBefore, r.roiAfter, "ratio", true),
+              deltaCell(r.guidedBefore, r.guidedAfter, "rate", true),
+              deltaCell(r.newBefore, r.newAfter, "rate", true)
             ],
             deltaLabel: deltaPctLabel(r.clicksBefore, r.clicksAfter, r.clicksDeltaPct),
-            deltaUp: r.clicksAfter >= r.clicksBefore
+            deltaTone: mainTone(r.clicksBefore, r.clicksAfter)
           }))}
         />
       ) : null}
@@ -208,13 +231,19 @@ interface Cell {
   tone: "good" | "bad" | "flat";
 }
 
+/** 主指标变化着色：持平(差<1e-9)→flat(灰)，否则按"越高越好"判涨跌。与单元格/卡片三态口径一致。 */
+function mainTone(before: number, after: number): "good" | "bad" | "flat" {
+  if (Math.abs(after - before) < 1e-9) return "flat";
+  return after > before ? "good" : "bad";
+}
+
 function ComparisonTable({
   head,
   rows,
   empty
 }: {
   head: string[];
-  rows: { key: string; label: string; sub: string; cells: Cell[]; deltaLabel: string; deltaUp: boolean }[];
+  rows: { key: string; label: string; sub: string; cells: Cell[]; deltaLabel: string; deltaTone: "good" | "bad" | "flat" }[];
   empty: string | null;
 }) {
   if (empty) return <p className="review-empty">{empty}</p>;
@@ -244,7 +273,7 @@ function ComparisonTable({
                 </td>
               ))}
               <td>
-                <span className={clsx("cmp-deltapct", r.deltaUp ? "cmp-good" : "cmp-bad")}>{r.deltaLabel}</span>
+                <span className={clsx("cmp-deltapct", `cmp-${r.deltaTone}`)}>{r.deltaLabel}</span>
               </td>
             </tr>
           ))}

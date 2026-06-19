@@ -2,12 +2,12 @@ import { ActionComparison } from "@/components/ActionComparison";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusPill } from "@/components/StatusPill";
 import { formatNumber } from "@/lib/format";
-import { getLatestCalcRun } from "@/lib/store/runtime-store";
+import { getBreakthroughResults } from "@/lib/store/runtime-store";
 
 export const dynamic = "force-dynamic";
 
 export default async function ProductBreakthroughPage() {
-  const items = [...(await getLatestCalcRun()).breakthroughResults].sort((a, b) => b.score - a.score);
+  const items = [...(await getBreakthroughResults())].sort((a, b) => b.score - a.score);
 
   return (
     <>

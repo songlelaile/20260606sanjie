@@ -333,6 +333,23 @@ export interface VersionSnapshot {
   summary: string;
 }
 
+/**
+ * 优化动作"类别" = 单品突破「三维八步·方案整改」的八个维度（运营标记动作时选它整改的突破方向），末位「其他」兜底。
+ * 与 three-stage.ts 的 dimensionLabels 同源（此处用更简短的下拉文案）。这样标记的动作能直接对应到它在整改哪个突破维度，
+ * 前后对比即可解读"整改 X 维度是否见效"。
+ */
+export const INTERVENTION_CATEGORIES = [
+  "搜索展现价值",
+  "搜索支付转化率",
+  "平均停留时长",
+  "跳失率",
+  "退款率",
+  "连带购买率",
+  "连带类目宽度",
+  "复购率",
+  "其他"
+] as const;
+
 /** 运营手动标记的"优化动作"（v2 前后对比锚点）。 */
 export interface Intervention {
   id: string;
@@ -345,6 +362,9 @@ export interface Intervention {
   createdAt: string;
 }
 
+/** 漏斗阶段：投放→流量→成交→利润，让前后对比按因果链路分组。 */
+export type FunnelStage = "投放" | "流量" | "成交" | "利润";
+
 /** 对比口径 A：单个真实经营指标的前后变化。 */
 export interface ComparisonMetric {
   key: string;
@@ -356,7 +376,20 @@ export interface ComparisonMetric {
   deltaPct: number; // 相对变化（after-before)/|before|
   higherIsBetter: boolean;
   neutral?: boolean; // 中性指标（如推广花费=投入杠杆，不判好坏）
-  group?: "经营" | "广告"; // 分组展示
+  group?: "经营" | "广告"; // 分组展示（向后兼容）
+  stage?: FunnelStage; // 漏斗阶段分组
+}
+
+/** 投产链路的一个节点（花费→展现→点击→访客→买家→销售额→ROI），用于"环环相扣"的一行式因果展示。 */
+export interface FunnelChainStep {
+  key: string;
+  label: string;
+  before: number;
+  after: number;
+  deltaPct: number;
+  unit: ComparisonMetric["unit"];
+  higherIsBetter: boolean;
+  neutral?: boolean;
 }
 
 /** 对比口径 B：单商品的计划 vs 实际。 */
@@ -368,12 +401,26 @@ export interface PlanActualRow {
   attainmentPct: number; // 达成率
 }
 
-/** 整店/商品集按天趋势点（对比口径 C）。 */
+/** 整店/商品集按天趋势点（对比口径 C）。含经营派生 + 推广按日，供多指标多轴下钻对比。 */
 export interface DailyTrendPoint {
   date: string;
-  netSales: number;
+  // 经营·可加和
+  netSales: number; // 净销额
+  paymentAmount: number; // 销售额
   visitors: number;
+  views: number; // 浏览量
   paymentBuyers: number;
+  // 经营·强度（当日）；分母为 0（当日无成交/无访客）时为 null，趋势线显示断点而非误导的 0
+  conversion: number | null; // 支付转化率 = 买家/访客
+  aov: number | null; // 客单价 = 销售额/买家
+  refundRate: number | null; // 退款率 = 退款/销售额
+  uvValue: number | null; // 访客价值 = 销售额/访客
+  // 广告·按日：可加和项无投放即为 0；强度项（CPC/ROI）当日无花费时为 null（断点）
+  adCost: number; // 推广花费
+  impressions: number; // 展现
+  adClicks: number; // 点击
+  cpc: number | null; // 点击成本 = 花费/点击
+  adRoi: number | null; // 推广ROI（当日花费加权）
 }
 
 export interface ComparisonWindow {
@@ -385,36 +432,45 @@ export interface ComparisonWindow {
   afterDays: number;
 }
 
-/** 一个优化动作的前后对比结果（三口径）。 */
+/** 一个优化动作的前后对比结果（三口径 + 投产链路）。 */
 export interface InterventionComparison {
   intervention: Intervention;
   window: ComparisonWindow;
-  lensA: { productScope: string; metrics: ComparisonMetric[] };
+  lensA: { productScope: string; metrics: ComparisonMetric[]; chain: FunnelChainStep[] };
   lensB: { rows: PlanActualRow[] };
   lensC: { interventionDate: string; series: DailyTrendPoint[] };
 }
 
-/** 单品突破：单商品的动作前后变化（日均净销额/转化率/客单价）。 */
+/** 单品突破：单商品的动作前后变化（漏斗维度：净销/访客/转化/客单/退款 + 投放花费/ROI）。 */
 export interface ProductComparisonRow {
   productId: string;
   productName: string;
   netBefore: number;
   netAfter: number;
   netDeltaPct: number;
+  visitorsBefore: number;
+  visitorsAfter: number;
   convBefore: number;
   convAfter: number;
   aovBefore: number;
   aovAfter: number;
+  refundRateBefore: number;
+  refundRateAfter: number;
+  adCostBefore: number;
+  adCostAfter: number;
+  adRoiBefore: number;
+  adRoiAfter: number;
 }
 
 export interface ProductComparison {
   intervention: Intervention;
   window: ComparisonWindow;
   scope: string;
+  hasPromo: boolean; // 作用域内是否有推广数据（决定是否展示投放列）
   rows: ProductComparisonRow[];
 }
 
-/** 人群计划：单(计划·人群·主体)的动作前后变化（日均点击/ROI）。 */
+/** 人群计划：单(计划·人群·主体)的动作前后变化（点击/ROI + 引导潜客占比/成交新客占比=拉新质量）。 */
 export interface AudienceComparisonRow {
   key: string; // planId|||audienceName|||subjectId，稳定唯一
   planName: string;
@@ -425,6 +481,10 @@ export interface AudienceComparisonRow {
   clicksDeltaPct: number;
   roiBefore: number;
   roiAfter: number;
+  guidedBefore: number;
+  guidedAfter: number;
+  newBefore: number;
+  newAfter: number;
 }
 
 export interface AudienceComparison {

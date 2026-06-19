@@ -1,10 +1,12 @@
 import "server-only";
+import { cache } from "react";
 import {
   gradeRows,
   lifecycleColumns,
   marginMatrix,
   runThreeStageCalculation
 } from "@/lib/algorithm/three-stage";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { isPrefillReady } from "@/lib/prefill-status";
 import { getServerSession, requireTenantId } from "@/lib/session-server";
@@ -22,12 +24,13 @@ import {
   aggregatePromotionForCycle,
   clearAllDailyMetrics,
   getProductDailyDateRange,
+  buildDailyTrendSeries,
   pruneAllDailyMetrics,
-  storeDailyTrend,
   sumAudienceWindowByGroup,
   sumProductWindow,
   sumProductWindowByProduct,
   sumPromotionWindow,
+  sumPromotionWindowByProduct,
   upsertDailyAudienceMetrics,
   upsertDailyProductMetrics,
   upsertDailyPromotionMetrics,
@@ -43,15 +46,22 @@ import {
 import type {
   AnalysisCycle,
   AudienceComparison,
+  AudiencePlanItem,
   CalcRun,
   ComparisonMetric,
   ComparisonWindow,
+  DailyTrendPoint,
+  FunnelChainStep,
+  FunnelStage,
   DamoProductRow,
   GrowthProfitConfigRow,
   Intervention,
   InterventionComparison,
   InviteCode,
+  ManagementDashboard,
+  ProductBreakthroughResult,
   ProductComparison,
+  ProductInvestmentResult,
   ImportBatch,
   ImportValidationResult,
   Lifecycle,
@@ -91,7 +101,7 @@ interface WorkspaceData {
   currentTenantDatasetBytes: number;
   prefillItems: PrefillItem[];
   growthProfitConfig: GrowthProfitConfigRow[];
-  calcRun: CalcRun;
+  // calcRun 已外置到独立 CalcRun 表（见 calcRunUpsertOp/getLatestCalcRun），不再随 blob 反复读写。
   versions: VersionSnapshot[];
   historyRecords: ManagementHistoryRecord[];
   historyReports: ManagementHistoryReport[];
@@ -103,6 +113,96 @@ export const DEFAULT_DAILY_RETENTION_DAYS = 365;
 
 const initialGrowthProfitConfig = matrixToGrowthProfitConfig(marginMatrix);
 
+/** 空计算结果（无源数据时的默认），用于 CalcRun 表无行/字段缺失时的兜底与「清空源数据」。冻结防止共享单例被原地改污染其它请求。 */
+const EMPTY_CALC_RUN: CalcRun = (() => {
+  const e = runThreeStageCalculation({
+    cycleId: "",
+    productSourceRows: [],
+    damoProductRows: [],
+    promotionProductRows: [],
+    audienceSourceRows: [],
+    prefillItems: [],
+    marginMatrix
+  });
+  Object.freeze(e.investmentResults);
+  Object.freeze(e.breakthroughResults);
+  Object.freeze(e.audiencePlans);
+  Object.freeze(e.managementDashboard.topProducts);
+  Object.freeze(e.managementDashboard);
+  return Object.freeze(e);
+})();
+
+const asJson = (v: unknown) => v as unknown as Prisma.InputJsonValue;
+
+/** dashboard 列可能是 '{}'（列默认/回填兜底）→ topProducts 为 undefined 会让管理页 .length 崩；缺形状即回落完整零对象。 */
+function safeDashboard(value: unknown): ManagementDashboard {
+  const d = value as ManagementDashboard | null | undefined;
+  return d && Array.isArray(d.topProducts) ? d : EMPTY_CALC_RUN.managementDashboard;
+}
+
+/** 三阶计算结果写独立 CalcRun 表的 upsert 操作（可放进 $transaction 与 blob 同事务原子写）。 */
+function calcRunUpsertOp(tenantId: string, run: CalcRun) {
+  const payload = {
+    runId: run.id,
+    cycleId: run.cycleId,
+    createdAt: run.createdAt,
+    investmentResults: asJson(run.investmentResults),
+    breakthroughResults: asJson(run.breakthroughResults),
+    audiencePlans: asJson(run.audiencePlans),
+    managementDashboard: asJson(run.managementDashboard)
+  };
+  return prisma.calcRun.upsert({ where: { tenantId }, update: payload, create: { tenantId, ...payload } });
+}
+
+/** 读全量 CalcRun（请求级缓存）；无行返回空结果。供 admin/完整消费方使用。 */
+const loadCalcRunFull = cache(async (tenantId: string): Promise<CalcRun> => {
+  const row = await prisma.calcRun.findUnique({ where: { tenantId } });
+  if (!row) {
+    return EMPTY_CALC_RUN;
+  }
+  return {
+    id: row.runId,
+    cycleId: row.cycleId,
+    createdAt: row.createdAt,
+    investmentResults: row.investmentResults as unknown as ProductInvestmentResult[],
+    breakthroughResults: row.breakthroughResults as unknown as ProductBreakthroughResult[],
+    audiencePlans: row.audiencePlans as unknown as AudiencePlanItem[],
+    managementDashboard: safeDashboard(row.managementDashboard)
+  };
+});
+
+/** 管理看板切片：只取 dashboard + investmentResults（跳过 ~96% 体积的 audiencePlans 列）。 */
+export const getManagementData = cache(
+  async (): Promise<{ managementDashboard: ManagementDashboard; investmentResults: ProductInvestmentResult[] }> => {
+    const tenantId = await requireTenantId();
+    const row = await prisma.calcRun.findUnique({
+      where: { tenantId },
+      select: { managementDashboard: true, investmentResults: true }
+    });
+    if (!row) {
+      return { managementDashboard: EMPTY_CALC_RUN.managementDashboard, investmentResults: [] };
+    }
+    return {
+      managementDashboard: safeDashboard(row.managementDashboard),
+      investmentResults: row.investmentResults as unknown as ProductInvestmentResult[]
+    };
+  }
+);
+
+/** 单品突破切片：只取 breakthroughResults。 */
+export const getBreakthroughResults = cache(async (): Promise<ProductBreakthroughResult[]> => {
+  const tenantId = await requireTenantId();
+  const row = await prisma.calcRun.findUnique({ where: { tenantId }, select: { breakthroughResults: true } });
+  return (row?.breakthroughResults as unknown as ProductBreakthroughResult[]) ?? [];
+});
+
+/** 人群计划切片：只取 audiencePlans（最大的一段）。 */
+export const getAudiencePlans = cache(async (): Promise<AudiencePlanItem[]> => {
+  const tenantId = await requireTenantId();
+  const row = await prisma.calcRun.findUnique({ where: { tenantId }, select: { audiencePlans: true } });
+  return (row?.audiencePlans as unknown as AudiencePlanItem[]) ?? [];
+});
+
 /** 为某租户构造初始（空白业务数据）工作区。 */
 export function buildInitialWorkspaceData(context: WorkspaceContext): WorkspaceData {
   return {
@@ -113,15 +213,6 @@ export function buildInitialWorkspaceData(context: WorkspaceContext): WorkspaceD
     currentTenantDatasetBytes: 0,
     prefillItems: [],
     growthProfitConfig: initialGrowthProfitConfig,
-    calcRun: runThreeStageCalculation({
-      cycleId: context.cycle.id,
-      productSourceRows: [],
-      damoProductRows: [],
-      promotionProductRows: [],
-      audienceSourceRows: [],
-      prefillItems: [],
-      marginMatrix
-    }),
     versions: [],
     historyRecords: [],
     historyReports: [],
@@ -158,7 +249,12 @@ function defaultContextFor(tenant: Tenant, user: User): WorkspaceContext {
 // 工作区读写：每次请求从 DB 读取 → 内存内复用既有领域逻辑 → 写回 DB。
 // ——————————————————————————————————————————————————————————————
 
-async function loadWorkspace(tenantId: string): Promise<WorkspaceData> {
+/**
+ * 加载某租户的工作区 blob（~490KB JSON）。用 React cache() 做请求级 memo：
+ * 同一请求内多次 ctx() 只反序列化一次，跨请求/跨租户不共享（cache 作用域=单次 server 请求）。
+ * 写语义不受影响：每个 mutation 是「一次 ctx()→改同一 state 引用→saveWorkspace」，函数内只读一次。
+ */
+const loadWorkspace = cache(async (tenantId: string): Promise<WorkspaceData> => {
   const row = await prisma.workspace.findUnique({ where: { tenantId } });
   if (row) {
     return row.data as unknown as WorkspaceData;
@@ -184,15 +280,20 @@ async function loadWorkspace(tenantId: string): Promise<WorkspaceData> {
   const data = buildInitialWorkspaceData(defaultContextFor(tenantDomain, userDomain));
   await saveWorkspace(tenantId, data);
   return data;
-}
+});
 
-async function saveWorkspace(tenantId: string, data: WorkspaceData): Promise<void> {
-  const json = data as unknown as object;
-  await prisma.workspace.upsert({
+/** 写 blob 的 upsert 操作（可放进 $transaction 与 CalcRun 表同事务原子写）。 */
+function workspaceUpsertOp(tenantId: string, data: WorkspaceData) {
+  const json = data as unknown as Prisma.InputJsonValue;
+  return prisma.workspace.upsert({
     where: { tenantId },
     update: { data: json },
     create: { tenantId, data: json }
   });
+}
+
+async function saveWorkspace(tenantId: string, data: WorkspaceData): Promise<void> {
+  await workspaceUpsertOp(tenantId, data);
 }
 
 /** 取当前请求租户的工作区（读 cookie → 加载 blob）。 */
@@ -274,15 +375,6 @@ export async function clearImportBatches(options?: { keepPrefill?: boolean }): P
   }
   state.currentTenantDatasetId = null;
   state.currentTenantDatasetBytes = 0;
-  state.calcRun = runThreeStageCalculation({
-    cycleId: state.context.cycle.id,
-    productSourceRows: [],
-    damoProductRows: [],
-    promotionProductRows: [],
-    audienceSourceRows: [],
-    prefillItems: [],
-    marginMatrix: growthProfitConfigToMarginMatrix(state.growthProfitConfig)
-  });
   pushVersion(state, {
     id: `version-import-clear-${Date.now()}`,
     cycleId: state.context.cycle.id,
@@ -293,7 +385,8 @@ export async function clearImportBatches(options?: { keepPrefill?: boolean }): P
     createdBy: state.context.user.name,
     summary: "租户端当前源数据已清空，看板同步清空，可上传下一次最新数据。"
   });
-  await saveWorkspace(tenantId, state);
+  // 计算结果同步清空（写独立 CalcRun 表）。同事务原子写。
+  await prisma.$transaction([calcRunUpsertOp(tenantId, EMPTY_CALC_RUN), workspaceUpsertOp(tenantId, state)]);
 }
 
 export async function addImportBatch(input: {
@@ -556,7 +649,7 @@ export async function runCalculation(cycleId?: string): Promise<CalcRun> {
   // 仅「已填写」(分层+毛利率+月GSV机会齐全) 的商品进入三阶计算；未填写的仅占位展示，不参与。
   const readyPrefillItems = prefillItems.filter(isPrefillReady);
 
-  state.calcRun = runThreeStageCalculation({
+  const run = runThreeStageCalculation({
     cycleId: cid,
     productSourceRows,
     damoProductRows,
@@ -571,17 +664,34 @@ export async function runCalculation(cycleId?: string): Promise<CalcRun> {
     shopId: state.context.shop.id,
     kind: "calculation",
     title: "三阶评估算法重新运行",
-    createdAt: state.calcRun.createdAt,
+    createdAt: run.createdAt,
     createdBy: state.context.user.name,
-    summary: `生成 ${state.calcRun.investmentResults.length} 个商品结果和 ${state.calcRun.audiencePlans.length} 条人群计划。`
+    summary: `生成 ${run.investmentResults.length} 个商品结果和 ${run.audiencePlans.length} 条人群计划。`
   });
-  await saveWorkspace(tenantId, state);
-  return state.calcRun;
+  // calcRun 写独立表；blob 只存 prefill 派生 + 版本留痕（小）。同事务原子写，避免半写不一致。
+  await prisma.$transaction([calcRunUpsertOp(tenantId, run), workspaceUpsertOp(tenantId, state)]);
+  return run;
 }
 
 export async function getLatestCalcRun(): Promise<CalcRun> {
-  const { state } = await ctx();
-  return state.calcRun;
+  const tenantId = await requireTenantId();
+  return loadCalcRunFull(tenantId);
+}
+
+/** 整店分日趋势（覆盖全部已有分日数据区间），供管理看板 KPI「分日趋势」视图。无数据返回 null。 */
+export async function getStoreDailyTrend(): Promise<{
+  series: DailyTrendPoint[];
+  start: string;
+  end: string;
+} | null> {
+  // 只需 tenantId（来自 cookie），不读 490KB blob。
+  const tenantId = await requireTenantId();
+  const range = await getProductDailyDateRange(tenantId);
+  if (!range) {
+    return null;
+  }
+  const series = await buildDailyTrendSeries(tenantId, range.start, range.end, null);
+  return { series, start: range.start, end: range.end };
 }
 
 export async function getVersions(cycleId?: string): Promise<VersionSnapshot[]> {
@@ -1034,47 +1144,126 @@ function comparisonMetric(
   return { key, label, unit, before, after, delta, deltaPct, higherIsBetter };
 }
 
-/** 由前后窗求和构造口径A指标：可加和项取"日均"（窗口长度不同也可比），费率/客单价为强度量不受窗长影响。 */
-function buildLensAMetrics(
-  before: WindowSum,
-  after: WindowSum,
+/**
+ * 漏斗对比引擎：把口径A的前后变化按 投放→流量→成交→利润 四阶段串成因果链。
+ * - 可加和项（花费/展现/点击/访客/浏览/买家/销售额/净销）取"日均"，窗口长度不同也可比；
+ * - 强度量（CPC/CPM/转化率/客单价/访客价值/退款率/各类ROI/花费占比）由前后窗各自的求和重算，不受窗长影响；
+ * - 无投放数据时跳过广告相关卡片，避免一排 0；
+ * - "综合ROI"=销售额/花费仅在 scoped（指定商品集，分子分母同口径）时展示；整店作用域下分子含自然流量，
+ *   与广告花费不同口径，会被误读为广告投产比，故不展示，仅保留"推广ROI"。
+ */
+function buildFunnelMetrics(
+  pb: WindowSum,
+  pa: WindowSum,
+  qb: PromotionWindowSum,
+  qa: PromotionWindowSum,
   beforeDays: number,
-  afterDays: number
+  afterDays: number,
+  hasPromo: boolean,
+  scoped: boolean
 ): ComparisonMetric[] {
+  const bd = beforeDays > 0 ? beforeDays : 1;
+  const ad = afterDays > 0 ? afterDays : 1;
+  // 强度量（不除窗长，由各自求和重算）
   const net = (s: WindowSum) => s.paymentAmount - s.refundAmount;
   const conv = (s: WindowSum) => (s.visitors > 0 ? s.paymentBuyers / s.visitors : 0);
   const aov = (s: WindowSum) => (s.paymentBuyers > 0 ? s.paymentAmount / s.paymentBuyers : 0);
+  const uv = (s: WindowSum) => (s.visitors > 0 ? s.paymentAmount / s.visitors : 0);
   const refundRate = (s: WindowSum) => (s.paymentAmount > 0 ? s.refundAmount / s.paymentAmount : 0);
-  const bd = beforeDays > 0 ? beforeDays : 1;
-  const ad = afterDays > 0 ? afterDays : 1;
-  return [
-    comparisonMetric("netSales", "日均净销额", "money", net(before) / bd, net(after) / ad, true),
-    comparisonMetric("paymentAmount", "日均销售额", "money", before.paymentAmount / bd, after.paymentAmount / ad, true),
-    comparisonMetric("refundAmount", "日均退款额", "money", before.refundAmount / bd, after.refundAmount / ad, false),
-    comparisonMetric("visitors", "日均访客", "int", before.visitors / bd, after.visitors / ad, true),
-    comparisonMetric("paymentBuyers", "日均支付买家", "int", before.paymentBuyers / bd, after.paymentBuyers / ad, true),
-    comparisonMetric("conversion", "支付转化率", "rate", conv(before), conv(after), true),
-    comparisonMetric("aov", "客单价", "money", aov(before), aov(after), true),
-    comparisonMetric("refundRate", "退款率", "rate", refundRate(before), refundRate(after), false)
-  ].map((m) => ({ ...m, group: "经营" as const }));
+  const cpc = (s: PromotionWindowSum) => (s.clicks > 0 ? s.cost / s.clicks : 0);
+  const cpm = (s: PromotionWindowSum) => (s.impressions > 0 ? (s.cost / s.impressions) * 1000 : 0);
+  const adRoi = (s: PromotionWindowSum) => (s.cost > 0 ? s.roiCost / s.cost : 0);
+  const costRatio = (p: WindowSum, q: PromotionWindowSum) => (p.paymentAmount > 0 ? q.cost / p.paymentAmount : 0);
+  const overallRoi = (p: WindowSum, q: PromotionWindowSum) => (q.cost > 0 ? p.paymentAmount / q.cost : 0);
+
+  const out: ComparisonMetric[] = [];
+  const push = (
+    m: ComparisonMetric,
+    stage: FunnelStage,
+    opts?: { ad?: boolean; neutral?: boolean }
+  ) => {
+    out.push({
+      ...m,
+      stage,
+      group: opts?.ad ? "广告" : "经营",
+      ...(opts?.neutral ? { neutral: true } : {})
+    });
+  };
+
+  // ① 投放：投入与单位成本
+  if (hasPromo) {
+    push(comparisonMetric("adCost", "日均推广花费", "money", qb.cost / bd, qa.cost / ad, true), "投放", { ad: true, neutral: true });
+    push(comparisonMetric("impressions", "日均展现", "int", qb.impressions / bd, qa.impressions / ad, true), "投放", { ad: true, neutral: true });
+    push(comparisonMetric("adClicks", "日均点击", "int", qb.clicks / bd, qa.clicks / ad, true), "投放", { ad: true, neutral: true });
+    push(comparisonMetric("cpc", "点击成本 CPC", "money", cpc(qb), cpc(qa), false), "投放", { ad: true });
+    push(comparisonMetric("cpm", "千次展现成本 CPM", "money", cpm(qb), cpm(qa), false), "投放", { ad: true });
+  }
+  // ② 流量：到店与流量质量
+  push(comparisonMetric("visitors", "日均访客", "int", pb.visitors / bd, pa.visitors / ad, true), "流量");
+  push(comparisonMetric("views", "日均浏览量", "int", pb.views / bd, pa.views / ad, true), "流量");
+  push(comparisonMetric("uvValue", "访客价值", "money", uv(pb), uv(pa), true), "流量");
+  // ③ 成交：转化与产出
+  push(comparisonMetric("paymentBuyers", "日均支付买家", "int", pb.paymentBuyers / bd, pa.paymentBuyers / ad, true), "成交");
+  push(comparisonMetric("conversion", "支付转化率", "rate", conv(pb), conv(pa), true), "成交");
+  push(comparisonMetric("aov", "客单价", "money", aov(pb), aov(pa), true), "成交");
+  push(comparisonMetric("paymentAmount", "日均销售额", "money", pb.paymentAmount / bd, pa.paymentAmount / ad, true), "成交");
+  // ④ 利润：净产出与投产效率
+  push(comparisonMetric("netSales", "日均净销额", "money", net(pb) / bd, net(pa) / ad, true), "利润");
+  push(comparisonMetric("refundRate", "退款率", "rate", refundRate(pb), refundRate(pa), false), "利润");
+  if (hasPromo) {
+    push(comparisonMetric("adRoi", "推广ROI", "ratio", adRoi(qb), adRoi(qa), true), "利润", { ad: true });
+    push(comparisonMetric("costRatio", "花费占比", "rate", costRatio(pb, qb), costRatio(pa, qa), false), "利润", { ad: true });
+    if (scoped) {
+      push(comparisonMetric("overallRoi", "综合ROI", "ratio", overallRoi(pb, qb), overallRoi(pa, qa), true), "利润", { ad: true });
+    }
+  }
+  return out;
 }
 
-/** 广告口径：日均推广花费(中性)、推广ROI(花费加权)、点击成本(CPC)。 */
-function buildAdMetrics(
-  before: PromotionWindowSum,
-  after: PromotionWindowSum,
+/**
+ * 投产链路：把漏斗关键节点抽成一行 花费→展现→点击→访客→买家→销售额→ROI，
+ * 让"动作如何沿链路传导"一眼可见（无投放则退化为 访客→买家→销售额→净销额）。
+ */
+function buildFunnelChain(
+  pb: WindowSum,
+  pa: WindowSum,
+  qb: PromotionWindowSum,
+  qa: PromotionWindowSum,
   beforeDays: number,
-  afterDays: number
-): ComparisonMetric[] {
+  afterDays: number,
+  hasPromo: boolean
+): FunnelChainStep[] {
   const bd = beforeDays > 0 ? beforeDays : 1;
   const ad = afterDays > 0 ? afterDays : 1;
-  const roi = (s: PromotionWindowSum) => (s.cost > 0 ? s.roiCost / s.cost : 0);
-  const cpc = (s: PromotionWindowSum) => (s.clicks > 0 ? s.cost / s.clicks : 0);
-  return [
-    { ...comparisonMetric("adCost", "日均推广花费", "money", before.cost / bd, after.cost / ad, true), neutral: true, group: "广告" as const },
-    { ...comparisonMetric("adRoi", "推广ROI", "ratio", roi(before), roi(after), true), group: "广告" as const },
-    { ...comparisonMetric("cpc", "点击成本", "money", cpc(before), cpc(after), false), group: "广告" as const }
-  ];
+  const relPct = (after: number, before: number) =>
+    before !== 0 ? (after - before) / Math.abs(before) : after !== 0 ? (after > 0 ? 1 : -1) : 0;
+  const step = (
+    key: string,
+    label: string,
+    before: number,
+    after: number,
+    unit: ComparisonMetric["unit"],
+    higherIsBetter: boolean,
+    neutral = false
+  ): FunnelChainStep => ({ key, label, before, after, deltaPct: relPct(after, before), unit, higherIsBetter, neutral });
+
+  const steps: FunnelChainStep[] = [];
+  if (hasPromo) {
+    steps.push(step("adCost", "推广花费", qb.cost / bd, qa.cost / ad, "money", true, true));
+    steps.push(step("impressions", "展现", qb.impressions / bd, qa.impressions / ad, "int", true, true));
+    steps.push(step("adClicks", "点击", qb.clicks / bd, qa.clicks / ad, "int", true, true));
+  }
+  steps.push(step("visitors", "访客", pb.visitors / bd, pa.visitors / ad, "int", true));
+  steps.push(step("paymentBuyers", "支付买家", pb.paymentBuyers / bd, pa.paymentBuyers / ad, "int", true));
+  steps.push(step("paymentAmount", "销售额", pb.paymentAmount / bd, pa.paymentAmount / ad, "money", true));
+  if (hasPromo) {
+    const roiB = qb.cost > 0 ? qb.roiCost / qb.cost : 0;
+    const roiA = qa.cost > 0 ? qa.roiCost / qa.cost : 0;
+    steps.push(step("adRoi", "推广ROI", roiB, roiA, "ratio", true));
+  } else {
+    steps.push(step("netSales", "净销额", (pb.paymentAmount - pb.refundAmount) / bd, (pa.paymentAmount - pa.refundAmount) / ad, "money", true));
+  }
+  return steps;
 }
 
 /**
@@ -1086,8 +1275,11 @@ export async function buildInterventionComparison(
   beforeDays = 7,
   afterDays = 7
 ): Promise<InterventionComparison | null> {
-  const { tenantId, state } = await ctx();
-  const iv = await prisma.intervention.findUnique({ where: { id } });
+  // blob 加载与 intervention 查询无依赖 → 并行省一个 RTT。
+  const [{ tenantId, state }, iv] = await Promise.all([
+    ctx(),
+    prisma.intervention.findUnique({ where: { id } })
+  ]);
   if (!iv || iv.tenantId !== tenantId) {
     return null;
   }
@@ -1106,13 +1298,11 @@ export async function buildInterventionComparison(
     sumPromotionWindow(tenantId, scopeIds, beforeStart, beforeEnd),
     sumPromotionWindow(tenantId, scopeIds, afterStart, afterEnd)
   ]);
-  const metrics = buildLensAMetrics(beforeSum, afterSum, beforeDays, afterDays);
-  // 有推广数据才追加广告卡片，避免无投放租户出现一排 0。
+  // 有推广数据才追加广告维度，避免无投放租户出现一排 0。
   const hasPromo =
     beforePromo.cost + afterPromo.cost + beforePromo.impressions + afterPromo.impressions > 0;
-  if (hasPromo) {
-    metrics.push(...buildAdMetrics(beforePromo, afterPromo, beforeDays, afterDays));
-  }
+  const metrics = buildFunnelMetrics(beforeSum, afterSum, beforePromo, afterPromo, beforeDays, afterDays, hasPromo, scopeIds !== null);
+  const chain = buildFunnelChain(beforeSum, afterSum, beforePromo, afterPromo, beforeDays, afterDays, hasPromo);
 
   // 口径 B：计划 vs 实际（按受影响商品；整店则取所有有计划的商品）
   const cid = state.context.cycle.id;
@@ -1129,7 +1319,7 @@ export async function buildInterventionComparison(
   const lensBRows = targetIds
     .map((pid) => {
       const plan = planById.get(pid);
-      const a = afterByProduct.get(pid) ?? { paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+      const a = afterByProduct.get(pid) ?? { paymentAmount: 0, refundAmount: 0, visitors: 0, views: 0, paymentBuyers: 0 };
       const actualNet = a.paymentAmount - a.refundAmount;
       const actualMonthlyGsv = afterDays > 0 ? (actualNet / afterDays) * 30 : 0;
       const planMonthlyGsv = plan?.monthlyGsvOpportunity ?? 0;
@@ -1144,8 +1334,8 @@ export async function buildInterventionComparison(
     .filter((r) => r.planMonthlyGsv > 0 || r.actualMonthlyGsv > 0)
     .sort((l, r) => r.actualMonthlyGsv - l.actualMonthlyGsv);
 
-  // 口径 C：整店（或商品集）按天趋势，覆盖 [前窗起, 后窗止]
-  const trend = await storeDailyTrend(tenantId, beforeStart, afterEnd, scopeIds);
+  // 口径 C：整店（或商品集）按天趋势，覆盖 [前窗起, 后窗止]；经营派生 + 推广按日 join。
+  const series = await buildDailyTrendSeries(tenantId, beforeStart, afterEnd, scopeIds);
 
   const intervention: Intervention = {
     id: iv.id,
@@ -1161,35 +1351,40 @@ export async function buildInterventionComparison(
   return {
     intervention,
     window: { beforeStart, beforeEnd, afterStart, afterEnd, beforeDays, afterDays },
-    lensA: { productScope: affected.length > 0 ? `${affected.length} 个商品` : "整店", metrics },
+    lensA: { productScope: affected.length > 0 ? `${affected.length} 个商品` : "整店", metrics, chain },
     lensB: { rows: lensBRows },
     lensC: {
       interventionDate: iv.date,
-      series: trend.map((p) => ({
-        date: p.date,
-        netSales: p.netSales,
-        visitors: p.visitors,
-        paymentBuyers: p.paymentBuyers
-      }))
+      series
     }
   };
 }
 
-/** 公共：加载动作 + 计算前后窗 + 作用域；找不到返回 null。 */
+/**
+ * 公共：加载动作 + 计算前后窗 + 作用域；找不到返回 null。
+ * withState=false 时跳过 490KB blob 加载（仅需 tenantId 的路径，如人群对比）。
+ * tenant/blob 加载与 intervention 查询无依赖，并行省一个 RTT。
+ */
 async function loadInterventionWindow(
   id: string,
   beforeDays: number,
-  afterDays: number
+  afterDays: number,
+  withState = true
 ): Promise<{
   tenantId: string;
-  state: WorkspaceData;
+  state: WorkspaceData | null;
   affected: string[];
   scopeIds: string[] | null;
   window: ComparisonWindow;
   intervention: Intervention;
 } | null> {
-  const { tenantId, state } = await ctx();
-  const iv = await prisma.intervention.findUnique({ where: { id } });
+  const [base, iv] = await Promise.all([
+    withState
+      ? ctx()
+      : requireTenantId().then((tenantId) => ({ tenantId, state: null as WorkspaceData | null })),
+    prisma.intervention.findUnique({ where: { id } })
+  ]);
+  const { tenantId, state } = base;
   if (!iv || iv.tenantId !== tenantId) {
     return null;
   }
@@ -1234,11 +1429,19 @@ export async function buildProductComparison(
   if (!ctxw) {
     return null;
   }
-  const { tenantId, state, affected, scopeIds, window, intervention } = ctxw;
-  const [beforeByP, afterByP] = await Promise.all([
+  const { tenantId, affected, scopeIds, window, intervention } = ctxw;
+  const state = ctxw.state!; // withState=true（默认）→ 非空
+  const [beforeByP, afterByP, beforePromoByP, afterPromoByP] = await Promise.all([
     sumProductWindowByProduct(tenantId, scopeIds, window.beforeStart, window.beforeEnd),
-    sumProductWindowByProduct(tenantId, scopeIds, window.afterStart, window.afterEnd)
+    sumProductWindowByProduct(tenantId, scopeIds, window.afterStart, window.afterEnd),
+    sumPromotionWindowByProduct(tenantId, scopeIds, window.beforeStart, window.beforeEnd),
+    sumPromotionWindowByProduct(tenantId, scopeIds, window.afterStart, window.afterEnd)
   ]);
+  // 与 overview 严格同口径（cost+impressions，不含 clicks）：基于实际投放量判定而非分组是否存在，
+  // 既避免全 0 推广行导致"一排 0"的投放列，也避免"仅有点击、花费/展现为 0"时两视图门控不一致。
+  const hasPromo = [...beforePromoByP.values(), ...afterPromoByP.values()].some(
+    (p) => p.cost + p.impressions > 0
+  );
   const cid = state.context.cycle.id;
   const nameById = new Map(
     state.prefillItems.filter((p) => p.cycleId === cid).map((p) => [p.productId, p.productName])
@@ -1246,10 +1449,13 @@ export async function buildProductComparison(
   const ids = new Set<string>([...beforeByP.keys(), ...afterByP.keys()]);
   const bd = beforeDays > 0 ? beforeDays : 1;
   const ad = afterDays > 0 ? afterDays : 1;
-  const zero = { paymentAmount: 0, refundAmount: 0, visitors: 0, paymentBuyers: 0 };
+  const zero = { paymentAmount: 0, refundAmount: 0, visitors: 0, views: 0, paymentBuyers: 0 };
+  const zeroPromo = { cost: 0, clicks: 0, impressions: 0, roiCost: 0 };
   let rows = [...ids].map((pid) => {
     const b = beforeByP.get(pid) ?? zero;
     const a = afterByP.get(pid) ?? zero;
+    const pbp = beforePromoByP.get(pid) ?? zeroPromo;
+    const pap = afterPromoByP.get(pid) ?? zeroPromo;
     const netBefore = (b.paymentAmount - b.refundAmount) / bd;
     const netAfter = (a.paymentAmount - a.refundAmount) / ad;
     return {
@@ -1258,10 +1464,18 @@ export async function buildProductComparison(
       netBefore,
       netAfter,
       netDeltaPct: rel(netAfter, netBefore),
+      visitorsBefore: b.visitors / bd,
+      visitorsAfter: a.visitors / ad,
       convBefore: b.visitors > 0 ? b.paymentBuyers / b.visitors : 0,
       convAfter: a.visitors > 0 ? a.paymentBuyers / a.visitors : 0,
       aovBefore: b.paymentBuyers > 0 ? b.paymentAmount / b.paymentBuyers : 0,
-      aovAfter: a.paymentBuyers > 0 ? a.paymentAmount / a.paymentBuyers : 0
+      aovAfter: a.paymentBuyers > 0 ? a.paymentAmount / a.paymentBuyers : 0,
+      refundRateBefore: b.paymentAmount > 0 ? b.refundAmount / b.paymentAmount : 0,
+      refundRateAfter: a.paymentAmount > 0 ? a.refundAmount / a.paymentAmount : 0,
+      adCostBefore: pbp.cost / bd,
+      adCostAfter: pap.cost / ad,
+      adRoiBefore: pbp.cost > 0 ? pbp.roiCost / pbp.cost : 0,
+      adRoiAfter: pap.cost > 0 ? pap.roiCost / pap.cost : 0
     };
   });
   rows.sort((l, r) => r.netAfter - l.netAfter);
@@ -1277,7 +1491,7 @@ export async function buildProductComparison(
       scope = `整店 ${total} 个商品`;
     }
   }
-  return { intervention, window, scope, rows };
+  return { intervention, window, scope, hasPromo, rows };
 }
 
 /** 人群计划视角：受影响主体（整店则全部）的 (计划·人群) 动作前后变化（点击 Top30）。 */
@@ -1286,7 +1500,8 @@ export async function buildAudienceComparison(
   beforeDays = 7,
   afterDays = 7
 ): Promise<AudienceComparison | null> {
-  const ctxw = await loadInterventionWindow(id, beforeDays, afterDays);
+  // 人群对比不读 state → withState=false，跳过 490KB blob 加载。
+  const ctxw = await loadInterventionWindow(id, beforeDays, afterDays, false);
   if (!ctxw) {
     return null;
   }
@@ -1318,7 +1533,11 @@ export async function buildAudienceComparison(
         clicksAfter,
         clicksDeltaPct: rel(clicksAfter, clicksBefore),
         roiBefore: b && b.clicks > 0 ? b.roiClicks / b.clicks : 0,
-        roiAfter: a && a.clicks > 0 ? a.roiClicks / a.clicks : 0
+        roiAfter: a && a.clicks > 0 ? a.roiClicks / a.clicks : 0,
+        guidedBefore: b && b.clicks > 0 ? b.guidedW / b.clicks : 0,
+        guidedAfter: a && a.clicks > 0 ? a.guidedW / a.clicks : 0,
+        newBefore: b && b.clicks > 0 ? b.newW / b.clicks : 0,
+        newAfter: a && a.clicks > 0 ? a.newW / a.clicks : 0
       };
     })
     .sort((l, r) => r.clicksAfter - l.clicksAfter)

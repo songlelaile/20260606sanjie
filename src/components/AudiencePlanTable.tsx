@@ -63,8 +63,8 @@ export function AudiencePlanTable({ items }: { items: AudiencePlanItem[] }) {
                   </thead>
                   <tbody>
                     {visibleItems.length > 0 ? (
-                      visibleItems.map((item) => (
-                        <tr key={`${type}-${item.planId}-${item.audienceName}`}>
+                      visibleItems.map((item, i) => (
+                        <tr key={`${type}-${item.planId}-${item.audienceName}-${item.subjectName}-${i}`}>
                           <td>
                             <strong>{item.planName}</strong>
                             <span>{item.sceneName}</span>

@@ -6,7 +6,12 @@ import type {
   DailyProductMetricInput,
   DailyPromotionMetricInput
 } from "@/lib/imports/map-rows";
-import type { AudienceSourceRow, ProductSourceRow, PromotionProductRow } from "@/lib/types/domain";
+import type {
+  AudienceSourceRow,
+  DailyTrendPoint,
+  ProductSourceRow,
+  PromotionProductRow
+} from "@/lib/types/domain";
 
 /** 复用的 where 片段：租户 + 可选日期区间 + 可选商品集（下推到 SQL）。 */
 function dailyWhere(
@@ -204,6 +209,7 @@ export interface WindowSum {
   paymentAmount: number;
   refundAmount: number;
   visitors: number;
+  views: number;
   paymentBuyers: number;
 }
 
@@ -211,6 +217,7 @@ const SUM_SELECT = {
   paymentAmount: true,
   refundAmount: true,
   visitors: true,
+  views: true,
   paymentBuyers: true
 } as const;
 
@@ -218,6 +225,7 @@ type SumAgg = {
   paymentAmount: number | null;
   refundAmount: number | null;
   visitors: number | null;
+  views: number | null;
   paymentBuyers: number | null;
 };
 
@@ -226,6 +234,7 @@ function toWindowSum(s: SumAgg | null | undefined): WindowSum {
     paymentAmount: s?.paymentAmount ?? 0,
     refundAmount: s?.refundAmount ?? 0,
     visitors: s?.visitors ?? 0,
+    views: s?.views ?? 0,
     paymentBuyers: s?.paymentBuyers ?? 0
   };
 }
@@ -269,6 +278,7 @@ export interface StoreTrendPoint {
   paymentAmount: number;
   refundAmount: number;
   visitors: number;
+  views: number;
   paymentBuyers: number;
 }
 
@@ -293,8 +303,91 @@ export async function storeDailyTrend(
       paymentAmount,
       refundAmount,
       visitors: g._sum.visitors ?? 0,
+      views: g._sum.views ?? 0,
       paymentBuyers: g._sum.paymentBuyers ?? 0,
       netSales: paymentAmount - refundAmount
+    };
+  });
+}
+
+export interface PromoTrendPoint {
+  date: string;
+  cost: number;
+  clicks: number;
+  impressions: number;
+  roiCost: number; // Σ(roi×cost)，当日花费加权 ROI 用
+}
+
+/** 推广按天趋势（subjectIds 为空=全部主体），日期升序——加权 ROI 需 Σ(roi×cost)，用 raw。 */
+export async function promotionDailyTrend(
+  tenantId: string,
+  start: string,
+  end: string,
+  subjectIds?: string[] | null
+): Promise<PromoTrendPoint[]> {
+  const subjectClause =
+    subjectIds && subjectIds.length > 0
+      ? Prisma.sql`AND "subjectId" IN (${Prisma.join(subjectIds)})`
+      : Prisma.empty;
+  return prisma.$queryRaw<PromoTrendPoint[]>(Prisma.sql`
+    SELECT
+      "date",
+      COALESCE(SUM("cost"), 0)::float8 AS "cost",
+      COALESCE(SUM("clicks"), 0)::float8 AS "clicks",
+      COALESCE(SUM("impressions"), 0)::float8 AS "impressions",
+      COALESCE(SUM("roi" * "cost"), 0)::float8 AS "roiCost"
+    FROM "DailyPromotionMetric"
+    WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
+    GROUP BY "date"
+    ORDER BY "date" ASC
+  `);
+}
+
+/**
+ * 构造分日趋势序列（商品派生 + 推广按日 join，覆盖 [start,end]，scopeIds 为空=整店）。
+ * 取两侧日期并集；强度项（转化率/客单价/退款率/访客价值/CPC/ROI）分母为 0 → null（断点）。
+ * 供"优化动作前后对比"与"KPI 分日趋势"共用。
+ */
+export async function buildDailyTrendSeries(
+  tenantId: string,
+  start: string,
+  end: string,
+  scopeIds?: string[] | null
+): Promise<DailyTrendPoint[]> {
+  const [trend, promoTrend] = await Promise.all([
+    storeDailyTrend(tenantId, start, end, scopeIds),
+    promotionDailyTrend(tenantId, start, end, scopeIds)
+  ]);
+  const productByDate = new Map(trend.map((p) => [p.date, p]));
+  const promoByDate = new Map(promoTrend.map((p) => [p.date, p]));
+  const allDates = [...new Set([...trend.map((p) => p.date), ...promoTrend.map((p) => p.date)])].sort();
+  return allDates.map((date) => {
+    const p = productByDate.get(date);
+    const q = promoByDate.get(date);
+    const paymentAmount = p?.paymentAmount ?? 0;
+    const refundAmount = p?.refundAmount ?? 0;
+    const visitors = p?.visitors ?? 0;
+    const paymentBuyers = p?.paymentBuyers ?? 0;
+    const cost = q?.cost ?? 0;
+    const clicks = q?.clicks ?? 0;
+    const impressions = q?.impressions ?? 0;
+    const roiCost = q?.roiCost ?? 0;
+    return {
+      date,
+      netSales: paymentAmount - refundAmount,
+      paymentAmount,
+      visitors,
+      views: p?.views ?? 0,
+      paymentBuyers,
+      conversion: visitors > 0 ? paymentBuyers / visitors : null,
+      aov: paymentBuyers > 0 ? paymentAmount / paymentBuyers : null,
+      refundRate: paymentAmount > 0 ? refundAmount / paymentAmount : null,
+      uvValue: visitors > 0 ? paymentAmount / visitors : null,
+      adCost: cost,
+      impressions,
+      adClicks: clicks,
+      cpc: clicks > 0 ? cost / clicks : null,
+      adRoi: cost > 0 ? roiCost / cost : null
     };
   });
 }
@@ -358,6 +451,35 @@ export async function sumPromotionWindow(
     WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
   `);
   return rows[0] ?? { cost: 0, clicks: 0, impressions: 0, roiCost: 0 };
+}
+
+/** 窗口内按推广主体(=商品)聚合（subjectIds 为空=全部）——单品突破对比的投放列用。 */
+export async function sumPromotionWindowByProduct(
+  tenantId: string,
+  subjectIds: string[] | null,
+  start: string,
+  end: string
+): Promise<Map<string, PromotionWindowSum>> {
+  const subjectClause =
+    subjectIds && subjectIds.length > 0
+      ? Prisma.sql`AND "subjectId" IN (${Prisma.join(subjectIds)})`
+      : Prisma.empty;
+  const rows = await prisma.$queryRaw<(PromotionWindowSum & { subjectId: string })[]>(Prisma.sql`
+    SELECT
+      "subjectId",
+      COALESCE(SUM("cost"), 0)::float8 AS "cost",
+      COALESCE(SUM("clicks"), 0)::float8 AS "clicks",
+      COALESCE(SUM("impressions"), 0)::float8 AS "impressions",
+      COALESCE(SUM("roi" * "cost"), 0)::float8 AS "roiCost"
+    FROM "DailyPromotionMetric"
+    WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
+    GROUP BY "subjectId"
+  `);
+  const byId = new Map<string, PromotionWindowSum>();
+  for (const r of rows) {
+    byId.set(r.subjectId, { cost: r.cost, clicks: r.clicks, impressions: r.impressions, roiCost: r.roiCost });
+  }
+  return byId;
 }
 
 interface PromoRawRow {
@@ -519,6 +641,8 @@ export interface AudienceWindowGroup {
   subjectName: string | null;
   clicks: number;
   roiClicks: number; // Σ(roi×clicks)，点击加权 ROI
+  guidedW: number; // Σ(引导访问潜客占比×clicks)，点击加权
+  newW: number; // Σ(成交新客占比×clicks)，点击加权
 }
 
 /**
@@ -541,7 +665,9 @@ export async function sumAudienceWindowByGroup(
       (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
       (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
       SUM("clicks")::float8 AS "clicks",
-      SUM("roi" * "clicks")::float8 AS "roiClicks"
+      SUM("roi" * "clicks")::float8 AS "roiClicks",
+      SUM("guidedPotentialCustomerRatio" * "clicks")::float8 AS "guidedW",
+      SUM("newCustomerRatio" * "clicks")::float8 AS "newW"
     FROM "DailyAudienceMetric"
     WHERE "tenantId" = ${tenantId} AND "date" >= ${start} AND "date" <= ${end} ${subjectClause}
     GROUP BY "planId", "audienceName", "subjectId"

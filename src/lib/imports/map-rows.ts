@@ -326,48 +326,124 @@ export function mapPromotionRows(headers: string[], rows: unknown[][]): Promotio
   return mergePromotionRows(mapped);
 }
 
-/** 分日推广映射：保留每主体每日一行（按 subjectId+date 去重保首行）。无日期行丢弃。 */
+/**
+ * 分日推广映射：粒度 (subjectId, date)。真实万相台报表里同一(主体,日期)按场景/计划拆成多行，
+ * 必须**累加**展现/点击/花费（保首行会严重少计），ROI 用花费加权 Σ(roi×cost)/Σcost。无日期行丢弃。
+ */
 export function mapPromotionDailyRows(headers: string[], rows: unknown[][]): DailyPromotionMetricInput[] {
   const { text, num } = columnReaders(headers);
-  const mapped = rows
-    .filter((row) => isDataRow(text(row, "主体ID")))
-    .map((row) => ({
-      subjectId: text(row, "主体ID"),
-      date: normalizeDate(text(row, "日期")),
-      subjectName: text(row, "主体名称"),
-      impressions: num(row, "展现量"),
-      clicks: num(row, "点击量"),
-      cost: num(row, "花费"),
-      roi: num(row, "投入产出比")
-    }))
-    .filter((item) => item.date !== "");
-  return dedupeByFirst(mapped, (item) => `${item.subjectId} ${item.date}`);
+  const byKey = new Map<string, { row: DailyPromotionMetricInput; roiCostSum: number }>();
+  const order: string[] = [];
+  for (const row of rows) {
+    const subjectId = text(row, "主体ID");
+    if (!isDataRow(subjectId)) {
+      continue;
+    }
+    const date = normalizeDate(text(row, "日期"));
+    if (date === "") {
+      continue;
+    }
+    const key = `${subjectId} ${date}`;
+    const impressions = num(row, "展现量");
+    const clicks = num(row, "点击量");
+    const cost = num(row, "花费");
+    const roi = num(row, "投入产出比");
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        row: { subjectId, date, subjectName: text(row, "主体名称"), impressions, clicks, cost, roi },
+        roiCostSum: roi * cost
+      });
+      order.push(key);
+    } else {
+      existing.row.impressions += impressions;
+      existing.row.clicks += clicks;
+      existing.row.cost += cost;
+      existing.roiCostSum += roi * cost;
+      if (!existing.row.subjectName) {
+        existing.row.subjectName = text(row, "主体名称");
+      }
+    }
+  }
+  return order.map((key) => {
+    const { row, roiCostSum } = byKey.get(key)!;
+    return { ...row, roi: row.cost > 0 ? roiCostSum / row.cost : 0 };
+  });
 }
 
-/** 分日人群映射：粒度 (date, planId, audienceName, subjectId)，按该键去重保首行。无日期行丢弃。 */
+/**
+ * 分日人群映射：粒度 (date, planId, audienceName, subjectId)。真实报表里同一键按单元(单元ID)拆多行，
+ * 必须**累加**点击；ROI/引导潜客占比/成交新客占比用点击加权 Σ(率×clicks)/Σclicks
+ * （与下游 sumAudienceWindowByGroup 的点击加权一致，可层层 telescope 还原真实窗口加权值）。无日期行丢弃。
+ */
 export function mapAudienceDailyRows(headers: string[], rows: unknown[][]): DailyAudienceMetricInput[] {
   const { text, num } = columnReaders(headers);
-  const mapped = rows
-    .filter((row) => isDataRow(text(row, "计划ID")))
-    .map((row) => ({
-      date: normalizeDate(text(row, "日期")),
-      sceneId: text(row, "场景ID"),
-      sceneName: text(row, "场景名字"),
-      planId: text(row, "计划ID"),
-      planName: text(row, "计划名字"),
-      audienceName: text(row, "人群名字"),
-      subjectId: text(row, "主体ID"),
-      subjectName: text(row, "主体名称"),
-      clicks: num(row, "点击量"),
-      roi: num(row, "投入产出比"),
-      guidedPotentialCustomerRatio: num(row, "引导访问潜客占比"),
-      newCustomerRatio: num(row, "成交新客占比")
-    }))
-    .filter((item) => item.date !== "");
-  return dedupeByFirst(
-    mapped,
-    (item) => `${item.date} ${item.planId} ${item.audienceName} ${item.subjectId}`
-  );
+  const byKey = new Map<
+    string,
+    { row: DailyAudienceMetricInput; clicksSum: number; roiW: number; guidedW: number; newW: number }
+  >();
+  const order: string[] = [];
+  for (const row of rows) {
+    const planId = text(row, "计划ID");
+    if (!isDataRow(planId)) {
+      continue;
+    }
+    const date = normalizeDate(text(row, "日期"));
+    if (date === "") {
+      continue;
+    }
+    const audienceName = text(row, "人群名字");
+    const subjectId = text(row, "主体ID");
+    const key = `${date} ${planId} ${audienceName} ${subjectId}`;
+    const clicks = num(row, "点击量");
+    const roi = num(row, "投入产出比");
+    const guided = num(row, "引导访问潜客占比");
+    const newc = num(row, "成交新客占比");
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        row: {
+          date,
+          sceneId: text(row, "场景ID"),
+          sceneName: text(row, "场景名字"),
+          planId,
+          planName: text(row, "计划名字"),
+          audienceName,
+          subjectId,
+          subjectName: text(row, "主体名称"),
+          clicks,
+          roi,
+          guidedPotentialCustomerRatio: guided,
+          newCustomerRatio: newc
+        },
+        clicksSum: clicks,
+        roiW: roi * clicks,
+        guidedW: guided * clicks,
+        newW: newc * clicks
+      });
+      order.push(key);
+    } else {
+      existing.clicksSum += clicks;
+      existing.roiW += roi * clicks;
+      existing.guidedW += guided * clicks;
+      existing.newW += newc * clicks;
+      existing.row.clicks += clicks;
+      if (!existing.row.subjectName) {
+        existing.row.subjectName = text(row, "主体名称");
+      }
+    }
+  }
+  return order.map((key) => {
+    const e = byKey.get(key)!;
+    const w = e.clicksSum;
+    return {
+      ...e.row,
+      clicks: e.clicksSum,
+      roi: w > 0 ? e.roiW / w : 0,
+      guidedPotentialCustomerRatio: w > 0 ? e.guidedW / w : 0,
+      newCustomerRatio: w > 0 ? e.newW / w : 0
+    };
+  });
 }
 
 export function mapAudienceRows(headers: string[], rows: unknown[][]): AudienceSourceRow[] {

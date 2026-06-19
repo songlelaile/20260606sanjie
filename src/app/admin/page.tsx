@@ -4,14 +4,13 @@ import { KpiGrid } from "@/components/KpiGrid";
 import { PageHeader } from "@/components/PageHeader";
 import { StatusPill } from "@/components/StatusPill";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
-import { getImportBatches, getLatestCalcRun, getVersions, getWorkspaceContext } from "@/lib/store/runtime-store";
+import { getImportBatches, getManagementData, getVersions, getWorkspaceContext } from "@/lib/store/runtime-store";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
   const { tenant, shop, cycle } = await getWorkspaceContext();
-  const run = await getLatestCalcRun();
-  const dashboard = run.managementDashboard;
+  const { managementDashboard: dashboard } = await getManagementData();
   const imports = await getImportBatches();
   const versions = await getVersions(cycle.id);
 

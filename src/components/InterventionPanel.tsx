@@ -3,9 +3,9 @@
 import { Flag, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Intervention } from "@/lib/types/domain";
+import { INTERVENTION_CATEGORIES, type Intervention } from "@/lib/types/domain";
 
-const CATEGORIES = ["预算", "主图", "价格", "人群", "详情", "其他"];
+const CATEGORIES = INTERVENTION_CATEGORIES;
 
 function todayIso() {
   const now = new Date();
@@ -24,7 +24,7 @@ export function InterventionPanel({
   const [items, setItems] = useState(initialInterventions);
   const [date, setDate] = useState(todayIso());
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [category, setCategory] = useState<string>(CATEGORIES[0]);
   const [note, setNote] = useState("");
   const [picked, setPicked] = useState<string[]>([]);
   const [search, setSearch] = useState("");
@@ -90,7 +90,7 @@ export function InterventionPanel({
       <div className="panel-toolbar">
         <div>
           <strong>标记优化动作</strong>
-          <span>记录某天做了什么调整（换主图/调预算/改价等），用于后续在管理视角看前后数据变化。</span>
+          <span>记录某天做了什么调整：标题写具体动作（如「上调P1日预算30%」），类别选它对应整改的「三维八步」突破维度，用于后续在管理视角看前后数据变化。</span>
         </div>
       </div>
 

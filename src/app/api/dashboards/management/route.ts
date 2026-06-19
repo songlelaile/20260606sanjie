@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getLatestCalcRun } from "@/lib/store/runtime-store";
+import { getManagementData } from "@/lib/store/runtime-store";
 
 export async function GET() {
   return NextResponse.json({
     data: {
-      dashboard: (await getLatestCalcRun()).managementDashboard
+      dashboard: (await getManagementData()).managementDashboard
     }
   });
 }

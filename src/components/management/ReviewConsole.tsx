@@ -2,45 +2,12 @@
 
 import clsx from "clsx";
 import { useState } from "react";
-import { DailyTrendChart } from "@/components/DailyTrendChart";
-import type { ComparisonMetric, Intervention, InterventionComparison } from "@/lib/types/domain";
-
-function fmt(value: number, unit: ComparisonMetric["unit"]): string {
-  if (unit === "rate") return `${(value * 100).toFixed(1)}%`;
-  if (unit === "ratio") return value.toFixed(2);
-  if (unit === "money") {
-    // 小额（如客单价）保留 1 位小数，避免 2.5 被显示成 3；大额取整。
-    const rounded = Math.abs(value) < 100 ? Number(value.toFixed(1)) : Math.round(value);
-    return `¥${rounded.toLocaleString()}`;
-  }
-  return Math.round(value).toLocaleString();
-}
-
-/** 变化是好是坏：中性指标恒为 flat；否则按 higherIsBetter 判断符号方向。 */
-function tone(metric: ComparisonMetric): "good" | "bad" | "flat" {
-  if (metric.neutral || Math.abs(metric.delta) < 1e-9) return "flat";
-  const up = metric.delta > 0;
-  return up === metric.higherIsBetter ? "good" : "bad";
-}
-
-function MetricCard({ m }: { m: ComparisonMetric }) {
-  const t = tone(m);
-  return (
-    <div className={clsx("review-metric", t)}>
-      <span className="review-metric-label">{m.label}</span>
-      <span className="review-metric-values">
-        {fmt(m.before, m.unit)} → <strong>{fmt(m.after, m.unit)}</strong>
-      </span>
-      <span className="review-metric-delta">
-        {m.delta >= 0 ? "+" : ""}
-        {fmt(m.delta, m.unit)}（{m.deltaPct >= 0 ? "+" : ""}
-        {(m.deltaPct * 100).toFixed(1)}%）
-      </span>
-    </div>
-  );
-}
+import { DailyTrendChart, useTrendSelection } from "@/components/DailyTrendChart";
+import { FunnelChain, StagedMetricGrid } from "@/components/comparison-ui";
+import type { Intervention, InterventionComparison } from "@/lib/types/domain";
 
 export function ReviewConsole({ interventions }: { interventions: Intervention[] }) {
+  const trend = useTrendSelection(); // 趋势图选中态：指标卡下钻与图表共享
   const [selectedId, setSelectedId] = useState<string | null>(interventions[0]?.id ?? null);
   const [beforeDays, setBeforeDays] = useState(7);
   const [afterDays, setAfterDays] = useState(7);
@@ -155,26 +122,13 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
             </p>
 
             <div className="review-lens">
-              <h3>① 真实经营变化（{comparison.lensA.productScope}）</h3>
-              <div className="review-metric-grid">
-                {comparison.lensA.metrics
-                  .filter((m) => m.group !== "广告")
-                  .map((m) => (
-                    <MetricCard key={m.key} m={m} />
-                  ))}
-              </div>
-              {comparison.lensA.metrics.some((m) => m.group === "广告") ? (
-                <>
-                  <h4 className="review-subhead">广告投放</h4>
-                  <div className="review-metric-grid">
-                    {comparison.lensA.metrics
-                      .filter((m) => m.group === "广告")
-                      .map((m) => (
-                        <MetricCard key={m.key} m={m} />
-                      ))}
-                  </div>
-                </>
-              ) : null}
+              <h3>① 投产链路（{comparison.lensA.productScope}）</h3>
+              <p className="review-lens-sub">动作如何沿 投放→流量→成交→利润 漏斗传导。</p>
+              <FunnelChain steps={comparison.lensA.chain} />
+              <StagedMetricGrid
+                metrics={comparison.lensA.metrics}
+                chartLink={{ activeKeys: new Set(trend.selected), onToggle: trend.toggle }}
+              />
             </div>
 
             <div className="review-lens">
@@ -220,10 +174,11 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
             </div>
 
             <div className="review-lens">
-              <h3>③ 整店每日趋势（动作日标注）</h3>
+              <h3>③ 每日趋势（多指标多轴对比，动作日标注）</h3>
               <DailyTrendChart
                 series={comparison.lensC.series}
                 interventionDate={comparison.lensC.interventionDate}
+                selection={trend}
               />
             </div>
           </div>

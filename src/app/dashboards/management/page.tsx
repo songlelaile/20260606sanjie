@@ -1,38 +1,24 @@
 import { ActionComparison } from "@/components/ActionComparison";
-import { KpiGrid } from "@/components/KpiGrid";
+import { KpiBoard } from "@/components/KpiBoard";
 import { PageHeader } from "@/components/PageHeader";
-import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
-import { getLatestCalcRun } from "@/lib/store/runtime-store";
+import { formatMoney, formatPercent } from "@/lib/format";
+import { getManagementData, getStoreDailyTrend } from "@/lib/store/runtime-store";
 
 export const dynamic = "force-dynamic";
 
 export default async function ManagementDashboardPage() {
-  const dashboard = (await getLatestCalcRun()).managementDashboard;
+  // 只取 dashboard + investmentResults 切片，不加载 ~96% 体积的 audiencePlans。
+  const [mgmt, trend] = await Promise.all([getManagementData(), getStoreDailyTrend()]);
+  const dashboard = mgmt.managementDashboard;
 
   return (
     <>
       <PageHeader
         eyebrow="Management Dashboard"
         title="盈利分层・付费驱动增长"
-        description="站在管理角度判断：哪些商品值得投、销售缺口有多大、全店还有多少可投费用。"
+        description="站在管理角度判断：哪些商品值得投、销售缺口有多大、全店还有多少可投费用。点 KPI 卡可下钻分析。"
       />
-      <KpiGrid
-        items={[
-          { label: "商品总数", value: formatNumber(dashboard.productCount) },
-          { label: "月去退销售额", value: formatMoney(dashboard.monthlyNetSales, 1) },
-          { label: "月利润预估", value: formatMoney(dashboard.monthlyProfitEstimate, 1) },
-          { label: "历史利润率", value: formatPercent(dashboard.historicalMarginRate, 1) },
-          { label: "月GSV机会", value: formatMoney(dashboard.monthlyGsvOpportunity, 1) },
-          {
-            label: dashboard.marketSalesGap < 0 ? "市场销售盈余" : "市场销售缺口",
-            value: formatMoney(Math.abs(dashboard.marketSalesGap), 1),
-            tone: dashboard.marketSalesGap < 0 ? "good" : "warn"
-          },
-          { label: "全店可投费用", value: formatMoney(dashboard.availableAdBudget, 1), tone: "good" },
-          { label: "增长预留毛利", value: formatMoney(dashboard.plannedProfit, 1) },
-          { label: "预留毛利率", value: formatPercent(dashboard.plannedMarginRate, 1) }
-        ]}
-      />
+      <KpiBoard dashboard={dashboard} results={mgmt.investmentResults} trendSeries={trend?.series ?? []} />
       <section className="table-panel">
         <div className="panel-toolbar">
           <div>

@@ -231,6 +231,240 @@ button:disabled {
   line-height: 1.15;
 }
 
+/* —— KPI 看板（可点选 + 下钻分析）—— */
+.kpi-board {
+  margin-bottom: 22px;
+}
+.kpi-board .kpi-grid {
+  margin-bottom: 12px;
+}
+button.kpi {
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  width: 100%;
+  transition: border-color 0.12s, background 0.12s;
+}
+button.kpi:hover {
+  background: var(--surface-2);
+}
+.kpi.is-selected {
+  border-color: var(--brand);
+  background: rgba(246, 198, 95, 0.06);
+  box-shadow: 0 0 0 1px var(--brand) inset;
+}
+
+.kpi-drill {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+}
+.kpi-drill-empty {
+  background: var(--surface-2);
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.kpi-drill-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.kpi-drill-head strong {
+  font-size: 15px;
+  color: var(--ink);
+}
+.kpi-drill-head span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.kpi-view-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.kpi-view-tabs button {
+  min-height: 30px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.kpi-view-tabs button.is-active {
+  background: var(--brand);
+  color: #182007;
+  border-color: #caa34d;
+}
+.kpi-drill-note {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.kpi-drill-note strong {
+  color: var(--ink);
+}
+
+.kpi-bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.kpi-bar-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 10px;
+}
+.kpi-bar-label {
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kpi-bar-label em {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+}
+.kpi-bar-track {
+  height: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.kpi-bar-track.neg {
+  background: rgba(239, 77, 77, 0.1);
+}
+.kpi-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  min-width: 2px;
+}
+.kpi-bar-val {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.kpi-pivot-toggle,
+.kpi-plan-legend {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.kpi-pivot-toggle button {
+  min-height: 28px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.kpi-pivot-toggle button.is-active {
+  background: var(--brand);
+  color: #182007;
+  border-color: #caa34d;
+}
+
+/* 规划 vs 实际：双条 */
+.kpi-plan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.kpi-plan-row {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr) 56px;
+  align-items: center;
+  gap: 10px;
+}
+.kpi-plan-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kpi-plan-track {
+  height: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.kpi-plan-fill {
+  height: 100%;
+  border-radius: 3px;
+  min-width: 2px;
+}
+.kpi-plan-fill.plan {
+  background: #6f8bdf;
+}
+.kpi-plan-fill.actual {
+  background: #f6c65f;
+}
+/* 去退后为负：满轨红色斜纹，明确是亏损/异常而非满额达成 */
+.kpi-plan-fill.actual.loss {
+  background: repeating-linear-gradient(45deg, #ef4d4d, #ef4d4d 4px, #7a2424 4px, #7a2424 8px);
+}
+.kpi-plan-attain {
+  font-size: 12.5px;
+  font-weight: 700;
+  text-align: right;
+}
+.kpi-plan-attain.good {
+  color: var(--good);
+}
+.kpi-plan-attain.warn {
+  color: var(--warn);
+}
+.kpi-plan-attain.bad {
+  color: var(--bad);
+}
+.kpi-plan-legend {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+.kpi-plan-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.kpi-plan-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.kpi-plan-legend i.plan {
+  background: #6f8bdf;
+}
+.kpi-plan-legend i.actual {
+  background: #f6c65f;
+}
+
+@media (max-width: 760px) {
+  .kpi-bar-row,
+  .kpi-plan-row {
+    grid-template-columns: 120px minmax(0, 1fr) 90px;
+  }
+}
+
 .overview-grid,
 .import-layout,
 .audience-columns {
@@ -2170,6 +2404,101 @@ td small {
   font-weight: 600;
 }
 
+/* —— 投产链路（一行式因果） —— */
+.funnel-chain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.funnel-chain-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.funnel-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 76px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.funnel-node-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.funnel-node-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.funnel-node-delta {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.funnel-arrow {
+  color: var(--muted);
+  font-size: 16px;
+  user-select: none;
+}
+
+/* —— 漏斗分阶段卡片 —— */
+.funnel-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.funnel-stage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.funnel-stage-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent, #2f6df6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.funnel-stage-head strong {
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.funnel-stage-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-lens-sub {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* —— 经营复盘（三口径对比）—— */
 .review-console {
   display: grid;
@@ -2343,13 +2672,22 @@ td small {
 
 .trend-chart-toolbar {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 6px 8px;
   margin-bottom: 10px;
 }
 
-.trend-chart-toolbar button {
+.trend-chip-wrap {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.trend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 30px;
-  padding: 0 12px;
+  padding: 0 10px;
   background: var(--surface-2);
   border: 1px solid var(--line);
   color: var(--muted);
@@ -2358,10 +2696,63 @@ td small {
   font-weight: 600;
 }
 
-.trend-chart-toolbar button.is-active {
-  background: var(--brand);
-  color: #182007;
-  border-color: #caa34d;
+.trend-chip.is-active {
+  background: rgba(246, 198, 95, 0.06);
+}
+
+.trend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid;
+  box-sizing: border-box;
+}
+
+/* 已选指标右侧的左右轴切换 */
+.trend-axis-toggle {
+  min-height: 30px;
+  padding: 0 8px;
+  margin-left: -1px;
+  background: #0b1307;
+  border: 1px solid var(--line);
+  border-radius: 0 7px 7px 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.trend-chip.is-active + .trend-axis-toggle {
+  border-left-color: transparent;
+}
+
+.funnel-drill-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 可下钻的指标卡（点击加入趋势图） */
+button.review-metric {
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.review-metric-clickable:hover {
+  background: rgba(246, 198, 95, 0.05);
+}
+
+.review-metric.is-charted {
+  border-left-width: 3px;
+}
+
+.review-metric-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: 6px;
+  vertical-align: middle;
 }
 
 .trend-chart-canvas {
