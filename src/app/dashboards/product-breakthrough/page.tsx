@@ -13,7 +13,7 @@ export default async function ProductBreakthroughPage() {
     <>
       <PageHeader
         eyebrow="Product Breakthrough"
-        title="三维八步・S 单品突围"
+        title="单品八步诊断・定位卡点、放大爆款产出"
         description="用八个 0/1 指标生成方案编码，定位搜索、承接、退款、连带和复购问题。"
       />
       <section className="table-panel">

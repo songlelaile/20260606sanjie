@@ -12,7 +12,7 @@ export default async function AudiencePlanPage() {
     <>
       <PageHeader
         eyebrow="Audience Plan"
-        title="三收 MVP 做增长"
+        title="人群三收计划・把预算投给高回报人群"
         description="从无界人群报表筛选拉新、追投、收割计划，让预算落到可执行人群。"
       />
       <AudiencePlanTable items={items} />

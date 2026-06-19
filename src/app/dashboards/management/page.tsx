@@ -15,7 +15,7 @@ export default async function ManagementDashboardPage() {
     <>
       <PageHeader
         eyebrow="Management Dashboard"
-        title="盈利分层・付费驱动增长"
+        title="盈利分层诊断・把预算投向高回报商品"
         description="站在管理角度判断：哪些商品值得投、销售缺口有多大、全店还有多少可投费用。点 KPI 卡可下钻分析。"
       />
       <KpiBoard dashboard={dashboard} results={mgmt.investmentResults} trendSeries={trend?.series ?? []} />
