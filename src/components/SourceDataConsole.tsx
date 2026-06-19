@@ -14,8 +14,6 @@ import { reportContracts } from "@/lib/imports/contracts";
 import { formatNumber } from "@/lib/format";
 import {
   formatStorageSize,
-  getImportBatchesSize,
-  retentionPolicy,
   validateTenantDatasetSize
 } from "@/lib/retention-policy";
 import type { ImportBatch, ReportType } from "@/lib/types/domain";
@@ -66,7 +64,6 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
   } | null>(null);
 
   const timeline = useMemo(() => buildTimeline(batches), [batches]);
-  const savedBytes = useMemo(() => getImportBatchesSize(batches), [batches]);
   const selectedBytes = useMemo(
     () => Object.values(files).reduce((total, file) => total + (file?.size ?? 0), 0),
     [files]
@@ -186,13 +183,6 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
             <FolderOpen size={15} />
             上传目录：/app/uploads/source-data/1
           </small>
-        </div>
-        <div className="retention-strip">
-          <b>租户端保留</b>
-          <span>仅保存最新 1 次源数据</span>
-          <span>单次上限 {retentionPolicy.tenantMaxDatasetMegabytes}MB</span>
-          <span>当前已保存 {formatStorageSize(savedBytes)}</span>
-          <span>本次待上传 {formatStorageSize(selectedBytes)}</span>
         </div>
         <div className="source-upload-grid">
           {sourceSlots.map((slot) => (
