@@ -3294,3 +3294,74 @@ button.review-metric {
     justify-content: center;
   }
 }
+
+/* ───────────────── 预填写表·批量填写 ───────────────── */
+.prefill-batch-bar {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  justify-content: space-between;
+  margin: 0 0 14px;
+  padding: 11px 14px;
+}
+
+.prefill-batch-select,
+.prefill-batch-fill {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prefill-batch-select span {
+  color: var(--muted);
+  font-size: 13px;
+  margin-right: 4px;
+}
+
+.prefill-batch-select span b {
+  color: var(--brand);
+}
+
+.prefill-batch-fill > span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.prefill-batch-fill svg {
+  color: var(--brand);
+}
+
+.prefill-batch-fill select,
+.prefill-batch-fill input {
+  min-height: 32px;
+}
+
+.prefill-batch-fill input[type="number"] {
+  width: 110px;
+}
+
+.prefill-batch-bar .ghost-button {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 13px;
+}
+
+.prefill-check-col {
+  text-align: center;
+  width: 42px;
+}
+
+.prefill-check-col input[type="checkbox"] {
+  cursor: pointer;
+  height: 16px;
+  width: 16px;
+}
+
+tr.row-selected td {
+  background: rgba(246, 198, 95, 0.08);
+}
