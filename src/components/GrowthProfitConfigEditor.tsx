@@ -41,7 +41,7 @@ export function GrowthProfitConfigEditor({
 
   function resetToV9Default() {
     setConfig(buildDefaultConfig());
-    setMessage("已恢复 V9 表格默认值，保存后生效");
+    setMessage("已恢复默认利润率，保存后生效");
   }
 
   async function save() {
@@ -77,8 +77,8 @@ export function GrowthProfitConfigEditor({
     <section className="table-panel growth-config-panel">
       <div className="panel-toolbar">
         <div>
-          <strong>V9 增长利润配置</strong>
-          <span>默认来自“盈利增长利润率对照表”，数字可调整，保存后用于三阶评估算法。</span>
+          <strong>SABC 分层利润率规划表</strong>
+          <span>每个分层 × 成长阶段一个利润率：默认来自盈利增长对照表，可自定义，保存后参与三阶计算。</span>
         </div>
         <div className="panel-actions">
           <button type="button" className="ghost-button" onClick={resetToV9Default}>
@@ -106,7 +106,7 @@ export function GrowthProfitConfigEditor({
               <tr key={row.grade}>
                 <td>
                   <strong>{row.grade}</strong>
-                  <span>SAB 分层</span>
+                  <span>SABC 分层</span>
                 </td>
                 {lifecycleColumns.map((lifecycle) => (
                   <td key={lifecycle}>
