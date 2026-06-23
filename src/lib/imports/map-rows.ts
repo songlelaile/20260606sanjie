@@ -156,46 +156,90 @@ function dedupeByFirst<T>(rows: T[], keyOf: (row: T) => string): T[] {
   return result;
 }
 
-function lifecycleRank(stage: Lifecycle): number {
-  const index = LIFECYCLES.indexOf(stage);
-  return index < 0 ? 0 : index;
+/**
+ * 合并同一宝贝ID的多日行（达摩盘「同货品不同时段拆行」）：遵循数据逻辑做汇总——
+ * - 量级求和：支付金额、IPV、营销推广消耗。
+ * - 营销推广ROI：按消耗加权 Σ(ROI×消耗)/Σ消耗（ROI 的分母就是消耗）。
+ * - 其余率（支付转化率/复购率/免费搜索点击率/连带购买率/连带类目宽度）：按订单数加权
+ *   Σ(率×订单数)/Σ订单数，订单数=支付金额/笔单价（≈买家数，避开用 IPV 作分母）；Σ订单数=0 回落取最新一期值。
+ * - 货品成长阶段 / 宝贝名称：取最大日期那行（最新一期）。笔单价重算为 Σ金额/Σ订单数。
+ */
+interface DamoAcc {
+  paymentAmount: number;
+  ipv: number;
+  marketingSpend: number;
+  roiSpendW: number; // Σ(ROI×消耗)
+  orders: number; // Σ订单数
+  convW: number;
+  repurchaseW: number;
+  clickW: number;
+  attachW: number;
+  widthW: number; // Σ(率×订单数)
+  latestDate: string;
+  latest: DamoProductRow;
 }
 
-/**
- * 合并同一宝贝ID的多行（货品成长阶段跨越会被拆成多行，如成长期→爆品期各一行）：
- * 数量/金额类累加求和；ROI、各种率、笔单价、类目宽度等不可累加项取最高值；
- * 成长阶段取生命周期最靠后（最成熟）的那个。
- */
-function mergeDamoRows(rows: DamoProductRow[]): DamoProductRow[] {
-  const byId = new Map<string, DamoProductRow>();
+function mergeDamoRows(entries: Array<{ date: string; row: DamoProductRow }>): DamoProductRow[] {
+  const byId = new Map<string, DamoAcc>();
   const order: string[] = [];
-  for (const row of rows) {
-    const existing = byId.get(row.productId);
-    if (!existing) {
-      byId.set(row.productId, { ...row });
+  for (const { date, row } of entries) {
+    const orders = row.unitPrice > 0 ? row.paymentAmount / row.unitPrice : 0;
+    let acc = byId.get(row.productId);
+    if (!acc) {
+      acc = {
+        paymentAmount: 0,
+        ipv: 0,
+        marketingSpend: 0,
+        roiSpendW: 0,
+        orders: 0,
+        convW: 0,
+        repurchaseW: 0,
+        clickW: 0,
+        attachW: 0,
+        widthW: 0,
+        latestDate: "",
+        latest: row
+      };
+      byId.set(row.productId, acc);
       order.push(row.productId);
-      continue;
     }
-    // 可累加：金额、流量、消耗、连带量
-    existing.paymentAmount += row.paymentAmount;
-    existing.ipv += row.ipv;
-    existing.marketingIpv += row.marketingIpv;
-    existing.marketingSpend += row.marketingSpend;
-    existing.attachPurchaseCount += row.attachPurchaseCount;
-    // 不可累加：取最高值
-    existing.marketingRoi = Math.max(existing.marketingRoi, row.marketingRoi);
-    existing.paymentConversionRate = Math.max(existing.paymentConversionRate, row.paymentConversionRate);
-    existing.repurchaseRate = Math.max(existing.repurchaseRate, row.repurchaseRate);
-    existing.freeSearchClickRate = Math.max(existing.freeSearchClickRate, row.freeSearchClickRate);
-    existing.unitPrice = Math.max(existing.unitPrice, row.unitPrice);
-    existing.attachPurchaseRate = Math.max(existing.attachPurchaseRate, row.attachPurchaseRate);
-    existing.attachCategoryWidth = Math.max(existing.attachCategoryWidth, row.attachCategoryWidth);
-    // 成长阶段取最靠后（最成熟）
-    if (lifecycleRank(row.growthStage) > lifecycleRank(existing.growthStage)) {
-      existing.growthStage = row.growthStage;
+    acc.paymentAmount += row.paymentAmount;
+    acc.ipv += row.ipv;
+    acc.marketingSpend += row.marketingSpend;
+    acc.roiSpendW += row.marketingRoi * row.marketingSpend;
+    acc.orders += orders;
+    acc.convW += row.paymentConversionRate * orders;
+    acc.repurchaseW += row.repurchaseRate * orders;
+    acc.clickW += row.freeSearchClickRate * orders;
+    acc.attachW += row.attachPurchaseRate * orders;
+    acc.widthW += row.attachCategoryWidth * orders;
+    if (acc.latestDate === "" || date > acc.latestDate) {
+      acc.latestDate = date;
+      acc.latest = row;
     }
   }
-  return order.map((id) => byId.get(id)!);
+  return order.map((id) => {
+    const a = byId.get(id)!;
+    const w = a.orders > 0 ? a.orders : 0;
+    const wavg = (sumW: number, fallback: number) => (w > 0 ? sumW / w : fallback);
+    return {
+      productId: id,
+      productName: a.latest.productName,
+      growthStage: a.latest.growthStage,
+      paymentAmount: a.paymentAmount,
+      ipv: a.ipv,
+      marketingIpv: 0,
+      marketingSpend: a.marketingSpend,
+      marketingRoi: a.marketingSpend > 0 ? a.roiSpendW / a.marketingSpend : 0,
+      paymentConversionRate: wavg(a.convW, a.latest.paymentConversionRate),
+      repurchaseRate: wavg(a.repurchaseW, a.latest.repurchaseRate),
+      freeSearchClickRate: wavg(a.clickW, a.latest.freeSearchClickRate),
+      unitPrice: w > 0 ? a.paymentAmount / w : a.latest.unitPrice,
+      attachPurchaseCount: 0,
+      attachPurchaseRate: wavg(a.attachW, a.latest.attachPurchaseRate),
+      attachCategoryWidth: wavg(a.widthW, a.latest.attachCategoryWidth)
+    };
+  });
 }
 
 /**
@@ -259,49 +303,108 @@ export function mapProductSourceRows(headers: string[], rows: unknown[][]): Prod
  */
 export function mapProductDailyRows(headers: string[], rows: unknown[][]): DailyProductMetricInput[] {
   const { text, num } = columnReaders(headers);
-  const mapped = rows
-    .filter((row) => isDataRow(text(row, "商品ID")))
-    .map((row) => ({
-      productId: text(row, "商品ID"),
-      date: normalizeDate(text(row, "统计日期")),
-      productName: text(row, "商品名称"),
-      visitors: num(row, "商品访客数"),
-      views: num(row, "商品浏览量"),
-      averageStaySeconds: num(row, "平均停留时长"),
-      bounceRate: num(row, "商品详情页跳出率"),
-      paymentBuyers: num(row, "支付买家数"),
-      paymentAmount: num(row, "支付金额"),
-      productPaymentConversionRate: num(row, "商品支付转化率"),
-      refundAmount: num(row, "成功退款金额"),
-      searchGuidedPaymentConversionRate: num(row, "搜索引导支付转化率"),
-      searchGuidedVisitors: num(row, "搜索引导访客数")
-    }))
-    .filter((item) => item.date !== "");
-  return dedupeByFirst(mapped, (item) => `${item.productId} ${item.date}`);
+  // 同 (商品ID, 统计日期) 多行 → 量级求和、率按访客加权（与读侧 aggregateProductForCycle 口径一致）。
+  const byKey = new Map<
+    string,
+    { row: DailyProductMetricInput; visitorsW: number; stayW: number; bounceW: number; convW: number; searchConvW: number }
+  >();
+  const order: string[] = [];
+  for (const row of rows) {
+    const productId = text(row, "商品ID");
+    if (!isDataRow(productId)) {
+      continue;
+    }
+    const date = normalizeDate(text(row, "统计日期"));
+    if (date === "") {
+      continue;
+    }
+    const visitors = num(row, "商品访客数");
+    const stay = num(row, "平均停留时长");
+    const bounce = num(row, "商品详情页跳出率");
+    const conv = num(row, "商品支付转化率");
+    const searchConv = num(row, "搜索引导支付转化率");
+    const key = `${productId} ${date}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        row: {
+          productId,
+          date,
+          productName: text(row, "商品名称"),
+          visitors,
+          views: num(row, "商品浏览量"),
+          averageStaySeconds: stay,
+          bounceRate: bounce,
+          paymentBuyers: num(row, "支付买家数"),
+          paymentAmount: num(row, "支付金额"),
+          productPaymentConversionRate: conv,
+          refundAmount: num(row, "成功退款金额"),
+          searchGuidedPaymentConversionRate: searchConv,
+          searchGuidedVisitors: num(row, "搜索引导访客数")
+        },
+        visitorsW: visitors,
+        stayW: stay * visitors,
+        bounceW: bounce * visitors,
+        convW: conv * visitors,
+        searchConvW: searchConv * visitors
+      });
+      order.push(key);
+    } else {
+      existing.row.visitors += visitors;
+      existing.row.views += num(row, "商品浏览量");
+      existing.row.paymentBuyers += num(row, "支付买家数");
+      existing.row.paymentAmount += num(row, "支付金额");
+      existing.row.refundAmount += num(row, "成功退款金额");
+      existing.row.searchGuidedVisitors += num(row, "搜索引导访客数");
+      existing.visitorsW += visitors;
+      existing.stayW += stay * visitors;
+      existing.bounceW += bounce * visitors;
+      existing.convW += conv * visitors;
+      existing.searchConvW += searchConv * visitors;
+      if (!existing.row.productName) {
+        existing.row.productName = text(row, "商品名称");
+      }
+    }
+  }
+  return order.map((key) => {
+    const e = byKey.get(key)!;
+    const w = e.visitorsW > 0 ? e.visitorsW : 1;
+    return {
+      ...e.row,
+      averageStaySeconds: e.stayW / w,
+      bounceRate: e.bounceW / w,
+      productPaymentConversionRate: e.convW / w,
+      searchGuidedPaymentConversionRate: e.searchConvW / w
+    };
+  });
 }
 
 export function mapDamoProductRows(headers: string[], rows: unknown[][]): DamoProductRow[] {
   const { text, num } = columnReaders(headers);
-  const mapped = rows
+  // 达摩盘「同货品不同时段拆行」：带上日期（取最新阶段用）+ 笔单价（算订单数=买家代理用）。
+  const entries = rows
     .filter((row) => isDataRow(text(row, "宝贝ID")))
     .map((row) => ({
-      productId: text(row, "宝贝ID"),
-      productName: text(row, "宝贝名称"),
-      growthStage: asLifecycle(text(row, "货品成长阶段")),
-      paymentAmount: num(row, "支付金额"),
-      ipv: num(row, "IPV"),
-      marketingIpv: 0,
-      marketingSpend: num(row, "营销推广消耗"),
-      marketingRoi: num(row, "营销推广ROI"),
-      paymentConversionRate: num(row, "支付转化率"),
-      repurchaseRate: num(row, "复购率"),
-      freeSearchClickRate: num(row, "免费搜索点击率"),
-      unitPrice: 0,
-      attachPurchaseCount: 0,
-      attachPurchaseRate: num(row, "连带购买率"),
-      attachCategoryWidth: num(row, "连带购买叶子类目宽度")
+      date: normalizeDate(text(row, "日期")),
+      row: {
+        productId: text(row, "宝贝ID"),
+        productName: text(row, "宝贝名称"),
+        growthStage: asLifecycle(text(row, "货品成长阶段")),
+        paymentAmount: num(row, "支付金额"),
+        ipv: num(row, "IPV"),
+        marketingIpv: 0,
+        marketingSpend: num(row, "营销推广消耗"),
+        marketingRoi: num(row, "营销推广ROI"),
+        paymentConversionRate: num(row, "支付转化率"),
+        repurchaseRate: num(row, "复购率"),
+        freeSearchClickRate: num(row, "免费搜索点击率"),
+        unitPrice: num(row, "笔单价"),
+        attachPurchaseCount: 0,
+        attachPurchaseRate: num(row, "连带购买率"),
+        attachCategoryWidth: num(row, "连带购买叶子类目宽度")
+      } as DamoProductRow
     }));
-  return mergeDamoRows(mapped);
+  return mergeDamoRows(entries);
 }
 
 export function mapPromotionRows(headers: string[], rows: unknown[][]): PromotionProductRow[] {

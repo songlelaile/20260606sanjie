@@ -34,7 +34,7 @@ describe("import contracts", () => {
     expect(validation.errors.join("；")).toContain("缺少必填字段");
   });
 
-  it("商品主数据重复主键时提示已保留首行，不阻断计算", () => {
+  it("商品源分日明细对重复主键不报警（同商品跨日由 mapper 按商品ID+日期求和）", () => {
     const contract = reportContracts.product_source;
     const validation = validateImportRows(contract.reportType, contract.requiredHeaders, [
       ["2026-05-08", "100", "甲", 10, 20, 5, 0.4, 3, 100, 0.05, 2, 0.03],
@@ -42,8 +42,8 @@ describe("import contracts", () => {
     ]);
 
     expect(validation.ok).toBe(true);
-    expect(validation.duplicateEntityIds).toEqual(["100"]);
-    expect(validation.warnings[0]).toContain("已自动归并");
+    expect(validation.duplicateEntityIds).toEqual(["100"]); // 仍检测到，但不报警
+    expect(validation.warnings).toEqual([]);
   });
 
   it("人群明细表对重复主键不报警（同商品多人群计划各自保留）", () => {

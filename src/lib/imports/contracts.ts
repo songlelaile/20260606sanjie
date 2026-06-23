@@ -18,6 +18,8 @@ export const reportContracts: Record<ReportType, ReportContract> = {
     sourceSystem: "生意参谋-商品源数据报表",
     entityHeader: "商品ID",
     dateHeader: "统计日期",
+    // 分日明细：同一商品ID跨不同统计日期本就多行，由 mapper 按(商品ID+日期)求和，不报"重复"。
+    allowDuplicateEntity: true,
     requiredHeaders: [
       "统计日期",
       "商品ID",
@@ -59,6 +61,8 @@ export const reportContracts: Record<ReportType, ReportContract> = {
     sourceSystem: "万相台无界-推广宝贝报表",
     entityHeader: "主体ID",
     dateHeader: "日期",
+    // 分日明细：同一主体ID跨不同日期本就多行，由 mapper 按(主体ID+日期)求和，不报"重复"。
+    allowDuplicateEntity: true,
     requiredHeaders: [
       "日期",
       "主体ID",
@@ -141,7 +145,7 @@ export function validateImportRows(
 
   if (duplicateEntityIds.length > 0 && !contract.allowDuplicateEntity) {
     warnings.push(
-      `发现 ${duplicateEntityIds.length} 个重复 ${contract.entityHeader}，已自动归并为每个商品一条：${duplicateEntityIds.slice(0, 8).join("、")}`
+      `${duplicateEntityIds.length} 个货品有多日数据，已按${contract.entityHeader}汇总为一条（量级求和、率重算、阶段取最新）：${duplicateEntityIds.slice(0, 8).join("、")}`
     );
   }
 

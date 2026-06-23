@@ -59,6 +59,7 @@ const DAMO_HEADERS = [
   "宝贝ID",
   "宝贝名称",
   "货品成长阶段",
+  "日期",
   "支付金额",
   "IPV",
   "营销推广消耗",
@@ -66,6 +67,7 @@ const DAMO_HEADERS = [
   "支付转化率",
   "复购率",
   "免费搜索点击率",
+  "笔单价",
   "连带购买率",
   "连带购买叶子类目宽度"
 ];
@@ -73,7 +75,7 @@ const DAMO_HEADERS = [
 describe("mapDamoProductRows", () => {
   it("保留合法生命周期", () => {
     const mapped = mapDamoProductRows(DAMO_HEADERS, [
-      ["111", "甲", "爆品期", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 0.2, 3]
+      ["111", "甲", "爆品期", "20260501", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 100, 0.2, 3]
     ]);
     expect(mapped[0].growthStage).toBe("爆品期");
     expect(mapped[0].marketingSpend).toBe(300);
@@ -81,24 +83,26 @@ describe("mapDamoProductRows", () => {
 
   it("非法生命周期回退冷启期", () => {
     const mapped = mapDamoProductRows(DAMO_HEADERS, [
-      ["111", "甲", "乱写阶段", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 0.2, 3]
+      ["111", "甲", "乱写阶段", "20260501", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 100, 0.2, 3]
     ]);
     expect(mapped[0].growthStage).toBe("冷启期");
   });
 
-  it("合并跨成长阶段的重复宝贝：数量求和、比率取最高、阶段取最靠后", () => {
+  it("合并跨日期的重复宝贝：量级求和、ROI按消耗加权、其余率按订单数加权、阶段取最新日期", () => {
+    // 订单数=支付金额/笔单价：行1=5000/100=50，行2=8000/200=40，Σ=90
     const merged = mapDamoProductRows(DAMO_HEADERS, [
-      ["111", "甲", "成长期", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 0.2, 3],
-      ["111", "甲", "爆品期", 8000, 2000, 500, 6.0, 0.1, 0.15, 0.05, 0.25, 4]
+      ["111", "甲", "成长期", "20260501", 5000, 1200, 300, 4.5, 0.08, 0.12, 0.03, 100, 0.2, 3],
+      ["111", "甲", "爆品期", "20260502", 8000, 2000, 500, 6.0, 0.1, 0.15, 0.05, 200, 0.25, 4]
     ]);
     expect(merged).toHaveLength(1);
-    expect(merged[0].paymentAmount).toBe(13000); // 5000+8000 求和
-    expect(merged[0].ipv).toBe(3200); // 1200+2000 求和
-    expect(merged[0].marketingSpend).toBe(800); // 300+500 求和
-    expect(merged[0].marketingRoi).toBe(6); // max(4.5,6) 取最高
-    expect(merged[0].repurchaseRate).toBe(0.15); // max(0.12,0.15)
-    expect(merged[0].attachCategoryWidth).toBe(4); // max(3,4)
-    expect(merged[0].growthStage).toBe("爆品期"); // 取最靠后
+    expect(merged[0].paymentAmount).toBe(13000); // 求和
+    expect(merged[0].ipv).toBe(3200); // 求和
+    expect(merged[0].marketingSpend).toBe(800); // 求和
+    expect(merged[0].marketingRoi).toBeCloseTo(5.4375, 4); // Σ(ROI×消耗)/Σ消耗 = (4.5*300+6*500)/800
+    expect(merged[0].repurchaseRate).toBeCloseTo(12 / 90, 6); // Σ(率×订单)/Σ订单 = (0.12*50+0.15*40)/90
+    expect(merged[0].paymentConversionRate).toBeCloseTo(8 / 90, 6); // (0.08*50+0.1*40)/90
+    expect(merged[0].attachCategoryWidth).toBeCloseTo(310 / 90, 6); // (3*50+4*40)/90
+    expect(merged[0].growthStage).toBe("爆品期"); // 取最新日期 20260502 那行
   });
 });
 
