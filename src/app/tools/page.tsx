@@ -16,11 +16,11 @@ export const metadata: Metadata = {
 
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
-  name: "生意参谋 · 关键词采集助手",
-  version: "1.4.1",
-  zipHref: "/downloads/sycm-keyword-collector-v1.4.1.zip",
-  downloadName: "生意参谋关键词采集助手-v1.4.1.zip",
-  sizeLabel: "约 209 KB",
+  name: "生意参谋 · 采集助手",
+  version: "1.6.0",
+  zipHref: "/downloads/sycm-keyword-collector-v1.6.0.zip",
+  downloadName: "生意参谋采集助手-v1.6.0.zip",
+  sizeLabel: "约 540 KB",
   platform: "Chrome / Edge 111+"
 };
 
@@ -34,8 +34,16 @@ const FEATURES = [
     desc: "把每个关键词当种子词，自动逐个打开「搜索分析」抓相关词（每词最多 50 页），也支持自定义词列表。"
   },
   {
+    title: "商品排行 · 分日下载",
+    desc: "商品排行源数据逐天自动下载，一天一个文件，带下载清单与补下跳过。"
+  },
+  {
+    title: "词根 + 需求分析",
+    desc: "对采集到的词离线拆词根、自动判需求类型（品类/属性/人群…）；可接 AI 拆词根并永久学习、不重复调用。"
+  },
+  {
     title: "一键导出 Excel",
-    desc: "纯前端生成 .xlsx（不依赖第三方库），另支持 CSV / 复制到剪贴板，直接接入本平台「源数据」导入。"
+    desc: "纯前端生成 .xlsx（不依赖第三方库），多工作表，另支持 CSV / 复制，直接接入本平台「源数据」导入。"
   },
   {
     title: "抗风控设计",
@@ -63,7 +71,7 @@ const INSTALL_STEPS = [
   },
   {
     title: "固定到工具栏",
-    body: "安装成功后点浏览器右上角拼图图标，把「生意参谋关键词采集助手」固定出来，方便随时打开。"
+    body: "安装成功后点浏览器右上角拼图图标，把「生意参谋采集助手」固定出来，方便随时打开。"
   }
 ];
 
@@ -81,7 +89,7 @@ export default function ToolsPage() {
       <PageHeader
         eyebrow="Toolbox"
         title="采集工具"
-        description="店铺运营的浏览器辅助工具集。当前提供「生意参谋关键词采集助手」——浏览器扩展，帮你把搜索排行与相关词批量采下来导出，再喂给本平台做分析。"
+        description="店铺运营的浏览器辅助工具集。当前提供「生意参谋采集助手」——浏览器扩展，帮你采关键词、衍生相关词、商品排行分日下载，并对采到的词离线拆词根、判需求，再喂给本平台做分析。"
       />
 
       <section className="tool-card">
