@@ -1,19 +1,21 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/PageHeader";
 
-const VERSION = "1.4.1";
+const VERSION = "1.6.0";
 const ZIP_URL = `/downloads/sycm-keyword-v${VERSION}.zip`;
 const CRX_URL = `/downloads/sycm-keyword-v${VERSION}.crx`;
 
 export const metadata: Metadata = {
-  title: "关键词采集助手 — 三阶引擎",
-  description: "生意参谋搜索排行热词采集与搜索分析相关词衍生，一键导出 Excel。"
+  title: "生意参谋采集助手 — 三阶引擎",
+  description: "生意参谋关键词采集、相关词衍生、商品排行分日下载、词根+需求分析（AI），一键导出 Excel。"
 };
 
 const features: Array<{ title: string; desc: string }> = [
   { title: "热词榜采集", desc: "市场·搜索排行，随机间隔自动翻页采全部关键词，可选 30天 / 7天 等时间范围。" },
   { title: "相关词衍生", desc: "逐个关键词打开搜索分析，按 30 天抓相关词，最多每词 50 页。" },
-  { title: "一键导出", desc: "导出 Excel / CSV / 复制，排名补全、指标干净规范。" },
+  { title: "商品排行·分日下载", desc: "商品排行源数据逐天自动下载，一天一个文件，带下载清单与补下跳过。" },
+  { title: "词根 + 需求分析", desc: "对采集到的词离线拆词根、自动判需求类型；可接 AI 拆词根并永久学习、不重复调用。" },
+  { title: "一键导出", desc: "导出 Excel / CSV / 复制，多工作表、排名补全、指标干净规范。" },
   { title: "稳定可控", desc: "随机点击防风控、随时停止 / 清空、关弹窗后台继续、完成系统通知。" }
 ];
 
@@ -28,7 +30,9 @@ const installSteps: string[] = [
 const usageSteps: string[] = [
   "登录并进入 生意参谋 → 市场 → 搜索排行，选好类目和时间。",
   "点插件图标 →「开始采集」自动翻页采全部热词 → 导出 Excel。",
-  "需要相关词时用「衍生采集」：用已采的词或自定义词作种子，按 30 天逐词抓相关词导出。"
+  "需要相关词时用「衍生采集」：用已采的词或自定义词作种子，按 30 天逐词抓相关词导出。",
+  "商品排行：进 商品 → 商品排行，在「商品排行」标签设好日期区间，逐天自动下载源数据。",
+  "采完词后在「关键词」标签底部点「生成词根 + 需求分析」，离线拆词根、判需求并导出；需更准可在设置里启用 AI（DeepSeek，填自己的 key）。"
 ];
 
 export default function KeywordCollectorPage() {
@@ -36,8 +40,8 @@ export default function KeywordCollectorPage() {
     <div className="kw-tool">
       <PageHeader
         eyebrow="Chrome 插件 · 工具"
-        title="生意参谋关键词采集助手"
-        description="搜索排行热词采集 · 搜索分析相关词衍生 · 一键导出 Excel"
+        title="生意参谋采集助手"
+        description="关键词采集 · 相关词衍生 · 商品排行分日下载 · 词根+需求分析（AI） · 一键导出 Excel"
         actions={
           <>
             <a className="button-link" href={ZIP_URL} download>
@@ -63,7 +67,7 @@ export default function KeywordCollectorPage() {
         <p className="management-section-label">下载安装（推荐解压版）</p>
         <div className="kw-dl">
           <a className="button-link" href={ZIP_URL} download>
-            ⬇ 下载解压版（.zip · 约 220KB）
+            ⬇ 下载解压版（.zip · 约 540KB）
           </a>
           <a className="button-link outline-button" href={CRX_URL} download>
             ⬇ CRX 安装包

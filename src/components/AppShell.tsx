@@ -23,7 +23,7 @@ const navItems = [
   { href: "/prefill", label: "预填写表", icon: Settings2 },
   { href: "/versions", label: "版本留痕", icon: History },
   { href: "/management", label: "管理", icon: Brain },
-  { href: "/tools/keyword-collector", label: "关键词采集工具", icon: Download }
+  { href: "/tools/keyword-collector", label: "采集助手工具", icon: Download }
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
