@@ -3365,3 +3365,25 @@ button.review-metric {
 tr.row-selected td {
   background: rgba(246, 198, 95, 0.08);
 }
+
+
+/* 人群计划·精简加载提示 */
+.audience-trim-hint {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 12px;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.audience-trim-hint button {
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--brand);
+  cursor: pointer;
+  font-size: 12px;
+  min-height: 28px;
+  padding: 0 10px;
+}

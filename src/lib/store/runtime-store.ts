@@ -200,10 +200,13 @@ export const getBreakthroughResults = cache(async (): Promise<ProductBreakthroug
 });
 
 /** 人群计划切片：只取 audiencePlans（最大的一段）。 */
-export const getAudiencePlans = cache(async (): Promise<AudiencePlanItem[]> => {
+export const getAudiencePlans = cache(async (minClicks = 0): Promise<AudiencePlanItem[]> => {
   const tenantId = await requireTenantId();
   const row = await prisma.calcRun.findUnique({ where: { tenantId }, select: { audiencePlans: true } });
-  return (row?.audiencePlans as unknown as AudiencePlanItem[]) ?? [];
+  const all = (row?.audiencePlans as unknown as AudiencePlanItem[]) ?? [];
+  // minClicks>0：服务端按点击门槛裁剪，人群计划页首屏 RSC 只传达阈值的计划（列以低点击噪声为主，
+  // 默认门槛下省 ~86% 传输/反序列化）；需要全量时前端按钮拉 /api/dashboards/audience-plan。
+  return minClicks > 0 ? all.filter((plan) => plan.clicks >= minClicks) : all;
 });
 
 /** 为某租户构造初始（空白业务数据）工作区。 */
@@ -297,6 +300,33 @@ function workspaceUpsertOp(tenantId: string, data: WorkspaceData) {
 
 async function saveWorkspace(tenantId: string, data: WorkspaceData): Promise<void> {
   await workspaceUpsertOp(tenantId, data);
+}
+
+/**
+ * 在每租户 advisory lock + 事务内对 blob 做 read-modify-write，序列化同租户并发写——
+ * 防并发导入/重试相互覆盖丢失 import 记录与版本留痕。锁内**重新读**（绕过请求级 cache 的旧快照），
+ * `pg_advisory_xact_lock` 随事务提交自动释放。
+ * 仅包 blob 元数据改动；分日表 upsert / prune 等重活留在锁外（ON CONFLICT 行级安全、独立表），
+ * 避免长事务持锁与 5s 交互事务超时。mutate 回调必须同步、只改传入的 state。
+ */
+async function mutateWorkspaceLocked<T>(
+  tenantId: string,
+  mutate: (state: WorkspaceData) => T
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`;
+    const row = await tx.workspace.findUnique({ where: { tenantId } });
+    if (!row) {
+      throw new Error("工作区不存在，无法写入");
+    }
+    const state = row.data as unknown as WorkspaceData;
+    const result = mutate(state);
+    await tx.workspace.update({
+      where: { tenantId },
+      data: { data: state as unknown as Prisma.InputJsonValue }
+    });
+    return result;
+  });
 }
 
 /** 取当前请求租户的工作区（读 cookie → 加载 blob）。 */
@@ -406,7 +436,7 @@ export async function addImportBatch(input: {
   // 分日合并导入（生意参谋多日表）走分日 upsert、天然累积，不受"仅保留最新一次数据集"约束。
   skipDatasetGuard?: boolean;
 }): Promise<ImportBatch> {
-  const { tenantId, state } = await ctx();
+  const tenantId = await requireTenantId();
   if (!input.skipDatasetGuard) {
     const preflightError = validateImportDatasetWriteOn({
       datasetTotalBytes: input.datasetTotalBytes
@@ -428,56 +458,56 @@ export async function addImportBatch(input: {
     createdAt: new Date().toISOString(),
     validation: input.validation
   };
-  // 分日合并不参与"单数据集"跟踪（数据在分日表，按日累积），避免改 currentTenantDatasetId 后
-  // 让下一次普通上传误触 409 守卫。
-  if (!input.skipDatasetGuard) {
-    state.currentTenantDatasetId = input.datasetId;
-    state.currentTenantDatasetBytes = input.datasetTotalBytes;
-  }
-  // 每个源类型各留最新一份（与数据集/其它源无关）：上传某类型只替换该类型，其它源保留。
-  state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
+
+  // 重活：商品/推广/人群分日表 upsert 放 blob 锁外（ON CONFLICT 行级安全、独立表，不碰 blob）。
+  // 达摩盘是 blob 快照，留到锁内写。
+  let damoSources: ReturnType<typeof mapImportedRows> | null = null;
+  let didIngestDaily = false;
   if (input.validation.ok && input.parsedHeaders && input.parsedRows) {
-    // 商品/推广/人群落 v2 分日表（按日 upsert 累积），不进 blob；达摩盘无日期、保持快照留 blob。
-    const retention = state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS;
     if (input.reportType === "product_source") {
-      await upsertDailyProductMetrics(
-        tenantId,
-        mapProductDailyRows(input.parsedHeaders, input.parsedRows)
-      );
-      await pruneAllDailyMetrics(tenantId, retention);
+      await upsertDailyProductMetrics(tenantId, mapProductDailyRows(input.parsedHeaders, input.parsedRows));
+      didIngestDaily = true;
     } else if (input.reportType === "promotion_product_source") {
-      await upsertDailyPromotionMetrics(
-        tenantId,
-        mapPromotionDailyRows(input.parsedHeaders, input.parsedRows)
-      );
-      await pruneAllDailyMetrics(tenantId, retention);
+      await upsertDailyPromotionMetrics(tenantId, mapPromotionDailyRows(input.parsedHeaders, input.parsedRows));
+      didIngestDaily = true;
     } else if (input.reportType === "audience_source") {
-      await upsertDailyAudienceMetrics(
-        tenantId,
-        mapAudienceDailyRows(input.parsedHeaders, input.parsedRows)
-      );
-      await pruneAllDailyMetrics(tenantId, retention);
+      await upsertDailyAudienceMetrics(tenantId, mapAudienceDailyRows(input.parsedHeaders, input.parsedRows));
+      didIngestDaily = true;
     } else {
-      // damo_product_source：当期快照，留 blob。
-      state.uploadedSources = {
-        ...state.uploadedSources,
-        ...mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows)
-      };
+      damoSources = mapImportedRows(input.reportType, input.parsedHeaders, input.parsedRows);
     }
   }
-  pushVersion(state, {
-    id: `version-import-${Date.now()}`,
-    cycleId: input.cycleId,
-    shopId: state.context.shop.id,
-    kind: "import",
-    title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
-    createdAt: batch.createdAt,
-    createdBy: state.context.user.name,
-    summary: input.validation.ok
-      ? `当前租户数据集 ${formatMegabytes(input.datasetTotalBytes)}，识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体。`
-      : input.validation.errors.join("；")
+
+  // blob 元数据改动放 advisory lock + 事务内（序列化同租户并发导入，防丢 import 记录/版本留痕）。
+  const retention = await mutateWorkspaceLocked(tenantId, (state) => {
+    // 分日合并不参与"单数据集"跟踪（数据在分日表，按日累积），避免改 currentTenantDatasetId 后
+    // 让下一次普通上传误触 409 守卫。
+    if (!input.skipDatasetGuard) {
+      state.currentTenantDatasetId = input.datasetId;
+      state.currentTenantDatasetBytes = input.datasetTotalBytes;
+    }
+    // 每个源类型各留最新一份（与数据集/其它源无关）：上传某类型只替换该类型，其它源保留。
+    state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
+    if (damoSources) {
+      state.uploadedSources = { ...state.uploadedSources, ...damoSources };
+    }
+    pushVersion(state, {
+      id: `version-import-${Date.now()}`,
+      cycleId: input.cycleId,
+      shopId: state.context.shop.id,
+      kind: "import",
+      title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
+      createdAt: batch.createdAt,
+      createdBy: state.context.user.name,
+      summary: input.validation.ok
+        ? `当前租户数据集 ${formatMegabytes(input.datasetTotalBytes)}，识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体。`
+        : input.validation.errors.join("；")
+    });
+    return state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS;
   });
-  await saveWorkspace(tenantId, state);
+  if (didIngestDaily) {
+    await pruneAllDailyMetrics(tenantId, retention);
+  }
   return batch;
 }
 
@@ -515,7 +545,7 @@ export async function finalizeImportBatch(input: {
   ingestedRowCount?: number;
   damoSourceRows?: DamoProductRow[];
 }): Promise<ImportBatch> {
-  const { tenantId, state } = await ctx();
+  const tenantId = await requireTenantId();
   const batch: ImportBatch = {
     id: `import-${input.reportType}-${Date.now()}`,
     cycleId: input.cycleId,
@@ -528,34 +558,36 @@ export async function finalizeImportBatch(input: {
     createdAt: new Date().toISOString(),
     validation: input.validation
   };
-  state.currentTenantDatasetId = input.datasetId;
-  state.currentTenantDatasetBytes = input.datasetTotalBytes;
-  state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
-  if (input.reportType === "damo_product_source") {
+  // blob 元数据改动放 advisory lock + 事务内（序列化同租户并发导入，防丢 import 记录/版本留痕）。
+  const retention = await mutateWorkspaceLocked(tenantId, (state) => {
+    state.currentTenantDatasetId = input.datasetId;
+    state.currentTenantDatasetBytes = input.datasetTotalBytes;
+    state.imports = [batch, ...state.imports.filter((item) => item.reportType !== input.reportType)];
     // 达摩盘快照入 blob（无日期，不进分日表）；仅校验通过才覆盖，避免坏数据冲掉既有快照。
-    if (input.validation.ok && input.damoSourceRows) {
+    if (input.reportType === "damo_product_source" && input.validation.ok && input.damoSourceRows) {
       state.uploadedSources = {
         ...state.uploadedSources,
         damo_product_source: input.damoSourceRows
       };
     }
-  } else if (input.validation.ok) {
-    // 商品/推广/人群分日行已 ingest 入库，这里按保留策略清理一次。
-    await pruneAllDailyMetrics(tenantId, state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS);
-  }
-  pushVersion(state, {
-    id: `version-import-${Date.now()}`,
-    cycleId: input.cycleId,
-    shopId: state.context.shop.id,
-    kind: "import",
-    title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
-    createdAt: batch.createdAt,
-    createdBy: state.context.user.name,
-    summary: input.validation.ok
-      ? `识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体（分批上传）。`
-      : input.validation.errors.join("；")
+    pushVersion(state, {
+      id: `version-import-${Date.now()}`,
+      cycleId: input.cycleId,
+      shopId: state.context.shop.id,
+      kind: "import",
+      title: `${input.validation.ok ? "通过" : "失败"}：${input.fileName}`,
+      createdAt: batch.createdAt,
+      createdBy: state.context.user.name,
+      summary: input.validation.ok
+        ? `识别 ${input.validation.rowCount} 行，${input.validation.uniqueEntityCount} 个主体（分批上传）。`
+        : input.validation.errors.join("；")
+    });
+    return state.dailyRetentionDays ?? DEFAULT_DAILY_RETENTION_DAYS;
   });
-  await saveWorkspace(tenantId, state);
+  // 分日行已 ingest 入库；按保留策略清理一次放锁外（独立表、删除幂等，不必持 blob 锁）。
+  if (input.reportType !== "damo_product_source" && input.validation.ok) {
+    await pruneAllDailyMetrics(tenantId, retention);
+  }
   return batch;
 }
 

@@ -11,9 +11,35 @@ import {
 import { formatNumber, formatPercent } from "@/lib/format";
 import type { AudiencePlanItem } from "@/lib/types/domain";
 
-export function AudiencePlanTable({ items }: { items: AudiencePlanItem[] }) {
+export function AudiencePlanTable({
+  items,
+  serverMinClicks = 0
+}: {
+  items: AudiencePlanItem[];
+  serverMinClicks?: number;
+}) {
   const [minimumClicks, setMinimumClicks] = useState(100);
-  const grouped = useMemo(() => groupAudiencePlans(items), [items]);
+  const [allItems, setAllItems] = useState<AudiencePlanItem[] | null>(null);
+  const [loadingAll, setLoadingAll] = useState(false);
+  // 首屏只拿到点击≥serverMinClicks 的精简集；需要看低点击计划时一键拉全量。
+  const trimmed = serverMinClicks > 0 && allItems === null;
+  const effectiveItems = allItems ?? items;
+  const grouped = useMemo(() => groupAudiencePlans(effectiveItems), [effectiveItems]);
+
+  async function loadAll() {
+    setLoadingAll(true);
+    try {
+      const res = await fetch("/api/dashboards/audience-plan");
+      const json = (await res.json().catch(() => null)) as
+        | { data?: { items?: AudiencePlanItem[] } }
+        | null;
+      if (json?.data?.items) {
+        setAllItems(json.data.items);
+      }
+    } finally {
+      setLoadingAll(false);
+    }
+  }
 
   return (
     <>
@@ -33,6 +59,14 @@ export function AudiencePlanTable({ items }: { items: AudiencePlanItem[] }) {
           />
         </label>
         <b>按 ROI 降序</b>
+        {trimmed ? (
+          <span className="audience-trim-hint">
+            已精简：仅显示点击 ≥ {serverMinClicks} 的计划
+            <button type="button" onClick={loadAll} disabled={loadingAll}>
+              {loadingAll ? "加载中…" : "加载全部计划"}
+            </button>
+          </span>
+        ) : null}
       </section>
 
       <section className="audience-stack">

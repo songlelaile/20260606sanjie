@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import type {
@@ -34,44 +35,59 @@ function dailyWhere(
  * - 读：把窗口内分日数据聚合成"每商品一行"的 ProductSourceRow，喂给现有三阶算法。
  */
 
-const UPSERT_CHUNK = 800;
+// 单条 INSERT...ON CONFLICT 的批大小。无 OR 上限约束，受 Postgres 65535 bind 参数限制：
+// 每行 bind = 列数-1（updatedAt 用字面量 now() 不占 bind）→ 商品 15/行(上限 4369)、人群 14/行(4681)、
+// 推广 9/行(7281)。取 2000 留 ~2× 余量；DB 执行成本与 chunk 无关，调大只为减少远端 RDS 往返。
+const UPSERT_CHUNK = 2000;
+
+// 进 chunk 前按唯一键去重（保最后一条，与 ON CONFLICT 覆盖语义一致）。正常路径客户端 mapper 已去重，
+// 此处给单条 INSERT...ON CONFLICT 兜底：同一批出现重复唯一键会触发 PG "cannot affect row a second
+// time" 致整批失败。用 \0 分隔避免值含空格时的拼接碰撞。O(n) Map，对 12 万行可忽略。
+function dedupeByKey<T>(rows: T[], keyOf: (r: T) => string): T[] {
+  const byKey = new Map<string, T>();
+  for (const r of rows) {
+    byKey.set(keyOf(r), r);
+  }
+  return [...byKey.values()];
+}
 
 /**
- * upsert 一批分日商品指标（同一批内按 (productId,date) 已去重）。
- * 批量化：分块用事务 deleteMany(按精确键集) + createMany，避免逐行 N 次往返。
+ * upsert 一批分日商品指标（同一批内按 (productId,date) 已去重，与 @@unique 对齐）。
+ * 单条 INSERT ... ON CONFLICT (tenantId,productId,date) DO UPDATE：冲突即覆盖，新键追加。
  */
 export async function upsertDailyProductMetrics(
   tenantId: string,
   rows: DailyProductMetricInput[]
 ): Promise<number> {
-  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
-    const chunk = rows.slice(i, i + UPSERT_CHUNK);
-    await prisma.$transaction([
-      prisma.dailyProductMetric.deleteMany({
-        where: {
-          tenantId,
-          OR: chunk.map((r) => ({ productId: r.productId, date: r.date }))
-        }
-      }),
-      prisma.dailyProductMetric.createMany({
-        data: chunk.map((r) => ({
-          tenantId,
-          productId: r.productId,
-          date: r.date,
-          productName: r.productName,
-          visitors: Math.round(r.visitors),
-          views: Math.round(r.views),
-          averageStaySeconds: r.averageStaySeconds,
-          bounceRate: r.bounceRate,
-          paymentBuyers: Math.round(r.paymentBuyers),
-          paymentAmount: r.paymentAmount,
-          productPaymentConversionRate: r.productPaymentConversionRate,
-          refundAmount: r.refundAmount,
-          searchGuidedPaymentConversionRate: r.searchGuidedPaymentConversionRate,
-          searchGuidedVisitors: Math.round(r.searchGuidedVisitors)
-        }))
-      })
-    ]);
+  const deduped = dedupeByKey(rows, (r) => `${r.productId} ${r.date}`);
+  for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
+    const chunk = deduped.slice(i, i + UPSERT_CHUNK);
+    const values = chunk.map(
+      (r) => Prisma.sql`(${randomUUID()}, ${tenantId}, ${r.productId}, ${r.date}, ${r.productName},
+        ${Math.round(r.visitors)}, ${Math.round(r.views)}, ${r.averageStaySeconds}, ${r.bounceRate},
+        ${Math.round(r.paymentBuyers)}, ${r.paymentAmount}, ${r.productPaymentConversionRate},
+        ${r.refundAmount}, ${r.searchGuidedPaymentConversionRate}, ${Math.round(r.searchGuidedVisitors)}, (now() AT TIME ZONE 'UTC'))`
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      INSERT INTO "DailyProductMetric"
+        ("id","tenantId","productId","date","productName","visitors","views","averageStaySeconds",
+         "bounceRate","paymentBuyers","paymentAmount","productPaymentConversionRate","refundAmount",
+         "searchGuidedPaymentConversionRate","searchGuidedVisitors","updatedAt")
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT ("tenantId","productId","date") DO UPDATE SET
+        "productName" = EXCLUDED."productName",
+        "visitors" = EXCLUDED."visitors",
+        "views" = EXCLUDED."views",
+        "averageStaySeconds" = EXCLUDED."averageStaySeconds",
+        "bounceRate" = EXCLUDED."bounceRate",
+        "paymentBuyers" = EXCLUDED."paymentBuyers",
+        "paymentAmount" = EXCLUDED."paymentAmount",
+        "productPaymentConversionRate" = EXCLUDED."productPaymentConversionRate",
+        "refundAmount" = EXCLUDED."refundAmount",
+        "searchGuidedPaymentConversionRate" = EXCLUDED."searchGuidedPaymentConversionRate",
+        "searchGuidedVisitors" = EXCLUDED."searchGuidedVisitors",
+        "updatedAt" = (now() AT TIME ZONE 'UTC')
+    `);
   }
   return rows.length;
 }
@@ -84,11 +100,19 @@ export async function pruneDailyProductMetrics(tenantId: string, keepDays: numbe
   if (!keepDays || keepDays <= 0) {
     return 0;
   }
-  const range = await getProductDailyDateRange(tenantId);
-  if (!range) {
+  // prune 只需 min/max，避免 getProductDailyDateRange 的 groupBy(distinct 天数) 多一次全扫。
+  const bounds = await prisma.dailyProductMetric.aggregate({
+    where: { tenantId },
+    _min: { date: true },
+    _max: { date: true }
+  });
+  if (!bounds._max.date || !bounds._min.date) {
     return 0;
   }
-  const cutoff = addDays(range.end, -(keepDays - 1)); // 保留 [end-keepDays+1, end]
+  const cutoff = addDays(bounds._max.date, -(keepDays - 1)); // 保留 [end-keepDays+1, end]
+  if (cutoff <= bounds._min.date) {
+    return 0; // 保留期≥数据跨度，无可删，跳过空 deleteMany
+  }
   const result = await prisma.dailyProductMetric.deleteMany({
     where: { tenantId, date: { lt: cutoff } }
   });
@@ -154,7 +178,7 @@ export async function aggregateProductForCycle(
   const rows = await prisma.$queryRaw<AggRawRow[]>(Prisma.sql`
     SELECT
       "productId",
-      (array_agg("productName" ORDER BY "date" DESC))[1] AS "productName",
+      (MAX(ARRAY["date", "productName"]))[2] AS "productName",
       MAX("date") AS "lastDate",
       SUM("visitors")::float8 AS "visitors",
       SUM("views")::float8 AS "views",
@@ -400,25 +424,25 @@ export async function upsertDailyPromotionMetrics(
   tenantId: string,
   rows: DailyPromotionMetricInput[]
 ): Promise<number> {
-  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
-    const chunk = rows.slice(i, i + UPSERT_CHUNK);
-    await prisma.$transaction([
-      prisma.dailyPromotionMetric.deleteMany({
-        where: { tenantId, OR: chunk.map((r) => ({ subjectId: r.subjectId, date: r.date })) }
-      }),
-      prisma.dailyPromotionMetric.createMany({
-        data: chunk.map((r) => ({
-          tenantId,
-          subjectId: r.subjectId,
-          date: r.date,
-          subjectName: r.subjectName,
-          impressions: Math.round(r.impressions),
-          clicks: Math.round(r.clicks),
-          cost: r.cost,
-          roi: r.roi
-        }))
-      })
-    ]);
+  const deduped = dedupeByKey(rows, (r) => `${r.subjectId} ${r.date}`);
+  for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
+    const chunk = deduped.slice(i, i + UPSERT_CHUNK);
+    const values = chunk.map(
+      (r) => Prisma.sql`(${randomUUID()}, ${tenantId}, ${r.subjectId}, ${r.date}, ${r.subjectName},
+        ${Math.round(r.impressions)}, ${Math.round(r.clicks)}, ${r.cost}, ${r.roi}, (now() AT TIME ZONE 'UTC'))`
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      INSERT INTO "DailyPromotionMetric"
+        ("id","tenantId","subjectId","date","subjectName","impressions","clicks","cost","roi","updatedAt")
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT ("tenantId","subjectId","date") DO UPDATE SET
+        "subjectName" = EXCLUDED."subjectName",
+        "impressions" = EXCLUDED."impressions",
+        "clicks" = EXCLUDED."clicks",
+        "cost" = EXCLUDED."cost",
+        "roi" = EXCLUDED."roi",
+        "updatedAt" = (now() AT TIME ZONE 'UTC')
+    `);
   }
   return rows.length;
 }
@@ -504,7 +528,7 @@ export async function aggregatePromotionForCycle(
   const rows = await prisma.$queryRaw<PromoRawRow[]>(Prisma.sql`
     SELECT
       "subjectId",
-      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
+      (MAX(ARRAY["date", "subjectName"]))[2] AS "subjectName",
       MAX("date") AS "lastDate",
       SUM("impressions")::float8 AS "impressions",
       SUM("clicks")::float8 AS "clicks",
@@ -535,38 +559,32 @@ export async function upsertDailyAudienceMetrics(
   tenantId: string,
   rows: DailyAudienceMetricInput[]
 ): Promise<number> {
-  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
-    const chunk = rows.slice(i, i + UPSERT_CHUNK);
-    await prisma.$transaction([
-      prisma.dailyAudienceMetric.deleteMany({
-        where: {
-          tenantId,
-          OR: chunk.map((r) => ({
-            date: r.date,
-            planId: r.planId,
-            audienceName: r.audienceName,
-            subjectId: r.subjectId
-          }))
-        }
-      }),
-      prisma.dailyAudienceMetric.createMany({
-        data: chunk.map((r) => ({
-          tenantId,
-          date: r.date,
-          sceneId: r.sceneId,
-          sceneName: r.sceneName,
-          planId: r.planId,
-          planName: r.planName,
-          audienceName: r.audienceName,
-          subjectId: r.subjectId,
-          subjectName: r.subjectName,
-          clicks: Math.round(r.clicks),
-          roi: r.roi,
-          guidedPotentialCustomerRatio: r.guidedPotentialCustomerRatio,
-          newCustomerRatio: r.newCustomerRatio
-        }))
-      })
-    ]);
+  // 12 万行热路径：单条 INSERT ... ON CONFLICT(唯一键)。键 (date,planId,audienceName,subjectId) 与
+  // mapAudienceDailyRows 去重键一致，批内不会有重复冲突键。
+  const deduped = dedupeByKey(rows, (r) => [r.date, r.planId, r.audienceName, r.subjectId].join("\u0000"));
+  for (let i = 0; i < deduped.length; i += UPSERT_CHUNK) {
+    const chunk = deduped.slice(i, i + UPSERT_CHUNK);
+    const values = chunk.map(
+      (r) => Prisma.sql`(${randomUUID()}, ${tenantId}, ${r.date}, ${r.sceneId}, ${r.sceneName}, ${r.planId},
+        ${r.planName}, ${r.audienceName}, ${r.subjectId}, ${r.subjectName}, ${Math.round(r.clicks)},
+        ${r.roi}, ${r.guidedPotentialCustomerRatio}, ${r.newCustomerRatio}, (now() AT TIME ZONE 'UTC'))`
+    );
+    await prisma.$executeRaw(Prisma.sql`
+      INSERT INTO "DailyAudienceMetric"
+        ("id","tenantId","date","sceneId","sceneName","planId","planName","audienceName","subjectId",
+         "subjectName","clicks","roi","guidedPotentialCustomerRatio","newCustomerRatio","updatedAt")
+      VALUES ${Prisma.join(values)}
+      ON CONFLICT ("tenantId","date","planId","audienceName","subjectId") DO UPDATE SET
+        "sceneId" = EXCLUDED."sceneId",
+        "sceneName" = EXCLUDED."sceneName",
+        "planName" = EXCLUDED."planName",
+        "subjectName" = EXCLUDED."subjectName",
+        "clicks" = EXCLUDED."clicks",
+        "roi" = EXCLUDED."roi",
+        "guidedPotentialCustomerRatio" = EXCLUDED."guidedPotentialCustomerRatio",
+        "newCustomerRatio" = EXCLUDED."newCustomerRatio",
+        "updatedAt" = (now() AT TIME ZONE 'UTC')
+    `);
   }
   return rows.length;
 }
@@ -599,10 +617,10 @@ export async function aggregateAudienceForCycle(
   const rows = await prisma.$queryRaw<AudienceRawRow[]>(Prisma.sql`
     SELECT
       "planId", "audienceName", "subjectId",
-      (array_agg("sceneId" ORDER BY "date" DESC))[1] AS "sceneId",
-      (array_agg("sceneName" ORDER BY "date" DESC))[1] AS "sceneName",
-      (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
-      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
+      (MAX(ARRAY["date", "sceneId"]))[2] AS "sceneId",
+      (MAX(ARRAY["date", "sceneName"]))[2] AS "sceneName",
+      (MAX(ARRAY["date", "planName"]))[2] AS "planName",
+      (MAX(ARRAY["date", "subjectName"]))[2] AS "subjectName",
       MIN("date") AS "minDate", MAX("date") AS "maxDate",
       SUM("clicks")::float8 AS "clicks",
       SUM("roi" * "clicks")::float8 AS "roiClicks",
@@ -662,8 +680,8 @@ export async function sumAudienceWindowByGroup(
   return prisma.$queryRaw<AudienceWindowGroup[]>(Prisma.sql`
     SELECT
       "planId", "audienceName", "subjectId",
-      (array_agg("planName" ORDER BY "date" DESC))[1] AS "planName",
-      (array_agg("subjectName" ORDER BY "date" DESC))[1] AS "subjectName",
+      (MAX(ARRAY["date", "planName"]))[2] AS "planName",
+      (MAX(ARRAY["date", "subjectName"]))[2] AS "subjectName",
       SUM("clicks")::float8 AS "clicks",
       SUM("roi" * "clicks")::float8 AS "roiClicks",
       SUM("guidedPotentialCustomerRatio" * "clicks")::float8 AS "guidedW",
@@ -698,15 +716,25 @@ export async function pruneAllDailyMetrics(tenantId: string, keepDays: number): 
 }
 
 async function prunePromotion(tenantId: string, keepDays: number): Promise<void> {
-  const bounds = await prisma.dailyPromotionMetric.aggregate({ where: { tenantId }, _max: { date: true } });
-  if (!bounds._max.date) return;
+  const bounds = await prisma.dailyPromotionMetric.aggregate({
+    where: { tenantId },
+    _min: { date: true },
+    _max: { date: true }
+  });
+  if (!bounds._max.date || !bounds._min.date) return;
   const cutoff = addDays(bounds._max.date, -(keepDays - 1));
+  if (cutoff <= bounds._min.date) return; // 保留期≥数据跨度，跳过空删
   await prisma.dailyPromotionMetric.deleteMany({ where: { tenantId, date: { lt: cutoff } } });
 }
 
 async function pruneAudience(tenantId: string, keepDays: number): Promise<void> {
-  const bounds = await prisma.dailyAudienceMetric.aggregate({ where: { tenantId }, _max: { date: true } });
-  if (!bounds._max.date) return;
+  const bounds = await prisma.dailyAudienceMetric.aggregate({
+    where: { tenantId },
+    _min: { date: true },
+    _max: { date: true }
+  });
+  if (!bounds._max.date || !bounds._min.date) return;
   const cutoff = addDays(bounds._max.date, -(keepDays - 1));
+  if (cutoff <= bounds._min.date) return; // 保留期≥数据跨度，跳过空删
   await prisma.dailyAudienceMetric.deleteMany({ where: { tenantId, date: { lt: cutoff } } });
 }
