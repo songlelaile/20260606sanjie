@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "生意参谋 · 采集助手",
-  version: "1.6.0",
-  zipHref: "/downloads/sycm-keyword-collector-v1.6.0.zip",
-  downloadName: "生意参谋采集助手-v1.6.0.zip",
-  sizeLabel: "约 540 KB",
+  version: "1.7.0",
+  zipHref: "/downloads/sycm-keyword-collector-v1.7.0.zip",
+  downloadName: "生意参谋采集助手-v1.7.0.zip",
+  sizeLabel: "约 610 KB",
   platform: "Chrome / Edge 111+"
 };
 
@@ -175,6 +175,13 @@ export default function ToolsPage() {
         </div>
 
         <div className="tool-notes">
+          <div className="tool-note">
+            <ShieldCheck size={16} />
+            <span>
+              <strong>邀请制 · 需登录</strong>：插件已开启邀请制。打开插件若提示登录，请用<strong>邀请码</strong>在本站注册并登录，登录后插件自动解锁——
+              一个邀请码同时开通「三阶引擎 + 采集插件」（1 码 2 用）。
+            </span>
+          </div>
           <div className="tool-note">
             <ShieldCheck size={16} />
             <span>
