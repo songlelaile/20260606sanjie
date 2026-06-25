@@ -11,7 +11,8 @@ import type {
   AudienceSourceRow,
   DailyTrendPoint,
   ProductSourceRow,
-  PromotionProductRow
+  PromotionProductRow,
+  ReportType
 } from "@/lib/types/domain";
 
 /** 复用的 where 片段：租户 + 可选日期区间 + 可选商品集（下推到 SQL）。 */
@@ -713,6 +714,30 @@ export async function pruneAllDailyMetrics(tenantId: string, keepDays: number): 
   await pruneDailyProductMetrics(tenantId, keepDays);
   await prunePromotion(tenantId, keepDays);
   await pruneAudience(tenantId, keepDays);
+}
+
+/** reportType → 对应分日表名（达摩盘走 blob 快照，无分日表）。 */
+const DAILY_TABLE_BY_REPORT: Partial<Record<ReportType, string>> = {
+  product_source: "DailyProductMetric",
+  promotion_product_source: "DailyPromotionMetric",
+  audience_source: "DailyAudienceMetric"
+};
+
+/**
+ * 大批量 upsert/prune 后刷新该分日表统计信息：避免 planner 用过期统计选灾难性计划
+ * （导入 12 万行后管理看板渲染从 22s 退化即此问题，手动 VACUUM ANALYZE 后恢复 1.5s）。
+ * best-effort：失败只告警、绝不阻断导入。表名取自内部常量映射（非用户输入），故 $executeRawUnsafe 安全。
+ */
+export async function analyzeDailyTable(reportType: ReportType): Promise<void> {
+  const table = DAILY_TABLE_BY_REPORT[reportType];
+  if (!table) {
+    return;
+  }
+  try {
+    await prisma.$executeRawUnsafe(`ANALYZE "${table}"`);
+  } catch (error) {
+    console.warn(`[import] ANALYZE "${table}" 失败（不影响导入，仅本次统计信息未刷新）：`, error);
+  }
 }
 
 async function prunePromotion(tenantId: string, keepDays: number): Promise<void> {

@@ -25,6 +25,7 @@ import {
   aggregateAudienceForCycle,
   aggregateProductForCycle,
   aggregatePromotionForCycle,
+  analyzeDailyTable,
   clearAllDailyMetrics,
   getProductDailyDateRange,
   buildDailyTrendSeries,
@@ -507,6 +508,8 @@ export async function addImportBatch(input: {
   });
   if (didIngestDaily) {
     await pruneAllDailyMetrics(tenantId, retention);
+    // 大批量写入后刷新该表统计信息，避免后续看板/重算用过期统计选灾难性计划（22s 卡顿根因）。
+    await analyzeDailyTable(input.reportType);
   }
   return batch;
 }
@@ -587,6 +590,8 @@ export async function finalizeImportBatch(input: {
   // 分日行已 ingest 入库；按保留策略清理一次放锁外（独立表、删除幂等，不必持 blob 锁）。
   if (input.reportType !== "damo_product_source" && input.validation.ok) {
     await pruneAllDailyMetrics(tenantId, retention);
+    // 大批量写入后刷新该表统计信息，避免后续看板/重算用过期统计选灾难性计划（22s 卡顿根因）。
+    await analyzeDailyTable(input.reportType);
   }
   return batch;
 }
