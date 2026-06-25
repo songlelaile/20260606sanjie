@@ -35,6 +35,19 @@ export async function findAccount(
   };
 }
 
+/**
+ * 校验「已登录会话对应的账号是否仍然有效」（未被禁用、未被删除）。
+ * 供采集插件登录门槛端点 /api/auth/me 用：验签通过后再查一次库，
+ * 让管理员禁用/删除账号后即时生效，而不必等会话自然过期（最长 8h）。
+ * 只按用户名查、不校验密码（调用方已通过 HMAC 验签确认会话真实性）。
+ */
+export async function isAccountActive(username: string): Promise<boolean> {
+  const user = await prisma.user.findUnique({ where: { username: username.trim() } });
+  if (!user) return false;                 // 已删除
+  if (user.status === "disabled") return false; // 已禁用
+  return true;
+}
+
 /** 校验待注册账号的基本字段（长度、是否重名）。 */
 export async function validateRegistration(input: {
   username: string;

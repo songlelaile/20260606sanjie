@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, parseSession } from "@/lib/auth";
+import { isAccountActive } from "@/lib/accounts";
+
+// 要查库(Prisma)校验账号状态，固定 Node 运行时（Edge 跑不了 Prisma）。
+export const runtime = "nodejs";
 
 // 采集插件用来校验「当前是否已登录 shaozhuangai.com」的轻量端点。
 // 设计要点：
@@ -42,6 +46,19 @@ export async function GET(request: Request) {
   if (!session) {
     return NextResponse.json({ error: "未登录" }, { status: 401, headers: CORS });
   }
+
+  // 验签通过后再查账号是否仍有效：被禁用/删除的账号即时锁定（不等会话自然过期）。
+  // DB 暂时不可用时 fail-open（放行验签通过的会话），不因基础设施抖动误锁正常用户。
+  let active = true;
+  try {
+    active = await isAccountActive(session.username);
+  } catch {
+    active = true;
+  }
+  if (!active) {
+    return NextResponse.json({ error: "账号已停用" }, { status: 401, headers: CORS });
+  }
+
   return NextResponse.json(
     {
       data: {

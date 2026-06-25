@@ -42,13 +42,27 @@ export function canAccess(role: Role, pathname: string): boolean {
 // parseSession 先验签再信任，验签失败一律当未登录（杜绝伪造 role/tenantId 越权）。
 // 用 Web Crypto，client / server / 中间件 edge 运行时均可用；仅在调用时执行，不在模块加载期跑。
 // ⚠️ 生产必须设置 SESSION_SECRET 环境变量；缺省的开发回退值是公开的，等于无保护。
-const SESSION_SECRET = process.env.SESSION_SECRET ?? "sanjie-dev-insecure-secret-change-me";
+const DEV_FALLBACK_SECRET = "sanjie-dev-insecure-secret-change-me";
+const SESSION_SECRET = process.env.SESSION_SECRET ?? DEV_FALLBACK_SECRET;
 
 const sessionEncoder = new TextEncoder();
 let hmacKeyPromise: Promise<CryptoKey> | null = null;
 
 function getHmacKey(): Promise<CryptoKey> {
   if (!hmacKeyPromise) {
+    // 生产环境必须显式配置一个高强度 SESSION_SECRET。若缺省回落到上面这个公开默认值，
+    // 任何人都能伪造任意 role/tenantId 的有效会话（同时击穿网站登录与采集插件门槛）——
+    // 直接 fail-fast，宁可启动即报错也不带病运行。
+    // 仅在服务端检查：客户端 bundle 里 process.env.SESSION_SECRET 必为 undefined，不能据此抛错。
+    if (
+      typeof window === "undefined" &&
+      process.env.NODE_ENV === "production" &&
+      SESSION_SECRET === DEV_FALLBACK_SECRET
+    ) {
+      throw new Error(
+        "SESSION_SECRET 未配置：生产环境必须设置一个高强度随机值（openssl rand -hex 32），否则会话可被伪造。"
+      );
+    }
     hmacKeyPromise = crypto.subtle.importKey(
       "raw",
       sessionEncoder.encode(SESSION_SECRET),
