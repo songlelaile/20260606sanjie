@@ -51,7 +51,7 @@ export function AppShell({
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <Link href={home} className="brand" aria-label="三阶引擎">
+        <Link href={home} prefetch={false} className="brand" aria-label="三阶引擎">
           <span className="brand-mark">
             <BarChart3 size={23} />
           </span>
@@ -65,7 +65,12 @@ export function AppShell({
             const Icon = item.icon;
             const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
-              <Link key={item.href} href={item.href} className={clsx("nav-item", active && "active")}>
+              <Link
+                key={item.href}
+                href={item.href}
+                prefetch={false}
+                className={clsx("nav-item", active && "active")}
+              >
                 <Icon size={18} />
                 <span>{item.label}</span>
               </Link>
