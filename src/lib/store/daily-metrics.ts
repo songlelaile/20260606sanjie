@@ -129,20 +129,18 @@ export async function clearDailyProductMetrics(tenantId: string): Promise<void> 
 export async function getProductDailyDateRange(
   tenantId: string
 ): Promise<{ start: string; end: string; days: number } | null> {
-  const bounds = await prisma.dailyProductMetric.aggregate({
-    where: { tenantId },
-    _min: { date: true },
-    _max: { date: true }
-  });
-  if (!bounds._min.date || !bounds._max.date) {
+  // 单条 SQL 同时取 min/max/不同日期数（覆盖索引 (tenantId,date)），
+  // 替代原先 aggregate + groupBy(date) 两次往返（后者对全表做 DISTINCT 扫描）。
+  const rows = await prisma.$queryRaw<{ start: string | null; end: string | null; days: bigint }[]>(Prisma.sql`
+    SELECT MIN("date") AS "start", MAX("date") AS "end", COUNT(DISTINCT "date") AS "days"
+    FROM "DailyProductMetric"
+    WHERE "tenantId" = ${tenantId}
+  `);
+  const row = rows[0];
+  if (!row || !row.start || !row.end) {
     return null;
   }
-  // 不同日期数（≤保留天数）：DB 端按 date 分组取行数。
-  const distinctDays = await prisma.dailyProductMetric.groupBy({
-    by: ["date"],
-    where: { tenantId }
-  });
-  return { start: bounds._min.date, end: bounds._max.date, days: distinctDays.length };
+  return { start: row.start, end: row.end, days: Number(row.days) };
 }
 
 /**
