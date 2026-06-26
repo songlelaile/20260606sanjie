@@ -38,11 +38,26 @@ function readCookie(cookieHeader: string | null, name: string): string | undefin
   return undefined;
 }
 
+// 先按原样验签，失败再 decodeURIComponent 解一层重试。
+// 原因：Next 写 cookie 时对值做了一层 encodeURIComponent，站点自身读 cookie 会自动解码，
+// 但采集插件用 chrome.cookies 取到的是「编码后的原始值」直接塞进 x-sanjie-session 头，
+// 不解这层码签名就对不上 → 401（表现为插件「登录已过期」）。两条路都兼容。
+async function resolveSession(rawToken: string | undefined) {
+  if (!rawToken) return null;
+  const s = await parseSession(rawToken);
+  if (s) return s;
+  try {
+    return await parseSession(decodeURIComponent(rawToken));
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const headerToken = request.headers.get("x-sanjie-session") ?? undefined;
   const value = headerToken || readCookie(request.headers.get("cookie"), SESSION_COOKIE);
 
-  const session = await parseSession(value);
+  const session = await resolveSession(value);
   if (!session) {
     return NextResponse.json({ error: "未登录" }, { status: 401, headers: CORS });
   }
