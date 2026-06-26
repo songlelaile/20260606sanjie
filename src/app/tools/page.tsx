@@ -16,11 +16,11 @@ export const metadata: Metadata = {
 
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
-  name: "生意参谋 · 采集助手",
-  version: "1.7.2",
-  zipHref: "/downloads/sycm-keyword-collector-v1.7.2.zip",
-  downloadName: "生意参谋采集助手-v1.7.2.zip",
-  sizeLabel: "约 620 KB",
+  name: "少壮AI自动化",
+  version: "1.8.0",
+  zipHref: "/downloads/sycm-keyword-collector-v1.8.0.zip",
+  downloadName: "少壮AI自动化-v1.8.0.zip",
+  sizeLabel: "约 690 KB",
   platform: "Chrome / Edge 111+"
 };
 
