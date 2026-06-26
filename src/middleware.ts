@@ -4,8 +4,8 @@ import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 登录页与认证接口放行
-  if (pathname === "/login" || pathname.startsWith("/api/auth/")) {
+  // 登录页、认证接口、公开隐私政策放行（/privacy 供 Chrome 商店与未登录用户查看）
+  if (pathname === "/login" || pathname === "/privacy" || pathname.startsWith("/api/auth/")) {
     return NextResponse.next();
   }
 
