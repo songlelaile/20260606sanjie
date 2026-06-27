@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.8.0",
-  zipHref: "/downloads/sycm-keyword-collector-v1.8.0.zip",
-  downloadName: "少壮AI自动化-v1.8.0.zip",
-  sizeLabel: "约 690 KB",
+  version: "1.8.2",
+  zipHref: "/downloads/sycm-keyword-collector-v1.8.2.zip",
+  downloadName: "少壮AI自动化-v1.8.2.zip",
+  sizeLabel: "约 679 KB",
   platform: "Chrome / Edge 111+"
 };
 
