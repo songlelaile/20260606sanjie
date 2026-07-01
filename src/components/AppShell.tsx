@@ -7,6 +7,7 @@ import {
   DatabaseZap,
   LineChart,
   LogOut,
+  Network,
   Puzzle,
   Settings2,
   Target
@@ -22,7 +23,8 @@ const TENANT_NAV = [
   { href: "/dashboards/audience-plan", label: "人群计划", icon: LineChart },
   { href: "/imports", label: "数据导入", icon: DatabaseZap },
   { href: "/prefill", label: "预填写表", icon: Settings2 },
-  { href: "/tools", label: "采集工具", icon: Puzzle }
+  { href: "/tools", label: "采集工具", icon: Puzzle },
+  { href: "/models", label: "模型网关", icon: Network }
 ];
 
 // 管理版 = 租户版全部功能 + 多一个「管理」入口

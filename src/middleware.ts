@@ -5,7 +5,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // 登录页、认证接口、公开隐私政策放行（/privacy 供 Chrome 商店与未登录用户查看）
-  if (pathname === "/login" || pathname === "/privacy" || pathname.startsWith("/api/auth/")) {
+  if (pathname === "/login" || pathname === "/privacy" || pathname.startsWith("/api/auth/") || pathname.startsWith("/v1/")) {
     return NextResponse.next();
   }
 
