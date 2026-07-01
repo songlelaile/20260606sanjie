@@ -20,7 +20,7 @@ const COLLECTOR = {
   version: "1.8.2",
   zipHref: "/downloads/sycm-keyword-collector-v1.8.2.zip",
   downloadName: "少壮AI自动化-v1.8.2.zip",
-  sizeLabel: "约 679 KB",
+  sizeLabel: "约 757 KB",
   platform: "Chrome / Edge 111+"
 };
 
