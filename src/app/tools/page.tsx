@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { CopyAddress } from "@/components/tools/CopyAddress";
 
 export const metadata: Metadata = {
-  title: "采集工具 · 三阶引擎"
+  title: "AI 自动化工具 · 三阶引擎"
 };
 
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
@@ -26,45 +26,51 @@ const COLLECTOR = {
 
 const FEATURES = [
   {
-    title: "热词榜采集",
-    desc: "在「市场 · 搜索排行」页，按你选好的类目与时间，随机间隔自动翻页，采全当前榜单关键词及其指标。"
+    title: "关键词榜单采集",
+    desc: "在「生意参谋 · 市场 · 搜索排行」按类目和时间自动翻页，采集关键词、搜索人气、点击率、转化等指标。"
   },
   {
-    title: "相关词衍生",
-    desc: "把每个关键词当种子词，自动逐个打开「搜索分析」抓相关词（每词最多 50 页），也支持自定义词列表。"
+    title: "相关词衍生采集",
+    desc: "把已采关键词或自定义词表当种子词，逐词进入「搜索分析」抓相关词，支持最多页数、停止续采和单独导出。"
   },
   {
-    title: "商品排行 · 分日下载",
-    desc: "商品排行源数据逐天自动下载，一天一个文件，带下载清单与补下跳过。"
+    title: "商品排行分日下载",
+    desc: "在「商品排行」按日期逐天点页面自带下载，一天一个文件，带下载清单，重复日期跳过、缺失日期可补下。"
   },
   {
-    title: "词根 + 需求分析",
-    desc: "对采集到的词离线拆词根、自动判需求类型（品类/属性/人群…）；可接 AI 拆词根并永久学习、不重复调用。"
+    title: "市场排行商品榜",
+    desc: "在「市场排行 · 商品」自动翻页拦接口缓存，采集商品榜全字段和图片 URL，并拼成 Excel 源表。"
   },
   {
-    title: "链接清单",
-    desc: "结合需求分析和市场排行生成上架链接矩阵，人工删除并确认后，可进入主图批量生图和详情批量生图。"
+    title: "词根需求分析",
+    desc: "合并去重关键词，离线拆词根、判断品类/属性/人群/场景等需求类型，AI 结果可学习沉淀。"
   },
   {
-    title: "主图生图",
-    desc: "右键网页竞品图导入参考图，结合链接定位和产品主体图生成主图提示词、结果图、分享卡，并支持引导重生。"
+    title: "链接清单企划",
+    desc: "结合需求分析与市场排行商品榜，用 AI 生成 9 表链接矩阵、上架节奏、标题方向和竞品验证清单。"
   },
   {
-    title: "详情生成",
-    desc: "按参考图或已确认链接清单生成详情页分屏提示词和图片，主体图作为最终商品身份依据。"
+    title: "清单生图",
+    desc: "基于链接清单沉淀卖点、人群、场景、规格和视觉方向，输出可交给设计或生图工具使用的图片清单与提示词。"
   },
   {
-    title: "批量 SKU",
-    desc: "最多 20 张产品图按 SKU 批量生成，支持模板图统一版式、属性文本逐行并入提示词。"
+    title: "三阶与货盘源表下载",
+    desc: "面向三阶引擎 BI、货盘 BI 和无界报表的源数据采集入口持续接入，结果可回到本平台数据导入。"
   },
   {
-    title: "一键导出 Excel",
-    desc: "纯前端生成 .xlsx，多工作表，另支持 CSV / 复制，方便接入本平台数据导入和运营分析。"
+    title: "本地导出与数据管理",
+    desc: "采集结果保存在浏览器本地，支持 Excel 多工作表、CSV、复制到剪贴板，便于直接上传或留档。"
   },
   {
-    title: "抗风控设计",
-    desc: "翻页采用随机间隔模拟人工；长流程后台执行；可随时停止/清空；完成弹系统通知。"
+    title: "登录校验与风控控制",
+    desc: "接入平台账号校验，支持随机间隔、后台继续、随时停止/清空、完成通知，只读取可见数据，不修改页面数据。"
   }
+];
+
+const RELEASE_NOTES = [
+  "升级到 v1.8.5 插件包，下载链接已替换为新版解压包。",
+  "强化关键词采集、相关词衍生、市场排行商品榜、商品排行分日下载到本平台数据导入的整套回流路径。",
+  "继续保留词根需求分析、链接清单企划和清单生图流程，适合从采集源表一路推进到 AI 企划素材。"
 ];
 
 const INSTALL_STEPS = [
@@ -87,26 +93,56 @@ const INSTALL_STEPS = [
   },
   {
     title: "固定到工具栏",
-    body: "安装成功后点浏览器右上角拼图图标，把「生意参谋采集助手」固定出来，方便随时打开。"
+    body: "安装成功后点浏览器右上角拼图图标，把「少壮AI自动化」固定出来，方便随时打开。"
   }
 ];
 
-const USAGE_STEPS = [
-  "登录并进入 生意参谋 → 市场 → 搜索排行，在页面上选好类目与时间范围，让关键词表格正常显示（停在第 1 页）。",
-  "点工具栏里的插件图标打开弹窗，按需调整「翻页随机间隔（默认 3~8 秒）」「最多采集页数（0=不限）」。",
-  "点「开始采集」，插件自动逐页翻页收集，弹窗实时显示「已采页数 / 关键词数」；关闭弹窗不中断，后台继续。",
-  "采完后点「导出 Excel」下载 .xlsx（或导出 CSV / 复制）；需要相关词时用「衍生采集」继续跑。",
-  "在「链接清单」生成上架规划，人工删除不需要的链接后点击「确认清单」，再进入主图批量生图或详情批量生图。",
-  "在「主图生图」里可右键导入网页竞品图作为参考图，再上传产品主体图生成提示词和图片；在「批量SKU」可按多张产品图批量生成。"
+const USAGE_GROUPS = [
+  {
+    title: "关键词榜单采集",
+    desc: "进入 生意参谋 → 市场 → 搜索排行，选好类目和时间范围并停在第 1 页；打开插件「关键词」，设置随机间隔、页数和数据来源后开始采集，完成后导出 Excel / CSV 或复制。"
+  },
+  {
+    title: "相关词衍生采集",
+    desc: "关键词采完后，在「关键词」页下方设置每词页数、时间范围和只跑前 N 个词；也可以一行一个粘贴自定义种子词，逐词进入搜索分析抓相关词。"
+  },
+  {
+    title: "词根需求分析",
+    desc: "把关键词和衍生词合并去重后，点击「关键词合并去重 + 生成词根 + 需求分析」；右上设置里配置 AI 后，可增强拆词根、判需求和本机学习沉淀。"
+  },
+  {
+    title: "市场排行商品榜",
+    desc: "进入 生意参谋 → 市场排行 → 商品，打开插件「市场排行」，选择时间范围后开始采集；插件会翻页缓存商品榜字段和图片 URL，用于竞品池与链接清单。"
+  },
+  {
+    title: "链接清单企划",
+    desc: "先完成词根需求分析和市场排行商品榜，再到「链接清单」填写类目、目标链接数和参与需求类型；配置 AI Key 后生成 9 表链接矩阵、标题方向和验证清单。"
+  },
+  {
+    title: "清单生图",
+    desc: "基于链接清单里的卖点、人群、场景、规格和竞品参考，整理图片清单与生图提示词；结果可交给设计排期或外部生图工具继续产图。"
+  },
+  {
+    title: "商品排行分日下载",
+    desc: "进入 生意参谋 → 商品 → 商品排行，先关闭浏览器下载前询问；在插件「商品排行」填写起止日期后按天下载，一天一个文件，漏日可按下载清单补下。"
+  },
+  {
+    title: "三阶源表回流",
+    desc: "将关键词、衍生词、词根需求、市场排行和商品排行等导出文件上传到本平台「数据导入」，即可进入三阶计算、业务诊断和看板复盘。"
+  },
+  {
+    title: "货盘 / 无界源表",
+    desc: "货盘、无界商品、无界人群属于异步源表接入口，按插件页提示进入对应后台页触发采集或下载；当前以插件内实际开放状态为准，产出的源表同样回流数据导入。"
+  }
 ];
 
 export default function ToolsPage() {
   return (
     <>
       <PageHeader
-        eyebrow="Toolbox"
-        title="采集工具"
-        description="店铺运营的 AI 工具集。当前提供「少壮AI自动化」浏览器扩展，覆盖采集、需求分析、链接清单、主图生图、详情生成和批量 SKU。"
+        eyebrow="AI Toolbox"
+        title="AI 自动化工具"
+        description="围绕店铺经营的 AI 自动化工具集。当前提供「少壮AI自动化」v1.8.5 浏览器扩展，覆盖关键词榜单采集、相关词衍生、商品排行分日下载、市场排行商品榜、词根需求识别、链接清单企划、清单生图和源表回流分析。"
       />
 
       <section className="tool-card">
@@ -133,9 +169,23 @@ export default function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          一个 Chrome Manifest V3 扩展：在生意参谋页面按随机间隔自动翻页采集数据，结合 AI 生成链接清单、
-          主图和详情页素材。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
+          一个 Chrome Manifest V3 扩展：面向生意参谋、市场排行、商品排行和本平台三阶引擎的数据回流场景，按随机间隔自动采集关键词、相关词、商品榜和分日排行数据，并把需求分析继续转成链接清单企划与清单生图素材，一键导出
+          Excel / CSV / 复制。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
         </p>
+
+        <div className="tool-block">
+          <div className="tool-block-label">
+            <Sparkles size={15} />
+            v{COLLECTOR.version} 更新说明
+          </div>
+          <div className="tool-feature-grid">
+            {RELEASE_NOTES.map((note) => (
+              <div key={note} className="tool-feature">
+                <span>{note}</span>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="tool-block">
           <div className="tool-block-label">
@@ -179,16 +229,20 @@ export default function ToolsPage() {
             <ListChecks size={15} />
             使用
           </div>
-          <ol className="tool-steps tool-steps-plain">
-            {USAGE_STEPS.map((step, i) => (
-              <li key={i} className="tool-step">
-                <span className="tool-step-no">{i + 1}</span>
-                <div className="tool-step-body">
-                  <span>{step}</span>
+          <p className="tool-hint">
+            不同任务不用从头到尾全部执行，按当前要完成的动作选择对应路径；涉及 AI 企划的功能，先在插件右上设置里填好可用的 AI Key。
+          </p>
+          <div className="tool-usage-grid">
+            {USAGE_GROUPS.map((usage, index) => (
+              <article key={usage.title} className="tool-usage-card">
+                <span className="tool-usage-no">{index + 1}</span>
+                <div>
+                  <strong>{usage.title}</strong>
+                  <p>{usage.desc}</p>
                 </div>
-              </li>
+              </article>
             ))}
-          </ol>
+          </div>
         </div>
 
         <div className="tool-notes">
