@@ -4,8 +4,14 @@ import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 登录页、认证接口、公开隐私政策放行（/privacy 供 Chrome 商店与未登录用户查看）
-  if (pathname === "/login" || pathname === "/privacy" || pathname.startsWith("/api/auth/") || pathname.startsWith("/v1/")) {
+  // 登录页、公开页、认证接口放行（/privacy 供 Chrome 商店与未登录用户查看，/tools 供插件下载）
+  if (
+    pathname === "/login" ||
+    pathname === "/privacy" ||
+    pathname === "/tools" ||
+    pathname.startsWith("/api/auth/") ||
+    pathname.startsWith("/v1/")
+  ) {
     return NextResponse.next();
   }
 
