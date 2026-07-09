@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.8.2",
-  zipHref: "/downloads/sycm-keyword-collector-v1.8.2.zip",
-  downloadName: "少壮AI自动化-v1.8.2.zip",
-  sizeLabel: "约 735 KB",
+  version: "1.8.5",
+  zipHref: "/downloads/sycm-keyword-collector-v1.8.5.zip",
+  downloadName: "少壮AI自动化-v1.8.5.zip",
+  sizeLabel: "约 814 KB",
   platform: "Chrome / Edge 111+"
 };
 
@@ -42,12 +42,28 @@ const FEATURES = [
     desc: "对采集到的词离线拆词根、自动判需求类型（品类/属性/人群…）；可接 AI 拆词根并永久学习、不重复调用。"
   },
   {
+    title: "链接清单",
+    desc: "结合需求分析和市场排行生成上架链接矩阵，人工删除并确认后，可进入主图批量生图和详情批量生图。"
+  },
+  {
+    title: "主图生图",
+    desc: "右键网页竞品图导入参考图，结合链接定位和产品主体图生成主图提示词、结果图、分享卡，并支持引导重生。"
+  },
+  {
+    title: "详情生成",
+    desc: "按参考图或已确认链接清单生成详情页分屏提示词和图片，主体图作为最终商品身份依据。"
+  },
+  {
+    title: "批量 SKU",
+    desc: "最多 20 张产品图按 SKU 批量生成，支持模板图统一版式、属性文本逐行并入提示词。"
+  },
+  {
     title: "一键导出 Excel",
-    desc: "纯前端生成 .xlsx（不依赖第三方库），多工作表，另支持 CSV / 复制，直接接入本平台「源数据」导入。"
+    desc: "纯前端生成 .xlsx，多工作表，另支持 CSV / 复制，方便接入本平台数据导入和运营分析。"
   },
   {
     title: "抗风控设计",
-    desc: "翻页采用随机间隔模拟人工；可随时停止/清空；关闭弹窗后台继续；完成弹系统通知。"
+    desc: "翻页采用随机间隔模拟人工；长流程后台执行；可随时停止/清空；完成弹系统通知。"
   }
 ];
 
@@ -79,8 +95,9 @@ const USAGE_STEPS = [
   "登录并进入 生意参谋 → 市场 → 搜索排行，在页面上选好类目与时间范围，让关键词表格正常显示（停在第 1 页）。",
   "点工具栏里的插件图标打开弹窗，按需调整「翻页随机间隔（默认 3~8 秒）」「最多采集页数（0=不限）」。",
   "点「开始采集」，插件自动逐页翻页收集，弹窗实时显示「已采页数 / 关键词数」；关闭弹窗不中断，后台继续。",
-  "采完后点「导出 Excel」下载 .xlsx（或导出 CSV / 复制）；需要相关词时用下方「衍生采集」继续跑。",
-  "把导出的报表拿到本平台「数据导入」页上传，即可进入三阶计算与看板。"
+  "采完后点「导出 Excel」下载 .xlsx（或导出 CSV / 复制）；需要相关词时用「衍生采集」继续跑。",
+  "在「链接清单」生成上架规划，人工删除不需要的链接后点击「确认清单」，再进入主图批量生图或详情批量生图。",
+  "在「主图生图」里可右键导入网页竞品图作为参考图，再上传产品主体图生成提示词和图片；在「批量SKU」可按多张产品图批量生成。"
 ];
 
 export default function ToolsPage() {
@@ -89,7 +106,7 @@ export default function ToolsPage() {
       <PageHeader
         eyebrow="Toolbox"
         title="采集工具"
-        description="店铺运营的浏览器辅助工具集。当前提供「生意参谋采集助手」——浏览器扩展，帮你采关键词、衍生相关词、商品排行分日下载，并对采到的词离线拆词根、判需求，再喂给本平台做分析。"
+        description="店铺运营的 AI 工具集。当前提供「少壮AI自动化」浏览器扩展，覆盖采集、需求分析、链接清单、主图生图、详情生成和批量 SKU。"
       />
 
       <section className="tool-card">
@@ -116,8 +133,8 @@ export default function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          一个 Chrome Manifest V3 扩展：在生意参谋页面按随机间隔自动翻页采集关键词数据，一键导出
-          Excel。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
+          一个 Chrome Manifest V3 扩展：在生意参谋页面按随机间隔自动翻页采集数据，结合 AI 生成链接清单、
+          主图和详情页素材。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
         </p>
 
         <div className="tool-block">
