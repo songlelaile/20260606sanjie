@@ -3062,6 +3062,14 @@ button.review-metric {
   width: 52px;
 }
 
+.tool-card-logo {
+  border-radius: 9px;
+  display: block;
+  height: 42px;
+  object-fit: cover;
+  width: 42px;
+}
+
 .tool-card-title {
   flex: 1 1 240px;
   min-width: 0;
@@ -3164,6 +3172,48 @@ button.review-metric {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+
+.tool-usage-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.tool-usage-card {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 12px;
+  padding: 13px 15px;
+}
+
+.tool-usage-no {
+  align-items: center;
+  background: rgba(246, 198, 95, 0.15);
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  color: var(--brand);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 800;
+  height: 26px;
+  justify-content: center;
+  width: 26px;
+}
+
+.tool-usage-card strong {
+  color: #fff5d4;
+  font-size: 14px;
+}
+
+.tool-usage-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 5px 0 0;
 }
 
 .tool-steps {
@@ -3286,7 +3336,8 @@ button.review-metric {
 }
 
 @media (max-width: 720px) {
-  .tool-feature-grid {
+  .tool-feature-grid,
+  .tool-usage-grid {
     grid-template-columns: 1fr;
   }
   .tool-download-btn {
