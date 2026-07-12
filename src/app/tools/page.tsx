@@ -17,10 +17,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.8.6",
-  zipHref: "/downloads/sycm-keyword-collector-v1.8.6.zip",
-  downloadName: "少壮AI自动化-v1.8.6.zip",
-  sizeLabel: "约 1.4 MB",
+  version: "1.8.24",
+  zipHref: "/downloads/sycm-keyword-collector-v1.8.24.zip",
+  downloadName: "少壮AI自动化-v1.8.24.zip",
+  sizeLabel: "约 1.6 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
 };
@@ -37,6 +37,10 @@ const FEATURES = [
   {
     title: "本地双表导入合成",
     desc: "直接上传已经做好的词根需求表与市场排行表，在浏览器本地解析、校验并生成链接清单，不必重新采集源数据。"
+  },
+  {
+    title: "共享业务知识库",
+    desc: "从插件启动界面导入 TXT、Markdown、CSV、TSV、JSON 或 Excel 业务资料，并按链接定位、主图和详情页三个范围辅助 AI 理解品牌与业务。"
   },
   {
     title: "词根语义组合定位",
@@ -59,8 +63,8 @@ const FEATURES = [
     desc: "拆解竞品图的风格、景深、光影、字体和模特；结合自己的商品主体多角度图，严格保持结构、比例、材质和包装一致。"
   },
   {
-    title: "批量 SKU 生图",
-    desc: "在主图和详情页之后继续按商品图、SKU 模板与属性分组生成规格图片，并保留每组结果和下载入口。"
+    title: "批量 SKU 共创编排",
+    desc: "先配置商品主体与可选视觉模板，再逐条编辑、勾选和预检 SKU 任务；支持稳定编号、并发控制、停止任务、保留成功结果和失败重试。"
   },
   {
     title: "采集控制与隐私清理",
@@ -77,9 +81,9 @@ const FEATURES = [
 ];
 
 const RELEASE_NOTES = [
-  "现有 v1.8.5 下载入口已直接升级为 v1.8.6；插件名称和 Logo 沿用老版本，不再并列展示其他版本。",
-  "新增现成词根需求表 + 市场排行表本地导入，按词根语义组合生成链接定位，并移除链接清单页的本地规则快速合成入口。",
-  "加强 L 编号主图/详情提词与批量生图、统一 API 配置、市场排行终止/刷新重采，以及当前网站 Cookie + 今日历史清理。"
+  "新增共享业务知识库占位与本地资料导入；知识可分别辅助链接定位、主图提示词和详情页提示词，同时不覆盖词根证据、L 编号、主体图等硬规则。",
+  "重构批量 SKU 为三阶段共创流程：主体与模板 → 逐 SKU 任务映射 → 预检与所选生成，并加入稳定编号、并发控制、停止和失败重试。",
+  "继续保留本地双表合成、固定 20 字段链接清单、严格按 L 编号主图/详情提词与生图、统一 API 配置、采集控制和隐私清理。"
 ];
 
 const INSTALL_STEPS = [
@@ -125,7 +129,11 @@ const USAGE_GROUPS = [
   },
   {
     title: "链接清单企划",
-    desc: "可以先采集词根需求和市场商品榜，也可直接上传已经做好的两张表；到「链接清单」确认品类锚点与词根需求后，由 AI 按语义组合生成 L 编号、定位和 9 表链接矩阵。"
+    desc: "可以先采集词根需求和市场商品榜，也可直接上传已经做好的两张表；到「链接清单」确认品类锚点与词根需求后，由 AI 按语义组合生成 L 编号和固定 20 字段的链接上架清单。"
+  },
+  {
+    title: "业务知识库",
+    desc: "从插件启动界面进入「知识库」，导入品牌、品类、人群、场景、利益点、视觉与合规资料，并选择用于链接定位、主图或详情页；知识只作业务校准，不替代采集证据和主体图。"
   },
   {
     title: "清单生图",
@@ -151,7 +159,7 @@ export default function ToolsPage() {
       <PageHeader
         eyebrow="AI Toolbox"
         title="AI 自动化工具"
-        description="围绕店铺经营的 AI 自动化工具集。现有「少壮AI自动化」已升级为 v1.8.6，在关键词和排行采集基础上，合并本地双表生成链接清单、词根语义定位、编号主图/详情提词与批量生图、统一 API 配置和隐私清理。"
+        description="围绕店铺经营的 AI 自动化工具集。「少壮AI自动化」v1.8.24 在关键词、排行采集与链接清单基础上，新增共享业务知识库，并将批量 SKU 重构为可编辑、可预检、可停止和可重试的共创流程。"
       />
 
       <section className="tool-card">
@@ -169,7 +177,7 @@ export default function ToolsPage() {
             <h2>{COLLECTOR.name}</h2>
             <div className="tool-badges">
               <span className="tool-badge">v{COLLECTOR.version}</span>
-              <span className="tool-badge tool-badge-soft">v1.8.5 直接升级</span>
+              <span className="tool-badge tool-badge-soft">当前最新版</span>
               <span className="tool-badge tool-badge-soft">{COLLECTOR.platform}</span>
               <span className="tool-badge tool-badge-soft">{COLLECTOR.sizeLabel}</span>
             </div>
@@ -185,7 +193,7 @@ export default function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          一个 Chrome Manifest V3 扩展：采集关键词、相关词、市场商品榜和分日排行，也可直接导入现成词根需求表与市场排行表生成链接清单；再按 L 编号完成主图、详情页和 SKU 提词与生图。结果可导出 Excel / CSV / 复制。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
+          一个 Chrome Manifest V3 扩展：采集关键词、相关词、市场商品榜和分日排行，也可直接导入现成词根需求表与市场排行表生成链接清单；共享知识库可辅助 AI 理解业务，再按 L 编号完成主图、详情页和 SKU 提词与生图。结果可导出 Excel / CSV / 复制。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
         </p>
 
         <div className="tool-block">
