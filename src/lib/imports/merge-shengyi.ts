@@ -1,4 +1,4 @@
-import { normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
+import { isPlaceholderToken, normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
 import { normalizeDate } from "@/lib/imports/map-rows";
 
 /**
@@ -150,12 +150,12 @@ export function buildShengyiMergePlan(
       issues.push(`缺列 ${missingCols.join("、")}`);
     }
 
-    // 数据行：商品ID 非空且非"总计/合计"
+    // 数据行：商品ID 非空、非"总计/合计"、非占位符(-、— 等)
     const dataRows =
       ii >= 0
         ? file.rows.filter((r) => {
             const id = stringifyCell(r[ii]).trim();
-            return id !== "" && id !== "总计" && id !== "合计";
+            return id !== "" && id !== "总计" && id !== "合计" && !isPlaceholderToken(id);
           })
         : [];
     if (dataRows.length === 0) {

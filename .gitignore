@@ -8,3 +8,6 @@ coverage/
 prisma/dev.db
 uploads/
 .claude/
+
+# macOS
+.DS_Store

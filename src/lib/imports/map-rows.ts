@@ -1,4 +1,4 @@
-import { normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
+import { isPlaceholderToken, normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
 import type {
   AudienceSourceRow,
   DamoProductRow,
@@ -98,12 +98,16 @@ function validIso(y: number, m: number, d: number): string {
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+/**
+ * 生意参谋/达摩盘/万相台导出里「无数据」的占位写法，一律按 0 计。
+ * 复用 contracts.isPlaceholderToken（-、—、－、N/A、无 等）；归一化时已去掉千分位逗号/货币符/空白。
+ */
 export function parseNumericCell(value: unknown): number {
   if (typeof value === "number") {
     return Number.isFinite(value) ? value : 0;
   }
   const text = stringifyCell(value).replace(/[,¥$\s]/g, "");
-  if (text === "") {
+  if (text === "" || isPlaceholderToken(text)) {
     return 0;
   }
   if (text.endsWith("%")) {
@@ -138,7 +142,10 @@ function columnReaders(headers: string[]) {
 }
 
 function isDataRow(idValue: string) {
-  return idValue !== "" && idValue !== "总计" && idValue !== "合计";
+  // 主键为空 / 汇总行(总计·合计) / 占位符(-、—、N/A 等) 都不是真实数据行，
+  // 否则会凭空生成一个 id="-" 的幽灵主体污染三阶计算与「重复主键」告警。
+  const id = idValue.trim();
+  return id !== "" && id !== "总计" && id !== "合计" && !isPlaceholderToken(id);
 }
 
 /** 按主键去重,自上而下保留首次出现的一行(重复行丢弃)。 */
