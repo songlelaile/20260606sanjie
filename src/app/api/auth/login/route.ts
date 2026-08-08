@@ -43,6 +43,7 @@ export async function POST(request: Request) {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
+    domain: process.env.NODE_ENV === "production" ? ".shaozhuangai.com" : undefined,
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS
   });

@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
-EXPECTED_VERSION="1.8.37"
-EXPECTED_ZIP_SHA256="38628ba96da1701c6fbe80f047551386921877f6dab786af1473a07f9781371e"
+EXPECTED_VERSION="1.8.98"
+EXPECTED_ZIP_SHA256="5c3db6ff60ecaa37047bc9908d137157448051acb2e31bb25b1a96371944ed4f"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 
 fail() {
@@ -20,7 +20,7 @@ require_fixed() {
   local needle="$1"
   local file="$2"
   local label="$3"
-  rg -Fq -- "$needle" "$file" || fail "$label（$file）"
+  rg -Fq -- "$needle" "$file" || fail "${label}（${file}）"
 }
 
 forbid_fixed() {
@@ -28,7 +28,7 @@ forbid_fixed() {
   local file="$2"
   local label="$3"
   if rg -Fq -- "$needle" "$file"; then
-    fail "$label（$file）"
+    fail "${label}（${file}）"
   fi
 }
 
