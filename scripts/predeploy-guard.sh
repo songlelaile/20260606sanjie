@@ -12,6 +12,14 @@ fail() {
   exit 1
 }
 
+fixed_search() {
+  if command -v rg >/dev/null 2>&1; then
+    rg -Fq -- "$1" "$2"
+  else
+    grep -Fq -- "$1" "$2"
+  fi
+}
+
 require_file() {
   [[ -f "$1" ]] || fail "缺少文件 $1"
 }
@@ -20,14 +28,14 @@ require_fixed() {
   local needle="$1"
   local file="$2"
   local label="$3"
-  rg -Fq -- "$needle" "$file" || fail "${label}（${file}）"
+  fixed_search "$needle" "$file" || fail "${label}（${file}）"
 }
 
 forbid_fixed() {
   local needle="$1"
   local file="$2"
   local label="$3"
-  if rg -Fq -- "$needle" "$file"; then
+  if fixed_search "$needle" "$file"; then
     fail "${label}（${file}）"
   fi
 }
