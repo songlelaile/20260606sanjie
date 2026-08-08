@@ -19,6 +19,7 @@ model Tenant {
   createdAt DateTime     @default(now())
   users     User[]
   invites   InviteCode[]
+  shops     Shop[]
   workspace Workspace?
   calcRun   CalcRun?
 }
@@ -56,11 +57,38 @@ model InviteCode {
   @@index([tenantId])
 }
 
+model Shop {
+  id          String          @id
+  tenantId    String
+  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name        String
+  platform    String          @default("淘宝")
+  createdBy   String          @default("")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  workspace   ShopWorkspace?
+  calcRun     ShopCalcRun?
+  shares      DashboardShare[]
+
+  @@index([tenantId])
+}
+
 model Workspace {
   tenantId  String   @id
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   data      Json
   updatedAt DateTime @updatedAt
+}
+
+model ShopWorkspace {
+  id        String   @id @default(cuid())
+  tenantId  String
+  shopId    String   @unique
+  shop      Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  data      Json
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
 }
 
 // 三阶计算结果（每租户一份）。原先内嵌 Workspace.data blob（占 ~96%，audiencePlans 最大），
@@ -71,6 +99,7 @@ model CalcRun {
   runId               String   @default("")
   cycleId             String   @default("")
   createdAt           String   @default("")
+  schemaVersion       Int      @default(1)
   investmentResults   Json     @default("[]")
   breakthroughResults Json     @default("[]")
   audiencePlans       Json     @default("[]")
@@ -78,53 +107,88 @@ model CalcRun {
   updatedAt           DateTime @updatedAt
 }
 
+model ShopCalcRun {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  shopId              String   @unique
+  shop                Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  runId               String   @default("")
+  cycleId             String   @default("")
+  createdAt           String   @default("")
+  schemaVersion       Int      @default(1)
+  investmentResults   Json     @default("[]")
+  breakthroughResults Json     @default("[]")
+  audiencePlans       Json     @default("[]")
+  managementDashboard Json     @default("{}")
+  updatedAt           DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model DashboardShare {
+  id               String   @id @default(cuid())
+  tenantId         String
+  shopId           String
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  tokenHash        String   @unique
+  title            String
+  encryptedPayload String   @db.Text
+  createdBy        String   @default("")
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, shopId])
+}
+
 // 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，
 // ISO 字典序=时间序，便于按区间查询；(tenantId, productId, date) 唯一，重传同日覆盖。
 model DailyProductMetric {
   id        String @id @default(cuid())
   tenantId  String
+  shopId    String @default("")
   productId String
   date      String
 
   productName                       String @default("")
-  visitors                          Int    @default(0)
-  views                             Int    @default(0)
-  averageStaySeconds                Float  @default(0)
-  bounceRate                        Float  @default(0)
-  paymentBuyers                     Int    @default(0)
-  paymentAmount                     Float  @default(0)
-  productPaymentConversionRate      Float  @default(0)
-  refundAmount                      Float  @default(0)
-  searchGuidedPaymentConversionRate Float  @default(0)
-  searchGuidedVisitors              Int    @default(0)
+  visitors                          Int?
+  views                             Int?
+  averageStaySeconds                Float?
+  bounceRate                        Float?
+  paymentBuyers                     Int?
+  paymentAmount                     Float?
+  productPaymentConversionRate      Float?
+  refundAmount                      Float?
+  searchGuidedPaymentConversionRate Float?
+  searchGuidedVisitors              Int?
 
   updatedAt DateTime @updatedAt
 
-  @@unique([tenantId, productId, date])
-  @@index([tenantId, date])
+  @@unique([tenantId, shopId, productId, date])
+  @@index([tenantId, shopId, date])
 }
 
 // 分日推广宝贝指标（v2）。(tenantId, subjectId, date) 唯一，重传同日覆盖。
 model DailyPromotionMetric {
   id          String @id @default(cuid())
   tenantId    String
+  shopId      String @default("")
   subjectId   String
   date        String
   subjectName String @default("")
-  impressions Int    @default(0)
-  clicks      Int    @default(0)
-  cost        Float  @default(0)
-  roi         Float  @default(0)
+  impressions Int?
+  clicks      Int?
+  cost        Float?
+  roi         Float?
   updatedAt   DateTime @updatedAt
 
-  @@unique([tenantId, subjectId, date])
-  @@index([tenantId, date])
+  @@unique([tenantId, shopId, subjectId, date])
+  @@index([tenantId, shopId, date])
 }
 
 // 分日人群指标（v2）。粒度 (date, planId, audienceName, subjectId)。
 model DailyAudienceMetric {
   id                          String @id @default(cuid())
   tenantId                    String
+  shopId                      String @default("")
   date                        String
   sceneId                     String @default("")
   sceneName                   String @default("")
@@ -133,23 +197,24 @@ model DailyAudienceMetric {
   audienceName                String
   subjectId                   String
   subjectName                 String @default("")
-  clicks                      Int    @default(0)
-  roi                         Float  @default(0)
-  guidedPotentialCustomerRatio Float @default(0)
-  newCustomerRatio            Float  @default(0)
+  clicks                      Int?
+  roi                         Float?
+  guidedPotentialCustomerRatio Float?
+  newCustomerRatio            Float?
   updatedAt                   DateTime @updatedAt
 
-  @@unique([tenantId, date, planId, audienceName, subjectId])
-  @@index([tenantId, date])
+  @@unique([tenantId, shopId, date, planId, audienceName, subjectId])
+  @@index([tenantId, shopId, date])
   // 按主体(=商品)筛选的窗口查询（受影响商品的人群对比）：唯一键以 date 起头，subjectId 落在末位无法裁剪；
   // 此索引让 subjectId IN 直接定位，避免读全窗口再丢弃 95% 行。
-  @@index([tenantId, subjectId, date])
+  @@index([tenantId, shopId, subjectId, date])
 }
 
 // 运营手动标记的"优化动作"（v2 前后对比锚点）。date=动作发生日；productIds=受影响商品(空=整店)。
 model Intervention {
   id         String   @id @default(cuid())
   tenantId   String
+  shopId     String   @default("")
   date       String // 归一化 ISO YYYY-MM-DD
   title      String
   note       String   @default("")
@@ -158,5 +223,5 @@ model Intervention {
   createdBy  String   @default("")
   createdAt  DateTime @default(now())
 
-  @@index([tenantId, date])
+  @@index([tenantId, shopId, date])
 }

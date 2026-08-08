@@ -2,11 +2,11 @@ import {
   CircleAlert,
   Download,
   ListChecks,
-  Puzzle,
   ShieldCheck,
   Sparkles
 } from "lucide-react";
 import type { Metadata } from "next";
+import Image from "next/image";
 import { PageHeader } from "@/components/PageHeader";
 import { CopyAddress } from "@/components/tools/CopyAddress";
 
@@ -17,60 +17,75 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.8.5",
-  zipHref: "/downloads/sycm-keyword-collector-v1.8.5.zip",
-  downloadName: "少壮AI自动化-v1.8.5.zip",
-  sizeLabel: "约 814 KB",
-  platform: "Chrome / Edge 111+"
+  version: "1.8.37",
+  zipHref: "/downloads/sycm-keyword-collector-v1.8.37.zip",
+  downloadName: "少壮AI自动化-v1.8.37.zip",
+  sizeLabel: "约 1.8 MB",
+  platform: "Chrome / Edge 111+",
+  iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
 };
 
 const FEATURES = [
   {
-    title: "关键词榜单采集",
-    desc: "在「生意参谋 · 市场 · 搜索排行」按类目和时间自动翻页，采集关键词、搜索人气、点击率、转化等指标。"
+    title: "关键词与相关词采集",
+    desc: "在生意参谋按类目和时间自动翻页采集关键词榜单，也可把已采关键词或自定义词表作为种子继续衍生相关词。"
   },
   {
-    title: "相关词衍生采集",
-    desc: "把已采关键词或自定义词表当种子词，逐词进入「搜索分析」抓相关词，支持最多页数、停止续采和单独导出。"
+    title: "市场与商品排行",
+    desc: "市场排行商品榜自动翻页缓存全字段和图片 URL；商品排行支持按日期逐天下载、重复日期跳过和漏日补下。"
   },
   {
-    title: "商品排行分日下载",
-    desc: "在「商品排行」按日期逐天点页面自带下载，一天一个文件，带下载清单，重复日期跳过、缺失日期可补下。"
+    title: "本地双表导入合成",
+    desc: "直接上传已经做好的词根需求表与市场排行表，在浏览器本地解析、校验并生成链接清单；普通任务最多 100 条，全量任务最多 20,000 条。"
   },
   {
-    title: "市场排行商品榜",
-    desc: "在「市场排行 · 商品」自动翻页拦接口缓存，采集商品榜全字段和图片 URL，并拼成 Excel 源表。"
+    title: "共享业务知识库",
+    desc: "从插件启动界面导入 TXT、Markdown、CSV、TSV、JSON 或 Excel 业务资料，并按链接定位、主图和详情页三个范围辅助 AI 理解品牌与业务。"
   },
   {
-    title: "词根需求分析",
-    desc: "合并去重关键词，离线拆词根、判断品类/属性/人群/场景等需求类型，AI 结果可学习沉淀。"
+    title: "词根语义组合定位",
+    desc: "按品类、属性、人群、场景等词根需求生成合理组合，强制保留品类锚点，并将组合语义和市场证据写入链接定位。"
   },
   {
-    title: "链接清单企划",
-    desc: "结合需求分析与市场排行商品榜，用 AI 生成 9 表链接矩阵、上架节奏、标题方向和竞品验证清单。"
+    title: "统一 API 配置",
+    desc: "在插件启动界面集中配置少壮托管、ChatGPT、Nano Banana、豆包、DeepSeek、MiniMax、智谱等图文模型与端点。"
   },
   {
-    title: "清单生图",
-    desc: "基于链接清单沉淀卖点、人群、场景、规格和视觉方向，输出可交给设计或生图工具使用的图片清单与提示词。"
+    title: "编号主图提词与生图",
+    desc: "严格按 L001、L002、L003 顺序读取链接定位、风格、人群、差异化壁垒和核心文案，逐条提词并按编号并发生图。"
   },
   {
-    title: "三阶与货盘源表下载",
-    desc: "面向三阶引擎 BI、货盘 BI 和无界报表的源数据采集入口持续接入，结果可回到本平台数据导入。"
+    title: "编号详情页提词与生图",
+    desc: "按每个链接的详情定位和文案逻辑生成连续分屏提示词，绑定商品多角度图与模特，确保编号、屏号和图片结果不串位。"
   },
   {
-    title: "本地导出与数据管理",
-    desc: "采集结果保存在浏览器本地，支持 Excel 多工作表、CSV、复制到剪贴板，便于直接上传或留档。"
+    title: "参考图反推与主体一致性",
+    desc: "拆解竞品图的风格、景深、光影、字体和模特；结合自己的商品主体多角度图，严格保持结构、比例、材质和包装一致。"
+  },
+  {
+    title: "批量 SKU 共创编排",
+    desc: "先配置商品主体与可选视觉模板，再逐条编辑、勾选和预检 SKU 任务；支持稳定编号、并发控制、停止任务、保留成功结果和失败重试。"
+  },
+  {
+    title: "采集控制与隐私清理",
+    desc: "市场排行支持中途终止、刷新页面重新采集；每个模块页脚可一键清理当前网站 Cookie 与当天浏览历史。"
+  },
+  {
+    title: "本地导出与数据回流",
+    desc: "结果保存在浏览器本地；链接清单按固定字段输出单工作表 Excel，并使用类目、实际条数和时间命名，关键词、排行与词根结果也可继续回流三阶引擎。"
   },
   {
     title: "登录校验与风控控制",
-    desc: "接入平台账号校验，支持随机间隔、后台继续、随时停止/清空、完成通知，只读取可见数据，不修改页面数据。"
+    desc: "接入平台账号校验，支持随机间隔、后台继续、停止/清空与完成通知，只读取已登录账号可见数据，不修改页面数据。"
   }
 ];
 
 const RELEASE_NOTES = [
-  "升级到 v1.8.5 插件包，下载链接已替换为新版解压包。",
-  "强化关键词采集、相关词衍生、市场排行商品榜、商品排行分日下载到本平台数据导入的整套回流路径。",
-  "继续保留词根需求分析、链接清单企划和清单生图流程，适合从采集源表一路推进到 AI 企划素材。"
+  "修复单张商品主体图搭配多行 SKU TXT 时只生成一个 SKU 的问题：现在每个非空文本行都会生成独立 SKU，并统一遵循点击生成时选定的比例、分辨率、实际尺寸和其他生图要求。",
+  "市场排行新增淘宝自定义关键词销量 Top300：采集标题、图片 URL、收货人数、店铺名称和卡片卖点；没有生意参谋市场榜时，可直接作为链接清单的红海、黄海、蓝海对比参考。",
+  "采集关键词时先判断页面类目、类目核心热词和用户填写类目，分别按 35%、35%、30% 投票；总分大于 50% 才认定品类，否则回退到类目核心热词榜中人气最高的品类词。",
+  "密封件等类目会把“空调”识别为场景词而不是品类词，例如“空调密封圈”以“密封圈”为品类，避免跨类目历史记忆污染链接清单。",
+  "衍生采集遇到纯数字或型号种子词会直接跳过，并自动顺次处理下一个有效词，避免无效搜索中断整批任务。",
 ];
 
 const INSTALL_STEPS = [
@@ -116,11 +131,15 @@ const USAGE_GROUPS = [
   },
   {
     title: "链接清单企划",
-    desc: "先完成词根需求分析和市场排行商品榜，再到「链接清单」填写类目、目标链接数和参与需求类型；配置 AI Key 后生成 9 表链接矩阵、标题方向和验证清单。"
+    desc: "可以先采集词根需求和市场商品榜，也可直接上传已经做好的两张表；到「链接清单」确认品类锚点与词根需求后，由 AI 按语义组合生成 L 编号和固定 20 字段的链接上架清单。"
+  },
+  {
+    title: "业务知识库",
+    desc: "从插件启动界面进入「知识库」，导入品牌、品类、人群、场景、利益点、视觉与合规资料，并选择用于链接定位、主图或详情页；知识只作业务校准，不替代采集证据和主体图。"
   },
   {
     title: "清单生图",
-    desc: "基于链接清单里的卖点、人群、场景、规格和竞品参考，整理图片清单与生图提示词；结果可交给设计排期或外部生图工具继续产图。"
+    desc: "选择连续 L 编号和主图/详情模式，上传商品主体多角度图；插件按每条链接自己的规划顺序提词，再按编号并发生图。参考图模式会先反推并覆盖当前提示词。"
   },
   {
     title: "商品排行分日下载",
@@ -142,18 +161,25 @@ export default function ToolsPage() {
       <PageHeader
         eyebrow="AI Toolbox"
         title="AI 自动化工具"
-        description="围绕店铺经营的 AI 自动化工具集。当前提供「少壮AI自动化」v1.8.5 浏览器扩展，覆盖关键词榜单采集、相关词衍生、商品排行分日下载、市场排行商品榜、词根需求识别、链接清单企划、清单生图和源表回流分析。"
+        description="围绕店铺经营的 AI 自动化工具集。「少壮AI自动化」v1.8.37 修复单主体图多行 SKU TXT 的逐行生图，并统一遵循批次比例、分辨率和其他生图要求；同时包含淘宝销量 Top300、红黄蓝海参考与品类投票纠偏。"
       />
 
       <section className="tool-card">
         <header className="tool-card-head">
           <span className="tool-card-icon">
-            <Puzzle size={26} />
+            <Image
+              className="tool-card-logo"
+              src={COLLECTOR.iconHref}
+              alt="少壮AI自动化 Logo"
+              width={42}
+              height={42}
+            />
           </span>
           <div className="tool-card-title">
             <h2>{COLLECTOR.name}</h2>
             <div className="tool-badges">
               <span className="tool-badge">v{COLLECTOR.version}</span>
+              <span className="tool-badge tool-badge-soft">当前最新版</span>
               <span className="tool-badge tool-badge-soft">{COLLECTOR.platform}</span>
               <span className="tool-badge tool-badge-soft">{COLLECTOR.sizeLabel}</span>
             </div>
@@ -169,8 +195,7 @@ export default function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          一个 Chrome Manifest V3 扩展：面向生意参谋、市场排行、商品排行和本平台三阶引擎的数据回流场景，按随机间隔自动采集关键词、相关词、商品榜和分日排行数据，并把需求分析继续转成链接清单企划与清单生图素材，一键导出
-          Excel / CSV / 复制。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
+          一个 Chrome Manifest V3 扩展：采集关键词、相关词、市场商品榜和分日排行，也可直接导入现成词根需求表与市场排行表生成链接清单；长任务在后台持续并支持恢复，共享知识库辅助 AI 理解业务，再按 L 编号完成主图、详情页和 SKU 提词与生图。结果可导出 Excel / CSV / 复制。仅读取你已登录账号下能看到的数据，不伪造请求、不修改任何数据。
         </p>
 
         <div className="tool-block">

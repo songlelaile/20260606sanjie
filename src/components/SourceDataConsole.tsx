@@ -3,20 +3,31 @@
 import {
   AlertTriangle,
   CheckCircle2,
+  FileSearch,
   FolderOpen,
+  GitMerge,
   Trash2,
   UploadCloud,
   X
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { locateHeaderRow, reportContracts, validateImportRows } from "@/lib/imports/contracts";
 import {
   mapAudienceDailyRows,
   mapDamoProductRows,
+  inferImportDate,
   mapProductDailyRows,
   mapPromotionDailyRows
 } from "@/lib/imports/map-rows";
+import {
+  mergeBusinessDiagnosisUploads,
+  parseBusinessDiagnosisUpload,
+  type BusinessDiagnosisMergeReport,
+  type BusinessDiagnosisSourcePatch,
+  type ParsedBusinessDiagnosisUpload
+} from "@/lib/imports/business-diagnosis-source";
 import { parseWorkbookUpload } from "@/lib/imports/parse-workbook";
 import { formatNumber } from "@/lib/format";
 import {
@@ -62,7 +73,14 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
   const router = useRouter();
   const [batches, setBatches] = useState(initialBatches);
   const [files, setFiles] = useState<Partial<Record<ReportType, File>>>({});
+  const [diagnosisFiles, setDiagnosisFiles] = useState<{
+    storeCategory: File[];
+    market: File[];
+  }>({ storeCategory: [], market: [] });
+  const [diagnosisReport, setDiagnosisReport] = useState<BusinessDiagnosisMergeReport | null>(null);
+  const [diagnosisPatch, setDiagnosisPatch] = useState<BusinessDiagnosisSourcePatch | null>(null);
   const [busy, setBusy] = useState(false);
+  const [diagnosisBusy, setDiagnosisBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState<{
     title: string;
@@ -89,6 +107,11 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
   const selectedBytes = useMemo(
     () => Object.values(files).reduce((total, file) => total + (file?.size ?? 0), 0),
     [files]
+  );
+  const diagnosisFileCount = diagnosisFiles.storeCategory.length + diagnosisFiles.market.length;
+  const diagnosisFileNames = useMemo(
+    () => [...diagnosisFiles.storeCategory, ...diagnosisFiles.market].map((file) => file.name),
+    [diagnosisFiles]
   );
 
   // 从服务端拉全量源表列表，回填本地 batches（驱动各源槽的"已有数据"绿态）。
@@ -136,7 +159,9 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
           // —— 浏览器端解析+映射：不上传原始大文件，绕开任何 body 上限 ——
           const parsed = await parseWorkbookUpload(file);
           const { headers, rows } = locateHeaderRow(parsed.matrix, reportType);
-          const validation = validateImportRows(reportType, headers, rows);
+          const validation = validateImportRows(reportType, headers, rows, {
+            fallbackDate: inferImportDate(file.name)
+          });
           if (parsed.warnings.length > 0) {
             validation.warnings = [...validation.warnings, ...parsed.warnings];
           }
@@ -145,7 +170,7 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
             validationErrors.push(...validation.errors);
             continue;
           }
-          const mapped = mapRowsForType(reportType, headers, rows);
+          const mapped = mapRowsForType(reportType, headers, rows, inferImportDate(file.name));
           // 分日源全部日期不可识别 → 映射后 0 行；不建"通过"记录、不入库，明确报错。
           if (reportType !== "damo_product_source" && mapped.length === 0) {
             validationErrors.push(`${file.name}：无可识别统计日期的有效数据行（请确认日期列格式）`);
@@ -215,6 +240,117 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
     }
   }
 
+  function pickDiagnosisFiles(kind: "storeCategory" | "market", selected: FileList | null) {
+    setDiagnosisFiles((current) => ({
+      ...current,
+      [kind]: selected ? Array.from(selected) : []
+    }));
+    setDiagnosisReport(null);
+    setDiagnosisPatch(null);
+    setNotice("");
+  }
+
+  async function buildDiagnosisMerge() {
+    const selected = [...diagnosisFiles.storeCategory, ...diagnosisFiles.market];
+    if (selected.length === 0) {
+      setDialog({
+        title: "未选择业务诊断源表",
+        lines: ["请先选择本店类目月度源表或市场大盘诊断源。"],
+        tone: "warn"
+      });
+      return null;
+    }
+    const parsedFiles: ParsedBusinessDiagnosisUpload[] = [];
+    for (const file of selected) {
+      try {
+        const parsed = await parseWorkbookUpload(file);
+        const diagnosis = parseBusinessDiagnosisUpload(file.name, parsed.matrix);
+        if (parsed.warnings.length > 0) {
+          diagnosis.warnings = [...diagnosis.warnings, ...parsed.warnings];
+        }
+        parsedFiles.push(diagnosis);
+      } catch (error) {
+        parsedFiles.push({
+          fileName: file.name,
+          kind: "unknown",
+          label: "解析失败",
+          rowCount: 0,
+          dateRange: "未识别",
+          errors: [error instanceof Error ? error.message : "文件解析失败"],
+          warnings: []
+        });
+      }
+    }
+    return mergeBusinessDiagnosisUploads(parsedFiles);
+  }
+
+  async function previewDiagnosisMerge() {
+    setDiagnosisBusy(true);
+    setNotice("");
+    try {
+      const result = await buildDiagnosisMerge();
+      if (!result) return;
+      setDiagnosisReport(result.report);
+      setDiagnosisPatch(result.patch);
+      if (result.report.ok) {
+        setNotice("业务诊断源表已识别完成，可合并应用到业务诊断看板。");
+      }
+    } finally {
+      setDiagnosisBusy(false);
+    }
+  }
+
+  async function applyDiagnosisMerge() {
+    setDiagnosisBusy(true);
+    setNotice("");
+    try {
+      const result =
+        diagnosisReport && diagnosisPatch
+          ? { report: diagnosisReport, patch: diagnosisPatch }
+          : await buildDiagnosisMerge();
+      if (!result) return;
+      setDiagnosisReport(result.report);
+      setDiagnosisPatch(result.patch);
+      if (!result.report.ok) {
+        setDialog({
+          title: "业务诊断源表未通过识别",
+          lines: result.report.errors.length > 0 ? result.report.errors : ["请检查源表格式后再合并。"],
+          tone: "bad"
+        });
+        return;
+      }
+      const res = await fetch("/api/business-diagnosis/source", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...result.patch,
+          fileNames: diagnosisFileNames,
+          sourceNote: "由数据导入页自定义上传源表识别合并，供业务诊断看板使用。"
+        })
+      });
+      const json = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) {
+        setDialog({
+          title: "业务诊断源表保存失败",
+          lines: [json?.error ?? `保存接口返回 ${res.status}`],
+          tone: "bad"
+        });
+        return;
+      }
+      setNotice("业务诊断源表已合并保存，已自动生成客户沟通版 HTML 报告，可前往业务诊断下载。");
+      router.refresh();
+    } finally {
+      setDiagnosisBusy(false);
+    }
+  }
+
+  function clearDiagnosisFiles() {
+    setDiagnosisFiles({ storeCategory: [], market: [] });
+    setDiagnosisReport(null);
+    setDiagnosisPatch(null);
+    setNotice("");
+  }
+
   async function clearSourceData() {
     setBusy(true);
     await fetch("/api/import-batches", { method: "DELETE" });
@@ -263,6 +399,106 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
               </label>
             );
           })}
+          <label
+            className={
+              diagnosisFiles.storeCategory.length > 0
+                ? "source-upload-slot has-data diagnosis-source-slot"
+                : "source-upload-slot diagnosis-source-slot"
+            }
+          >
+            <span>本店类目月度源表</span>
+            <strong>
+              {diagnosisFiles.storeCategory.length > 0
+                ? `已选 ${diagnosisFiles.storeCategory.length} 个文件`
+                : "选择文件"}
+            </strong>
+            <small>品类-标准类目 XLS / XLSX，可多月合并</small>
+            <input
+              type="file"
+              multiple
+              accept=".xlsx,.xls"
+              onChange={(event) => pickDiagnosisFiles("storeCategory", event.target.files)}
+            />
+          </label>
+          <label
+            className={
+              diagnosisFiles.market.length > 0
+                ? "source-upload-slot has-data diagnosis-source-slot"
+                : "source-upload-slot diagnosis-source-slot"
+            }
+          >
+            <span>市场大盘诊断源</span>
+            <strong>
+              {diagnosisFiles.market.length > 0 ? `已选 ${diagnosisFiles.market.length} 个文件` : "选择文件"}
+            </strong>
+            <small>市场概况 / 价格带 / 卖点 / 搜索词</small>
+            <input
+              type="file"
+              multiple
+              accept=".xlsx,.xls"
+              onChange={(event) => pickDiagnosisFiles("market", event.target.files)}
+            />
+          </label>
+        </div>
+        <div className="source-recognition-panel">
+          <div className="source-recognition-head">
+            <span>
+              <FileSearch size={15} />
+              源表识别与合并
+            </span>
+            {diagnosisFileCount > 0 ? <strong>待识别 {diagnosisFileCount} 个业务诊断源表</strong> : null}
+          </div>
+          <div className="source-recognition-actions">
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={previewDiagnosisMerge}
+              disabled={busy || diagnosisBusy || diagnosisFileCount === 0}
+            >
+              <FileSearch size={16} />
+              {diagnosisBusy ? "识别中" : "识别预览"}
+            </button>
+            <button
+              type="button"
+              onClick={applyDiagnosisMerge}
+              disabled={busy || diagnosisBusy || diagnosisFileCount === 0}
+            >
+              <GitMerge size={16} />
+              合并应用到业务诊断
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={clearDiagnosisFiles}
+              disabled={busy || diagnosisBusy || diagnosisFileCount === 0}
+            >
+              清除业务诊断源表
+            </button>
+          </div>
+          {diagnosisReport ? (
+            <div className="source-recognition-report">
+              <div className="source-recognition-summary">
+                <b>{diagnosisReport.ok ? "识别通过" : "识别失败"}</b>
+                <span>本店类目 {formatNumber(diagnosisReport.storeRowCount)} 行</span>
+                <span>市场概况 {formatNumber(diagnosisReport.marketOverviewCount)} 行</span>
+                <span>价格带 {formatNumber(diagnosisReport.priceBandCount)} 条</span>
+                <span>卖点 {formatNumber(diagnosisReport.attributeSignalCount)} 条</span>
+                <span>搜索词 {formatNumber(diagnosisReport.searchSignalCount)} 条</span>
+              </div>
+              <div className="source-recognition-files">
+                {diagnosisReport.files.map((file) => (
+                  <span className={file.errors.length > 0 ? "bad" : "good"} key={file.fileName}>
+                    {file.label} · {file.fileName} · {file.dateRange} · {formatNumber(file.rowCount)} 行
+                  </span>
+                ))}
+              </div>
+              {[...diagnosisReport.errors, ...diagnosisReport.warnings].slice(0, 8).map((line, index) => (
+                <p className={diagnosisReport.errors.includes(line) ? "merge-line error" : "merge-line warn"} key={`${line}-${index}`}>
+                  {line}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="source-actions">
           <button type="button" onClick={uploadAndRecalculate} disabled={busy}>
@@ -277,6 +513,7 @@ export function SourceDataConsole({ initialBatches }: { initialBatches: ImportBa
             <p className="form-message success">
               <CheckCircle2 size={16} />
               {notice}
+              <Link href="/dashboards/business-diagnosis">查看诊断与 HTML 报告</Link>
             </p>
           ) : null}
         </div>
@@ -416,15 +653,15 @@ function createDatasetId() {
 }
 
 /** 浏览器端把表头+数据行映射成可入库的行（商品/推广/人群→分日行；达摩盘→货品快照行）。 */
-function mapRowsForType(reportType: ReportType, headers: string[], rows: unknown[][]): unknown[] {
-  if (reportType === "product_source") return mapProductDailyRows(headers, rows);
-  if (reportType === "promotion_product_source") return mapPromotionDailyRows(headers, rows);
-  if (reportType === "audience_source") return mapAudienceDailyRows(headers, rows);
+function mapRowsForType(reportType: ReportType, headers: string[], rows: unknown[][], fallbackDate: string): unknown[] {
+  if (reportType === "product_source") return mapProductDailyRows(headers, rows, fallbackDate);
+  if (reportType === "promotion_product_source") return mapPromotionDailyRows(headers, rows, fallbackDate);
+  if (reportType === "audience_source") return mapAudienceDailyRows(headers, rows, fallbackDate);
   if (reportType === "damo_product_source") return mapDamoProductRows(headers, rows);
   return [];
 }
 
-const INGEST_CHUNK = 5000;
+const INGEST_CHUNK = 500;
 
 /**
  * 把映射后的行分批 POST 到 /ingest，末批收尾返回 batch。

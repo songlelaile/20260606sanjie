@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseWorkbookUpload } from "@/lib/imports/parse-workbook";
 import { locateHeaderRow, reportContracts, validateImportRows } from "@/lib/imports/contracts";
+import { inferImportDate } from "@/lib/imports/map-rows";
 import {
   addImportBatch,
   clearImportBatches,
@@ -65,7 +66,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: message }, { status: 400 });
     }
     const { headers, rows } = locateHeaderRow(parsed.matrix, reportType);
-    const validation = validateImportRows(reportType, headers, rows);
+    const validation = validateImportRows(reportType, headers, rows, {
+      fallbackDate: inferImportDate(file.name)
+    });
     if (parsed.warnings.length > 0) {
       validation.warnings = [...validation.warnings, ...parsed.warnings];
     }
@@ -108,7 +111,9 @@ export async function POST(request: Request) {
 
   const headers = Array.isArray(body.headers) ? body.headers : [];
   const rows = Array.isArray(body.rows) ? body.rows.filter(Array.isArray) : [];
-  const validation = validateImportRows(body.reportType, headers, rows);
+  const validation = validateImportRows(body.reportType, headers, rows, {
+    fallbackDate: inferImportDate(body.fileName ?? "")
+  });
   const datasetId = body.datasetId ?? `dataset-${Date.now()}`;
   const datasetTotalBytes = body.datasetTotalBytes ?? body.fileSizeBytes ?? 0;
   const fileSizeBytes = body.fileSizeBytes ?? datasetTotalBytes;

@@ -1,11 +1,28 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
 
+const AUTH_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 登录页、认证接口、公开隐私政策放行（/privacy 供 Chrome 商店与未登录用户查看）
-  if (pathname === "/login" || pathname === "/privacy" || pathname.startsWith("/api/auth/")) {
+  // 只读分享页放行（分享页靠高熵 token 授权），但拒绝非读取语义的方法。
+  if (pathname.startsWith("/shared/dashboards/")) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new NextResponse(null, {
+        status: 405,
+        headers: { Allow: "GET, HEAD" }
+      });
+    }
+    return NextResponse.next();
+  }
+
+  // 登录页、认证接口与公开隐私政策放行。
+  if (
+    pathname === "/login" ||
+    pathname === "/privacy" ||
+    pathname.startsWith("/api/auth/")
+  ) {
     return NextResponse.next();
   }
 
@@ -14,18 +31,25 @@ export async function middleware(request: NextRequest) {
   // 未登录：API 返回 401，页面跳转登录
   if (!session) {
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json({ error: "未登录" }, { status: 401 });
+      return NextResponse.json(
+        { error: "未登录" },
+        { status: 401, headers: AUTH_RESPONSE_HEADERS }
+      );
     }
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    response.headers.set("Cache-Control", AUTH_RESPONSE_HEADERS["Cache-Control"]);
+    return response;
   }
 
   // 已登录但页面越权 → 跳本角色首页（API 不做角色限制，先做界面区分）
   if (!pathname.startsWith("/api/") && !canAccess(session.role, pathname)) {
     const url = request.nextUrl.clone();
     url.pathname = ROLE_HOME[session.role];
-    return NextResponse.redirect(url);
+    const response = NextResponse.redirect(url);
+    response.headers.set("Cache-Control", AUTH_RESPONSE_HEADERS["Cache-Control"]);
+    return response;
   }
 
   return NextResponse.next();

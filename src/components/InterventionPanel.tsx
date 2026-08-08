@@ -98,7 +98,7 @@ export function InterventionPanel({
         <div className="intervention-form-row">
           <label>
             动作日期
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            <input type="date" max={todayIso()} value={date} onChange={(e) => setDate(e.target.value)} />
           </label>
           <label>
             类别

@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useState } from "react";
 import { DailyTrendChart, useTrendSelection } from "@/components/DailyTrendChart";
 import { FunnelChain, StagedMetricGrid } from "@/components/comparison-ui";
+import { ComparisonCoverageNotice } from "@/components/ComparisonCoverageNotice";
 import type { Intervention, InterventionComparison } from "@/lib/types/domain";
 
 export function ReviewConsole({ interventions }: { interventions: Intervention[] }) {
@@ -120,8 +121,11 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
               前窗 {comparison.window.beforeStart} ~ {comparison.window.beforeEnd}　·　后窗{" "}
               {comparison.window.afterStart} ~ {comparison.window.afterEnd}
             </p>
+            <ComparisonCoverageNotice window={comparison.window} />
 
-            <div className="review-lens">
+            {comparison.window.coverage.status === "ready" ? (
+              <>
+                <div className="review-lens">
               <h3>① 投产链路（{comparison.lensA.productScope}）</h3>
               <p className="review-lens-sub">动作如何沿 投放→流量→成交→利润 漏斗传导。</p>
               <FunnelChain steps={comparison.lensA.chain} />
@@ -129,12 +133,12 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
                 metrics={comparison.lensA.metrics}
                 chartLink={{ activeKeys: new Set(trend.selected), onToggle: trend.toggle }}
               />
-            </div>
+                </div>
 
-            <div className="review-lens">
-              <h3>② 计划 vs 实际（按后窗折算月度）</h3>
+                <div className="review-lens">
+              <h3>② 计划 vs 实际（按完整后窗折算月度）</h3>
               {comparison.lensB.rows.length === 0 ? (
-                <p className="review-empty">受影响商品暂无计划或后窗无数据。</p>
+                <p className="review-empty">受影响商品暂无计划或完整后窗内无数据。</p>
               ) : (
                 <div className="table-wrap">
                   <table className="management-table">
@@ -154,15 +158,22 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
                             <span>{r.productName}</span>
                           </td>
                           <td>¥{Math.round(r.planMonthlyGsv).toLocaleString()}</td>
-                          <td>¥{Math.round(r.actualMonthlyGsv).toLocaleString()}</td>
+                          <td>{r.actualMonthlyGsv === null ? "—" : `¥${Math.round(r.actualMonthlyGsv).toLocaleString()}`}</td>
                           <td>
+                            {/* 未设月GSV目标 → 显示"未设目标"，不能渲染成 0% 的"完全未达标"。 */}
                             <span
                               className={clsx(
                                 "user-status-pill",
-                                r.attainmentPct >= 1 ? "active" : r.attainmentPct >= 0.6 ? "pending" : "disabled"
+                                r.attainmentPct === null
+                                  ? "pending"
+                                  : r.attainmentPct >= 1
+                                    ? "active"
+                                    : r.attainmentPct >= 0.6
+                                      ? "pending"
+                                      : "disabled"
                               )}
                             >
-                              {(r.attainmentPct * 100).toFixed(0)}%
+                              {r.attainmentPct === null ? "未设目标" : `${(r.attainmentPct * 100).toFixed(0)}%`}
                             </span>
                           </td>
                         </tr>
@@ -171,7 +182,11 @@ export function ReviewConsole({ interventions }: { interventions: Intervention[]
                   </table>
                 </div>
               )}
-            </div>
+                </div>
+              </>
+            ) : (
+              <p className="review-empty">当前仅展示已到达的每日趋势，不输出涨跌、投产或月度折算结论。</p>
+            )}
 
             <div className="review-lens">
               <h3>③ 每日趋势（多指标多轴对比，动作日标注）</h3>

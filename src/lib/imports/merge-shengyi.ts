@@ -109,7 +109,18 @@ export function buildShengyiMergePlan(
     };
   }
 
-  const canonicalHeaders = files[0].headers;
+  // 以所有文件表头并集作为规范列，避免首文件缺少的后续合法列被静默丢弃。
+  const canonicalHeaders: string[] = [];
+  const seenCanonical = new Set<string>();
+  for (const file of files) {
+    for (const header of file.headers) {
+      const key = normalizeHeader(header);
+      if (key && !seenCanonical.has(key)) {
+        seenCanonical.add(key);
+        canonicalHeaders.push(header);
+      }
+    }
+  }
   const canonicalColCount = canonicalHeaders.length;
   const canonicalKeys = canonicalHeaders.map(normalizeHeader);
   const dateToFile = new Map<string, string>(); // 内部日期 → 首个文件名（查重）
@@ -195,8 +206,14 @@ export function buildShengyiMergePlan(
     }
 
     if (file.headers.length !== canonicalColCount) {
-      warnings.push(`${file.name}：表头列数 ${file.headers.length} 与首个文件 ${canonicalColCount} 不一致`);
+      warnings.push(`${file.name}：表头列数 ${file.headers.length} 与合并规范 ${canonicalColCount} 不一致`);
       issues.push("列数不一致");
+    }
+    const fileKeys = new Set(file.headers.map(normalizeHeader).filter(Boolean));
+    const missingFromFile = canonicalKeys.filter((key) => !fileKeys.has(key));
+    if (missingFromFile.length > 0) {
+      warnings.push(`${file.name}：缺少合并规范列 ${missingFromFile.join("、")}，对应字段将记为 null`);
+      issues.push("列名集合不一致");
     }
 
     // 重排到首文件列序后再拼接（防止个别文件列顺序不同导致错列）。

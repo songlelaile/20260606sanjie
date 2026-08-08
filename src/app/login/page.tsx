@@ -1,7 +1,8 @@
 "use client";
 
+import { Eye, EyeOff } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 
 type Tab = "login" | "register";
 
@@ -20,18 +21,19 @@ export default function LoginPage() {
 }
 
 function LoginView() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>("login");
 
   // 登录
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   // 注册
   const [regName, setRegName] = useState("");
   const [regUsername, setRegUsername] = useState("");
   const [regPassword, setRegPassword] = useState("");
+  const [showRegPassword, setShowRegPassword] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
 
   const [error, setError] = useState("");
@@ -55,47 +57,58 @@ function LoginView() {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username, password })
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { data?: { home: string }; error?: string }
-      | null;
-    setBusy(false);
-    if (!response.ok || !payload?.data) {
-      setError(payload?.error ?? "登录失败，请重试");
-      return;
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password }),
+        cache: "no-store"
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: { home: string }; error?: string }
+        | null;
+      if (!response.ok || !payload?.data) {
+        setError(payload?.error ?? "登录失败，请重试");
+        return;
+      }
+      // 账号切换必须重建整个文档，避免复用上一租户的 Next Router Cache。
+      window.location.replace(payload.data.home);
+    } catch {
+      setError("网络连接失败，请检查网络后重试");
+    } finally {
+      setBusy(false);
     }
-    router.replace(payload.data.home);
-    router.refresh();
   }
 
   async function submitRegister(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
-    const response = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        name: regName,
-        username: regUsername,
-        password: regPassword,
-        inviteCode
-      })
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { data?: { home: string }; error?: string }
-      | null;
-    setBusy(false);
-    if (!response.ok || !payload?.data) {
-      setError(payload?.error ?? "注册失败，请重试");
-      return;
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name: regName,
+          username: regUsername,
+          password: regPassword,
+          inviteCode
+        }),
+        cache: "no-store"
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { data?: { home: string }; error?: string }
+        | null;
+      if (!response.ok || !payload?.data) {
+        setError(payload?.error ?? "注册失败，请重试");
+        return;
+      }
+      window.location.replace(payload.data.home);
+    } catch {
+      setError("网络连接失败，请检查网络后重试");
+    } finally {
+      setBusy(false);
     }
-    router.replace(payload.data.home);
-    router.refresh();
   }
 
   return (
@@ -148,23 +161,34 @@ function LoginView() {
           {tab === "login" ? (
             <form className="auth-form" onSubmit={submitLogin}>
               <label>
-                账号
+                账号（手机号）
                 <input
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
-                  placeholder="请输入账号"
+                  placeholder="请输入账号或手机号"
                 />
               </label>
               <label>
                 密码
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete="current-password"
-                  placeholder="请输入密码"
-                />
+                <span className="password-input-wrap">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete="current-password"
+                    placeholder="请输入密码"
+                  />
+                  <button
+                    type="button"
+                    className="password-visibility-button"
+                    aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                    title={showPassword ? "隐藏密码" : "显示密码"}
+                    onClick={() => setShowPassword((current) => !current)}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
               </label>
               {error ? <p className="auth-error">{error}</p> : null}
               <button type="submit" className="auth-submit" disabled={busy}>
@@ -196,13 +220,24 @@ function LoginView() {
               </label>
               <label>
                 密码
-                <input
-                  type="password"
-                  value={regPassword}
-                  onChange={(event) => setRegPassword(event.target.value)}
-                  autoComplete="new-password"
-                  placeholder="至少 6 个字符"
-                />
+                <span className="password-input-wrap">
+                  <input
+                    type={showRegPassword ? "text" : "password"}
+                    value={regPassword}
+                    onChange={(event) => setRegPassword(event.target.value)}
+                    autoComplete="new-password"
+                    placeholder="至少 6 个字符"
+                  />
+                  <button
+                    type="button"
+                    className="password-visibility-button"
+                    aria-label={showRegPassword ? "隐藏密码" : "显示密码"}
+                    title={showRegPassword ? "隐藏密码" : "显示密码"}
+                    onClick={() => setShowRegPassword((current) => !current)}
+                  >
+                    {showRegPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
               </label>
               <label>
                 邀请码

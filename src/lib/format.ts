@@ -1,5 +1,9 @@
-export function formatNumber(value: number, digits = 0) {
-  if (!Number.isFinite(value)) {
+/**
+ * 展示层格式化统一接受 null：分母为 0 的强度指标（转化率/客单价/毛利率/ROI…）
+ * 一律以 null 表达"无法计算"，渲染成"—"，绝不落成会被误读的 0。
+ */
+export function formatNumber(value: number | null | undefined, digits = 0) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";
   }
   return new Intl.NumberFormat("zh-CN", {
@@ -8,8 +12,8 @@ export function formatNumber(value: number, digits = 0) {
   }).format(value);
 }
 
-export function formatMoney(value: number, digits = 0) {
-  if (!Number.isFinite(value)) {
+export function formatMoney(value: number | null | undefined, digits = 0) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
     return "¥—";
   }
   return new Intl.NumberFormat("zh-CN", {
@@ -20,8 +24,8 @@ export function formatMoney(value: number, digits = 0) {
   }).format(value);
 }
 
-export function formatPercent(value: number, digits = 1) {
-  if (!Number.isFinite(value)) {
+export function formatPercent(value: number | null | undefined, digits = 1) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
     return "—";
   }
   return new Intl.NumberFormat("zh-CN", {

@@ -10,8 +10,12 @@ export interface ChartLink {
   onToggle: (key: string) => void;
 }
 
-/** 对比指标格式化：rate=百分比，ratio=倍数，money=金额（小额留小数），int=整数。 */
-export function fmtMetric(value: number, unit: ComparisonMetric["unit"]): string {
+/** 无数据占位：分母为 0（无访客/无成交/无投放）时显示，避免被读成"指标为 0"。 */
+export const NO_DATA = "—";
+
+/** 对比指标格式化：rate=百分比，ratio=倍数，money=金额（小额留小数），int=整数。null=无数据。 */
+export function fmtMetric(value: number | null, unit: ComparisonMetric["unit"]): string {
+  if (value === null || !Number.isFinite(value)) return NO_DATA;
   if (unit === "rate") return `${(value * 100).toFixed(1)}%`;
   if (unit === "ratio") return value.toFixed(2);
   if (unit === "money") {
@@ -23,26 +27,43 @@ export function fmtMetric(value: number, unit: ComparisonMetric["unit"]): string
 
 /** 中性指标恒 flat；否则按 higherIsBetter 判断符号方向。 */
 export function metricTone(metric: ComparisonMetric): "good" | "bad" | "flat" {
-  if (metric.neutral || Math.abs(metric.delta) < 1e-9) return "flat";
+  if (metric.neutral || metric.delta === null || metric.changeStatus === "unchanged" || metric.changeStatus === "unavailable") return "flat";
   return metric.delta > 0 === metric.higherIsBetter ? "good" : "bad";
 }
 
 const EPS = 1e-9;
 
 /** 变化文案：前窗为 0、后窗有值 → "新增"（避免误导的 +100%）；否则带符号绝对+相对。 */
-export function deltaText(before: number, after: number, delta: number, deltaPct: number, unit: ComparisonMetric["unit"]): string {
-  if (Math.abs(before) < EPS && Math.abs(after) >= EPS) {
-    return "新增";
-  }
-  return `${delta >= 0 ? "+" : ""}${fmtMetric(delta, unit)}（${deltaPct >= 0 ? "+" : ""}${(deltaPct * 100).toFixed(1)}%）`;
+export function deltaText(metric: ComparisonMetric): string {
+  if (metric.changeStatus === "new") return "新增";
+  if (metric.changeStatus === "disappeared") return "消失";
+  if (metric.changeStatus === "unavailable") return "不可比较";
+  if (metric.changeStatus === "unchanged") return "持平";
+  if (metric.delta === null || metric.deltaPct === null) return "不可比较";
+  return `${metric.delta >= 0 ? "+" : ""}${fmtMetric(metric.delta, metric.unit)}（${metric.deltaPct >= 0 ? "+" : ""}${(metric.deltaPct * 100).toFixed(1)}%）`;
 }
 
 /** 表格主指标变化标签（前窗0且后窗有值 → "新增"）。 */
-export function deltaPctLabel(before: number, after: number, deltaPct: number): string {
-  if (Math.abs(before) < EPS && Math.abs(after) >= EPS) {
-    return "新增";
-  }
-  return `${deltaPct >= 0 ? "+" : ""}${(deltaPct * 100).toFixed(1)}%`;
+export function deltaPctLabel(
+  before: number | null,
+  after: number | null,
+  deltaPct: number | null,
+  changeStatus?: ComparisonMetric["changeStatus"]
+): string {
+  const status = changeStatus ?? (before === null || after === null
+    ? "unavailable"
+    : Math.abs(before) < EPS && Math.abs(after) >= EPS
+      ? "new"
+      : Math.abs(before) >= EPS && Math.abs(after) < EPS
+        ? "disappeared"
+        : Math.abs(after - before) < EPS
+          ? "unchanged"
+          : after > before ? "increased" : "decreased");
+  if (status === "new") return "新增";
+  if (status === "disappeared") return "消失";
+  if (status === "unavailable") return "不可比较";
+  if (status === "unchanged") return "持平";
+  return deltaPct === null ? "不可比较" : `${deltaPct >= 0 ? "+" : ""}${(deltaPct * 100).toFixed(1)}%`;
 }
 
 export function MetricCard({ m, chartLink }: { m: ComparisonMetric; chartLink?: ChartLink }) {
@@ -59,7 +80,7 @@ export function MetricCard({ m, chartLink }: { m: ComparisonMetric; chartLink?: 
       <span className="review-metric-values">
         {fmtMetric(m.before, m.unit)} → <strong>{fmtMetric(m.after, m.unit)}</strong>
       </span>
-      <span className="review-metric-delta">{deltaText(m.before, m.after, m.delta, m.deltaPct, m.unit)}</span>
+      <span className="review-metric-delta">{deltaText(m)}</span>
     </>
   );
   if (!chartable) {
@@ -134,20 +155,18 @@ export function StagedMetricGrid({
 
 /** 链路节点变化色：中性=灰；否则 higherIsBetter 决定红绿。 */
 function chainTone(s: FunnelChainStep): "good" | "bad" | "flat" {
-  if (s.neutral || Math.abs(s.after - s.before) < 1e-9) return "flat";
+  if (s.neutral || s.before === null || s.after === null || s.changeStatus === "unchanged" || s.changeStatus === "unavailable") return "flat";
   return s.after - s.before > 0 === s.higherIsBetter ? "good" : "bad";
 }
 
-/** 投产链路：花费→展现→点击→访客→买家→销售额→ROI 一行式因果展示。 */
+/** 投产链路：花费→展现→点击→访客→买家→销售额→ROI 的一行式描述性展示。 */
 export function FunnelChain({ steps }: { steps: FunnelChainStep[] }) {
   if (!steps.length) return null;
   return (
     <div className="funnel-chain" role="list" aria-label="投产链路">
       {steps.map((s, i) => {
         const t = chainTone(s);
-        const pct = Math.abs(s.before) < EPS && Math.abs(s.after) >= EPS
-          ? "新增"
-          : `${s.deltaPct >= 0 ? "+" : ""}${(s.deltaPct * 100).toFixed(0)}%`;
+        const pct = deltaPctLabel(s.before, s.after, s.deltaPct, s.changeStatus);
         return (
           <div className="funnel-chain-item" role="listitem" key={s.key}>
             <div className="funnel-node">
@@ -163,16 +182,24 @@ export function FunnelChain({ steps }: { steps: FunnelChainStep[] }) {
   );
 }
 
-/** 前→后单元格（带涨跌色，higherIsBetter 决定红绿）。 */
+/**
+ * 前→后单元格（带涨跌色，higherIsBetter 决定红绿）。
+ * 任一侧为 null（无访客/无成交/无投放，指标无法计算）时不判涨跌，渲染成"—"并保持中性色。
+ */
 export function deltaCell(
-  before: number,
-  after: number,
+  before: number | null,
+  after: number | null,
   unit: ComparisonMetric["unit"],
   higherIsBetter: boolean,
   neutral = false
 ): { before: string; after: string; tone: "good" | "bad" | "flat" } {
-  const delta = after - before;
+  const comparable = before !== null && after !== null;
+  const delta = comparable ? after - before : 0;
   const tone: "good" | "bad" | "flat" =
-    neutral || Math.abs(delta) < 1e-9 ? "flat" : delta > 0 === higherIsBetter ? "good" : "bad";
+    !comparable || neutral || Math.abs(delta) < 1e-9
+      ? "flat"
+      : delta > 0 === higherIsBetter
+        ? "good"
+        : "bad";
   return { before: fmtMetric(before, unit), after: fmtMetric(after, unit), tone };
 }

@@ -19,12 +19,13 @@ interface KpiDef {
   key: string;
   label: (d: ManagementDashboard) => string;
   unit: Unit;
-  value: (d: ManagementDashboard) => number;
+  /** null = 该 KPI 在当前数据下无法计算（分母为 0），展示层渲染成"—"而不是 0。 */
+  value: (d: ManagementDashboard) => number | null;
   tone?: (d: ManagementDashboard) => "good" | "warn" | undefined;
   /** 该 KPI 在每个商品上的贡献值（可加和项）。费率/计数无此项。 */
-  perProduct?: (r: ProductInvestmentResult) => number;
+  perProduct?: (r: ProductInvestmentResult) => number | null;
   /** 费率型 KPI：由分子/分母加权重算。 */
-  rate?: { num: (r: ProductInvestmentResult) => number; den: (r: ProductInvestmentResult) => number };
+  rate?: { num: (r: ProductInvestmentResult) => number | null; den: (r: ProductInvestmentResult) => number | null };
   formula: string;
 }
 
@@ -38,7 +39,7 @@ const KPIS: KpiDef[] = [
   },
   {
     key: "monthlyNetSales",
-    label: () => "月去退销售额",
+    label: (d) => periodLabel(d, "去退销售额"),
     unit: "money",
     value: (d) => d.monthlyNetSales,
     perProduct: (r) => r.netSales,
@@ -46,11 +47,11 @@ const KPIS: KpiDef[] = [
   },
   {
     key: "monthlyProfitEstimate",
-    label: () => "月利润预估",
+    label: (d) => periodLabel(d, "贡献利润估算"),
     unit: "money",
     value: (d) => d.monthlyProfitEstimate,
     perProduct: (r) => r.historicalGrossProfit,
-    formula: "Σ 各商品历史毛利（去退销售额 × 毛利率 − 营销消耗）。"
+    formula: "Σ 各商品（分析窗去退销售额 × 用户预填毛利率 − 同窗推广花费）；预填毛利率已包含固定成本、税费、仓储与现金成本口径。"
   },
   {
     key: "historicalMarginRate",
@@ -58,7 +59,7 @@ const KPIS: KpiDef[] = [
     unit: "rate",
     value: (d) => d.historicalMarginRate,
     rate: { num: (r) => r.historicalGrossProfit, den: (r) => r.netSales },
-    formula: "月利润预估 ÷ 月去退销售额。"
+    formula: "分析窗贡献利润估算 ÷ 分析窗去退销售额；仅统计同窗推广成本可关联的商品，分子分母同口径。"
   },
   {
     key: "monthlyGsvOpportunity",
@@ -70,21 +71,24 @@ const KPIS: KpiDef[] = [
   },
   {
     key: "marketSalesGap",
-    label: (d) => (d.marketSalesGap < 0 ? "市场销售盈余" : "市场销售缺口"),
+    label: (d) => isFullNaturalMonth(d.analysisPeriod) && d.marketSalesGap !== null
+      ? d.marketSalesGap < 0 ? "月GSV目标缺口" : "月GSV超目标额"
+      : "月目标差额（待同口径）",
     unit: "money",
-    value: (d) => Math.abs(d.marketSalesGap),
-    tone: (d) => (d.marketSalesGap < 0 ? "good" : "warn"),
+    value: (d) => d.marketSalesGap === null ? null : Math.abs(d.marketSalesGap),
+    tone: (d) => isFullNaturalMonth(d.analysisPeriod) && d.marketSalesGap !== null
+      ? d.marketSalesGap < 0 ? "warn" : "good"
+      : undefined,
     perProduct: (r) => r.salesGap,
-    formula: "月去退销售额 − 月GSV机会（逐商品 salesGap 求和；负=实际低于目标）。"
+    formula: "完整自然月：月去退销售额 − 月GSV机会；短窗仅展示不同口径差额，不判定达成。"
   },
   {
     key: "availableAdBudget",
-    label: () => "全店可投费用",
+    label: () => "静态利润安全垫",
     unit: "money",
     value: (d) => d.availableAdBudget,
-    tone: () => "good",
-    perProduct: (r) => r.remainingAdBudget,
-    formula: "Σ 各商品（历史毛利率 − 攻防毛利率）× 历史毛利 ÷ 历史毛利率。"
+    perProduct: (r) => r.profitEvidenceAvailable === true && r.remainingAdBudget !== null ? Math.max(r.remainingAdBudget, 0) : null,
+    formula: "Σ 各商品正向（同窗贡献利润 − 正净销×目标保留率）；极端零产出承压代理，不是获批或建议预算。"
   },
   {
     key: "plannedProfit",
@@ -104,19 +108,42 @@ const KPIS: KpiDef[] = [
   }
 ];
 
+/** 利润类下钻只允许使用同窗成本证据完整的商品，避免分母被未知利润商品稀释。 */
+function evidenceRowsFor(def: KpiDef, rows: ProductInvestmentResult[]) {
+  return ["monthlyProfitEstimate", "historicalMarginRate", "availableAdBudget"].includes(def.key)
+    ? rows.filter((row) => row.profitEvidenceAvailable === true)
+    : rows;
+}
+
 const KPI_BY_KEY = new Map(KPIS.map((k) => [k.key, k]));
+
+function periodLabel(dashboard: ManagementDashboard, metric: string) {
+  const period = dashboard.analysisPeriod;
+  return period ? `${period.start}~${period.end} ${metric}` : `分析窗${metric}`;
+}
+
+function isFullNaturalMonth(period?: { start: string; end: string }) {
+  if (!period) return false;
+  const [year, month, startDay] = period.start.split("-").map(Number);
+  const [endYear, endMonth, endDay] = period.end.split("-").map(Number);
+  return year === endYear && month === endMonth && startDay === 1 &&
+    endDay === new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
 const GRADES: ProductGrade[] = ["S", "A", "B", "C"];
 const LIFECYCLES: Lifecycle[] = ["冷启期", "新品成长期", "成长期", "新品打爆期", "爆品期", "平销期"];
 
 /** 金额紧凑：亿/万。 */
-function money(v: number): string {
+function money(v: number | null): string {
+  if (v === null || !Number.isFinite(v)) return "¥—";
   const abs = Math.abs(v);
   const sign = v < 0 ? "-" : "";
   if (abs >= 1e8) return `${sign}¥${(abs / 1e8).toFixed(2)}亿`;
   if (abs >= 1e4) return `${sign}¥${(abs / 1e4).toFixed(1)}万`;
   return `${sign}¥${Math.round(abs).toLocaleString()}`;
 }
-function fmtVal(v: number, unit: Unit): string {
+/** null = 无法计算（如无证据完整商品时的历史利润率），统一渲染成"—"。 */
+function fmtVal(v: number | null, unit: Unit): string {
+  if (v === null) return "—";
   if (unit === "rate") return formatPercent(v, 1);
   if (unit === "int") return formatNumber(v);
   return money(v);
@@ -154,11 +181,13 @@ function HBar({
 export function KpiBoard({
   dashboard,
   results,
-  trendSeries
+  trendSeries,
+  scopeName = "整店"
 }: {
   dashboard: ManagementDashboard;
   results: ProductInvestmentResult[];
   trendSeries: DailyTrendPoint[];
+  scopeName?: string;
 }) {
   const [selected, setSelected] = useState<string>("monthlyNetSales");
   const [view, setView] = useState<ViewMode>("rank");
@@ -175,11 +204,11 @@ export function KpiBoard({
   // 瀑布/规划两视图与选中 KPI 无关，标题/说明随视图走，避免「标题是某 KPI、内容却与它无关」的误导。
   const head =
     view === "waterfall"
-      ? { title: "盈利构成推导", desc: "把销售→利润→可投费用、目标→缺口串成一条链（与选中 KPI 无关）。" }
+      ? { title: "盈利构成推导", desc: "把分析窗销售→贡献利润→静态安全垫串成一条证据链（与选中 KPI 无关）。" }
       : view === "plan"
-        ? { title: "规划 vs 实际达成", desc: "逐商品 月GSV机会(规划) vs 去退销售额(实际) 及达成率（与选中 KPI 无关）。" }
+        ? { title: "规划 vs 实际", desc: "仅完整自然月展示达成率；短窗只并列展示，不做同口径结论（与选中 KPI 无关）。" }
         : view === "trend"
-          ? { title: "分日趋势", desc: "整店实际经营指标按天走势（多指标多轴对比），与上方规划 KPI 互为印证。" }
+          ? { title: "分日趋势", desc: `${scopeName}实际经营指标按天走势（多指标多轴对比），与上方规划 KPI 互为印证。` }
           : { title: def.label(dashboard), desc: def.formula };
 
   return (
@@ -202,6 +231,27 @@ export function KpiBoard({
           );
         })}
       </div>
+
+      {/* 利润口径只统计同窗推广成本可关联的商品；被排除的数量必须显式告知，
+          否则运营会把"证据不足"读成"这些商品利润为 0"。 */}
+      {!empty && dashboard.profitEvidenceMissingCount > 0 ? (
+        <p className="kpi-drill-note">
+          利润相关指标（贡献利润估算、历史利润率、静态利润安全垫）仅统计同分析窗推广成本可关联的{" "}
+          {dashboard.profitEvidenceProductCount} 个商品；另有 {dashboard.profitEvidenceMissingCount}{" "}
+          个商品因推广或商品源缺日未计入，其利润为「未知」而非 0。补齐缺日后自动纳入。
+        </p>
+      ) : null}
+
+      {!empty && dashboard.negativeMarginProducts.length > 0 ? (
+        <p className="kpi-drill-note">
+          有 {dashboard.negativeMarginProducts.length} 个商品毛利率 ≤ 0 但仍有净销额（
+          {dashboard.negativeMarginProducts
+            .slice(0, 3)
+            .map((row) => row.productName || row.productId)
+            .join("、")}
+          {dashboard.negativeMarginProducts.length > 3 ? " 等" : ""}），卖得越多亏得越多，需优先复核毛利率填写与定价。
+        </p>
+      ) : null}
 
       {empty ? (
         <p className="kpi-drill-empty">暂无三阶计算结果，请到「预填写表」填好评级/毛利率/月GSV机会后运行算法。</p>
@@ -232,7 +282,7 @@ export function KpiBoard({
           {view === "pivot" ? (
             <PivotView def={def} results={results} pivotBy={pivotBy} setPivotBy={setPivotBy} />
           ) : null}
-          {view === "plan" ? <PlanView results={results} /> : null}
+          {view === "plan" ? <PlanView results={results} dashboard={dashboard} /> : null}
           {view === "trend" ? (
             trendSeries.length > 0 ? (
               <DailyTrendChart series={trendSeries} />
@@ -261,8 +311,13 @@ function RankView({
   }
   if (def.rate) {
     // 费率：逐商品该费率，按值排序，条宽 ∝ 费率。
-    const rows = results
-      .map((r) => ({ r, v: def.rate!.den(r) !== 0 ? def.rate!.num(r) / def.rate!.den(r) : 0 }))
+    const rows = evidenceRowsFor(def, results)
+      .map((r) => {
+        const numerator = def.rate!.num(r);
+        const denominator = def.rate!.den(r);
+        return { r, v: numerator !== null && denominator !== null && denominator !== 0 ? numerator / denominator : null };
+      })
+      .filter((entry): entry is { r: ProductInvestmentResult; v: number } => entry.v !== null)
       .sort((a, b) => b.v - a.v)
       .slice(0, 15);
     const max = Math.max(...rows.map((x) => Math.abs(x.v)), 1e-9);
@@ -284,11 +339,13 @@ function RankView({
     );
   }
   const get = def.perProduct!;
-  const signedTotal = results.reduce((s, r) => s + get(r), 0);
-  // 贡献度分母用 Σ|各商品|：避免 total 带符号/正负混合（如 salesGap）时算出反号占比。
-  const absTotal = results.reduce((s, r) => s + Math.abs(get(r)), 0);
-  const rows = results
+  const known = evidenceRowsFor(def, results)
     .map((r) => ({ r, v: get(r) }))
+    .filter((entry): entry is { r: ProductInvestmentResult; v: number } => entry.v !== null);
+  const signedTotal = known.length > 0 ? known.reduce((s, entry) => s + entry.v, 0) : null;
+  // 贡献度分母用 Σ|各商品|：避免 total 带符号/正负混合（如 salesGap）时算出反号占比。
+  const absTotal = known.reduce((s, entry) => s + Math.abs(entry.v), 0);
+  const rows = known
     .filter((x) => Math.abs(x.v) > 0)
     .sort((a, b) => Math.abs(b.v) - Math.abs(a.v))
     .slice(0, 15);
@@ -313,25 +370,27 @@ function RankView({
   );
 }
 
-/** ② 盈利构成：把孤立 KPI 串成 销售→利润→可投费用 与 目标→缺口 的推导链。 */
+/** ② 盈利构成：把孤立 KPI 串成 销售→贡献利润→静态安全垫 与 目标→差额 的推导链。 */
 function WaterfallView({ dashboard }: { dashboard: ManagementDashboard }) {
   const d = dashboard;
-  const cost = d.monthlyNetSales - d.monthlyProfitEstimate; // 成本+营销
-  const scale = Math.max(d.monthlyGsvOpportunity, d.monthlyNetSales, 1);
-  const bar = (label: string, value: number, fill: string, sub?: string) => (
-    <HBar key={label} label={label} sub={sub} value={money(value)} pct={(Math.abs(value) / scale) * 100} fill={fill} negative={value < 0} />
+  const cost = d.monthlyNetSales !== null && d.monthlyProfitEstimate !== null
+    ? d.monthlyNetSales - d.monthlyProfitEstimate
+    : null;
+  const scale = Math.max(d.monthlyGsvOpportunity, d.monthlyNetSales ?? 0, 1);
+  const bar = (label: string, value: number | null, fill: string, sub?: string) => (
+    <HBar key={label} label={label} sub={sub} value={money(value)} pct={value === null ? 0 : (Math.abs(value) / scale) * 100} fill={fill} negative={value !== null && value < 0} />
   );
-  const attain = d.monthlyGsvOpportunity !== 0 ? d.monthlyNetSales / d.monthlyGsvOpportunity : 0;
+  const attain = d.monthlyNetSales !== null && d.monthlyGsvOpportunity !== 0 ? d.monthlyNetSales / d.monthlyGsvOpportunity : null;
   return (
     <div className="kpi-waterfall">
-      <p className="kpi-drill-note">盈利推导链：销售如何变成利润与可投费用；目标(GSV机会)与实际的缺口。</p>
+      <p className="kpi-drill-note">盈利推导链：分析窗销售如何形成贡献利润与静态承压代理；静态安全垫不是获批预算。</p>
       <div className="kpi-bar-list">
         {bar("月GSV机会（目标）", d.monthlyGsvOpportunity, "#6f8bdf")}
-        {bar("月去退销售额（实际）", d.monthlyNetSales, "#f6c65f", `达成 ${formatPercent(attain, 0)}`)}
-        {bar(d.marketSalesGap < 0 ? "↳ 距目标缺口" : "↳ 超目标盈余", Math.abs(d.marketSalesGap), d.marketSalesGap < 0 ? "#ef7c67" : "#7ad17a")}
-        {bar("月利润预估", d.monthlyProfitEstimate, "#7ad17a", `毛利率 ${formatPercent(d.historicalMarginRate, 1)}`)}
+        {bar(periodLabel(d, "去退销售额（实际）"), d.monthlyNetSales, "#f6c65f", isFullNaturalMonth(d.analysisPeriod) ? `达成 ${formatPercent(attain, 0)}` : "短窗与月目标不同口径")}
+        {bar(isFullNaturalMonth(d.analysisPeriod) && d.marketSalesGap !== null ? (d.marketSalesGap < 0 ? "↳ 距月目标缺口" : "↳ 超月目标额") : "↳ 月目标差额（待同口径）", d.marketSalesGap === null ? null : Math.abs(d.marketSalesGap), isFullNaturalMonth(d.analysisPeriod) && (d.marketSalesGap ?? -1) >= 0 ? "#7ad17a" : "#ef7c67")}
+        {bar(periodLabel(d, "贡献利润估算"), d.monthlyProfitEstimate, "#7ad17a", `贡献利润率 ${formatPercent(d.historicalMarginRate, 1)}`)}
         {bar("↳ 成本 + 营销", cost, "#9aa0a6")}
-        {bar("全店可投费用", d.availableAdBudget, "#36c9b0", "历史毛利率高于攻防线的预算空间")}
+        {bar("静态利润安全垫", d.availableAdBudget, "#36c9b0", "极端零产出承压代理；非获批预算")}
         {bar("增长预留毛利", d.plannedProfit, d.plannedProfit < 0 ? "#ef4d4d" : "#a3e635", `预留毛利率 ${formatPercent(d.plannedMarginRate, 1)}`)}
       </div>
     </div>
@@ -354,16 +413,22 @@ function PivotView({
   const isCount = def.key === "productCount";
   const rows = groups.map((g) => {
     const items = results.filter((r) => (pivotBy === "grade" ? r.grade : r.lifecycle) === g);
-    let v: number;
+    let v: number | null;
     if (isCount) v = items.length;
     else if (def.rate) {
-      const num = items.reduce((s, r) => s + def.rate!.num(r), 0);
-      const den = items.reduce((s, r) => s + def.rate!.den(r), 0);
-      v = den !== 0 ? num / den : 0;
-    } else v = items.reduce((s, r) => s + def.perProduct!(r), 0);
+      const eligible = evidenceRowsFor(def, items);
+      const nums = eligible.map((r) => def.rate!.num(r)).filter((value): value is number => value !== null);
+      const dens = eligible.map((r) => def.rate!.den(r)).filter((value): value is number => value !== null);
+      const num = nums.reduce((sum, value) => sum + value, 0);
+      const den = dens.reduce((sum, value) => sum + value, 0);
+      v = nums.length > 0 && dens.length > 0 && den !== 0 ? num / den : null;
+    } else {
+      const values = evidenceRowsFor(def, items).map((r) => def.perProduct!(r)).filter((value): value is number => value !== null);
+      v = values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null;
+    }
     return { g, v, n: items.length };
   });
-  const max = Math.max(...rows.map((x) => Math.abs(x.v)), 1e-9);
+  const max = Math.max(...rows.map((x) => Math.abs(x.v ?? 0)), 1e-9);
   const unit: Unit = isCount ? "int" : def.unit;
   return (
     <div className="kpi-pivot">
@@ -382,9 +447,9 @@ function PivotView({
             label={g}
             sub={`${n} 个商品`}
             value={fmtVal(v, unit)}
-            pct={(Math.abs(v) / max) * 100}
-            fill={v < 0 ? "#ef4d4d" : pivotBy === "grade" ? "#f4a43e" : "#6f8bdf"}
-            negative={v < 0}
+            pct={(Math.abs(v ?? 0) / max) * 100}
+            fill={(v ?? 0) < 0 ? "#ef4d4d" : pivotBy === "grade" ? "#f4a43e" : "#6f8bdf"}
+            negative={v !== null && v < 0}
           />
         ))}
       </div>
@@ -392,29 +457,32 @@ function PivotView({
   );
 }
 
-/** ④ 规划 vs 实际：逐商品 月GSV机会(规划) vs 月去退销售额(实际) 与达成率。 */
-function PlanView({ results }: { results: ProductInvestmentResult[] }) {
+/** ④ 规划 vs 实际：完整自然月才计算月目标达成；短窗只展示并列值。 */
+function PlanView({ results, dashboard }: { results: ProductInvestmentResult[]; dashboard: ManagementDashboard }) {
+  const comparable = isFullNaturalMonth(dashboard.analysisPeriod);
   const { sorted, planTotal, actualTotal, max } = useMemo(() => {
     const s = [...results].sort((a, b) => b.monthlyGsvOpportunity - a.monthlyGsvOpportunity).slice(0, 15);
     return {
       sorted: s,
       planTotal: results.reduce((acc, r) => acc + r.monthlyGsvOpportunity, 0),
-      actualTotal: results.reduce((acc, r) => acc + r.netSales, 0),
+      actualTotal: results.some((r) => r.netSales !== null)
+        ? results.reduce((acc, r) => acc + (r.netSales ?? 0), 0)
+        : null,
       // 分母只取正向值，避免某行规划/实际皆负或 GSV 全 0 时 1e-9 兜底导致条宽爆量。
-      max: Math.max(...s.map((r) => Math.max(r.monthlyGsvOpportunity, r.netSales, 0)), 1e-9)
+      max: Math.max(...s.map((r) => Math.max(r.monthlyGsvOpportunity, r.netSales ?? 0, 0)), 1e-9)
     };
   }, [results]);
   const barPct = (v: number) => Math.max(0, Math.min(100, (Math.max(v, 0) / max) * 100));
   return (
     <div className="kpi-plan">
       <p className="kpi-drill-note">
-        规划（月GSV机会）vs 实际（月去退销售额）。整店达成率{" "}
-        <strong>{planTotal !== 0 ? formatPercent(actualTotal / planTotal, 0) : "—"}</strong>（实际 {money(actualTotal)} / 规划 {money(planTotal)}）。
+        月GSV机会 vs {periodLabel(dashboard, "去退销售额")}。整店达成率{" "}
+        <strong>{comparable && planTotal !== 0 && actualTotal !== null ? formatPercent(actualTotal / planTotal, 0) : "待同口径"}</strong>（实际 {money(actualTotal)} / 月目标 {money(planTotal)}）。
       </p>
       <div className="kpi-plan-list">
         {sorted.map((r) => {
-          const attain = r.monthlyGsvOpportunity !== 0 ? r.netSales / r.monthlyGsvOpportunity : 0;
-          const loss = r.netSales < 0;
+          const attain = r.monthlyGsvOpportunity !== 0 && r.netSales !== null ? r.netSales / r.monthlyGsvOpportunity : null;
+          const loss = (r.netSales ?? 0) < 0;
           return (
             <div className="kpi-plan-row" key={r.productId}>
               <span className="kpi-bar-label" title={r.productName}>
@@ -428,14 +496,14 @@ function PlanView({ results }: { results: ProductInvestmentResult[] }) {
                 <div className="kpi-plan-track">
                   <div
                     className={clsx("kpi-plan-fill actual", loss && "loss")}
-                    style={{ width: `${loss ? 100 : barPct(r.netSales)}%` }}
+                    style={{ width: `${loss ? 100 : barPct(r.netSales ?? 0)}%` }}
                   />
                 </div>
               </div>
               <span
-                className={clsx("kpi-plan-attain", attain >= 1 ? "good" : attain >= 0.8 ? "warn" : "bad")}
+                className={clsx("kpi-plan-attain", comparable && attain !== null && (attain >= 1 ? "good" : attain >= 0.8 ? "warn" : "bad"))}
               >
-                {formatPercent(attain, 0)}
+                {comparable && attain !== null ? formatPercent(attain, 0) : "—"}
               </span>
             </div>
           );

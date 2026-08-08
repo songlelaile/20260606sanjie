@@ -3,44 +3,44 @@
 import { FileSpreadsheet, Layers } from "lucide-react";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { locateHeaderRow, validateImportRows } from "@/lib/imports/contracts";
+import { mapProductDailyRows } from "@/lib/imports/map-rows";
+import {
+  buildShengyiMergePlan,
+  type ParsedShengyiFile,
+  type ShengyiMergePlan,
+  type ShengyiMergeReport
+} from "@/lib/imports/merge-shengyi";
+import { parseWorkbookUpload } from "@/lib/imports/parse-workbook";
+import type { ImportBatch, ImportValidationResult } from "@/lib/types/domain";
 
-interface MergeReport {
-  fileCount: number;
-  dateStart: string;
-  dateEnd: string;
-  totalDataRows: number;
-  headerColumnCount: number;
-  distinctDates: number;
-  ok: boolean;
-  errors: string[];
-  warnings: string[];
+interface CachedPlan {
+  key: string;
+  totalBytes: number;
+  plan: ShengyiMergePlan;
 }
 
 export function ShengyiMergePanel() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const planRef = useRef<CachedPlan | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [shopName, setShopName] = useState("");
   const [expectedStart, setExpectedStart] = useState("");
   const [expectedEnd, setExpectedEnd] = useState("");
-  const [report, setReport] = useState<MergeReport | null>(null);
+  const [report, setReport] = useState<ShengyiMergeReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
-  function pickFiles(selected: FileList | null) {
-    setFiles(selected ? Array.from(selected) : []);
+  function resetPlan() {
+    planRef.current = null;
     setReport(null);
     setMessage("");
   }
 
-  function buildForm(dryRun: boolean): FormData {
-    const form = new FormData();
-    if (dryRun) form.set("dryRun", "1");
-    if (expectedStart) form.set("expectedStart", expectedStart);
-    if (expectedEnd) form.set("expectedEnd", expectedEnd);
-    if (shopName) form.set("shopName", shopName);
-    for (const file of files) form.append("files", file);
-    return form;
+  function pickFiles(selected: FileList | null) {
+    setFiles(selected ? Array.from(selected) : []);
+    resetPlan();
   }
 
   async function run(dryRun: boolean) {
@@ -49,36 +49,75 @@ export function ShengyiMergePanel() {
       return;
     }
     setBusy(true);
-    setMessage("");
-    const response = await fetch("/api/import-batches/merge-shengyi", {
-      method: "POST",
-      body: buildForm(dryRun)
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | { data?: { report: MergeReport }; error?: string; report?: MergeReport }
-      | null;
-    setBusy(false);
-    const rep = payload?.data?.report ?? payload?.report ?? null;
-    if (rep) setReport(rep);
-    if (!response.ok) {
-      setMessage(payload?.error ?? "处理失败");
-      return;
-    }
-    if (dryRun) {
-      setMessage(rep?.ok ? "校验通过，可直接合并。" : "预检发现问题，请修正后再合并。");
-    } else {
-      setMessage(`已合并 ${rep?.fileCount ?? files.length} 个日表（${rep?.totalDataRows ?? 0} 行）并应用为商品维度源表。`);
-      setFiles([]);
-      if (inputRef.current) inputRef.current.value = "";
+    setMessage(dryRun ? "正在解析并预检…" : "正在合并并分批写入…");
+    try {
+      const cached = await getMergePlan();
+      const rep = cached.plan.report;
+      setReport(rep);
+      if (dryRun || !rep.ok) {
+        setMessage(rep.ok ? "校验通过，可直接合并。" : "预检发现问题，请修正后再合并。");
+        return;
+      }
+
+      const validation = validateImportRows("product_source", cached.plan.mergedHeaders, cached.plan.mergedRows);
+      if (!validation.ok) {
+        setMessage(validation.errors.join("；") || "合并数据校验未通过");
+        return;
+      }
+
+      const mapped = mapProductDailyRows(cached.plan.mergedHeaders, cached.plan.mergedRows);
+      if (mapped.length === 0) {
+        setMessage("合并后没有可识别统计日期的有效数据行，请确认统计日期列格式。");
+        return;
+      }
+
+      const fileName = `生意参谋合并_${rep.dateStart}~${rep.dateEnd}_${rep.fileCount}日.xlsx`;
+      await ingestProductRows({
+        fileName,
+        fileSizeBytes: cached.totalBytes,
+        datasetTotalBytes: cached.totalBytes,
+        rows: mapped,
+        validation
+      });
+      setMessage(`已合并 ${rep.fileCount} 个日表（${rep.totalDataRows} 行）并应用为商品维度源表。`);
+      clearSelectedFiles();
       router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "处理失败");
+    } finally {
+      setBusy(false);
     }
   }
 
-  function clearAll() {
+  async function getMergePlan(): Promise<CachedPlan> {
+    const key = buildPlanKey(files, expectedStart, expectedEnd);
+    if (planRef.current?.key === key) {
+      return planRef.current;
+    }
+    const parsed: ParsedShengyiFile[] = [];
+    let totalBytes = 0;
+    for (const file of files) {
+      totalBytes += file.size;
+      const result = await parseWorkbookUpload(file);
+      const { headers, rows } = locateHeaderRow(result.matrix, "product_source");
+      parsed.push({ name: file.name, headers, rows });
+    }
+    const plan = buildShengyiMergePlan(parsed, { expectedStart, expectedEnd });
+    const cached = { key, totalBytes, plan };
+    planRef.current = cached;
+    return cached;
+  }
+
+  function clearSelectedFiles() {
     setFiles([]);
+    planRef.current = null;
+    if (inputRef.current) inputRef.current.value = "";
+  }
+
+  function clearAll() {
+    clearSelectedFiles();
     setReport(null);
     setMessage("");
-    if (inputRef.current) inputRef.current.value = "";
   }
 
   return (
@@ -116,11 +155,25 @@ export function ShengyiMergePanel() {
         </label>
         <label>
           开始日期（可选，校验缺失）
-          <input type="date" value={expectedStart} onChange={(e) => setExpectedStart(e.target.value)} />
+          <input
+            type="date"
+            value={expectedStart}
+            onChange={(e) => {
+              setExpectedStart(e.target.value);
+              resetPlan();
+            }}
+          />
         </label>
         <label>
           结束日期（可选，校验缺失）
-          <input type="date" value={expectedEnd} onChange={(e) => setExpectedEnd(e.target.value)} />
+          <input
+            type="date"
+            value={expectedEnd}
+            onChange={(e) => {
+              setExpectedEnd(e.target.value);
+              resetPlan();
+            }}
+          />
         </label>
       </div>
 
@@ -167,4 +220,73 @@ export function ShengyiMergePanel() {
       ) : null}
     </section>
   );
+}
+
+function buildPlanKey(files: File[], expectedStart: string, expectedEnd: string) {
+  const fileKey = files.map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
+  return `${expectedStart}~${expectedEnd}::${fileKey}`;
+}
+
+function createDatasetId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `dataset-${crypto.randomUUID()}`;
+  }
+  return `dataset-${Date.now()}`;
+}
+
+const INGEST_CHUNK = 5000;
+
+async function ingestProductRows(input: {
+  fileName: string;
+  fileSizeBytes: number;
+  datasetTotalBytes: number;
+  rows: unknown[];
+  validation: ImportValidationResult;
+}): Promise<ImportBatch | null> {
+  const sessionId = createDatasetId();
+  const total = Math.max(1, Math.ceil(input.rows.length / INGEST_CHUNK));
+  let batch: ImportBatch | null = null;
+
+  for (let i = 0; i < total; i += 1) {
+    const chunk = input.rows.slice(i * INGEST_CHUNK, (i + 1) * INGEST_CHUNK);
+    const isLast = i === total - 1;
+    const body = JSON.stringify({
+      sessionId,
+      reportType: "product_source",
+      fileName: input.fileName,
+      fileSizeBytes: input.fileSizeBytes,
+      datasetTotalBytes: input.datasetTotalBytes,
+      rows: chunk,
+      index: i,
+      total,
+      validation: isLast ? input.validation : undefined,
+      ingestedRowCount: isLast ? input.rows.length : undefined
+    });
+    type IngestResp = { data?: { batch?: ImportBatch }; error?: string } | null;
+    let json: IngestResp = null;
+    let lastErr = "";
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await fetch("/api/import-batches/ingest", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body
+        });
+        json = (await res.json().catch(() => null)) as IngestResp;
+        if (res.ok) {
+          lastErr = "";
+          break;
+        }
+        lastErr = json?.error ?? `第 ${i + 1}/${total} 批失败 (${res.status})`;
+        if (res.status >= 400 && res.status < 500) break;
+      } catch (error) {
+        lastErr = error instanceof Error ? error.message : "网络错误";
+      }
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+    if (lastErr) throw new Error(lastErr);
+    if (json?.data?.batch) batch = json.data.batch;
+  }
+
+  return batch;
 }

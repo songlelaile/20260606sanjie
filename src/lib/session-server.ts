@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { cookies } from "next/headers";
-import { SESSION_COOKIE, parseSession, type Session } from "./auth";
+import { ACTIVE_SHOP_COOKIE, SESSION_COOKIE, parseSession, type Session } from "./auth";
 
 /**
  * 读取当前请求的会话（服务端组件 / 路由处理器可用）。
@@ -20,3 +20,8 @@ export async function requireTenantId(): Promise<string> {
   }
   return session.tenantId;
 }
+
+export const getActiveShopCookie = cache(async (): Promise<string | null> => {
+  const store = await cookies();
+  return store.get(ACTIVE_SHOP_COOKIE)?.value ?? null;
+});

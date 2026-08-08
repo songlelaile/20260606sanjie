@@ -1,5 +1,18 @@
 # 部署指南（阿里云 ECS · Alibaba Cloud Linux 3 · 命令行）
 
+## 生产发布保护（必须先执行）
+
+- 唯一生产工程：`/Users/shaozhuang/20260606sanjie`。`/Users/shaozhuang/Desktop/20260606sanjie` 仅是历史副本，禁止整仓发布。
+- 工具插件升级只允许覆盖白名单文件：`src/app/tools/page.tsx`、对应的 `public/downloads/*.zip` 和 Logo 图片。不得用历史副本覆盖登录、认证、中间件、Prisma 或业务模块。
+- 每次发布前先运行 `./scripts/predeploy-guard.sh --full`。脚本会阻断错误目录、登录眼睛缺失、明文密码比较、多店铺模型丢失、工具页版本与 ZIP 哈希不一致等回归。
+- 每次部署到新的 `/opt/sanjie-releases/<日期-版本>` 目录，先用独立端口做金丝雀验证，再切换 PM2；保留上一版目录用于快速回滚，不在 `/opt/sanjie` 原地覆盖。
+- 上线冒烟标准：登录页 200 且有“显示密码”；错误密码返回 401；未登录访问 `/tools` 返回 307；新版 ZIP 返回 200；废弃 ZIP 返回 404；PM2 的 `cwd` 必须是本次新发布目录。
+
+```bash
+cd /Users/shaozhuang/20260606sanjie
+./scripts/predeploy-guard.sh --full
+```
+
 应用 + Postgres 同机一体部署，适用于 ~100 租户。全程用 `root` 或 `sudo`。
 
 > 安全组只放行 22/80/443；**不要**对公网开放 5432(Postgres)。
@@ -47,7 +60,7 @@ SQL
 ```bash
 dnf install -y git
 cd /opt
-git clone -b feat/postgres-multitenant https://github.com/songlelaile/20260606sanjie.git sanjie
+git clone -b feat/daily-data-v2 https://github.com/songlelaile/20260606sanjie.git sanjie
 cd /opt/sanjie
 npm ci      # 会自动 prisma generate（postinstall）
 ```
@@ -57,17 +70,31 @@ npm ci      # 会自动 prisma generate（postinstall）
 ```bash
 cat > /opt/sanjie/.env <<'ENV'
 DATABASE_URL="postgresql://sanjie:改成你的强密码@localhost:5432/three_stage_engine?schema=public"
+SESSION_SECRET="改成 openssl rand -hex 32 生成的高强度随机值"
+SHARE_ENCRYPTION_KEY="改成另一个 openssl rand -hex 32 生成的高强度随机值"
+AI_API_ENCRYPTION_KEY="改成第三个 openssl rand -hex 32 生成的高强度随机值"
 ENV
 ```
 
-## 6. 建表 + 种子 + 构建
+## 6. 建表 + 一次性管理员初始化 + 构建
 
 ```bash
 cd /opt/sanjie
 npm run db:migrate    # prisma migrate deploy，建所有表
-npm run db:seed       # 演示账号 admin/admin123、tenant/tenant123
+
+# 仅首次部署且数据库还没有管理员时执行；密码不会写入仓库或命令历史。
+export BOOTSTRAP_ADMIN_USERNAME="填写管理员账号"
+read -s BOOTSTRAP_ADMIN_PASSWORD
+export BOOTSTRAP_ADMIN_PASSWORD
+npm run db:bootstrap-admin
+unset BOOTSTRAP_ADMIN_PASSWORD
+
 npm run build         # 生产构建
 ```
+
+`npm run db:seed` 只用于本地演示，生产环境会直接拒绝执行，也不会再创建或重置公开固定口令。
+
+从旧版切换到独立 `AI_API_ENCRYPTION_KEY` 后，原来用共享密钥保存的店铺 AI Key 不会被自动迁移；请由店铺所有者重新录入一次，避免在迁移脚本或日志中接触明文凭据。
 
 ## 7. PM2 守护进程（开机自启）
 
@@ -102,7 +129,7 @@ NGINX
 nginx -t && systemctl enable --now nginx
 ```
 
-浏览器访问 `http://<公网IP>` → 应看到登录页。用 `admin / admin123` 登录。
+浏览器访问 `http://<公网IP>` → 应看到登录页。使用上一步一次性初始化的管理员账号登录。
 
 ## 9.（可选）HTTPS
 
@@ -133,7 +160,8 @@ pm2 restart sanjie
 
 ## 生产加固（上线前）
 
-- [ ] 演示账号密码改掉（admin123/tenant123 仅演示）
+- [ ] 生产库不存在 `admin/admin123`、`tenant/tenant123` 等演示账号；不要执行演示 seed
+- [ ] `SESSION_SECRET`、`SHARE_ENCRYPTION_KEY`、`AI_API_ENCRYPTION_KEY` 均使用彼此不同的高强度随机值
 - [ ] 数据库密码用强密码，且 Postgres 只监听 localhost（默认即是）
 - [ ] 定期备份：`pg_dump` 或阿里云快照
-- [ ] 账号密码改为加盐哈希（当前为演示明文，见 src/lib/accounts.ts）
+- [ ] Nginx 配置 HTTPS 后再对外提供分享链接

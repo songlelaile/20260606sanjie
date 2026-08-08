@@ -1,18 +1,9 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "@/lib/session-server";
+import { requireAdminResponse } from "@/lib/route-guards";
 import { deleteManagedUser, setManagedUserStatus } from "@/lib/store/runtime-store";
 
-/** 中间件只拦未登录；用户管理是管理员能力，这里再校验角色。 */
-async function requireAdmin() {
-  const session = await getServerSession();
-  if (!session || session.role !== "admin") {
-    return NextResponse.json({ error: "仅管理员可执行此操作" }, { status: 403 });
-  }
-  return null;
-}
-
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
-  const forbidden = await requireAdmin();
+  const forbidden = await requireAdminResponse();
   if (forbidden) {
     return forbidden;
   }
@@ -30,7 +21,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const forbidden = await requireAdmin();
+  const forbidden = await requireAdminResponse();
   if (forbidden) {
     return forbidden;
   }

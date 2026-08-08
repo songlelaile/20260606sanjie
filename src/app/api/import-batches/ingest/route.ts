@@ -7,6 +7,7 @@ import {
   validateImportDatasetWrite
 } from "@/lib/store/runtime-store";
 import type { DamoProductRow, ImportValidationResult, ReportType } from "@/lib/types/domain";
+import { validateMappedImportRows } from "@/lib/imports/daily-dto";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,15 +57,43 @@ export async function POST(request: Request) {
   }
 
   try {
+    let serverRejected = 0;
+    let serverIssues: string[] = [];
     if (reportType !== "damo_product_source") {
       // 商品/推广/人群：当批 upsert 入分日表（达摩盘无日期，整批在收尾时落 blob）。
-      await ingestDailyRows(reportType, body.rows);
+      const result = await ingestDailyRows(reportType, body.rows);
+      serverRejected = result.rejectedCount;
+      serverIssues = result.issues;
+      if (body.rows.length > 0 && result.acceptedCount === 0) {
+        return NextResponse.json(
+          { error: `本批没有可入库的有效行：${serverIssues.join("；") || "映射结果不合法"}` },
+          { status: 422 }
+        );
+      }
     }
 
     if (index >= total - 1) {
       const { cycle } = await getWorkspaceContext();
       const validation =
         body.validation ?? emptyValidation(reportType, body.rows.length);
+      const damoValidation = reportType === "damo_product_source"
+        ? validateMappedImportRows(reportType, body.rows)
+        : null;
+      const acceptedDamoRows = damoValidation?.acceptedRows as DamoProductRow[] | undefined;
+      const rejectedCount = serverRejected + (damoValidation?.rejectedCount ?? 0);
+      if (rejectedCount > 0) {
+        validation.rejectedRowCount = (validation.rejectedRowCount ?? 0) + rejectedCount;
+        validation.acceptedRowCount = Math.max(0, (validation.acceptedRowCount ?? validation.rowCount) - rejectedCount);
+        validation.warnings = [
+          ...validation.warnings,
+          `服务端二次校验隔离 ${rejectedCount} 行，其余有效行继续入库`,
+          ...serverIssues,
+          ...(damoValidation?.issues ?? [])
+        ];
+      }
+      if (reportType === "damo_product_source" && body.rows.length > 0 && acceptedDamoRows?.length === 0) {
+        return NextResponse.json({ error: "达摩盘数据没有可入库的有效行" }, { status: 422 });
+      }
       const batch = await finalizeImportBatch({
         cycleId: cycle.id,
         datasetId: body.sessionId ?? `ingest-${reportType}`,
@@ -75,12 +104,12 @@ export async function POST(request: Request) {
         validation,
         ingestedRowCount: body.ingestedRowCount,
         damoSourceRows:
-          reportType === "damo_product_source" ? (body.rows as DamoProductRow[]) : undefined
+          reportType === "damo_product_source" ? acceptedDamoRows : undefined
       });
       return NextResponse.json({ data: { batch } }, { status: validation.ok ? 201 : 422 });
     }
 
-    return NextResponse.json({ data: { ok: true, received: body.rows.length } });
+    return NextResponse.json({ data: { ok: true, received: body.rows.length, rejected: serverRejected, issues: serverIssues } });
   } catch (error) {
     if (error instanceof ImportRetentionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });

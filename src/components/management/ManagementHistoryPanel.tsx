@@ -200,7 +200,7 @@ export function ManagementHistoryPanel({
           <span className="management-section-label">留存策略</span>
           <h2>历史数据</h2>
           <p>
-            管理历史库的保留时长和清理动作。租户端默认只保存最新 1 次数据，更新新数据时会自动清理旧数据，避免服务器和磁盘持续膨胀。
+            租户可多次上传并更新数据；分日明细会按日期和主体去重，重复日期以最新上传覆盖。系统按保留上限清理过旧历史，控制服务器存储增长。
           </p>
         </div>
         <label className="management-history-input">

@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import {
   Ban,
+  Bot,
   Copy,
   History,
   KeyRound,
@@ -14,6 +15,7 @@ import {
   UsersRound
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { AiApiConfigPanel } from "@/components/AiApiConfigPanel";
 import { ManagementHistoryPanel } from "@/components/management/ManagementHistoryPanel";
 import { ReviewConsole } from "@/components/management/ReviewConsole";
 import type {
@@ -24,7 +26,7 @@ import type {
   User
 } from "@/lib/types/domain";
 
-type ManagementTab = "invites" | "users" | "review" | "history";
+type ManagementTab = "invites" | "users" | "review" | "history" | "ai";
 
 export function ManagementConsole({
   initialInvites,
@@ -55,6 +57,15 @@ export function ManagementConsole({
     () => [...invites].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [invites]
   );
+
+  async function logout() {
+    setBusy(true);
+    try {
+      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" });
+    } finally {
+      window.location.replace("/login");
+    }
+  }
 
   async function generateInvite() {
     setBusy(true);
@@ -196,12 +207,20 @@ export function ManagementConsole({
             <History size={17} />
             历史数据
           </button>
+          <button
+            type="button"
+            className={clsx("management-tab", activeTab === "ai" && "active")}
+            onClick={() => setActiveTab("ai")}
+          >
+            <Bot size={17} />
+            AI API
+          </button>
         </div>
         <div className="login-strip" aria-label="当前登录账号">
           <span>登录：</span>
           <strong>{loginName}</strong>
           <b>{roleLabel(currentUser.role)}</b>
-          <button type="button" className="outline-button">
+          <button type="button" className="outline-button" onClick={logout} disabled={busy}>
             <LogOut size={15} />
             退出
           </button>
@@ -293,7 +312,7 @@ export function ManagementConsole({
           <div className="panel-toolbar">
             <div>
               <strong>用户列表</strong>
-              <span>{users.length} 个账号可访问当前租户</span>
+              <span>{users.length} 个租户账号</span>
             </div>
           </div>
           {message ? <p className="management-message">{message}</p> : null}
@@ -386,6 +405,8 @@ export function ManagementConsole({
       {activeTab === "review" ? <ReviewConsole interventions={initialInterventions} /> : null}
 
       {activeTab === "history" ? <ManagementHistoryPanel initialHistory={initialHistory} /> : null}
+
+      {activeTab === "ai" ? <AiApiConfigPanel variant="page" /> : null}
     </section>
   );
 }

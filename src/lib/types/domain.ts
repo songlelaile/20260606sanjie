@@ -18,7 +18,7 @@ export type Lifecycle =
 
 export type ProductGrade = "S" | "A" | "B" | "C";
 
-export type AudiencePlanType = "拉新" | "追投" | "收割";
+export type AudiencePlanType = "拉新" | "追投" | "收割" | "观察";
 
 export type ProfitMarginMatrix = Record<ProductGrade, Record<Lifecycle, number>>;
 
@@ -39,6 +39,27 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+}
+
+export type AiProvider =
+  | "shaozhuang"
+  | "openai"
+  | "deepseek"
+  | "doubao"
+  | "minimax"
+  | "zhipu"
+  | "dashscope"
+  | "custom";
+
+export interface AiApiConfigPublic {
+  provider: AiProvider;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  hasApiKey: boolean;
+  apiKeyHint: string;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface InviteCode {
@@ -75,6 +96,11 @@ export interface Shop {
   platform: "淘宝" | "天猫" | "其他";
 }
 
+export interface ShopSummary extends Shop {
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AnalysisCycle {
   id: string;
   tenantId: string;
@@ -89,48 +115,52 @@ export interface ProductSourceRow {
   date: string;
   productId: string;
   productName: string;
-  visitors: number;
-  views: number;
-  averageStaySeconds: number;
-  bounceRate: number;
-  orderBuyers: number;
-  paymentBuyers: number;
-  paymentAmount: number;
-  productPaymentConversionRate: number;
-  refundAmount: number;
-  visitorValue: number;
-  searchGuidedPaymentConversionRate: number;
-  searchGuidedVisitors: number;
+  visitors: number | null;
+  views: number | null;
+  averageStaySeconds: number | null;
+  bounceRate: number | null;
+  orderBuyers: number | null;
+  paymentBuyers: number | null;
+  paymentAmount: number | null;
+  productPaymentConversionRate: number | null;
+  refundAmount: number | null;
+  visitorValue: number | null;
+  searchGuidedPaymentConversionRate: number | null;
+  searchGuidedVisitors: number | null;
+  /** 本次聚合窗内该商品实际出现的不同日期数。 */
+  observedDays?: number;
 }
 
 export interface DamoProductRow {
   productId: string;
   productName: string;
   growthStage: Lifecycle;
-  paymentAmount: number;
-  ipv: number;
-  marketingIpv: number;
-  marketingSpend: number;
-  marketingRoi: number;
-  paymentConversionRate: number;
-  repurchaseRate: number;
-  freeSearchClickRate: number;
-  unitPrice: number;
-  attachPurchaseCount: number;
-  attachPurchaseRate: number;
-  attachCategoryWidth: number;
+  paymentAmount: number | null;
+  ipv: number | null;
+  marketingIpv: number | null;
+  marketingSpend: number | null;
+  marketingRoi: number | null;
+  paymentConversionRate: number | null;
+  repurchaseRate: number | null;
+  freeSearchClickRate: number | null;
+  unitPrice: number | null;
+  attachPurchaseCount: number | null;
+  attachPurchaseRate: number | null;
+  attachCategoryWidth: number | null;
 }
 
 export interface PromotionProductRow {
   date: string;
   subjectId: string;
   subjectName: string;
-  impressions: number;
-  clicks: number;
-  cost: number;
-  ctr: number;
-  averageClickCost: number;
-  roi: number;
+  impressions: number | null;
+  clicks: number | null;
+  cost: number | null;
+  ctr: number | null;
+  averageClickCost: number | null;
+  roi: number | null;
+  /** 本次聚合窗内该推广主体实际出现的不同日期数。 */
+  observedDays?: number;
 }
 
 export interface AudienceSourceRow {
@@ -142,12 +172,14 @@ export interface AudienceSourceRow {
   audienceName: string;
   subjectId: string;
   subjectName: string;
-  clicks: number;
-  roi: number;
-  guidedVisitorCount: number;
-  guidedPotentialCustomerRatio: number;
-  newCustomerCount: number;
-  newCustomerRatio: number;
+  clicks: number | null;
+  roi: number | null;
+  guidedVisitorCount: number | null;
+  guidedPotentialCustomerRatio: number | null;
+  newCustomerCount: number | null;
+  newCustomerRatio: number | null;
+  /** 本次聚合窗内该计划·人群·主体实际出现的不同日期数。 */
+  observedDays?: number;
 }
 
 export interface PrefillItem {
@@ -156,6 +188,8 @@ export interface PrefillItem {
   productId: string;
   productCode: string;
   productName: string;
+  /** 自定义商品类别标签，按店铺维护。 */
+  tagIds?: string[];
   /** 空串表示运营尚未填写分层（仅占位，不参与三阶计算）。 */
   grade: ProductGrade | "";
   monthlyGsvOpportunity: number;
@@ -165,6 +199,12 @@ export interface PrefillItem {
   competitorConversionExpectation?: number;
   benchmarkProductId?: string;
   audienceStrategy?: string;
+}
+
+export interface ProductTag {
+  id: string;
+  name: string;
+  createdAt: string;
 }
 
 export interface ImportBatch {
@@ -188,9 +228,18 @@ export interface ImportValidationResult {
   missingHeaders: string[];
   extraHeaders: string[];
   rowCount: number;
+  /** 可以进入归一化/计算链路的行数；坏行被隔离但不阻断整批。 */
+  acceptedRowCount?: number;
+  /** 缺少主键、可靠日期等核心结构而被隔离的行数。 */
+  rejectedRowCount?: number;
+  /** 可选字段为空或格式异常的单元格数；这些字段按 null 处理。 */
+  fieldIssueCount?: number;
   uniqueEntityCount: number;
   duplicateEntityIds: string[];
   dateValues: string[];
+  /** 分日报表实际出现的不同日期数与首尾自然日数；用于识别中间缺日。 */
+  dateObservedDays?: number;
+  dateExpectedDays?: number;
   warnings: string[];
   errors: string[];
 }
@@ -198,23 +247,35 @@ export interface ImportValidationResult {
 export interface ProductInvestmentResult {
   productId: string;
   productName: string;
+  tagIds?: string[];
   lifecycle: Lifecycle;
   grade: ProductGrade;
   grossMarginRate: number;
   attackDefenseMarginRate: number;
   monthlyGsvOpportunity: number;
   plannedGrossProfit: number;
-  historicalPpc: number;
-  historicalAov: number;
-  plannedMonthlyOrders: number;
-  plannedMonthlyTraffic: number;
-  monthlyPaidEstimate: number;
-  netSales: number;
-  historicalGrossProfitWithoutPromotion: number;
-  historicalGrossProfit: number;
-  historicalMarginRate: number;
-  remainingAdBudget: number;
-  salesGap: number;
+  historicalPpc: number | null;
+  historicalAov: number | null;
+  /**
+   * 规划测算所用的 AOV/转化率是否为估算值（该商品无历史成交，回退到同分层或全店中位数）。
+   * 冷启期新品必然如此；结果可用，但必须在界面上标注为估算，不能与实测值混为一谈。
+   */
+  planningBasis?: "observed" | "estimated";
+  /** 估算来源说明（如"同 S 层 12 个商品客单价中位数"），供界面与 AI 报告解释口径。 */
+  planningBasisNote?: string;
+  plannedMonthlyOrders: number | null;
+  plannedMonthlyTraffic: number | null;
+  monthlyPaidEstimate: number | null;
+  netSales: number | null;
+  historicalGrossProfitWithoutPromotion: number | null;
+  historicalGrossProfit: number | null;
+  historicalMarginRate: number | null;
+  /** 同一分析窗内是否存在可关联的推广成本；false/缺失时不得把贡献利润用于投资放行。 */
+  profitEvidenceAvailable?: boolean;
+  /** 与商品分析窗对齐的推广花费；旧快照可能没有该字段。 */
+  promotionSpend?: number | null;
+  remainingAdBudget: number | null;
+  salesGap: number | null;
 }
 
 export interface BreakthroughDimensionScore {
@@ -228,8 +289,10 @@ export interface BreakthroughDimensionScore {
     | "attachCategoryWidth"
     | "repurchaseRate";
   label: string;
-  value: number;
-  threshold: number;
+  value: number | null;
+  threshold: number | null;
+  /** false 表示该维度对应源表未关联成功；旧快照没有此字段时视为未知。 */
+  available?: boolean;
   passed: boolean;
   higherIsBetter: boolean;
 }
@@ -252,11 +315,14 @@ export interface AudiencePlanItem {
   planId: string;
   planName: string;
   audienceName: string;
-  clicks: number;
-  roi: number;
-  guidedPotentialCustomerRatio: number;
-  newCustomerRatio: number;
+  clicks: number | null;
+  roi: number | null;
+  guidedPotentialCustomerRatio: number | null;
+  newCustomerRatio: number | null;
+  /** 人群投放主体，保留后才能稳定关联到商品诊断与投资方案。 */
+  subjectId?: string;
   subjectName: string;
+  observedDays?: number;
 }
 
 export type HistoryDataKey =
@@ -301,25 +367,67 @@ export interface ManagementHistoryRetention {
 
 export interface ManagementDashboard {
   productCount: number;
-  monthlyNetSales: number;
-  monthlyProfitEstimate: number;
+  monthlyNetSales: number | null;
+  monthlyProfitEstimate: number | null;
   monthlyGsvOpportunity: number;
-  marketSalesGap: number;
-  historicalMarginRate: number;
+  marketSalesGap: number | null;
+  /**
+   * 全店历史毛利率。仅由"同窗推广成本可关联"的商品构成（分子分母同步口径）；
+   * 无任何证据完整商品时为 null，不得显示成 0%。
+   */
+  historicalMarginRate: number | null;
   plannedProfit: number;
-  availableAdBudget: number;
+  availableAdBudget: number | null;
   plannedMarginRate: number;
+  /** 参与利润口径的商品数（证据完整）与被排除数，供看板显式提示，避免"未知"被当成 0。 */
+  profitEvidenceProductCount: number;
+  profitEvidenceMissingCount: number;
+  /** 证据完整商品的净销额合计——historicalMarginRate 的分母，与 monthlyNetSales 不同。 */
+  profitEvidenceNetSales: number | null;
+  /** 高销售额但毛利率<=0 的问题商品：不能因为不进 TopProducts 榜单就从看板消失。 */
+  negativeMarginProducts: ProductInvestmentResult[];
   topProducts: ProductInvestmentResult[];
+  /** 本次计算实际使用的商品日期窗；随 dashboard JSON 持久化，避免旧结果误配新上传周期。 */
+  analysisPeriod?: { start: string; end: string };
 }
 
 export interface CalcRun {
+  schemaVersion?: number;
   id: string;
   cycleId: string;
   createdAt: string;
+  analysisPeriod?: { start: string; end: string };
   investmentResults: ProductInvestmentResult[];
   breakthroughResults: ProductBreakthroughResult[];
   audiencePlans: AudiencePlanItem[];
   managementDashboard: ManagementDashboard;
+}
+
+export interface DashboardShareSnapshot {
+  title: string;
+  sourceTenantName: string;
+  sourceShopName: string;
+  createdAt: string;
+  createdBy: string;
+  sections?: DashboardShareSection[];
+  calcRun: CalcRun;
+  prefill?: DashboardSharePrefillSnapshot;
+}
+
+export type DashboardShareSection = "management" | "breakthrough" | "audience" | "prefill";
+
+export interface DashboardSharePrefillSnapshot {
+  cycleId: string;
+  items: PrefillItem[];
+  tags: ProductTag[];
+}
+
+export interface DashboardShareInfo {
+  id: string;
+  title: string;
+  url: string;
+  createdAt: string;
+  sections?: DashboardShareSection[];
 }
 
 export interface VersionSnapshot {
@@ -364,29 +472,32 @@ export interface Intervention {
 
 /** 漏斗阶段：投放→流量→成交→利润，让前后对比按因果链路分组。 */
 export type FunnelStage = "投放" | "流量" | "成交" | "利润";
+export type MetricChangeStatus = import("@/lib/metric-change").MetricChangeStatus;
 
 /** 对比口径 A：单个真实经营指标的前后变化。 */
 export interface ComparisonMetric {
   key: string;
   label: string;
   unit: "money" | "int" | "rate" | "ratio"; // rate=0~1 百分比；ratio=倍数(如ROI 3.5)
-  before: number;
-  after: number;
-  delta: number;
-  deltaPct: number; // 相对变化（after-before)/|before|
+  before: number | null;
+  after: number | null;
+  delta: number | null;
+  deltaPct: number | null; // 仅常规可比变化有比例；新增/消失/不可用均为 null
+  changeStatus: MetricChangeStatus;
   higherIsBetter: boolean;
   neutral?: boolean; // 中性指标（如推广花费=投入杠杆，不判好坏）
   group?: "经营" | "广告"; // 分组展示（向后兼容）
   stage?: FunnelStage; // 漏斗阶段分组
 }
 
-/** 投产链路的一个节点（花费→展现→点击→访客→买家→销售额→ROI），用于"环环相扣"的一行式因果展示。 */
+/** 投产链路的一个节点（花费→展现→点击→访客→买家→销售额→ROI），用于一行式描述性展示。 */
 export interface FunnelChainStep {
   key: string;
   label: string;
-  before: number;
-  after: number;
-  deltaPct: number;
+  before: number | null;
+  after: number | null;
+  deltaPct: number | null;
+  changeStatus: MetricChangeStatus;
   unit: ComparisonMetric["unit"];
   higherIsBetter: boolean;
   neutral?: boolean;
@@ -397,28 +508,29 @@ export interface PlanActualRow {
   productId: string;
   productName: string;
   planMonthlyGsv: number; // 预填的月GSV机会
-  actualMonthlyGsv: number; // 后窗净销额折算月度
-  attainmentPct: number; // 达成率
+  actualMonthlyGsv: number | null; // 后窗净销额折算月度
+  /** 达成率；未设定月GSV目标时为 null（"未设目标"），不得显示成 0% 的"完全未达标"。 */
+  attainmentPct: number | null;
 }
 
 /** 整店/商品集按天趋势点（对比口径 C）。含经营派生 + 推广按日，供多指标多轴下钻对比。 */
 export interface DailyTrendPoint {
   date: string;
   // 经营·可加和
-  netSales: number; // 净销额
-  paymentAmount: number; // 销售额
-  visitors: number;
-  views: number; // 浏览量
-  paymentBuyers: number;
+  netSales: number | null; // 净销额
+  paymentAmount: number | null; // 销售额
+  visitors: number | null;
+  views: number | null; // 浏览量
+  paymentBuyers: number | null;
   // 经营·强度（当日）；分母为 0（当日无成交/无访客）时为 null，趋势线显示断点而非误导的 0
   conversion: number | null; // 支付转化率 = 买家/访客
   aov: number | null; // 客单价 = 销售额/买家
   refundRate: number | null; // 退款率 = 退款/销售额
   uvValue: number | null; // 访客价值 = 销售额/访客
   // 广告·按日：可加和项无投放即为 0；强度项（CPC/ROI）当日无花费时为 null（断点）
-  adCost: number; // 推广花费
-  impressions: number; // 展现
-  adClicks: number; // 点击
+  adCost: number | null; // 推广花费
+  impressions: number | null; // 展现
+  adClicks: number | null; // 点击
   cpc: number | null; // 点击成本 = 花费/点击
   adRoi: number | null; // 推广ROI（当日花费加权）
 }
@@ -430,6 +542,26 @@ export interface ComparisonWindow {
   afterEnd: string;
   beforeDays: number;
   afterDays: number;
+  coverage: ComparisonWindowCoverage;
+}
+
+export type ComparisonWindowStatus = "ready" | "observation" | "insufficient";
+
+export interface ComparisonWindowSideCoverage {
+  expectedDays: number;
+  observedDays: number;
+  coverageRatio: number;
+  calendarClosed: boolean;
+  complete: boolean;
+}
+
+/** 主数据源在动作前后窗的覆盖情况；非 ready 时不得输出涨跌结论。 */
+export interface ComparisonWindowCoverage {
+  status: ComparisonWindowStatus;
+  asOfDate: string;
+  message: string;
+  before: ComparisonWindowSideCoverage;
+  after: ComparisonWindowSideCoverage;
 }
 
 /** 一个优化动作的前后对比结果（三口径 + 投产链路）。 */
@@ -441,25 +573,35 @@ export interface InterventionComparison {
   lensC: { interventionDate: string; series: DailyTrendPoint[] };
 }
 
-/** 单品突破：单商品的动作前后变化（漏斗维度：净销/访客/转化/客单/退款 + 投放花费/ROI）。 */
+/**
+ * 单品突破：单商品的动作前后变化（漏斗维度：净销/访客/转化/客单/退款 + 投放花费/ROI）。
+ *
+ * 强度类指标（转化率/客单价/退款率/ROI）分母为 0 时一律为 null——新品未上架、断货、
+ * 当天无投放都会出现该情况，显示成 0 会被误读成"转化崩溃"。可加和项（净销额/访客/
+ * 花费）同样保留 null；只有完整源窗口内确认“未发生”时，计算层才可解释为真实 0。
+ */
 export interface ProductComparisonRow {
   productId: string;
   productName: string;
-  netBefore: number;
-  netAfter: number;
-  netDeltaPct: number;
-  visitorsBefore: number;
-  visitorsAfter: number;
-  convBefore: number;
-  convAfter: number;
-  aovBefore: number;
-  aovAfter: number;
-  refundRateBefore: number;
-  refundRateAfter: number;
-  adCostBefore: number;
-  adCostAfter: number;
-  adRoiBefore: number;
-  adRoiAfter: number;
+  netBefore: number | null;
+  netAfter: number | null;
+  netDeltaPct: number | null;
+  netChangeStatus: MetricChangeStatus;
+  visitorsBefore: number | null;
+  visitorsAfter: number | null;
+  /** 该商品在前/后窗内实际有分日记录的天数；日均值以此为分母，而非整店口径天数。 */
+  observedDaysBefore: number;
+  observedDaysAfter: number;
+  convBefore: number | null;
+  convAfter: number | null;
+  aovBefore: number | null;
+  aovAfter: number | null;
+  refundRateBefore: number | null;
+  refundRateAfter: number | null;
+  adCostBefore: number | null;
+  adCostAfter: number | null;
+  adRoiBefore: number | null;
+  adRoiAfter: number | null;
 }
 
 export interface ProductComparison {
@@ -470,21 +612,24 @@ export interface ProductComparison {
   rows: ProductComparisonRow[];
 }
 
-/** 人群计划：单(计划·人群·主体)的动作前后变化（点击/ROI + 引导潜客占比/成交新客占比=拉新质量）。 */
+/** 人群计划：单(计划·人群·主体)的动作前后变化（点击/点击加权报表ROI代理 + 引导潜客占比/成交新客占比）。 */
 export interface AudienceComparisonRow {
-  key: string; // planId|||audienceName|||subjectId，稳定唯一
+  /** planId/audienceName/subjectId 的转义拼接（见 runtime-store 的 keyOf），稳定唯一。 */
+  key: string;
   planName: string;
   audienceName: string;
   subjectName: string;
-  clicksBefore: number;
-  clicksAfter: number;
-  clicksDeltaPct: number;
-  roiBefore: number;
-  roiAfter: number;
-  guidedBefore: number;
-  guidedAfter: number;
-  newBefore: number;
-  newAfter: number;
+  clicksBefore: number | null;
+  clicksAfter: number | null;
+  clicksDeltaPct: number | null;
+  clicksChangeStatus: MetricChangeStatus;
+  /** 点击加权强度指标：该侧无点击时为 null（无法计算），不得当作 0。 */
+  roiBefore: number | null;
+  roiAfter: number | null;
+  guidedBefore: number | null;
+  guidedAfter: number | null;
+  newBefore: number | null;
+  newAfter: number | null;
 }
 
 export interface AudienceComparison {

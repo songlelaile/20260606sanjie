@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   mapDamoProductRows,
+  mapProductDailyRows,
   mapProductSourceRows,
+  mapPromotionDailyRows,
   mapPromotionRows,
-  parseNumericCell
+  parseNumericCellOrNull
 } from "@/lib/imports/map-rows";
 
-describe("parseNumericCell", () => {
+describe("parseNumericCellOrNull", () => {
   it("处理数字、百分比、千分位与货币符号", () => {
-    expect(parseNumericCell(0.45)).toBe(0.45);
-    expect(parseNumericCell("45%")).toBeCloseTo(0.45);
-    expect(parseNumericCell("1,234.5")).toBe(1234.5);
-    expect(parseNumericCell("¥2,000")).toBe(2000);
-    expect(parseNumericCell("")).toBe(0);
-    expect(parseNumericCell("abc")).toBe(0);
+    expect(parseNumericCellOrNull(0.45)).toBe(0.45);
+    expect(parseNumericCellOrNull("45%")).toBeCloseTo(0.45);
+    expect(parseNumericCellOrNull("1,234.5")).toBe(1234.5);
+    expect(parseNumericCellOrNull("¥2,000")).toBe(2000);
+    expect(parseNumericCellOrNull("")).toBeNull();
+    expect(parseNumericCellOrNull("abc")).toBeNull();
+  });
+
+  it.each(["-", "--", "—", "–", "－"])("将报表占位符 %s 识别为缺失", (placeholder) => {
+    expect(parseNumericCellOrNull(placeholder)).toBeNull();
   });
 });
 
@@ -29,20 +35,22 @@ const PRODUCT_HEADERS = [
   "支付金额",
   "商品支付转化率",
   "成功退款金额",
-  "搜索引导支付转化率"
+  "搜索引导支付转化率",
+  "搜索引导访客数"
 ];
 
 describe("mapProductSourceRows", () => {
   it("按表头映射并跳过总计行", () => {
     const rows = [
-      ["20260501", "111", "刀杆A", 1000, 2000, 30, 0.4, 50, 8000, 0.05, 200, 0.03],
-      ["20260501", "总计", "", 9999, 0, 0, 0, 0, 0, 0, 0, 0]
+      ["20260501", "111", "刀杆A", 1000, 2000, 30, 0.4, 50, 8000, 0.05, 200, 0.03, 320],
+      ["20260501", "总计", "", 9999, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     ];
     const mapped = mapProductSourceRows(PRODUCT_HEADERS, rows);
     expect(mapped).toHaveLength(1);
     expect(mapped[0].productId).toBe("111");
     expect(mapped[0].paymentAmount).toBe(8000);
     expect(mapped[0].refundAmount).toBe(200);
+    expect(mapped[0].searchGuidedVisitors).toBe(320);
   });
 
   it("列顺序打乱也能按表头名正确映射", () => {
@@ -52,6 +60,49 @@ describe("mapProductSourceRows", () => {
     expect(mapped[0].productName).toBe("刀杆B");
     expect(mapped[0].paymentAmount).toBe(5000);
     expect(mapped[0].refundAmount).toBe(100);
+  });
+});
+
+describe("safe structural repair", () => {
+  it("isolates a row with a missing product ID instead of generating a fake ID", () => {
+    const mapped = mapProductDailyRows(
+      PRODUCT_HEADERS,
+      [["无法识别", "", "刀杆A", 10, 20, 5, 0.4, 3, 100, 0.05, "无数据", 0.03, 8]],
+      "2026-08-04"
+    );
+
+    expect(mapped).toHaveLength(0);
+  });
+
+  it("uses canonical column positions when required header text is missing", () => {
+    const headers = [...PRODUCT_HEADERS];
+    headers[1] = "";
+    const mapped = mapProductDailyRows(
+      headers,
+      [["2026-08-04", "P-100", "刀杆A", 10, 20, 5, 0.4, 3, 100, 0.05, 0, 0.03, 8]]
+    );
+
+    expect(mapped[0].productId).toBe("P-100");
+  });
+
+  it("isolates a promotion row without a stable subject ID", () => {
+    const mapped = mapPromotionDailyRows(
+      ["日期", "主体ID", "主体类型", "主体名称", "展现量", "点击量", "花费", "平均点击花费", "投入产出比"],
+      [["-", "", "商品", "X", 100, 10, 20, 2, "未投放"]],
+      "2026-08-04"
+    );
+
+    expect(mapped).toHaveLength(0);
+  });
+
+  it("uses an unambiguous file date but keeps an unknown metric as null", () => {
+    const mapped = mapProductDailyRows(
+      PRODUCT_HEADERS,
+      [["无法识别", "P-100", "刀杆A", 10, 20, 5, 0.4, 3, 100, 0.05, "无数据", 0.03, 8]],
+      "2026-08-04"
+    );
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0]).toMatchObject({ productId: "P-100", date: "2026-08-04", refundAmount: null });
   });
 });
 
@@ -103,6 +154,15 @@ describe("mapDamoProductRows", () => {
     expect(merged[0].paymentConversionRate).toBeCloseTo(8 / 90, 6); // (0.08*50+0.1*40)/90
     expect(merged[0].attachCategoryWidth).toBeCloseTo(310 / 90, 6); // (3*50+4*40)/90
     expect(merged[0].growthStage).toBe("爆品期"); // 取最新日期 20260502 那行
+  });
+
+  it("缺失的率不进入该率的加权分母", () => {
+    const [merged] = mapDamoProductRows(DAMO_HEADERS, [
+      ["111", "甲", "成长期", "20260501", 5000, 1200, 300, 4.5, "-", 0.12, 0.03, 100, 0.2, 3],
+      ["111", "甲", "爆品期", "20260502", 5000, 1200, 300, 4.5, 0.1, 0.12, 0.03, 100, 0.2, 3]
+    ]);
+
+    expect(merged.paymentConversionRate).toBeCloseTo(0.1, 6);
   });
 });
 

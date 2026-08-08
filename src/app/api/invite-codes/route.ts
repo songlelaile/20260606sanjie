@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
+import { requireAdminResponse } from "@/lib/route-guards";
 import { createInviteCode, getInviteCodes } from "@/lib/store/runtime-store";
 
 export async function GET() {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   return NextResponse.json({
     data: {
       invites: await getInviteCodes()
@@ -10,6 +13,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as
     | {
         note?: string;

@@ -18,6 +18,18 @@ const MAX_MERGE_ROWS = 1_000_000;
  * dryRun=1 仅返回预检报告；否则 ok 后合并所有数据行走商品分日 upsert。
  */
 export async function POST(request: Request) {
+  try {
+    return await handlePost(request);
+  } catch (error) {
+    console.error("[merge-shengyi] failed", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "多日表合并失败，请稍后重试" },
+      { status: 500 }
+    );
+  }
+}
+
+async function handlePost(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("multipart/form-data")) {
     return NextResponse.json({ error: "请使用 multipart 上传文件" }, { status: 400 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAdminResponse } from "@/lib/route-guards";
 import {
   clearManagementHistory,
   deleteManagementHistoryBefore,
@@ -12,12 +13,16 @@ import type { HistoryDataKey } from "@/lib/types/domain";
 const allowedKeys: HistoryDataKey[] = ["product", "promotionProduct", "promotionContent", "keyword", "audience"];
 
 export async function GET() {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   return NextResponse.json({
     data: await getManagementHistory()
   });
 }
 
 export async function PATCH(request: Request) {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as
     | {
         months?: number;
@@ -35,6 +40,8 @@ export async function PATCH(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as
     | {
         name?: string;
@@ -71,6 +78,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const forbidden = await requireAdminResponse();
+  if (forbidden) return forbidden;
   const body = (await request.json().catch(() => null)) as
     | {
         action?: "all" | "before" | "range";

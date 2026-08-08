@@ -30,13 +30,13 @@ export default async function AdminPage() {
       <KpiGrid
         items={[
           { label: "填写产品数量", value: formatNumber(dashboard.productCount), helper: cycle.name },
-          { label: "月去退销售额", value: formatMoney(dashboard.monthlyNetSales, 1) },
-          { label: "月利润预估", value: formatMoney(dashboard.monthlyProfitEstimate, 1) },
+          { label: "分析窗去退销售额", value: formatMoney(dashboard.monthlyNetSales, 1) },
+          { label: "分析窗贡献利润估算", value: formatMoney(dashboard.monthlyProfitEstimate, 1) },
           { label: "月GSV机会", value: formatMoney(dashboard.monthlyGsvOpportunity, 1) },
           {
-            label: "全店可投费用",
+            label: "静态利润安全垫（非预算）",
             value: formatMoney(dashboard.availableAdBudget, 1),
-            tone: dashboard.availableAdBudget > 0 ? "good" : "warn"
+            tone: (dashboard.availableAdBudget ?? 0) > 0 ? undefined : "warn"
           },
           {
             label: "历史利润率",

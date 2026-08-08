@@ -2,27 +2,33 @@
 
 import clsx from "clsx";
 import {
+  Activity,
   BarChart3,
   Brain,
   DatabaseZap,
   LineChart,
   LogOut,
+  Network,
   Puzzle,
   Settings2,
   Target
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import type { Role } from "@/lib/auth";
+import type { ShopSummary } from "@/lib/types/domain";
+import { ShopSwitcher } from "@/components/ShopSwitcher";
 
 const TENANT_NAV = [
+  { href: "/dashboards/operating-network", label: "经营网络", icon: Network },
   { href: "/dashboards/management", label: "综合看板", icon: BarChart3 },
   { href: "/dashboards/product-breakthrough", label: "单品突破", icon: Target },
   { href: "/dashboards/audience-plan", label: "人群计划", icon: LineChart },
+  { href: "/dashboards/business-diagnosis", label: "业务诊断", icon: Activity },
   { href: "/imports", label: "数据导入", icon: DatabaseZap },
   { href: "/prefill", label: "预填写表", icon: Settings2 },
-  { href: "/tools", label: "采集工具", icon: Puzzle }
+  { href: "/tools", label: "AI 工具", icon: Puzzle }
 ];
 
 // 管理版 = 租户版全部功能 + 多一个「管理」入口
@@ -31,21 +37,31 @@ const ADMIN_NAV = [...TENANT_NAV, { href: "/management", label: "管理", icon: 
 export function AppShell({
   children,
   role,
-  userName
+  userName,
+  shopSwitcher
 }: {
   children: ReactNode;
   role: Role;
   userName: string;
+  shopSwitcher: {
+    shops: ShopSummary[];
+    activeShopId: string;
+    limit: number | null;
+    canCreate: boolean;
+    isAdmin: boolean;
+  };
 }) {
   const pathname = usePathname();
-  const router = useRouter();
   const navItems = role === "admin" ? ADMIN_NAV : TENANT_NAV;
-  const home = "/dashboards/management";
+  const home = "/dashboards/operating-network";
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.replace("/login");
-    router.refresh();
+    try {
+      await fetch("/api/auth/logout", { method: "POST", cache: "no-store" });
+    } finally {
+      // 即使网络中断也离开当前租户页面；服务端会在下一次鉴权时兜底。
+      window.location.replace("/login");
+    }
   }
 
   return (
@@ -60,6 +76,7 @@ export function AppShell({
             <small>{role === "admin" ? "管理版" : "租户版"}</small>
           </span>
         </Link>
+        <ShopSwitcher {...shopSwitcher} />
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => {
             const Icon = item.icon;

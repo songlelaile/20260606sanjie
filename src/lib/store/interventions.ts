@@ -1,7 +1,9 @@
 import "server-only";
+import { isFutureInterventionDate } from "@/lib/comparison-window";
 import { prisma } from "@/lib/db";
 import { normalizeDate } from "@/lib/imports/map-rows";
-import { getServerSession, requireTenantId } from "@/lib/session-server";
+import { getServerSession } from "@/lib/session-server";
+import { requireShopScope } from "@/lib/store/runtime-store";
 import type { Intervention } from "@/lib/types/domain";
 
 /** 运营手动标记的"优化动作"（v2 前后对比锚点）的增删改查，全部租户隔离。 */
@@ -29,9 +31,9 @@ function toDomain(row: {
 }
 
 export async function getInterventions(): Promise<Intervention[]> {
-  const tenantId = await requireTenantId();
+  const { tenantId, shopId } = await requireShopScope();
   const rows = await prisma.intervention.findMany({
-    where: { tenantId },
+    where: { tenantId, shopId },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }]
   });
   return rows.map(toDomain);
@@ -48,11 +50,14 @@ export async function createIntervention(input: {
   category?: string;
   productIds?: string[];
 }): Promise<InterventionResult> {
-  const tenantId = await requireTenantId();
+  const { tenantId, shopId } = await requireShopScope();
   const session = await getServerSession();
   const date = normalizeDate(input.date);
   if (!date) {
     return { ok: false, error: "请填写合法的动作日期", status: 400 };
+  }
+  if (isFutureInterventionDate(date)) {
+    return { ok: false, error: "动作日期不能晚于今天", status: 400 };
   }
   const title = input.title.trim();
   if (!title) {
@@ -61,6 +66,7 @@ export async function createIntervention(input: {
   const row = await prisma.intervention.create({
     data: {
       tenantId,
+      shopId,
       date,
       title,
       note: input.note?.trim() ?? "",
@@ -72,13 +78,13 @@ export async function createIntervention(input: {
   return { ok: true, intervention: toDomain(row) };
 }
 
-async function guardOwn(id: string): Promise<{ tenantId: string } | { error: string; status: number }> {
-  const tenantId = await requireTenantId();
+async function guardOwn(id: string): Promise<{ tenantId: string; shopId: string } | { error: string; status: number }> {
+  const { tenantId, shopId } = await requireShopScope();
   const row = await prisma.intervention.findUnique({ where: { id } });
-  if (!row || row.tenantId !== tenantId) {
+  if (!row || row.tenantId !== tenantId || row.shopId !== shopId) {
     return { error: "动作不存在", status: 404 };
   }
-  return { tenantId };
+  return { tenantId, shopId };
 }
 
 export async function updateIntervention(
@@ -94,6 +100,9 @@ export async function updateIntervention(
     const date = normalizeDate(patch.date);
     if (!date) {
       return { ok: false, error: "请填写合法的动作日期", status: 400 };
+    }
+    if (isFutureInterventionDate(date)) {
+      return { ok: false, error: "动作日期不能晚于今天", status: 400 };
     }
     data.date = date;
   }

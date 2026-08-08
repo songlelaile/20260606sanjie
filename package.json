@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "node prisma/seed.mjs",
+    "db:bootstrap-admin": "node prisma/bootstrap-admin.mjs",
     "postinstall": "prisma generate"
   },
   "prisma": {

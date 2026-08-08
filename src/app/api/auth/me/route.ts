@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, parseSession } from "@/lib/auth";
-import { isAccountActive } from "@/lib/accounts";
+import { isSessionAccountValid } from "@/lib/accounts";
 
 // 要查库(Prisma)校验账号状态，固定 Node 运行时（Edge 跑不了 Prisma）。
 export const runtime = "nodejs";
 
 // 采集插件用来校验「当前是否已登录 shaozhuangai.com」的轻量端点。
 // 设计要点：
-//  1) 只读会话、验签，不碰 Prisma、不写任何数据 —— 纯读校验。
+//  1) 只读会话、验签并核对数据库账号的租户/角色，不写任何数据。
 //  2) 优先读 `x-sanjie-session` 请求头：浏览器扩展跨站请求不会自动带上
 //     SameSite=lax 的会话 cookie，所以插件用 chrome.cookies 取到值后放进头里传来。
 //     回退读 Cookie 头：站点自身同源调用时照常工作。
@@ -32,7 +32,11 @@ function readCookie(cookieHeader: string | null, name: string): string | undefin
     const idx = part.indexOf("=");
     if (idx < 0) continue;
     if (part.slice(0, idx).trim() === name) {
-      return decodeURIComponent(part.slice(idx + 1).trim());
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return undefined;
+      }
     }
   }
   return undefined;
@@ -63,15 +67,15 @@ export async function GET(request: Request) {
   }
 
   // 验签通过后再查账号是否仍有效：被禁用/删除的账号即时锁定（不等会话自然过期）。
-  // DB 暂时不可用时 fail-open（放行验签通过的会话），不因基础设施抖动误锁正常用户。
-  let active = true;
+  // DB 暂时不可用时 fail-closed：无法确认账号状态、租户和角色就不继续认可会话。
+  let validAccount = true;
   try {
-    active = await isAccountActive(session.username);
+    validAccount = await isSessionAccountValid(session);
   } catch {
-    active = true;
+    validAccount = false;
   }
-  if (!active) {
-    return NextResponse.json({ error: "账号已停用" }, { status: 401, headers: CORS });
+  if (!validAccount) {
+    return NextResponse.json({ error: "会话已失效" }, { status: 401, headers: CORS });
   }
 
   return NextResponse.json(
