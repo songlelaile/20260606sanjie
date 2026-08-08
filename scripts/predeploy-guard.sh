@@ -20,6 +20,16 @@ fixed_search() {
   fi
 }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    fail "缺少 SHA-256 校验工具（sha256sum 或 shasum）"
+  fi
+}
+
 require_file() {
   [[ -f "$1" ]] || fail "缺少文件 $1"
 }
@@ -79,7 +89,7 @@ require_fixed "shaozhuang-ai-legacy-icon.png" src/app/tools/page.tsx "工具页�
 require_file "$ZIP_PATH"
 require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 
-actual_zip_sha256="$(shasum -a 256 "$ZIP_PATH" | awk '{print $1}')"
+actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
 
 echo "发布保护通过：工程、登录、密码哈希、数据库模型、工具页与插件包均匹配 v${EXPECTED_VERSION}。"
