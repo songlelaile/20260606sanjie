@@ -1,4 +1,4 @@
-import { normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
+import { isPlaceholderToken, normalizeHeader, stringifyCell } from "@/lib/imports/contracts";
 import type {
   AudienceSourceRow,
   DamoProductRow,
@@ -104,7 +104,7 @@ export function parseNumericCellOrNull(value: unknown): number | null {
     return Number.isFinite(value) ? value : null;
   }
   const text = stringifyCell(value).replace(/[,¥$\s]/g, "");
-  if (text === "" || isMissingNumericToken(text)) {
+  if (text === "" || isPlaceholderToken(text)) {
     return null;
   }
   if (text.endsWith("%")) {
@@ -113,11 +113,6 @@ export function parseNumericCellOrNull(value: unknown): number | null {
   }
   const numeric = Number(text);
   return Number.isFinite(numeric) ? numeric : null;
-}
-
-function isMissingNumericToken(text: string) {
-  return ["-", "--", "—", "–", "－", "N/A", "NA", "NULL", "UNDEFINED", "无数据", "未投放"]
-    .includes(text.toUpperCase());
 }
 
 function asLifecycle(value: string): Lifecycle {
@@ -177,7 +172,10 @@ const AUDIENCE_COLUMN_ORDER = [
 ];
 
 function isDataRow(idValue: string) {
-  return idValue !== "" && idValue !== "总计" && idValue !== "合计";
+  // 主键为空 / 汇总行(总计·合计) / 占位符(-、—、N/A 等) 都不是真实数据行，
+  // 否则会凭空生成一个 id="-" 的幽灵主体污染三阶计算与「重复主键」告警。
+  const id = idValue.trim();
+  return id !== "" && id !== "总计" && id !== "合计" && !isPlaceholderToken(id);
 }
 
 function addNullable(left: number | null, right: number | null): number | null {

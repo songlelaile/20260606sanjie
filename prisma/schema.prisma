@@ -38,6 +38,10 @@ model User {
   status       String   @default("active")
   createdAt    DateTime @default(now())
   lastActiveAt DateTime @default(now())
+  gatewayWallet GatewayWallet?
+  gatewayApiKeys GatewayApiKey[]
+  gatewayOrders  GatewayOrder[]
+  gatewayUsages  GatewayUsage[]
 
   @@index([tenantId])
 }
@@ -224,4 +228,77 @@ model Intervention {
   createdAt  DateTime @default(now())
 
   @@index([tenantId, shopId, date])
+}
+
+// 少壮 AI 模型网关：用户钱包。以人民币分为单位存储，避免浮点误差。
+model GatewayWallet {
+  userId            String   @id
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceCents      Int      @default(0)
+  monthlyQuotaCents Int      @default(0)
+  planCode          String   @default("free")
+  planName          String   @default("体验版")
+  periodStart       DateTime @default(now())
+  periodEnd         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+// 用户在网关里创建的 API Key。只保存哈希和前缀，不保存明文。
+model GatewayApiKey {
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  keyHash    String         @unique
+  keyPrefix  String
+  status     String         @default("active")
+  createdAt  DateTime       @default(now())
+  lastUsedAt DateTime?
+  usages     GatewayUsage[]
+
+  @@index([userId, status])
+}
+
+// 套餐/充值订单。真实支付接入后由支付回调把 status 改为 paid 并充值钱包。
+model GatewayOrder {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planCode        String
+  planName        String
+  amountCents     Int
+  creditCents     Int
+  status          String    @default("pending")
+  paymentProvider String    @default("manual")
+  paymentUrl      String    @default("")
+  paidAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// 网关调用流水。先按模型基础价格估算并扣费，后续可替换成上游返回 token 结算。
+model GatewayUsage {
+  id               String        @id @default(cuid())
+  userId           String
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeyId         String?
+  apiKey           GatewayApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  requestId        String        @default("")
+  endpoint         String
+  provider         String
+  model            String
+  promptTokens     Int           @default(0)
+  completionTokens Int           @default(0)
+  totalTokens      Int           @default(0)
+  imageCount       Int           @default(0)
+  costCents        Int           @default(0)
+  status           String        @default("ok")
+  error            String        @default("")
+  createdAt        DateTime      @default(now())
+  metadata         Json          @default("{}")
+
+  @@index([userId, createdAt])
+  @@index([apiKeyId, createdAt])
 }

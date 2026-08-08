@@ -17,11 +17,12 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 登录页、认证接口与公开隐私政策放行。
+  // 登录页、认证接口、公开隐私政策与 API-key 鉴权的模型兼容端点放行。
   if (
     pathname === "/login" ||
     pathname === "/privacy" ||
-    pathname.startsWith("/api/auth/")
+    pathname.startsWith("/api/auth/") ||
+    pathname.startsWith("/v1/")
   ) {
     return NextResponse.next();
   }

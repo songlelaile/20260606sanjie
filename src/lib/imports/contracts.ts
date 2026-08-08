@@ -161,7 +161,9 @@ export function validateImportRows(
     entityIndex >= 0
       ? rows
           .map((row) => stringifyCell(row[entityIndex]))
-          .filter((value) => value !== "" && value !== "总计")
+          // 空 / 汇总(总计·合计) / 占位符(-、—、N/A 等) 都不是真实主体，
+          // 否则会把 id="-" 的汇总行当成一个主体（还会误报「重复主键：-」）。
+          .filter((value) => value !== "" && value !== "总计" && value !== "合计" && !isPlaceholderToken(value))
       : [];
   const contentRows = entityIndex >= 0
     ? rows.filter((row) => {
@@ -361,7 +363,7 @@ function normalizeDailyDate(value: unknown) {
 function parseNumericForQuality(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   const text = stringifyCell(value).replace(/[,¥$\s]/g, "");
-  if (!text || isZeroLikeNumericCell(text)) return null;
+  if (!text || isPlaceholderToken(text)) return null;
   const numeric = text.endsWith("%") ? Number(text.slice(0, -1)) / 100 : Number(text);
   return Number.isFinite(numeric) ? numeric : null;
 }
@@ -372,12 +374,6 @@ function inclusiveDateCount(start: string, end: string) {
   return Number.isFinite(from) && Number.isFinite(to) && to >= from
     ? Math.floor((to - from) / 86_400_000) + 1
     : 0;
-}
-
-/** 报表用这些显式占位符表示“本期没有产生数据”，计算时按 0 处理。 */
-export function isZeroLikeNumericCell(value: unknown) {
-  const text = stringifyCell(value).trim().toUpperCase();
-  return ["-", "--", "—", "–", "－", "N/A", "NA", "NULL", "UNDEFINED"].includes(text);
 }
 
 export function normalizeHeader(value: unknown) {
@@ -392,6 +388,28 @@ export function stringifyCell(value: unknown) {
     return value.toISOString();
   }
   return String(value).trim();
+}
+
+/**
+ * 淘系报表里「无数据」的占位写法（一律等价于未知 null）：
+ * 半角连字符 -、全角减号 －、连接号/破折号 – — ―、双连字符 --、斜杠 /，以及 N/A、NA、null、无 等。
+ * 供数值解析(parseNumericCellOrNull)与主键判定(isDataRow / 校验实体过滤)共用，避免口径分叉。
+ */
+const PLACEHOLDER_TOKENS = new Set([
+  "-", "--", "－", "–", "—", "―", "/", "\\", "n/a", "na", "null", "undefined",
+  "无", "无数据", "未投放", "——"
+]);
+
+export function isPlaceholderToken(value: unknown): boolean {
+  const text = stringifyCell(value);
+  if (text === "") {
+    return false; // 空串由各调用方单独判定，这里只认「明确的占位符」
+  }
+  if (PLACEHOLDER_TOKENS.has(text) || PLACEHOLDER_TOKENS.has(text.toLowerCase())) {
+    return true;
+  }
+  // 纯由各种连字符/破折号组成（如 "---"、"— —"）也视为占位。
+  return /^[-－–—―]+$/.test(text.replace(/\s/g, ""));
 }
 
 function findDuplicates(values: string[]) {

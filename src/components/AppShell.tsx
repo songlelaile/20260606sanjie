@@ -28,7 +28,8 @@ const TENANT_NAV = [
   { href: "/dashboards/business-diagnosis", label: "业务诊断", icon: Activity },
   { href: "/imports", label: "数据导入", icon: DatabaseZap },
   { href: "/prefill", label: "预填写表", icon: Settings2 },
-  { href: "/tools", label: "AI 工具", icon: Puzzle }
+  { href: "/tools", label: "AI 工具", icon: Puzzle },
+  { href: "/models", label: "模型网关", icon: Network }
 ];
 
 // 管理版 = 租户版全部功能 + 多一个「管理」入口

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  mapAudienceDailyRows,
   mapDamoProductRows,
   mapProductDailyRows,
   mapProductSourceRows,
@@ -7,6 +8,7 @@ import {
   mapPromotionRows,
   parseNumericCellOrNull
 } from "@/lib/imports/map-rows";
+import { validateImportRows } from "@/lib/imports/contracts";
 
 describe("parseNumericCellOrNull", () => {
   it("处理数字、百分比、千分位与货币符号", () => {
@@ -20,6 +22,16 @@ describe("parseNumericCellOrNull", () => {
 
   it.each(["-", "--", "—", "–", "－"])("将报表占位符 %s 识别为缺失", (placeholder) => {
     expect(parseNumericCellOrNull(placeholder)).toBeNull();
+  });
+
+  it("把「无数据」占位符一律判为 null（源表常见 - / — / N/A / 无）", () => {
+    // 淘系报表在某指标当日无数据时会打占位符；行仍可导入，但值不能伪造成真实 0。
+    for (const placeholder of ["-", "－", "—", "–", "--", "---", " - ", "/", "N/A", "n/a", "无", "null"]) {
+      expect(parseNumericCellOrNull(placeholder)).toBeNull();
+    }
+    // 负数不能被误判为占位符
+    expect(parseNumericCellOrNull("-12.5")).toBe(-12.5);
+    expect(parseNumericCellOrNull("-3%")).toBeCloseTo(-0.03);
   });
 });
 
@@ -191,5 +203,107 @@ describe("mapPromotionRows 合并多推广计划", () => {
     expect(merged[0].averageClickCost).toBe(2); // 400/200
     expect(merged[0].roi).toBeCloseTo(5.5, 5); // (4×100+6×300)/400 花费加权
     expect(merged[0].ctr).toBeCloseTo(200 / 3000, 5); // Σ点击/Σ展现
+  });
+});
+
+describe("源表出现「-」占位符：不该拦截校验，也不该产生幽灵主体", () => {
+  const PRODUCT_DAILY_HEADERS = [
+    "统计日期",
+    "商品ID",
+    "商品名称",
+    "商品访客数",
+    "商品浏览量",
+    "平均停留时长",
+    "商品详情页跳出率",
+    "支付买家数",
+    "支付金额",
+    "商品支付转化率",
+    "成功退款金额",
+    "搜索引导支付转化率",
+    "搜索引导访客数"
+  ];
+
+  it("商品源：整行指标全是「-」→ 行可导入、指标为 null、等待补证据", () => {
+    const rows = [
+      ["2026-05-01", "111", "刀A", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]
+    ];
+    const validation = validateImportRows("product_source", PRODUCT_DAILY_HEADERS, rows);
+    expect(validation.ok).toBe(true);
+    expect(validation.errors).toEqual([]);
+
+    const mapped = mapProductDailyRows(PRODUCT_DAILY_HEADERS, rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].productId).toBe("111");
+    expect(mapped[0].visitors).toBeNull();
+    expect(mapped[0].paymentAmount).toBeNull();
+    expect(mapped[0].averageStaySeconds).toBeNull();
+    expect(mapped[0].bounceRate).toBeNull();
+    expect(mapped[0].productPaymentConversionRate).toBeNull();
+  });
+
+  it("商品源：部分指标「-」、部分有值 → 有值保留、「-」记 null", () => {
+    const rows = [
+      ["2026-05-01", "111", "刀A", 4539, 10312, "-", "-", 473, 54306.24, "-", "-", "-", "-"]
+    ];
+    const mapped = mapProductDailyRows(PRODUCT_DAILY_HEADERS, rows);
+    expect(mapped[0].visitors).toBe(4539);
+    expect(mapped[0].paymentAmount).toBe(54306.24);
+    expect(mapped[0].paymentBuyers).toBe(473);
+    expect(mapped[0].averageStaySeconds).toBeNull();
+    expect(mapped[0].refundAmount).toBeNull();
+  });
+
+  it("商品源：主键「商品ID」为「-」的汇总行被丢弃，不生成幽灵主体", () => {
+    const rows = [
+      ["2026-05-01", "111", "刀A", 100, 200, 30, 0.4, 5, 8000, 0.05, 100, 0.03, 50],
+      ["2026-05-01", "-", "汇总", 999, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    ];
+    const mapped = mapProductDailyRows(PRODUCT_DAILY_HEADERS, rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].productId).toBe("111");
+
+    // 校验层同样不把「-」当成一个主体（不误报重复主键、主体数计正确）
+    const validation = validateImportRows("product_source", PRODUCT_DAILY_HEADERS, rows);
+    expect(validation.uniqueEntityCount).toBe(1);
+    expect(validation.duplicateEntityIds).not.toContain("-");
+  });
+
+  it("推广源：指标「-」→ 映射为 null，校验通过", () => {
+    const PROMO_HEADERS = [
+      "日期", "主体ID", "主体类型", "主体名称", "展现量", "点击量", "花费", "平均点击花费", "投入产出比"
+    ];
+    const rows = [["2026-05-01", "222", "商品", "推X", "-", "-", "-", "-", "-"]];
+    expect(validateImportRows("promotion_product_source", PROMO_HEADERS, rows).ok).toBe(true);
+    const mapped = mapPromotionDailyRows(PROMO_HEADERS, rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].cost).toBeNull();
+    expect(mapped[0].clicks).toBeNull();
+    expect(mapped[0].roi).toBeNull();
+  });
+
+  it("人群源：指标「-」→ 映射为 null，校验通过", () => {
+    const AUD_HEADERS = [
+      "日期", "场景ID", "场景名字", "计划ID", "计划名字", "人群名字", "主体ID", "主体名称",
+      "点击量", "投入产出比", "引导访问潜客占比", "成交新客占比"
+    ];
+    const rows = [["2026-05-01", "s1", "场景", "p1", "计划A", "人群甲", "333", "主体X", "-", "-", "-", "-"]];
+    expect(validateImportRows("audience_source", AUD_HEADERS, rows).ok).toBe(true);
+    const mapped = mapAudienceDailyRows(AUD_HEADERS, rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].clicks).toBeNull();
+    expect(mapped[0].roi).toBeNull();
+  });
+
+  it("达摩盘源：指标「-」→ 映射为 null，阶段回落冷启期", () => {
+    const DAMO_HEADERS = [
+      "宝贝ID", "宝贝名称", "货品成长阶段", "日期", "支付金额", "IPV", "营销推广消耗",
+      "营销推广ROI", "支付转化率", "复购率", "免费搜索点击率", "笔单价", "连带购买率", "连带购买叶子类目宽度"
+    ];
+    const rows = [["444", "甲", "-", "2026-05-01", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]];
+    const mapped = mapDamoProductRows(DAMO_HEADERS, rows);
+    expect(mapped).toHaveLength(1);
+    expect(mapped[0].paymentAmount).toBeNull();
+    expect(mapped[0].marketingSpend).toBeNull();
+    expect(mapped[0].growthStage).toBe("冷启期");
   });
 });
