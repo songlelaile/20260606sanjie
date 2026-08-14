@@ -2,7 +2,6 @@ import {
   ArrowRight,
   CircleAlert,
   Download,
-  FileJson,
   ListChecks,
   LockKeyhole,
   ShieldCheck,
@@ -45,6 +44,44 @@ const DMP_AUTOMATION = {
   downloadName: DMP_AUTOMATION_DOWNLOAD_NAME,
   platform: "Chrome / Edge 125+"
 };
+
+const DMP_DATA_GROUPS = [
+  {
+    title: "总览与周期对标",
+    desc: "报告总览、对标总表、商品与成功品、周期汇总：集中查看主体与目标对手、对齐周期、总 GMV、广告消耗、费比和全域 ROAS。"
+  },
+  {
+    title: "日数据与渠道花费",
+    desc: "日 GMV 与费比、渠道花费：按天展示 GMV、五渠道消耗、日总消耗和日费比，并汇总内容、人群、全站、线索、关键词五类花费结构。"
+  },
+  {
+    title: "场景与成长阶段",
+    desc: "一级场景、二级场景、成长阶段数据：展示场景消耗、占比、展现、点击、CTR、CPC、直接成交金额、直接 ROI，以及阶段 GMV 和花费。"
+  },
+  {
+    title: "基础指标与关键词",
+    desc: "基础指标对比、关键词样本：对比点击、成交、转化、客单、访客、GMV、花费和费比，并保留已返回的关键词展现、点击与转化数据。"
+  }
+];
+
+const DMP_USAGE_STEPS = [
+  {
+    title: "开通并安装",
+    body: "账号获得 30 天使用权限后下载 ZIP，解压到固定文件夹；在 Chrome / Edge 扩展管理页开启开发者模式，选择“加载已解压的扩展程序”。"
+  },
+  {
+    title: "填写对标商品",
+    body: "打开达摩盘“商品成长”页面，填写本店主体商品 ID 和目标成功品 ID，确认两个 ID 不同后点击“一键运行”。"
+  },
+  {
+    title: "检查并补漏一次",
+    body: "首次取数有缺口时点击一次“精准补抓缺失数据”。北京时间 0:00–10:00 若昨天消耗尚未产出，可在 10:00–24:00 重新获取。"
+  },
+  {
+    title: "下载业务报告",
+    body: "检查结束后下载 Excel 报告。若仅缺 1 天花费，费比仍会按已返回花费计算，并在报告总览标明实际覆盖天数；缺失值不会按 0 补齐。"
+  }
+];
 
 const FEATURES = [
   {
@@ -210,7 +247,7 @@ export default async function ToolsPage() {
       <section className="tool-card dmp-tool-card">
         <header className="tool-card-head">
           <span className="tool-card-icon dmp-tool-icon">
-            <FileJson size={27} />
+            <ListChecks size={27} />
           </span>
           <div className="tool-card-title">
             <h2>{DMP_AUTOMATION.name}</h2>
@@ -245,20 +282,37 @@ export default async function ToolsPage() {
                 打开报表工具 <ArrowRight size={17} />
               </Link>
             ) : dmpAccess.allowed ? (
-              <span className="dmp-admin-only"><LockKeyhole size={15} /> JSON 入口仅平台管理员</span>
+              <span className="dmp-admin-only"><LockKeyhole size={15} /> 报表入口仅平台管理员</span>
             ) : null}
           </div>
         </header>
 
         <p className="tool-lead">
-          在达摩盘商品成长页面输入本店主体与成功品 ID，一键落实「过去 30 天」，依次采集关键指标、推广策略、人群对比和全部场景渠道。该版本按账号单独付费授权，每次开通默认有效 30 天、到期自动关闭；开通后可下载和运行插件，平台管理员还可把监听 JSON 完整展开为 11 张业务表。
+          围绕同一主体商品、目标成功品和过去 30 天对齐周期，输出 11 张固定业务表。数据从总览、周期 KPI 逐层展开到每日 GMV 与费比、五渠道花费、一级与二级投放场景、成长阶段、基础指标和关键词样本，便于直接对标与复盘。
         </p>
 
         <div className="dmp-tool-capabilities">
-          <div><strong>实时在线与授权校验</strong><span>启动、运行与心跳同时核对官网状态和数据库授权；官网不可达或未授权时失败关闭。</span></div>
-          <div><strong>纯本地 JSON 解析</strong><span>工程文件留在管理员浏览器内存，不上传原始接口记录。</span></div>
-          <div><strong>30 天倒计时授权</strong><span>下载接口、插件运行和 JSON 入口共用数据库授权；到期自动关闭，请联系管理员付费开通或续费。</span></div>
-          <div><strong>完整报表页面</strong><span>主体/竞品 KPI、完整性状态、11 表切换、行筛选与多格式导出。</span></div>
+          {DMP_DATA_GROUPS.map((group) => (
+            <div key={group.title}><strong>{group.title}</strong><span>{group.desc}</span></div>
+          ))}
+        </div>
+
+        <div className="tool-block">
+          <div className="tool-block-label">
+            <ListChecks size={15} />
+            如何使用
+          </div>
+          <ol className="tool-steps tool-steps-plain">
+            {DMP_USAGE_STEPS.map((step, index) => (
+              <li key={step.title} className="tool-step">
+                <span className="tool-step-no">{index + 1}</span>
+                <div className="tool-step-body">
+                  <strong>{step.title}</strong>
+                  <span>{step.body}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
         </div>
       </section>
 
