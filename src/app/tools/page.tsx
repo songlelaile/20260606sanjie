@@ -1,14 +1,19 @@
 import {
+  ArrowRight,
   CircleAlert,
   Download,
+  FileJson,
   ListChecks,
+  LockKeyhole,
   ShieldCheck,
   Sparkles
 } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
+import Link from "next/link";
 import { PageHeader } from "@/components/PageHeader";
 import { CopyAddress } from "@/components/tools/CopyAddress";
+import { getCurrentSession } from "@/lib/server-session";
 
 export const metadata: Metadata = {
   title: "AI 自动化工具 · 三阶引擎"
@@ -23,6 +28,14 @@ const COLLECTOR = {
   sizeLabel: "约 3.1 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
+};
+
+const DMP_AUTOMATION = {
+  name: "达摩盘 AI 自动化",
+  version: "0.9.16",
+  zipHref: "/downloads/shaozhuang-dmp-automation-v0.9.16.zip",
+  downloadName: "少壮达摩盘取数自动化-v0.9.16.zip",
+  platform: "Chrome / Edge 125+"
 };
 
 const FEATURES = [
@@ -164,7 +177,10 @@ const USAGE_GROUPS = [
   }
 ];
 
-export default function ToolsPage() {
+export default async function ToolsPage() {
+  const session = await getCurrentSession();
+  const canOpenDmpJson = session?.role === "admin";
+
   return (
     <>
       <PageHeader
@@ -172,6 +188,51 @@ export default function ToolsPage() {
         title="AI 自动化工具"
         description="从经营数据到业务理解、链接策略、主图详情生产和本机成果留档的一体化 AI 工作台。少壮AI自动化 v1.9.18 强化商品标题的精确 60 字符求解，并在热词不足时安全借鉴市场排行标题。"
       />
+
+      <section className="tool-card dmp-tool-card">
+        <header className="tool-card-head">
+          <span className="tool-card-icon dmp-tool-icon">
+            <FileJson size={27} />
+          </span>
+          <div className="tool-card-title">
+            <h2>{DMP_AUTOMATION.name}</h2>
+            <div className="tool-badges">
+              <span className="tool-badge">v{DMP_AUTOMATION.version}</span>
+              <span className="tool-badge tool-badge-soft">过去 30 天自动取数</span>
+              <span className="tool-badge tool-badge-soft">11 张业务表</span>
+              <span className="tool-badge tool-badge-soft">{DMP_AUTOMATION.platform}</span>
+            </div>
+          </div>
+          <div className="tool-card-actions">
+            <a
+              className="button-link tool-download-btn dmp-tool-secondary"
+              href={DMP_AUTOMATION.zipHref}
+              download={DMP_AUTOMATION.downloadName}
+            >
+              <Download size={17} />
+              下载插件
+            </a>
+            {canOpenDmpJson ? (
+              <Link className="button-link tool-download-btn" href="/tools/dmp-report" prefetch={false}>
+                打开报表工具 <ArrowRight size={17} />
+              </Link>
+            ) : (
+              <span className="dmp-admin-only"><LockKeyhole size={15} /> JSON 入口仅平台管理员</span>
+            )}
+          </div>
+        </header>
+
+        <p className="tool-lead">
+          在达摩盘商品成长页面输入本店主体与成功品 ID，一键落实「过去 30 天」，依次采集关键指标、推广策略、人群对比和全部场景渠道。插件通过确定性规则解析并执行完整性门禁，官网工作台可把监听 JSON 完整展开为 11 张业务表，支持筛选、XLSX、CSV 和标准业务 JSON。
+        </p>
+
+        <div className="dmp-tool-capabilities">
+          <div><strong>实时在线校验</strong><span>启动、运行与心跳都核对 shaozhuangai.com；官网不可达时失败关闭。</span></div>
+          <div><strong>纯本地 JSON 解析</strong><span>工程文件留在管理员浏览器内存，不上传原始接口记录。</span></div>
+          <div><strong>管理员权限边界</strong><span>报表入口由服务端角色校验保护，普通租户账号无法直接访问。</span></div>
+          <div><strong>完整报表页面</strong><span>主体/竞品 KPI、完整性状态、11 表切换、行筛选与多格式导出。</span></div>
+        </div>
+      </section>
 
       <section className="tool-card">
         <header className="tool-card-head">

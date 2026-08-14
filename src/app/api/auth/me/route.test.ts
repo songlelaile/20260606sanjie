@@ -54,8 +54,25 @@ describe("GET /api/auth/me", () => {
       })
     );
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ data: SESSION });
+    const payload = await response.json();
+    expect(payload.data).toMatchObject({
+      ...SESSION,
+      service: { online: true },
+      capabilities: { dmpAutomation: true, dmpJsonImport: false }
+    });
+    expect(payload.data.service.checkedAt).toEqual(expect.any(String));
     expect(mocks.isSessionAccountValid).toHaveBeenCalledWith(SESSION);
+  });
+
+  it("grants the JSON engineering-file capability only to platform administrators", async () => {
+    mocks.parseSession.mockResolvedValueOnce({ ...SESSION, role: "admin" });
+    const response = await GET(
+      new Request("http://localhost/api/auth/me", {
+        headers: { "x-sanjie-session": "signed-admin-token" }
+      })
+    );
+    const payload = await response.json();
+    expect(payload.data.capabilities).toEqual({ dmpAutomation: true, dmpJsonImport: true });
   });
 
   it("rejects a signed session whose database tenant or role no longer matches", async () => {

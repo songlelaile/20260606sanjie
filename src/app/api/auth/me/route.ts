@@ -84,7 +84,15 @@ export async function GET(request: Request) {
         username: session.username,
         name: session.name,
         role: session.role,
-        tenantId: session.tenantId
+        tenantId: session.tenantId,
+        service: {
+          online: true,
+          checkedAt: new Date().toISOString()
+        },
+        capabilities: {
+          dmpAutomation: true,
+          dmpJsonImport: session.role === "admin"
+        }
       }
     },
     { headers: CORS }

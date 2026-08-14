@@ -6,6 +6,9 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.18"
 EXPECTED_ZIP_SHA256="ea82ed62b4c995ce1de3cb94730b576974f78639ea79ac0cc5e0f29c56074f1f"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
+DMP_VERSION="0.9.16"
+DMP_ZIP_SHA256="a8e487d611760d090797d67087cb6c8d9f184f01159ecf8984d0eb92f179b6b5"
+DMP_ZIP_PATH="public/downloads/shaozhuang-dmp-automation-v${DMP_VERSION}.zip"
 
 fail() {
   echo "发布保护失败：$*" >&2
@@ -59,7 +62,11 @@ for file in \
   src/lib/accounts.ts \
   src/middleware.ts \
   prisma/schema.prisma \
-  src/app/tools/page.tsx; do
+  src/app/tools/page.tsx \
+  src/app/tools/dmp-report/page.tsx \
+  src/components/tools/DmpReportWorkspace.tsx \
+  public/tools/dmp-report-engine/completeness-engine.js \
+  public/tools/dmp-report-engine/report-engine.js; do
   require_file "$file"
 done
 
@@ -92,7 +99,19 @@ require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
 
-echo "发布保护通过：工程、登录、密码哈希、数据库模型、工具页与插件包均匹配 v${EXPECTED_VERSION}。"
+# 达摩盘插件、管理员 JSON 工程入口与本地解析引擎必须成套发布。
+require_fixed "version: \"${DMP_VERSION}\"" src/app/tools/page.tsx "达摩盘工具卡版本不是 v${DMP_VERSION}"
+require_fixed "shaozhuang-dmp-automation-v${DMP_VERSION}.zip" src/app/tools/page.tsx "达摩盘工具卡下载地址不是 v${DMP_VERSION}"
+require_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少管理员角色校验"
+require_fixed "isSessionAccountValid" src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少数据库账号复核"
+require_fixed "dmpJsonImport" src/app/api/auth/me/route.ts "认证端点缺少达摩盘 JSON 权限声明"
+require_fixed "file.text()" src/components/tools/DmpReportWorkspace.tsx "达摩盘 JSON 未在浏览器本地解析"
+require_file "$DMP_ZIP_PATH"
+
+actual_dmp_zip_sha256="$(sha256_file "$DMP_ZIP_PATH")"
+[[ "$actual_dmp_zip_sha256" == "$DMP_ZIP_SHA256" ]] || fail "达摩盘 v${DMP_VERSION} ZIP 哈希不一致：$actual_dmp_zip_sha256"
+
+echo "发布保护通过：工程、登录、密码哈希、数据库模型、AI 工具页、少壮AI v${EXPECTED_VERSION} 与达摩盘 v${DMP_VERSION} 插件包均匹配。"
 
 if [[ "${1:-}" == "--full" ]]; then
   npm run typecheck
