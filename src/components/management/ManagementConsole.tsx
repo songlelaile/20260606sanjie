@@ -133,6 +133,37 @@ export function ManagementConsole({
     setBusy(false);
   }
 
+  async function toggleDmpAccess(user: ManagedUser) {
+    const enabled = !user.dmpAutomationAccess.allowed;
+    const action = enabled ? "开通" : "关闭";
+    if (!window.confirm(`确定为「${user.name}（${user.username}）」${action}达摩盘 AI 自动化？`)) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    const response = await fetch(`/api/managed-users/${user.id}/dmp-access`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled })
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { data?: { dmpAutomationAccess: ManagedUser["dmpAutomationAccess"] }; error?: string }
+      | null;
+    if (response.ok && payload?.data?.dmpAutomationAccess) {
+      setUsers((current) =>
+        current.map((item) =>
+          item.id === user.id
+            ? { ...item, dmpAutomationAccess: payload.data!.dmpAutomationAccess }
+            : item
+        )
+      );
+      setMessage(`已为 ${user.name}${action}达摩盘 AI 自动化`);
+    } else {
+      setMessage(payload?.error ?? `${action}失败，请刷新后重试`);
+    }
+    setBusy(false);
+  }
+
   async function resetPassword(user: ManagedUser) {
     if (!window.confirm(`确定重置「${user.name}（${user.username}）」的密码？原密码将立即失效。`)) {
       return;
@@ -325,6 +356,7 @@ export function ManagementConsole({
                   <th>角色</th>
                   <th>店铺</th>
                   <th>状态</th>
+                  <th>达摩盘工具</th>
                   <th>创建时间</th>
                   <th>最近活跃</th>
                   <th>操作</th>
@@ -347,51 +379,65 @@ export function ManagementConsole({
                         {statusLabel(user.status)}
                       </span>
                     </td>
+                    <td>
+                      <span className={clsx("user-status-pill", `dmp-${user.dmpAutomationAccess.status}`)}>
+                        {dmpAccessLabel(user.dmpAutomationAccess.status)}
+                      </span>
+                    </td>
                     <td>{formatFullDateTime(user.createdAt)}</td>
                     <td>{formatFullDateTime(user.lastActiveAt)}</td>
                     <td>
-                      {isAdminAccount ? (
-                        <span className="user-action-none">—</span>
-                      ) : (
-                        <div className="user-actions">
-                          <button
-                            type="button"
-                            className="copy-link-button"
-                            disabled={busy}
-                            onClick={() => resetPassword(user)}
-                          >
-                            <KeyRound size={14} />
-                            重置密码
-                          </button>
-                          <button
-                            type="button"
-                            className={user.status === "disabled" ? "copy-link-button" : "danger-outline-button"}
-                            disabled={busy}
-                            onClick={() => toggleUserStatus(user)}
-                          >
-                            {user.status === "disabled" ? (
-                              <>
-                                <UserRoundCheck size={14} />
-                                启用
-                              </>
-                            ) : (
-                              <>
-                                <Ban size={14} />
-                                禁用
-                              </>
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            className="danger-outline-button"
-                            disabled={busy}
-                            onClick={() => removeUser(user)}
-                          >
-                            <Trash2 size={14} />
-                            删除
-                          </button>
-                        </div>
-                      )}
+                      <div className="user-actions">
+                        <button
+                          type="button"
+                          className={user.dmpAutomationAccess.allowed ? "danger-outline-button" : "copy-link-button"}
+                          disabled={busy}
+                          onClick={() => toggleDmpAccess(user)}
+                        >
+                          <Bot size={14} />
+                          {user.dmpAutomationAccess.allowed ? "关闭达摩盘" : "开通达摩盘"}
+                        </button>
+                        {!isAdminAccount ? (
+                          <>
+                            <button
+                              type="button"
+                              className="copy-link-button"
+                              disabled={busy}
+                              onClick={() => resetPassword(user)}
+                            >
+                              <KeyRound size={14} />
+                              重置密码
+                            </button>
+                            <button
+                              type="button"
+                              className={user.status === "disabled" ? "copy-link-button" : "danger-outline-button"}
+                              disabled={busy}
+                              onClick={() => toggleUserStatus(user)}
+                            >
+                              {user.status === "disabled" ? (
+                                <>
+                                  <UserRoundCheck size={14} />
+                                  启用
+                                </>
+                              ) : (
+                                <>
+                                  <Ban size={14} />
+                                  禁用
+                                </>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              className="danger-outline-button"
+                              disabled={busy}
+                              onClick={() => removeUser(user)}
+                            >
+                              <Trash2 size={14} />
+                              删除
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                   );
@@ -434,6 +480,16 @@ function statusLabel(status: ManagedUser["status"]) {
     active: "启用",
     pending: "待激活",
     disabled: "停用"
+  };
+  return labels[status];
+}
+
+function dmpAccessLabel(status: ManagedUser["dmpAutomationAccess"]["status"]) {
+  const labels: Record<ManagedUser["dmpAutomationAccess"]["status"], string> = {
+    active: "已开通",
+    expired: "已过期",
+    revoked: "已关闭",
+    not_granted: "未开通"
   };
   return labels[status];
 }

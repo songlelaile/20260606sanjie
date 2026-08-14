@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, parseSession } from "@/lib/auth";
 import { isSessionAccountValid } from "@/lib/accounts";
+import {
+  getDmpAutomationAccessForSession,
+  NO_DMP_AUTOMATION_ACCESS
+} from "@/lib/tool-entitlements";
 
 // 要查库(Prisma)校验账号状态，固定 Node 运行时（Edge 跑不了 Prisma）。
 export const runtime = "nodejs";
@@ -78,6 +82,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "会话已失效" }, { status: 401, headers: CORS });
   }
 
+  // 付费工具权限单独查库，未开通、已撤销、已过期或数据库异常时一律关闭。
+  const dmpAccess = await getDmpAutomationAccessForSession(session).catch(() => ({
+    ...NO_DMP_AUTOMATION_ACCESS
+  }));
+
   return NextResponse.json(
     {
       data: {
@@ -90,9 +99,11 @@ export async function GET(request: Request) {
           checkedAt: new Date().toISOString()
         },
         capabilities: {
-          dmpAutomation: true,
-          dmpJsonImport: session.role === "admin"
-        }
+          dmpAutomation: dmpAccess.allowed,
+          dmpDownload: dmpAccess.allowed,
+          dmpJsonImport: session.role === "admin" && dmpAccess.allowed
+        },
+        dmpEntitlement: dmpAccess
       }
     },
     { headers: CORS }

@@ -42,8 +42,27 @@ model User {
   gatewayApiKeys GatewayApiKey[]
   gatewayOrders  GatewayOrder[]
   gatewayUsages  GatewayUsage[]
+  toolEntitlements ToolEntitlement[]
 
   @@index([tenantId])
+}
+
+// 按账号单独开通的付费工具权限。toolCode 使用稳定产品码，插件升级不要求重复授权；
+// revoked 记录保留授权/撤销痕迹，不通过删除行来表达未授权。
+model ToolEntitlement {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  toolCode  String
+  status    String   @default("active") // active | revoked
+  grantedBy String   @default("")
+  grantedAt DateTime @default(now())
+  expiresAt DateTime?
+  note      String   @default("")
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, toolCode])
+  @@index([toolCode, status])
 }
 
 model InviteCode {

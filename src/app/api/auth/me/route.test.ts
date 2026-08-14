@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   parseSession: vi.fn(),
-  isSessionAccountValid: vi.fn()
+  isSessionAccountValid: vi.fn(),
+  getDmpAutomationAccessForSession: vi.fn()
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -11,6 +12,15 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/accounts", () => ({
   isSessionAccountValid: mocks.isSessionAccountValid
+}));
+vi.mock("@/lib/tool-entitlements", () => ({
+  getDmpAutomationAccessForSession: mocks.getDmpAutomationAccessForSession,
+  NO_DMP_AUTOMATION_ACCESS: {
+    allowed: false,
+    status: "not_granted",
+    grantedAt: null,
+    expiresAt: null
+  }
 }));
 
 import { GET } from "./route";
@@ -26,8 +36,15 @@ describe("GET /api/auth/me", () => {
   beforeEach(() => {
     mocks.parseSession.mockReset();
     mocks.isSessionAccountValid.mockReset();
+    mocks.getDmpAutomationAccessForSession.mockReset();
     mocks.parseSession.mockResolvedValue(SESSION);
     mocks.isSessionAccountValid.mockResolvedValue(true);
+    mocks.getDmpAutomationAccessForSession.mockResolvedValue({
+      allowed: true,
+      status: "active",
+      grantedAt: "2026-08-15T00:00:00.000Z",
+      expiresAt: null
+    });
   });
 
   it("rejects requests without a session token", async () => {
@@ -58,7 +75,8 @@ describe("GET /api/auth/me", () => {
     expect(payload.data).toMatchObject({
       ...SESSION,
       service: { online: true },
-      capabilities: { dmpAutomation: true, dmpJsonImport: false }
+      capabilities: { dmpAutomation: true, dmpDownload: true, dmpJsonImport: false },
+      dmpEntitlement: { allowed: true, status: "active" }
     });
     expect(payload.data.service.checkedAt).toEqual(expect.any(String));
     expect(mocks.isSessionAccountValid).toHaveBeenCalledWith(SESSION);
@@ -72,7 +90,33 @@ describe("GET /api/auth/me", () => {
       })
     );
     const payload = await response.json();
-    expect(payload.data.capabilities).toEqual({ dmpAutomation: true, dmpJsonImport: true });
+    expect(payload.data.capabilities).toEqual({
+      dmpAutomation: true,
+      dmpDownload: true,
+      dmpJsonImport: true
+    });
+  });
+
+  it("keeps the service online while denying an account without paid DMP access", async () => {
+    mocks.getDmpAutomationAccessForSession.mockResolvedValueOnce({
+      allowed: false,
+      status: "not_granted",
+      grantedAt: null,
+      expiresAt: null
+    });
+    const response = await GET(
+      new Request("http://localhost/api/auth/me", {
+        headers: { "x-sanjie-session": "signed-token" }
+      })
+    );
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.data.service.online).toBe(true);
+    expect(payload.data.capabilities).toEqual({
+      dmpAutomation: false,
+      dmpDownload: false,
+      dmpJsonImport: false
+    });
   });
 
   it("rejects a signed session whose database tenant or role no longer matches", async () => {

@@ -7,8 +7,8 @@ EXPECTED_VERSION="1.9.18"
 EXPECTED_ZIP_SHA256="ea82ed62b4c995ce1de3cb94730b576974f78639ea79ac0cc5e0f29c56074f1f"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 DMP_VERSION="0.9.16"
-DMP_ZIP_SHA256="a8e487d611760d090797d67087cb6c8d9f184f01159ecf8984d0eb92f179b6b5"
-DMP_ZIP_PATH="public/downloads/shaozhuang-dmp-automation-v${DMP_VERSION}.zip"
+DMP_ZIP_SHA256="6e7cd68c6887291b4031f88c8dfc8a87668071b76bb5fdde2534208d36940c7d"
+DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-automation-v${DMP_VERSION}.zip"
 
 fail() {
   echo "发布保护失败：$*" >&2
@@ -64,7 +64,10 @@ for file in \
   prisma/schema.prisma \
   src/app/tools/page.tsx \
   src/app/tools/dmp-report/page.tsx \
+  src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpReportWorkspace.tsx \
+  src/lib/dmp-product.ts \
+  src/lib/tool-entitlements.ts \
   public/tools/dmp-report-engine/completeness-engine.js \
   public/tools/dmp-report-engine/report-engine.js; do
   require_file "$file"
@@ -82,6 +85,8 @@ forbid_fixed "user.password !== password" src/lib/accounts.ts "检测到旧版�
 # 数据结构基线。错误工程缺少这些模型，发布前必须立即阻断。
 require_fixed "model Shop {" prisma/schema.prisma "缺少多店铺 Shop 模型"
 require_fixed "model ShopCalcRun {" prisma/schema.prisma "缺少多店铺 ShopCalcRun 模型"
+require_fixed "model ToolEntitlement {" prisma/schema.prisma "缺少付费工具授权模型"
+require_file "prisma/migrations/20260815001500_tool_entitlements/migration.sql"
 
 # 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
@@ -99,14 +104,19 @@ require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
 
-# 达摩盘插件、管理员 JSON 工程入口与本地解析引擎必须成套发布。
-require_fixed "version: \"${DMP_VERSION}\"" src/app/tools/page.tsx "达摩盘工具卡版本不是 v${DMP_VERSION}"
-require_fixed "shaozhuang-dmp-automation-v${DMP_VERSION}.zip" src/app/tools/page.tsx "达摩盘工具卡下载地址不是 v${DMP_VERSION}"
+# 达摩盘插件、付费授权、受保护下载、管理员 JSON 工程入口与本地解析引擎必须成套发布。
+require_fixed "DMP_AUTOMATION_VERSION = \"${DMP_VERSION}\"" src/lib/dmp-product.ts "达摩盘工具卡版本不是 v${DMP_VERSION}"
+require_fixed 'zipHref: "/api/tools/dmp/download"' src/app/tools/page.tsx "达摩盘工具卡未使用受保护下载接口"
 require_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少管理员角色校验"
-require_fixed "isSessionAccountValid" src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少数据库账号复核"
+require_fixed "getDmpAutomationAccessForSession" src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少数据库付费授权复核"
 require_fixed "dmpJsonImport" src/app/api/auth/me/route.ts "认证端点缺少达摩盘 JSON 权限声明"
+require_fixed "dmpAutomation: dmpAccess.allowed" src/app/api/auth/me/route.ts "认证端点未按数据库授权控制插件"
+require_fixed "getDmpAutomationAccessForSession" src/app/api/tools/dmp/download/route.ts "达摩盘下载接口缺少数据库授权校验"
+require_fixed "请联系管理员付费使用" src/app/api/tools/dmp/download/route.ts "达摩盘下载接口缺少未授权提示"
+require_fixed 'DMP_AUTOMATION_TOOL_CODE = "dmp-automation"' src/lib/dmp-product.ts "达摩盘产品码不稳定"
 require_fixed "file.text()" src/components/tools/DmpReportWorkspace.tsx "达摩盘 JSON 未在浏览器本地解析"
 require_file "$DMP_ZIP_PATH"
+[[ ! -e "public/downloads/shaozhuang-dmp-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
 
 actual_dmp_zip_sha256="$(sha256_file "$DMP_ZIP_PATH")"
 [[ "$actual_dmp_zip_sha256" == "$DMP_ZIP_SHA256" ]] || fail "达摩盘 v${DMP_VERSION} ZIP 哈希不一致：$actual_dmp_zip_sha256"

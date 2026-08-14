@@ -75,6 +75,14 @@ export interface InviteCode {
 }
 
 export type ManagedUserStatus = "active" | "pending" | "disabled";
+export type ToolEntitlementStatus = "active" | "expired" | "revoked" | "not_granted";
+
+export interface ToolEntitlementAccess {
+  allowed: boolean;
+  status: ToolEntitlementStatus;
+  grantedAt: string | null;
+  expiresAt: string | null;
+}
 
 export interface ManagedUser {
   id: string;
@@ -85,6 +93,7 @@ export interface ManagedUser {
   role: Role;
   shopName: string;
   status: ManagedUserStatus;
+  dmpAutomationAccess: ToolEntitlementAccess;
   createdAt: string;
   lastActiveAt: string;
 }

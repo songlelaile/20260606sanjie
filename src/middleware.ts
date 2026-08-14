@@ -58,7 +58,8 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // 排除 _next 内部资源、favicon 与 public/downloads 静态下载：
-  // downloads/ 下是面向所有人的公开静态分发物（插件 ZIP 等），直出不走鉴权。
+  // downloads/ 下仅放面向所有人的公开静态分发物，直出不走鉴权；达摩盘付费插件
+  // 存放在 private-assets/，只能通过带数据库授权校验的 API 下载。
   // ⚠️ 切勿往 public/downloads/ 放任何含租户数据的文件——public/ 一律无鉴权对外。
   // favicon.ico 的点需转义，避免 /faviconXico 之类被误旁路。
   matcher: ["/((?!_next/static|_next/image|favicon\\.ico|downloads/).*)"]

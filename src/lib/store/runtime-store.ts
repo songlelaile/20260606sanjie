@@ -21,6 +21,10 @@ import {
 } from "@/lib/dashboard-share";
 import type { BusinessDiagnosisSource } from "@/lib/business-diagnosis";
 import { prisma } from "@/lib/db";
+import {
+  getDmpAutomationAccessForUserIds,
+  NO_DMP_AUTOMATION_ACCESS
+} from "@/lib/tool-entitlements";
 import { resolveAiEncryptionKeySource } from "@/lib/ai-encryption-key";
 import {
   DEFAULT_AI_PROVIDER,
@@ -1799,6 +1803,7 @@ export async function getManagedUsers(): Promise<ManagedUser[]> {
     where: scope.isAdmin ? {} : { tenantId: scope.tenantId },
     orderBy: { createdAt: "desc" }
   });
+  const dmpAccessByUserId = await getDmpAutomationAccessForUserIds(users.map((user) => user.id));
   return users.map((u) => ({
     id: u.id,
     tenantId: u.tenantId,
@@ -1808,6 +1813,7 @@ export async function getManagedUsers(): Promise<ManagedUser[]> {
     role: u.role as ManagedUser["role"],
     shopName: u.shopName,
     status: u.status as ManagedUser["status"],
+    dmpAutomationAccess: dmpAccessByUserId.get(u.id) ?? { ...NO_DMP_AUTOMATION_ACCESS },
     createdAt: u.createdAt.toISOString(),
     lastActiveAt: u.lastActiveAt.toISOString()
   }));

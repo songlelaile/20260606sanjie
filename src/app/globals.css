@@ -70,6 +70,35 @@
   padding: 0 12px;
 }
 
+.dmp-paid-required {
+  align-items: center;
+  background: rgba(61, 34, 18, 0.5);
+  border: 1px solid #8b5d34;
+  border-radius: 6px;
+  color: #f0c985;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 7px;
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.tool-badge-paid {
+  border-color: #8b6735;
+  color: #f0c985;
+}
+
+.tool-badge-access {
+  border-color: #4b7d46;
+  color: #b9e2a8;
+}
+
+.tool-badge-locked {
+  border-color: #76533a;
+  color: #d4a97a;
+}
+
 .dmp-tool-capabilities {
   display: grid;
   gap: 10px;
@@ -3455,7 +3484,7 @@ button.kpi:hover {
 
 /* 用户表：时间列不换行，操作列容纳三个按钮，店铺占余宽 */
 .user-table {
-  min-width: 1200px;
+  min-width: 1440px;
 }
 
 .user-table th:nth-child(1),
@@ -3481,14 +3510,16 @@ button.kpi:hover {
 .user-table th:nth-child(6),
 .user-table td:nth-child(6),
 .user-table th:nth-child(7),
-.user-table td:nth-child(7) {
+.user-table td:nth-child(7),
+.user-table th:nth-child(8),
+.user-table td:nth-child(8) {
   width: 165px;
   white-space: nowrap;
 }
 
-.user-table th:nth-child(8),
-.user-table td:nth-child(8) {
-  width: 280px;
+.user-table th:nth-child(9),
+.user-table td:nth-child(9) {
+  width: 470px;
 }
 
 /* 历史数据清单：时间/区间不换行，五个数量列紧凑，备注占余宽 */
@@ -5705,6 +5736,20 @@ button.review-metric {
   color: var(--muted);
   background: var(--surface-3);
   border: 1px solid var(--line);
+}
+
+.user-status-pill.dmp-active {
+  background: rgba(93, 161, 80, 0.22);
+  border: 1px solid #527846;
+  color: #b9e2a8;
+}
+
+.user-status-pill.dmp-expired,
+.user-status-pill.dmp-revoked,
+.user-status-pill.dmp-not_granted {
+  background: rgba(77, 60, 34, 0.36);
+  border: 1px solid #665739;
+  color: #cfbd93;
 }
 
 .user-table .row-disabled td {
