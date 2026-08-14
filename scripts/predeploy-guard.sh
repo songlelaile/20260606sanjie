@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
-EXPECTED_VERSION="1.8.98"
-EXPECTED_ZIP_SHA256="5c3db6ff60ecaa37047bc9908d137157448051acb2e31bb25b1a96371944ed4f"
+EXPECTED_VERSION="1.9.18"
+EXPECTED_ZIP_SHA256="ea82ed62b4c995ce1de3cb94730b576974f78639ea79ac0cc5e0f29c56074f1f"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 
 fail() {
