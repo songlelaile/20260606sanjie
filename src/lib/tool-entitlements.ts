@@ -1,7 +1,10 @@
 import "server-only";
 import type { Session } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { DMP_AUTOMATION_TOOL_CODE } from "@/lib/dmp-product";
+import {
+  DMP_AUTOMATION_ACCESS_DAYS,
+  DMP_AUTOMATION_TOOL_CODE
+} from "@/lib/dmp-product";
 import type { ToolEntitlementAccess } from "@/lib/types/domain";
 
 type EntitlementRecord = {
@@ -14,8 +17,11 @@ export const NO_DMP_AUTOMATION_ACCESS: ToolEntitlementAccess = {
   allowed: false,
   status: "not_granted",
   grantedAt: null,
-  expiresAt: null
+  expiresAt: null,
+  remainingDays: 0
 };
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function resolveToolEntitlementAccess(
   record: EntitlementRecord | null | undefined,
@@ -25,12 +31,18 @@ export function resolveToolEntitlementAccess(
   const grantedAt = record.grantedAt.toISOString();
   const expiresAt = record.expiresAt?.toISOString() ?? null;
   if (record.status !== "active") {
-    return { allowed: false, status: "revoked", grantedAt, expiresAt };
+    return { allowed: false, status: "revoked", grantedAt, expiresAt, remainingDays: 0 };
   }
-  if (record.expiresAt && record.expiresAt.getTime() <= now.getTime()) {
-    return { allowed: false, status: "expired", grantedAt, expiresAt };
+  if (!record.expiresAt || record.expiresAt.getTime() <= now.getTime()) {
+    return { allowed: false, status: "expired", grantedAt, expiresAt, remainingDays: 0 };
   }
-  return { allowed: true, status: "active", grantedAt, expiresAt };
+  return {
+    allowed: true,
+    status: "active",
+    grantedAt,
+    expiresAt,
+    remainingDays: Math.max(1, Math.ceil((record.expiresAt.getTime() - now.getTime()) / DAY_MS))
+  };
 }
 
 export async function getDmpAutomationAccessForSession(
@@ -76,6 +88,7 @@ export async function setDmpAutomationEntitlement(input: {
   if (!user) return { ok: false, error: "用户不存在", status: 404 };
 
   const now = new Date();
+  const expiresAt = new Date(now.getTime() + DMP_AUTOMATION_ACCESS_DAYS * DAY_MS);
   const record = await prisma.toolEntitlement.upsert({
     where: {
       userId_toolCode: { userId: input.userId, toolCode: DMP_AUTOMATION_TOOL_CODE }
@@ -85,12 +98,13 @@ export async function setDmpAutomationEntitlement(input: {
       toolCode: DMP_AUTOMATION_TOOL_CODE,
       status: input.enabled ? "active" : "revoked",
       grantedBy: input.grantedBy,
-      grantedAt: now
+      grantedAt: now,
+      expiresAt: input.enabled ? expiresAt : null
     },
     update: {
       status: input.enabled ? "active" : "revoked",
       grantedBy: input.grantedBy,
-      ...(input.enabled ? { grantedAt: now, expiresAt: null } : {})
+      ...(input.enabled ? { grantedAt: now, expiresAt } : {})
     },
     select: { status: true, grantedAt: true, expiresAt: true }
   });

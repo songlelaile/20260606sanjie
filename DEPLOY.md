@@ -3,7 +3,7 @@
 ## 生产发布保护（必须先执行）
 
 - 唯一生产工程：`/Users/shaozhuang/20260606sanjie`。`/Users/shaozhuang/Desktop/20260606sanjie` 仅是历史副本，禁止整仓发布。
-- 普通公开工具插件仍放在 `public/downloads/`；达摩盘付费插件必须放在 `private-assets/dmp/`，并通过 `/api/tools/dmp/download` 的登录与数据库授权校验下载，禁止复制回 `public/`。
+- 普通公开工具插件仍放在 `public/downloads/`；达摩盘付费插件必须放在 `private-assets/dmp/`，并通过 `/api/tools/dmp/download` 的登录与数据库授权校验下载，禁止复制回 `public/`。管理员每次开通或续费默认授予 30 天，到期后下载、插件运行和 JSON 入口自动关闭。
 - 每次发布前先运行 `./scripts/predeploy-guard.sh --full`。脚本会阻断错误目录、登录眼睛缺失、明文密码比较、多店铺模型丢失、工具页版本与 ZIP 哈希不一致等回归。
 - 每次部署到新的 `/opt/sanjie-releases/<日期-版本>` 目录，先用独立端口做金丝雀验证，再切换 PM2；保留上一版目录用于快速回滚，不在 `/opt/sanjie` 原地覆盖。
 - 上线冒烟标准：登录页 200 且有“显示密码”；错误密码返回 401；未登录访问 `/tools` 返回 307；公开新版 ZIP 返回 200；未登录下载达摩盘插件返回 401、未授权账号返回 403；PM2 的 `cwd` 必须是本次新发布目录。

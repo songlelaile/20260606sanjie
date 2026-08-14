@@ -21,8 +21,11 @@ export async function GET() {
 
   const access = await getDmpAutomationAccessForSession(session).catch(() => null);
   if (!access?.allowed) {
+    const error = access?.status === "expired"
+      ? "达摩盘 AI 自动化的 30 天授权已到期，请联系管理员付费续费"
+      : "该账号尚未开通达摩盘 AI 自动化，请联系管理员付费开通";
     return NextResponse.json(
-      { error: "该账号尚未开通达摩盘 AI 自动化，请联系管理员付费使用" },
+      { error },
       { status: 403, headers: PRIVATE_HEADERS }
     );
   }

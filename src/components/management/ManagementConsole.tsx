@@ -135,8 +135,10 @@ export function ManagementConsole({
 
   async function toggleDmpAccess(user: ManagedUser) {
     const enabled = !user.dmpAutomationAccess.allowed;
-    const action = enabled ? "开通" : "关闭";
-    if (!window.confirm(`确定为「${user.name}（${user.username}）」${action}达摩盘 AI 自动化？`)) {
+    const action = enabled
+      ? user.dmpAutomationAccess.status === "expired" ? "续费 30 天" : "开通 30 天"
+      : "关闭";
+    if (!window.confirm(`确定为「${user.name}（${user.username}）」${action}达摩盘 AI 自动化？开通或续费后到期将自动关闭。`)) {
       return;
     }
     setBusy(true);
@@ -157,7 +159,9 @@ export function ManagementConsole({
             : item
         )
       );
-      setMessage(`已为 ${user.name}${action}达摩盘 AI 自动化`);
+      setMessage(enabled
+        ? `已为 ${user.name}开通达摩盘 AI 自动化，有效期 30 天`
+        : `已为 ${user.name}关闭达摩盘 AI 自动化`);
     } else {
       setMessage(payload?.error ?? `${action}失败，请刷新后重试`);
     }
@@ -381,7 +385,7 @@ export function ManagementConsole({
                     </td>
                     <td>
                       <span className={clsx("user-status-pill", `dmp-${user.dmpAutomationAccess.status}`)}>
-                        {dmpAccessLabel(user.dmpAutomationAccess.status)}
+                        {dmpAccessLabel(user.dmpAutomationAccess)}
                       </span>
                     </td>
                     <td>{formatFullDateTime(user.createdAt)}</td>
@@ -395,7 +399,11 @@ export function ManagementConsole({
                           onClick={() => toggleDmpAccess(user)}
                         >
                           <Bot size={14} />
-                          {user.dmpAutomationAccess.allowed ? "关闭达摩盘" : "开通达摩盘"}
+                          {user.dmpAutomationAccess.allowed
+                            ? "关闭达摩盘"
+                            : user.dmpAutomationAccess.status === "expired"
+                              ? "续费30天"
+                              : "开通30天"}
                         </button>
                         {!isAdminAccount ? (
                           <>
@@ -484,12 +492,12 @@ function statusLabel(status: ManagedUser["status"]) {
   return labels[status];
 }
 
-function dmpAccessLabel(status: ManagedUser["dmpAutomationAccess"]["status"]) {
+function dmpAccessLabel(access: ManagedUser["dmpAutomationAccess"]) {
   const labels: Record<ManagedUser["dmpAutomationAccess"]["status"], string> = {
-    active: "已开通",
+    active: `剩余 ${access.remainingDays} 天`,
     expired: "已过期",
     revoked: "已关闭",
     not_granted: "未开通"
   };
-  return labels[status];
+  return labels[access.status];
 }

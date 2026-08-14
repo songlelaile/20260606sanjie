@@ -32,7 +32,21 @@ describe("GET /api/tools/dmp/download", () => {
     const response = await GET();
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "该账号尚未开通达摩盘 AI 自动化，请联系管理员付费使用"
+      error: "该账号尚未开通达摩盘 AI 自动化，请联系管理员付费开通"
+    });
+    expect(mocks.readFile).not.toHaveBeenCalled();
+  });
+
+  it("tells expired users to contact the administrator for renewal", async () => {
+    mocks.getServerSession.mockResolvedValueOnce(SESSION);
+    mocks.getDmpAutomationAccessForSession.mockResolvedValueOnce({
+      allowed: false,
+      status: "expired"
+    });
+    const response = await GET();
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "达摩盘 AI 自动化的 30 天授权已到期，请联系管理员付费续费"
     });
     expect(mocks.readFile).not.toHaveBeenCalled();
   });

@@ -82,6 +82,7 @@ export interface ToolEntitlementAccess {
   status: ToolEntitlementStatus;
   grantedAt: string | null;
   expiresAt: string | null;
+  remainingDays: number;
 }
 
 export interface ManagedUser {

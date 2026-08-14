@@ -55,8 +55,18 @@ describe("DMP paid tool entitlements", () => {
       resolveToolEntitlementAccess(
         { status: "active", grantedAt: now, expiresAt: null },
         now
-      ).allowed
-    ).toBe(true);
+      ).status
+    ).toBe("expired");
+    expect(
+      resolveToolEntitlementAccess(
+        {
+          status: "active",
+          grantedAt: now,
+          expiresAt: new Date("2026-09-14T00:00:00.000Z")
+        },
+        now
+      )
+    ).toMatchObject({ allowed: true, status: "active", remainingDays: 30 });
   });
 
   it("requires the signed session to match an enabled database account", async () => {
@@ -65,7 +75,11 @@ describe("DMP paid tool entitlements", () => {
       authRole: "tenant",
       status: "active",
       toolEntitlements: [
-        { status: "active", grantedAt: new Date("2026-08-15T00:00:00.000Z"), expiresAt: null }
+        {
+          status: "active",
+          grantedAt: new Date(),
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        }
       ]
     });
     await expect(getDmpAutomationAccessForSession(SESSION)).resolves.toMatchObject({
@@ -78,7 +92,11 @@ describe("DMP paid tool entitlements", () => {
       authRole: "tenant",
       status: "active",
       toolEntitlements: [
-        { status: "active", grantedAt: new Date("2026-08-15T00:00:00.000Z"), expiresAt: null }
+        {
+          status: "active",
+          grantedAt: new Date(),
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        }
       ]
     });
     await expect(getDmpAutomationAccessForSession(SESSION)).resolves.toMatchObject({
@@ -89,21 +107,29 @@ describe("DMP paid tool entitlements", () => {
 
   it("upserts a durable per-user grant and preserves revocations", async () => {
     mocks.userFindUnique.mockResolvedValueOnce({ id: "user-1" });
-    mocks.entitlementUpsert.mockResolvedValueOnce({
-      status: "active",
-      grantedAt: new Date("2026-08-15T00:00:00.000Z"),
-      expiresAt: null
-    });
+    mocks.entitlementUpsert.mockImplementationOnce(async (args) => ({
+      status: args.create.status,
+      grantedAt: args.create.grantedAt,
+      expiresAt: args.create.expiresAt
+    }));
     const result = await setDmpAutomationEntitlement({
       userId: "user-1",
       enabled: true,
       grantedBy: "admin"
     });
-    expect(result).toMatchObject({ ok: true, access: { allowed: true } });
+    expect(result).toMatchObject({
+      ok: true,
+      access: { allowed: true, status: "active", remainingDays: 30 }
+    });
     expect(mocks.entitlementUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId_toolCode: { userId: "user-1", toolCode: "dmp-automation" } }
       })
     );
+    const call = mocks.entitlementUpsert.mock.calls[0][0];
+    expect(call.create.expiresAt.getTime() - call.create.grantedAt.getTime()).toBe(
+      30 * 24 * 60 * 60 * 1000
+    );
+    expect(call.update.expiresAt).toEqual(call.create.expiresAt);
   });
 });

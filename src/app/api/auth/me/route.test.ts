@@ -19,7 +19,8 @@ vi.mock("@/lib/tool-entitlements", () => ({
     allowed: false,
     status: "not_granted",
     grantedAt: null,
-    expiresAt: null
+    expiresAt: null,
+    remainingDays: 0
   }
 }));
 
@@ -43,7 +44,8 @@ describe("GET /api/auth/me", () => {
       allowed: true,
       status: "active",
       grantedAt: "2026-08-15T00:00:00.000Z",
-      expiresAt: null
+      expiresAt: "2026-09-14T00:00:00.000Z",
+      remainingDays: 30
     });
   });
 
@@ -102,7 +104,8 @@ describe("GET /api/auth/me", () => {
       allowed: false,
       status: "not_granted",
       grantedAt: null,
-      expiresAt: null
+      expiresAt: null,
+      remainingDays: 0
     });
     const response = await GET(
       new Request("http://localhost/api/auth/me", {

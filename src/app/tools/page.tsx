@@ -193,6 +193,11 @@ export default async function ToolsPage() {
       }))
     : { ...NO_DMP_AUTOMATION_ACCESS };
   const canOpenDmpJson = session?.role === "admin" && dmpAccess.allowed;
+  const dmpAccessLabel = dmpAccess.allowed
+    ? `当前账号已开通 · 剩余 ${dmpAccess.remainingDays} 天`
+    : dmpAccess.status === "expired"
+      ? "30 天授权已到期"
+      : "当前账号未开通";
 
   return (
     <>
@@ -216,7 +221,7 @@ export default async function ToolsPage() {
               <span className="tool-badge tool-badge-soft">{DMP_AUTOMATION.platform}</span>
               <span className="tool-badge tool-badge-paid">付费工具 · 数据库授权</span>
               <span className={dmpAccess.allowed ? "tool-badge tool-badge-access" : "tool-badge tool-badge-locked"}>
-                {dmpAccess.allowed ? "当前账号已开通" : "当前账号未开通"}
+                {dmpAccessLabel}
               </span>
             </div>
           </div>
@@ -232,7 +237,7 @@ export default async function ToolsPage() {
               </a>
             ) : (
               <span className="dmp-paid-required">
-                <LockKeyhole size={15} /> 请联系管理员付费使用
+                <LockKeyhole size={15} /> 请联系管理员付费开通/续费
               </span>
             )}
             {canOpenDmpJson ? (
@@ -246,13 +251,13 @@ export default async function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          在达摩盘商品成长页面输入本店主体与成功品 ID，一键落实「过去 30 天」，依次采集关键指标、推广策略、人群对比和全部场景渠道。该版本按账号单独付费授权；开通后可下载和运行插件，平台管理员还可把监听 JSON 完整展开为 11 张业务表。
+          在达摩盘商品成长页面输入本店主体与成功品 ID，一键落实「过去 30 天」，依次采集关键指标、推广策略、人群对比和全部场景渠道。该版本按账号单独付费授权，每次开通默认有效 30 天、到期自动关闭；开通后可下载和运行插件，平台管理员还可把监听 JSON 完整展开为 11 张业务表。
         </p>
 
         <div className="dmp-tool-capabilities">
           <div><strong>实时在线与授权校验</strong><span>启动、运行与心跳同时核对官网状态和数据库授权；官网不可达或未授权时失败关闭。</span></div>
           <div><strong>纯本地 JSON 解析</strong><span>工程文件留在管理员浏览器内存，不上传原始接口记录。</span></div>
-          <div><strong>单账号付费权限</strong><span>下载接口、插件运行和 JSON 入口共用数据库授权，未开通请联系管理员付费使用。</span></div>
+          <div><strong>30 天倒计时授权</strong><span>下载接口、插件运行和 JSON 入口共用数据库授权；到期自动关闭，请联系管理员付费开通或续费。</span></div>
           <div><strong>完整报表页面</strong><span>主体/竞品 KPI、完整性状态、11 表切换、行筛选与多格式导出。</span></div>
         </div>
       </section>
