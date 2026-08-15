@@ -22,6 +22,8 @@ export async function middleware(request: NextRequest) {
     pathname === "/login" ||
     pathname === "/privacy" ||
     pathname.startsWith("/api/auth/") ||
+    pathname.startsWith("/api/dmp-reports") ||
+    pathname.startsWith("/api/dmp-runtime/") ||
     pathname.startsWith("/v1/")
   ) {
     return NextResponse.next();

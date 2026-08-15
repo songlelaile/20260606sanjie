@@ -22,6 +22,7 @@ model Tenant {
   shops     Shop[]
   workspace Workspace?
   calcRun   CalcRun?
+  dmpReports DmpBusinessReport[]
 }
 
 model User {
@@ -43,6 +44,7 @@ model User {
   gatewayOrders  GatewayOrder[]
   gatewayUsages  GatewayUsage[]
   toolEntitlements ToolEntitlement[]
+  dmpReports       DmpBusinessReport[]
 
   @@index([tenantId])
 }
@@ -160,6 +162,23 @@ model DashboardShare {
   createdAt        DateTime @default(now())
 
   @@index([tenantId, shopId])
+}
+
+model DmpBusinessReport {
+  id               String   @id @default(cuid())
+  tenantId         String
+  userId           String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subjectItemId    String
+  competitorItemId String
+  period           String   @default("")
+  quality          String   @default("complete")
+  sourceVersion    String   @default("")
+  report           Json
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, userId, createdAt])
 }
 
 // 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，

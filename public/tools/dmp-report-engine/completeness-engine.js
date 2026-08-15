@@ -101,6 +101,27 @@
     return null;
   }
 
+  function datasetRequestType(record) {
+    const body = parseJsonLike(record?.requestBody || record?.request?.postData?.text || record?.postData);
+    return String(body?.type ?? body?.data?.type ?? body?.params?.type ?? "").trim().toUpperCase();
+  }
+
+  // OPTIONS/HEAD 是浏览器和网关的传输层请求，redirect 记录则是 CDP 额外
+  // 发出的跳转中间态；它们都不是业务接口响应，也没有可供业务解析的 body。
+  // 若把它们计入 endpoint 守恒，跨域 POST 每补抓一次就会永久增加一条
+  // missing-response，最终出现业务数据 6/6、关键值 14/14 仍不能下载。
+  function transportOnlyReason(record) {
+    const method = String(record?.method || record?.request?.method || "").toUpperCase();
+    if (method === "OPTIONS") return "cors-preflight";
+    if (method === "HEAD") return "head-probe";
+    if (record?.redirect === true || record?.format === "redirect") return "redirect-intermediate";
+    return "";
+  }
+
+  function isTransportOnlyRecord(record) {
+    return Boolean(transportOnlyReason(record));
+  }
+
   function datasetFilters(record, key) {
     const request = parseJsonLike(record?.requestBody || record?.request?.postData?.text || record?.postData);
     const filters = parseJsonLike(request?.[key]);
@@ -125,14 +146,126 @@
     };
   }
 
-  function numberOrNull(value) {
+  function magnitudeScalar(value, inheritedMultiplier = 1) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value !== "string") return null;
-    const text = value.trim().replace(/[,，￥¥]/g, "");
-    if (!text || text === "-" || /[~～至]/.test(text)) return null;
+    let text = value.trim().replace(/[,，￥¥\s]/g, "");
+    if (!text || text === "-") return null;
     const percent = text.endsWith("%");
-    const parsed = Number(text.replace(/%$/, ""));
-    return Number.isFinite(parsed) ? (percent ? parsed / 100 : parsed) : null;
+    if (percent) text = text.slice(0, -1);
+    text = text.replace(/[元个次笔人件]$/, "");
+    const unit = text.match(/(亿|万|千|[wWkK])$/)?.[1] || "";
+    const multiplier = unit === "亿" ? 100000000 : /^(万|[wW])$/.test(unit) ? 10000 : /^(千|[kK])$/.test(unit) ? 1000 : inheritedMultiplier;
+    const parsed = Number(unit ? text.slice(0, -unit.length) : text);
+    return Number.isFinite(parsed) ? parsed * multiplier / (percent ? 100 : 1) : null;
+  }
+
+  function numberOrNull(value) {
+    if (typeof value === "string" && /[~～至]|以上|以下|以内/.test(value)) return null;
+    return magnitudeScalar(value);
+  }
+
+  function metricNumber(value, preferredKeys = [], depth = 0) {
+    const direct = numberOrNull(value);
+    if (direct != null) return direct;
+    if (!value || typeof value !== "object" || Array.isArray(value) || depth > 3) return null;
+    const orderedKeys = [...preferredKeys, "indicatorValue", "value", "periodValue", "indexValue", "itemValue", "selfValue"];
+    for (const key of orderedKeys) {
+      if (!(key in value)) continue;
+      const nested = metricNumber(value[key], preferredKeys, depth + 1);
+      if (nested != null) return nested;
+    }
+    return null;
+  }
+
+  function lineGmvIndex(row) {
+    const aliases = ["gmvIndex", "gmv_index", "indexValue", "gmvValue", "gmvTrend", "gmv", "GMV指数", "日GMV指数"];
+    const competitorKeys = ["succItemValue", "c_value", "cValue", "compareValue", "competitorValue"];
+    for (const alias of aliases) {
+      if (!(alias in (row || {}))) continue;
+      const value = metricNumber(row[alias], competitorKeys);
+      if (value != null) return value;
+    }
+    return null;
+  }
+
+  function costPerClick(spend, clicks) {
+    if (!Number.isFinite(spend) || spend < 0) return null;
+    const exactClicks = numberOrNull(clicks);
+    if (exactClicks != null) return exactClicks > 0 ? round(spend / exactClicks) : null;
+    const range = parseVagueRange(clicks);
+    if (!range) return null;
+    const minimumClicks = Number.isFinite(range.min) ? range.min : null;
+    const maximumClicks = Number.isFinite(range.max) ? range.max : null;
+    if (minimumClicks != null && minimumClicks > 0 && maximumClicks != null && maximumClicks > 0) {
+      const lower = round(spend / maximumClicks);
+      const upper = round(spend / minimumClicks);
+      return lower === upper ? lower : `${lower.toFixed(2)}~${upper.toFixed(2)}`;
+    }
+    if (maximumClicks != null && maximumClicks > 0) return `>${round(spend / maximumClicks).toFixed(2)}`;
+    if (minimumClicks != null && minimumClicks > 0) return `<${round(spend / minimumClicks).toFixed(2)}`;
+    return null;
+  }
+
+  function sumMetricRanges(values) {
+    if (!Array.isArray(values) || !values.length) return null;
+    let minimum = 0;
+    let maximum = 0;
+    let hasRange = false;
+    for (const value of values) {
+      const exact = numberOrNull(value);
+      if (exact != null) {
+        minimum += exact;
+        maximum += exact;
+        continue;
+      }
+      const range = parseVagueRange(value);
+      if (!range) return null;
+      hasRange = hasRange || !range.exact;
+      minimum = minimum == null || range.min == null ? null : minimum + range.min;
+      maximum = maximum == null || range.max == null ? null : maximum + range.max;
+    }
+    if (!hasRange && Number.isFinite(minimum) && Number.isFinite(maximum) && minimum === maximum) return round(minimum);
+    if (Number.isFinite(minimum) && Number.isFinite(maximum)) return `${round(minimum).toFixed(2)}~${round(maximum).toFixed(2)}`;
+    if (Number.isFinite(maximum)) return `<${round(maximum).toFixed(2)}`;
+    if (Number.isFinite(minimum)) return `>${round(minimum).toFixed(2)}`;
+    return null;
+  }
+
+  function returnOnSpend(paidGmv, spend) {
+    if (!Number.isFinite(spend) || spend <= 0) return null;
+    const exactGmv = numberOrNull(paidGmv);
+    if (exactGmv != null) return exactGmv >= 0 ? round(exactGmv / spend) : null;
+    const range = parseVagueRange(paidGmv);
+    if (!range) return null;
+    const minimumGmv = Number.isFinite(range.min) ? range.min : null;
+    const maximumGmv = Number.isFinite(range.max) ? range.max : null;
+    if (range.upperOpen && maximumGmv != null) return `<${round(maximumGmv / spend).toFixed(2)}`;
+    if (range.lowerOpen && minimumGmv != null) return `>${round(minimumGmv / spend).toFixed(2)}`;
+    if (minimumGmv != null && maximumGmv != null) {
+      const lower = round(minimumGmv / spend);
+      const upper = round(maximumGmv / spend);
+      return lower === upper ? lower : `${lower.toFixed(2)}~${upper.toFixed(2)}`;
+    }
+    if (maximumGmv != null) return `<${round(maximumGmv / spend).toFixed(2)}`;
+    if (minimumGmv != null) return `>${round(minimumGmv / spend).toFixed(2)}`;
+    return null;
+  }
+
+  function contributionRatio(value, total) {
+    if (!Number.isFinite(total) || total <= 0) return null;
+    const exact = numberOrNull(value);
+    if (exact != null) return exact >= 0 ? round(exact / total, 6) : null;
+    const range = parseVagueRange(value);
+    if (!range) return null;
+    const minimum = Number.isFinite(range.min) ? round(range.min / total, 6) : null;
+    const maximum = Number.isFinite(range.max) ? round(range.max / total, 6) : null;
+    if (range.upperOpen && maximum != null) return `<${maximum}`;
+    if (range.lowerOpen && minimum != null) return `>${minimum}`;
+    if (minimum != null && maximum != null) return minimum === maximum ? minimum : `${minimum}~${maximum}`;
+    if (maximum != null) return `<${maximum}`;
+    if (minimum != null) return `>${minimum}`;
+    return null;
   }
 
   function round(value, digits = 2) {
@@ -169,26 +302,41 @@
   function parseVagueRange(value) {
     if (typeof value === "number" && Number.isFinite(value)) return { min: value, max: value, exact: true };
     if (typeof value !== "string") return null;
-    const text = value.replace(/[,，]/g, "").trim();
+    const text = value.replace(/[,，￥¥]/g, "").trim();
     if (!text || text === "-") return null;
-    const scalar = token => {
-      const clean = String(token).trim();
-      const multiplier = clean.endsWith("万") ? 10000 : clean.endsWith("千") ? 1000 : 1;
-      const parsed = Number(clean.replace(/[万千%]/g, ""));
-      return Number.isFinite(parsed) ? parsed * multiplier / (clean.endsWith("%") ? 100 : 1) : null;
-    };
-    if (/^[<>]\s*[\d.]+[万千%]?$/.test(text)) {
-      const valueNumber = scalar(text.slice(1));
+    if (/^[<>]\s*[\d.]+(?:亿|万|千|[wWkK])?%?(?:元)?$/.test(text)) {
+      const valueNumber = magnitudeScalar(text.slice(1));
       return text.startsWith("<") ? { min: 0, max: valueNumber, exact: false, upperOpen: true } : { min: valueNumber, max: null, exact: false, lowerOpen: true };
+    }
+    const wordBound = text.match(/^(.+?)(及以上|以上|及以下|以下|以内)$/);
+    if (wordBound) {
+      const valueNumber = magnitudeScalar(wordBound[1]);
+      if (valueNumber == null) return null;
+      return /以下|以内/.test(wordBound[2])
+        ? { min: 0, max: valueNumber, exact: false, upperOpen: true }
+        : { min: valueNumber, max: null, exact: false, lowerOpen: true };
     }
     const parts = text.split(/[~～]/);
     if (parts.length === 2) {
-      const min = scalar(parts[0]);
-      const max = scalar(parts[1]);
+      const leftMultiplier = magnitudeScalar(`1${String(parts[0]).trim().match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] || ""}`) || 1;
+      const rightMultiplier = magnitudeScalar(`1${String(parts[1]).trim().match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] || ""}`) || 1;
+      const sharedMultiplier = leftMultiplier > 1 ? leftMultiplier : rightMultiplier;
+      const min = magnitudeScalar(parts[0], sharedMultiplier);
+      const max = magnitudeScalar(parts[1], sharedMultiplier);
       return min == null || max == null ? null : { min, max, exact: false };
     }
-    const exact = numberOrNull(text);
+    const exact = magnitudeScalar(text);
     return exact == null ? null : { min: exact, max: exact, exact: true };
+  }
+
+  function calculableMetricValue(value) {
+    const range = parseVagueRange(value);
+    if (!range) return value ?? null;
+    if (range.exact && Number.isFinite(range.min)) return range.min;
+    if (Number.isFinite(range.min) && Number.isFinite(range.max)) return `${round(range.min).toFixed(2)}~${round(range.max).toFixed(2)}`;
+    if (Number.isFinite(range.max)) return `<${round(range.max).toFixed(2)}`;
+    if (Number.isFinite(range.min)) return `>${round(range.min).toFixed(2)}`;
+    return value ?? null;
   }
 
   function valueFromPair(value, side) {
@@ -333,7 +481,7 @@
       const channelSpend = Object.fromEntries(CHANNELS.map(([apiName, label]) => [label, numberOrNull(row[apiName])]));
       const values = Object.values(channelSpend);
       return {
-        date: normalizeDate(row.date), gmvIndex: numberOrNull(row.gmv ?? row.gmvIndex), channelSpend,
+        date: normalizeDate(row.date), gmvIndex: lineGmvIndex(row), channelSpend,
         channelFieldCoverage: values.filter(Number.isFinite).length,
         totalSpend: values.every(Number.isFinite) ? round(values.reduce((sum, value) => sum + value, 0)) : null
       };
@@ -411,25 +559,34 @@
     return card?.metrics?.[name] || { subject: null, competitor: null };
   }
 
+  function metricByAliases(card, aliases) {
+    const normalized = aliases.map(value => String(value).replace(/\s+/g, "").toLowerCase());
+    for (const [name, value] of Object.entries(card?.metrics || {})) {
+      const key = String(name).replace(/\s+/g, "").toLowerCase();
+      if (normalized.includes(key)) return value;
+    }
+    return { subject: null, competitor: null };
+  }
+
   function rangeContains(range, value) {
     return Boolean(range && Number.isFinite(value) && (range.min == null || value >= range.min) && (range.max == null || value <= range.max));
   }
 
   function buildMetrics(card) {
-    const read = (name, side) => numberOrNull(metric(card, name)[side]);
+    const read = (name, side) => calculableMetricValue(metric(card, name)[side]);
+    const paidGmv = metricByAliases(card, ["付费成交额", "付费成交金额", "营销推广成交额", "营销推广成交金额", "广告归因GMV", "广告成交额", "广告成交金额"]);
+    const paidOrders = metricByAliases(card, ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数", "alipayCnt1d"]);
     const subject = {
       marketingClicks: read("营销推广点击量", "subject"), naturalClicks: read("自然点击量", "subject"),
       orders: read("成交笔数", "subject"), conversion: read("支付转化率", "subject"), aov: read("笔单价", "subject"),
-      cartRate: read("加购率", "subject"), ipv: read("IPV", "subject")
+      cartRate: read("加购率", "subject"), ipv: read("IPV", "subject"),
+      paidGmv: calculableMetricValue(paidGmv.subject), paidOrders: calculableMetricValue(paidOrders.subject)
     };
     const competitor = {
-      marketingClicks: numberOrNull(metric(card, "营销推广点击量").competitor) ?? metric(card, "营销推广点击量").competitor,
-      naturalClicks: numberOrNull(metric(card, "自然点击量").competitor) ?? metric(card, "自然点击量").competitor,
-      orders: numberOrNull(metric(card, "成交笔数").competitor) ?? metric(card, "成交笔数").competitor,
-      conversion: numberOrNull(metric(card, "支付转化率").competitor) ?? metric(card, "支付转化率").competitor,
-      aov: numberOrNull(metric(card, "笔单价").competitor) ?? metric(card, "笔单价").competitor,
-      cartRate: numberOrNull(metric(card, "加购率").competitor) ?? metric(card, "加购率").competitor,
-      ipv: numberOrNull(metric(card, "IPV").competitor) ?? metric(card, "IPV").competitor
+      marketingClicks: read("营销推广点击量", "competitor"), naturalClicks: read("自然点击量", "competitor"),
+      orders: read("成交笔数", "competitor"), conversion: read("支付转化率", "competitor"), aov: read("笔单价", "competitor"),
+      cartRate: read("加购率", "competitor"), ipv: read("IPV", "competitor"),
+      paidGmv: calculableMetricValue(paidGmv.competitor), paidOrders: calculableMetricValue(paidOrders.competitor)
     };
     for (const side of [subject, competitor]) {
       const orders = numberOrNull(side.orders);
@@ -458,33 +615,76 @@
       .sort((left, right) => right.score - left.score || String(right.line.capturedAt || "").localeCompare(String(left.line.capturedAt || "")))[0]?.line || null;
   }
 
+  function fitDailyGmv(rows, periodGmv) {
+    const sourceRows = Array.isArray(rows) ? rows : [];
+    const exactPeriodGmv = numberOrNull(periodGmv);
+    const indexes = sourceRows.map(row => numberOrNull(row?.gmvIndex));
+    const indexSum = indexes.every(Number.isFinite) ? indexes.reduce((sum, value) => sum + value, 0) : null;
+    const base = {
+      status: "blocked", reason: "", exactPeriodGmv: Number.isFinite(exactPeriodGmv) ? round(exactPeriodGmv) : null,
+      estimatedPeakDailyGmv: null, indexSum, indexMin: null, indexMax: null, roundingAdjustment: 0,
+      fittedTotal: null, dailyGmv: sourceRows.map(() => null)
+    };
+    if (!sourceRows.length) return { ...base, reason: "empty-series" };
+    if (indexes.some(value => !Number.isFinite(value))) return { ...base, reason: "missing-index" };
+    if (indexes.some(value => value < 0)) return { ...base, reason: "negative-index", indexMin: Math.min(...indexes), indexMax: Math.max(...indexes) };
+    const indexMin = Math.min(...indexes);
+    const indexMax = Math.max(...indexes);
+    if (!Number.isFinite(exactPeriodGmv) || exactPeriodGmv < 0) return { ...base, reason: "invalid-period-gmv", indexMin, indexMax };
+    if (!Number.isFinite(indexSum) || indexSum <= 0) return { ...base, reason: "non-positive-index-sum", indexMin, indexMax };
+
+    const estimatedPeakDailyGmv = exactPeriodGmv / indexSum;
+    const dailyGmv = indexes.map(value => round(estimatedPeakDailyGmv * value));
+    const roundedTotal = round(dailyGmv.reduce((sum, value) => sum + value, 0));
+    const roundingAdjustment = round(exactPeriodGmv - roundedTotal);
+    if (roundingAdjustment) dailyGmv[dailyGmv.length - 1] = round(dailyGmv.at(-1) + roundingAdjustment);
+    const fittedTotal = round(dailyGmv.reduce((sum, value) => sum + value, 0));
+    if (Math.abs(fittedTotal - round(exactPeriodGmv)) > 0.01) {
+      return { ...base, reason: "rounding-closure-failed", estimatedPeakDailyGmv: round(estimatedPeakDailyGmv), indexMin, indexMax, roundingAdjustment, fittedTotal };
+    }
+    return {
+      status: "ready", reason: "", exactPeriodGmv: round(exactPeriodGmv), estimatedPeakDailyGmv: round(estimatedPeakDailyGmv),
+      indexSum, indexMin, indexMax, roundingAdjustment, fittedTotal, dailyGmv
+    };
+  }
+
   function buildDaily(line, period, periodGmv) {
     const expected = enumerateDates(period.startDate, period.endDate);
     const selected = expected.map(date => line?.daily.find(row => row.date === date)).filter(Boolean);
     const missingDates = expected.filter(date => !selected.some(row => row.date === date));
     const missingChannelDates = selected.filter(row => row.channelFieldCoverage < CHANNELS.length).map(row => row.date);
     const missingIndexDates = selected.filter(row => !Number.isFinite(row.gmvIndex)).map(row => row.date);
-    const complete = Boolean(line && !missingDates.length && !missingChannelDates.length && !missingIndexDates.length);
-    const indexSum = complete ? selected.reduce((sum, row) => sum + row.gmvIndex, 0) : null;
-    let allocated = 0;
+    const invalidIndexDates = selected.filter(row => Number.isFinite(row.gmvIndex) && row.gmvIndex < 0).map(row => row.date);
+    const gmvFit = missingDates.length
+      ? { ...fitDailyGmv([], periodGmv), reason: "missing-date", dailyGmv: selected.map(() => null) }
+      : fitDailyGmv(selected, periodGmv);
+    const complete = Boolean(line && !missingDates.length && !missingChannelDates.length && !missingIndexDates.length && !invalidIndexDates.length && gmvFit.status === "ready");
     const rows = selected.map((row, index) => {
-      const last = index === selected.length - 1;
-      const dailyGmv = Number.isFinite(periodGmv) && Number.isFinite(indexSum) && indexSum > 0
-        ? (last ? round(periodGmv - allocated) : round(periodGmv * row.gmvIndex / indexSum))
-        : null;
-      if (Number.isFinite(dailyGmv)) allocated = round(allocated + dailyGmv);
+      const dailyGmv = gmvFit.dailyGmv[index];
       return {
         ...row, dailyGmv,
         feeRatio: Number.isFinite(row.totalSpend) && Number.isFinite(dailyGmv) && dailyGmv !== 0 ? round(row.totalSpend / dailyGmv, 6) : null,
         stage: line?.stages.find(stage => (!stage.start || row.date >= stage.start) && (!stage.end || row.date <= stage.end))?.name || ""
       };
     });
-    const totalSpend = complete ? round(rows.reduce((sum, row) => sum + row.totalSpend, 0)) : null;
+    const spendRows = rows.filter(row => Number.isFinite(row.totalSpend));
+    const spendDates = new Set(spendRows.map(row => row.date));
+    const spendMissingDates = expected.filter(date => !spendDates.has(date));
+    const spendCoverageDays = spendRows.length;
+    const spendComplete = Boolean(line && spendMissingDates.length === 0);
+    const spendPartial = Boolean(line && spendMissingDates.length === 1 && spendCoverageDays > 0);
+    const spendUsable = spendComplete || spendPartial;
+    const totalSpend = spendUsable ? round(spendRows.reduce((sum, row) => sum + row.totalSpend, 0)) : null;
     const channelSpend = Object.fromEntries(CHANNELS.map(([, label]) => {
-      const values = rows.map(row => row.channelSpend[label]);
-      return [label, values.length && values.every(Number.isFinite) ? round(values.reduce((sum, value) => sum + value, 0)) : null];
+      const values = spendRows.map(row => row.channelSpend[label]);
+      return [label, spendUsable && values.length === spendCoverageDays && values.every(Number.isFinite)
+        ? round(values.reduce((sum, value) => sum + value, 0))
+        : null];
     }));
-    return { rows, expectedDates: expected, missingDates, missingChannelDates, missingIndexDates, complete, indexSum, totalSpend, channelSpend };
+    return {
+      rows, expectedDates: expected, missingDates, missingChannelDates, missingIndexDates, invalidIndexDates, complete, indexSum: gmvFit.indexSum, gmvFit,
+      totalSpend, channelSpend, spendCoverageDays, spendExpectedDays: expected.length, spendMissingDates, spendComplete, spendPartial
+    };
   }
 
   function sceneMetric(row, key, side) {
@@ -512,12 +712,17 @@
             const base = response.level === 1 ? totalCompetitorSpend : totalCompetitorSpend * (parentRatios.get(String(response.parentSceneId)) ?? NaN);
             if (Number.isFinite(base)) allocated = round(base * ratio);
           }
+          const impression = sceneMetric(row, "impression", side);
+          const click = sceneMetric(row, "click", side);
+          const directDealAmount = sceneMetric(row, "directDealAmount", side);
+          const calculatedCpc = Number.isFinite(allocated) ? costPerClick(allocated, click) : null;
+          const calculatedDirectRoi = Number.isFinite(allocated) ? returnOnSpend(directDealAmount, allocated) : null;
           const values = {
             role, level: response.level, primary, secondary, sceneId: row.sceneId,
             charge, ratio: ratioValue, allocated,
-            impression: sceneMetric(row, "impression", side), click: sceneMetric(row, "click", side),
-            ctr: sceneMetric(row, "ctr", side), cpc: sceneMetric(row, "cpc", side),
-            directDealAmount: sceneMetric(row, "directDealAmount", side), directRoi: sceneMetric(row, "directRoi", side)
+            impression, click,
+            ctr: sceneMetric(row, "ctr", side), cpc: calculatedCpc ?? sceneMetric(row, "cpc", side),
+            directDealAmount, directRoi: calculatedDirectRoi ?? sceneMetric(row, "directRoi", side)
           };
           const hasData = [values.charge, values.ratio, values.impression, values.click, values.ctr, values.cpc, values.directDealAmount, values.directRoi]
             .some(value => value !== "" && value !== null && value !== undefined);
@@ -537,8 +742,10 @@
     const competitorLevel1 = sceneRows.level1.filter(row => row.role === "对手");
     metrics.subject.spend = sumFinite(subjectLevel1.map(row => numberOrNull(row.charge)));
     metrics.competitor.spend = daily.totalSpend;
-    metrics.subject.attributedGmv = sumFinite(subjectLevel1.map(row => numberOrNull(row.directDealAmount)));
-    metrics.competitor.attributedGmv = null;
+    metrics.subject.paidGmv = metrics.subject.paidGmv ?? sumMetricRanges(subjectLevel1.map(row => row.directDealAmount));
+    metrics.competitor.paidGmv = metrics.competitor.paidGmv ?? sumMetricRanges(competitorLevel1.map(row => row.directDealAmount));
+    metrics.subject.attributedGmv = metrics.subject.paidGmv;
+    metrics.competitor.attributedGmv = metrics.competitor.paidGmv;
     for (const side of ["subject", "competitor"]) {
       const values = side === "subject" ? subjectLevel1 : competitorLevel1;
       const keyword = values.find(row => row.primary === "关键词推广");
@@ -548,8 +755,88 @@
       metrics[side].channelHhi = ratios.length && ratios.every(Number.isFinite) && Math.abs(sum - 1) <= 0.01 ? round(ratios.reduce((total, value) => total + value ** 2, 0), 6) : null;
       metrics[side].feeRatio = Number.isFinite(metrics[side].spend) && Number.isFinite(metrics[side].totalGmv) && metrics[side].totalGmv !== 0 ? round(metrics[side].spend / metrics[side].totalGmv, 6) : null;
       metrics[side].roas = Number.isFinite(metrics[side].spend) && metrics[side].spend !== 0 && Number.isFinite(metrics[side].totalGmv) ? round(metrics[side].totalGmv / metrics[side].spend, 4) : null;
+      metrics[side].ppc = costPerClick(metrics[side].spend, metrics[side].marketingClicks);
+      metrics[side].roi = returnOnSpend(metrics[side].paidGmv, metrics[side].spend);
+      metrics[side].paidGmvContribution = contributionRatio(metrics[side].paidGmv, metrics[side].totalGmv);
+      metrics[side].paidOrderContribution = contributionRatio(metrics[side].paidOrders, numberOrNull(metrics[side].orders));
     }
     return metrics;
+  }
+
+  // 补抓清理必须与完整性审计使用同一套失败定义。过去 overlay 只识别截断、
+  // 无响应体和 HTTP 错误，导致 HTTP 200 下的 API 报错或结构变化记录无法被
+  // 替换：新响应已经可用，旧失败仍永久计入 failedRecords，最终出现 6/6、
+  // 14/14 但下载门禁始终阻断。这里集中完成单条业务响应的解析与审计分类。
+  function classifyGrowthRecord(record) {
+    const path = recordPath(record);
+    const transportReason = transportOnlyReason(record);
+    if (transportReason) {
+      return { path, parser: "transport", status: "ignored", reason: transportReason, parsed: null };
+    }
+    const httpStatus = Number(record?.status ?? record?.response?.status);
+    if (Number.isFinite(httpStatus) && (httpStatus < 200 || httpStatus >= 300)) {
+      return { path, parser: "http", status: "failed", reason: `http-status:${httpStatus}`, parsed: null };
+    }
+    if (record?.truncated || record?.bodyTruncated || record?.bodyAvailable === false || !record?.body) {
+      return {
+        path,
+        parser: "body",
+        status: "failed",
+        reason: record?.truncated || record?.bodyTruncated ? "truncated-response" : "missing-response",
+        parsed: null
+      };
+    }
+
+    const body = parseBody(record);
+    if (!body) return { path, parser: "body", status: "failed", reason: "unparseable-response", parsed: null };
+    const apiInfo = body?.info || body?.result?.info;
+    if (apiInfo?.ok === false) {
+      return { path, parser: "api", status: "failed", reason: `api-error:${apiInfo.message || apiInfo.code || "unknown"}`, parsed: null };
+    }
+
+    let parser = "unsupported-growth-endpoint";
+    let parsed = null;
+    if (path === "/api/goods/item/info") {
+      parser = "item-info";
+      parsed = extractItemInfo(record, body);
+    } else if (path === "/api/goods/grow/define/success/load" || path === "/api/goods/grow/define/success/item/list") {
+      parser = path.endsWith("/load") ? "selected-success-items" : "success-item-search";
+      parsed = extractSuccessItems(record, body, path.endsWith("/load") ? "selected" : "search");
+    } else if (path === "/api/goods/grow/define/success") {
+      parser = "success-write-ack";
+      parsed = apiInfo?.ok === true || body?.data != null ? { ack: true } : null;
+    } else if (path === "/api/goods/grow/line") {
+      parser = "growth-definitions";
+      parsed = arrayFromBody(body);
+    } else if (path === "/api/goods/grow/define/line/data") {
+      parser = "growth-line";
+      parsed = extractLine(record, body);
+    } else if (path === "/api/goods/grow/comparison/scene/keyword") {
+      parser = "growth-keywords";
+      parsed = extractKeywords(record, body);
+    } else if (path === "/api/goods/grow/comparison/scene") {
+      parser = "growth-scenes";
+      parsed = extractScene(record, body);
+    } else if (path === "/dataplatform/dataset/report/query") {
+      const requestType = datasetRequestType(record);
+      if (requestType === "INDEX_CARD") {
+        parser = "index-card";
+        parsed = extractCard(record, body);
+      } else if (requestType === "TABLE") {
+        parser = "dataset-table";
+        parsed = extractDatasetTable(record, body);
+      } else {
+        parsed = extractCard(record, body) || extractDatasetTable(record, body);
+        parser = parsed?.metrics ? "index-card" : parsed ? "dataset-table" : `dataset-${requestType.toLowerCase() || "unknown"}`;
+      }
+    }
+
+    const empty = Array.isArray(parsed)
+      ? parsed.length === 0
+      : parsed?.rows && Array.isArray(parsed.rows) ? parsed.rows.length === 0 : false;
+    return parsed
+      ? { path, parser, status: empty ? "empty" : "parsed", reason: "", parsed }
+      : { path, parser, status: "failed", reason: "response-shape-not-recognized", parsed: null };
   }
 
   function deriveGrowth(records, options = {}) {
@@ -563,7 +850,7 @@
     const scoped = (records || []).filter(record => {
       if (!record || (record.kind && record.kind !== "Network")) return false;
       if (startedAt && record.capturedAt && record.capturedAt < startedAt) return false;
-      return isGrowthBusinessPath(recordPath(record));
+      return isGrowthBusinessPath(recordPath(record)) && !isTransportOnlyRecord(record);
     });
 
     const auditMap = new Map();
@@ -586,45 +873,17 @@
     }
 
     for (const record of scoped) {
-      const path = recordPath(record);
-      const status = Number(record?.status ?? record?.response?.status);
-      if (Number.isFinite(status) && (status < 200 || status >= 300)) {
-        audit(path, "http", "failed", `http-status:${status}`);
-        continue;
-      }
-      if (record.truncated || record.bodyTruncated || record.bodyAvailable === false || !record.body) {
-        audit(path, "body", "failed", record.truncated || record.bodyTruncated ? "truncated-response" : "missing-response");
-        continue;
-      }
-      const body = parseBody(record);
-      if (!body) { audit(path, "body", "failed", "unparseable-response"); continue; }
-      const apiInfo = body?.info || body?.result?.info;
-      if (apiInfo?.ok === false) { audit(path, "api", "failed", `api-error:${apiInfo.message || apiInfo.code || "unknown"}`); continue; }
-      let parser = "unsupported-growth-endpoint";
-      let parsed = null;
-      if (path === "/api/goods/item/info") {
-        parser = "item-info"; parsed = extractItemInfo(record, body); if (parsed) itemInfos.push(parsed);
-      } else if (path === "/api/goods/grow/define/success/load" || path === "/api/goods/grow/define/success/item/list") {
-        parser = path.endsWith("/load") ? "selected-success-items" : "success-item-search";
-        parsed = extractSuccessItems(record, body, path.endsWith("/load") ? "selected" : "search");
-        if (parsed) successItems.push(...parsed);
-      } else if (path === "/api/goods/grow/define/success") {
-        parser = "success-write-ack"; parsed = apiInfo?.ok === true || body?.data != null ? { ack: true } : null;
-      } else if (path === "/api/goods/grow/line") {
-        parser = "growth-definitions"; parsed = arrayFromBody(body); if (parsed) parsedDefinitions.push(...parsed);
-      } else if (path === "/api/goods/grow/define/line/data") {
-        parser = "growth-line"; parsed = extractLine(record, body); if (parsed) lines.push(parsed);
-      } else if (path === "/api/goods/grow/comparison/scene/keyword") {
-        parser = "growth-keywords"; parsed = extractKeywords(record, body); if (parsed) keywords.push(parsed);
-      } else if (path === "/api/goods/grow/comparison/scene") {
-        parser = "growth-scenes"; parsed = extractScene(record, body); if (parsed) scenes.push(parsed);
-      } else if (path === "/dataplatform/dataset/report/query") {
-        parsed = extractCard(record, body) || extractDatasetTable(record, body);
-        parser = parsed?.metrics ? "index-card" : "dataset-table";
-        if (parsed?.metrics) cards.push(parsed); else if (parsed) datasetTables.push(parsed);
-      }
-      const empty = Array.isArray(parsed) ? parsed.length === 0 : parsed?.rows && Array.isArray(parsed.rows) ? parsed.rows.length === 0 : false;
-      audit(path, parser, parsed ? (empty ? "empty" : "parsed") : "failed", parsed ? "" : "response-shape-not-recognized");
+      const result = classifyGrowthRecord(record);
+      audit(result.path, result.parser, result.status, result.reason);
+      if (result.status === "failed") continue;
+      if (result.parser === "item-info") itemInfos.push(result.parsed);
+      else if (result.parser === "selected-success-items" || result.parser === "success-item-search") successItems.push(...result.parsed);
+      else if (result.parser === "growth-definitions") parsedDefinitions.push(...result.parsed);
+      else if (result.parser === "growth-line") lines.push(result.parsed);
+      else if (result.parser === "growth-keywords") keywords.push(result.parsed);
+      else if (result.parser === "growth-scenes") scenes.push(result.parsed);
+      else if (result.parser === "index-card") cards.push(result.parsed);
+      else if (result.parser === "dataset-table") datasetTables.push(result.parsed);
     }
 
     const endpointCoverage = [...auditMap.values()].map(entry => ({
@@ -662,7 +921,12 @@
     if (daily.missingDates.length) blockingIssues.push(`目标周期缺少 ${daily.missingDates.length} 日趋势：${daily.missingDates.join("、")}`);
     if (daily.missingChannelDates.length) blockingIssues.push(`有 ${daily.missingChannelDates.length} 日五渠道消耗字段不完整`);
     if (daily.missingIndexDates.length) blockingIssues.push(`有 ${daily.missingIndexDates.length} 日 GMV 序列值缺失`);
+    if (daily.invalidIndexDates.length) blockingIssues.push(`有 ${daily.invalidIndexDates.length} 日 GMV 序列值小于 0`);
     if (!Number.isFinite(metrics.competitor.totalGmv)) blockingIssues.push("目标成功品缺少精确周期GMV，不能把GMV序列换算为日金额");
+    if (!daily.missingDates.length && !daily.missingIndexDates.length && !daily.invalidIndexDates.length
+      && Number.isFinite(metrics.competitor.totalGmv) && daily.gmvFit.status !== "ready") {
+      blockingIssues.push(`日GMV金额拟合未闭合（${daily.gmvFit.reason}）`);
+    }
 
     const targetScenes = scenes.filter(scene => scene.itemId === subjectItemId
       && scene.successItemIds.includes(successItemId) && samePeriod(scene, period));
@@ -678,9 +942,9 @@
     const capturedParents = new Set(dedupScenes.filter(scene => scene.level === 2).map(scene => String(scene.parentSceneId || "")));
     const missingParents = expectedParents.filter(parent => !capturedParents.has(parent));
     if (missingParents.length) blockingIssues.push(`缺少 ${missingParents.length} 个一级场景的二级明细响应：${missingParents.join("、")}`);
-    const sceneRows = buildSceneRows(dedupScenes, daily.totalSpend);
+    const sceneRows = buildSceneRows(dedupScenes, daily.spendComplete ? daily.totalSpend : null);
     enrichMetrics(metrics, sceneRows, daily);
-    if (sceneRows.level1.some(row => row.role === "对手" && numberOrNull(row.ratio) != null) && !Number.isFinite(daily.totalSpend)) {
+    if (sceneRows.level1.some(row => row.role === "对手" && numberOrNull(row.ratio) != null) && !daily.spendComplete) {
       blockingIssues.push("竞品场景只有消耗比例，但缺少同周期完整总消耗，不能分配场景金额");
     }
 
@@ -707,6 +971,7 @@
 
   return {
     CHANNELS, SCENE_CODES, STANDARD_PATHS, canonicalPath, recordPath, parseBody, parseVagueRange,
-    numberOrNull, normalizeDate, enumerateDates, deriveGrowth
+    numberOrNull, calculableMetricValue, normalizeDate, enumerateDates, lineGmvIndex, fitDailyGmv, costPerClick, sumMetricRanges, returnOnSpend, contributionRatio,
+    datasetRequestType, transportOnlyReason, isTransportOnlyRecord, classifyGrowthRecord, deriveGrowth
   };
 });

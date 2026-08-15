@@ -21,6 +21,13 @@ function datasetRecord(subject: string, competitor: string, start: string, end: 
   };
 }
 
+function dates(start: string, days: number) {
+  const values: string[] = [];
+  const startTime = Date.parse(`${start}T00:00:00Z`);
+  for (let index = 0; index < days; index += 1) values.push(new Date(startTime + index * 86_400_000).toISOString().slice(0, 10));
+  return values;
+}
+
 describe("DMP JSON 工程文件识别", () => {
   it("优先选择文件名指定对象且完整 30 天的同周期请求", () => {
     const records = [
@@ -46,14 +53,78 @@ describe("DMP JSON 工程文件识别", () => {
       title: "达摩盘报告",
       item_id: "593063365092",
       period: "近30天（2026-07-15 至 2026-08-13）",
-      tables: [{
-        name: "报告总览",
-        columns: ["项目", "主体", "对手"],
-        rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }]
-      }]
+      tables: [
+        {
+          name: "报告总览",
+          columns: ["项目", "主体", "对手"],
+          rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }]
+        },
+        {
+          name: "对标总表",
+          columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+          rows: [{ cells: ["成交", "总GMV", "1530988.18", "945000", ""] }]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "周期开始", "周期结束", "天数", "总GMV", "付费成交额", "广告消耗", "付费GMV贡献率", "GMV峰值日", "GMV波动率"],
+          rows: [
+            { cells: ["593063365092", "主体商品・30日", "2026-07-15", "2026-08-13", "30", "1530988.18", "456075.05", "150211.72", "", "", ""] },
+            { cells: ["623803508105", "目标对手・30日", "2026-07-15", "2026-08-13", "30", "945000", "300000~410000", "102.32", "", "", ""] }
+          ]
+        },
+        {
+          name: "日GMV与费比",
+          columns: ["日期", "日GMV"],
+          rows: dates("2026-07-15", 30).map((date, index) => ({ cells: [date, index === 29 ? "46000" : "31000"] }))
+        },
+        {
+          name: "一级场景",
+          columns: ["对象", "层级", "一级场景", "二级场景", "sceneId", "消耗(API精确值)", "消耗占比(API原值)", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"],
+          rows: [
+            { cells: ["主体", "1", "关键词推广", "", "371", "150211.72", "100%", "", "", "33938", "", "", "234836.70", ""] },
+            { cells: ["对手", "1", "人群推广", "", "372", "", "46.77%", "", "4千~5千", "90~100", "1%~2.5%", "0~10", "0~10", "0~10"] },
+            { cells: ["对手", "1", "关键词推广", "", "371", "", "53.23%", "", "1千~2千", "60~70", "5%~7.5%", "0~10", "300~400", "0~10"] }
+          ]
+        },
+        {
+          name: "二级场景",
+          columns: ["对象", "层级", "一级场景", "二级场景", "sceneId", "消耗(API精确值)", "消耗占比(API原值)", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"],
+          rows: [
+            { cells: ["对手", "2", "关键词推广", "智能投放", "37101", "", "50%", "", "", "30~40", "", "0~10", "100~200", "0~10"] }
+          ]
+        },
+        {
+          name: "商品与成功品",
+          columns: ["角色", "商品ID", "30日GMV", "30日日均成交"],
+          rows: [
+            { cells: ["主体", "593063365092", "1530988.18", "51032.94"] },
+            { cells: ["目标对手", "623803508105", "", ""] },
+            { cells: ["备选成功品", "623803508106", "", ""] }
+          ]
+        }
+      ]
     });
     expect(report?.item.competitorId).toBe("623803508105");
     expect(report?.period.days).toBe(30);
     expect(report?.tables[0].rows[0][1]).toBe("593063365092");
+    const itemRows = report?.tables.find((table) => table.name === "商品与成功品")?.rows;
+    expect(itemRows?.[1][2]).toBe("945000");
+    expect(itemRows?.[1][3]).toBe(31500);
+    expect(itemRows?.[2][2]).toBe("");
+    const periodRows = report?.tables.find((table) => table.name === "周期汇总")?.rows;
+    expect(periodRows?.[1][8]).toBe("0.31746~0.433862");
+    expect(periodRows?.[1][9]).toBe("2026-08-13");
+    expect(Number(periodRows?.[1][10])).toBeGreaterThan(0);
+    const level1 = report?.tables.find((table) => table.name === "一级场景")?.rows;
+    expect(level1?.[1][7]).toBe(47.86);
+    expect(level1?.[1][11]).toBe("0.48~0.53");
+    expect(level1?.[1][13]).toBe("0~0.21");
+    expect(level1?.[2][7]).toBe(54.46);
+    expect(level1?.[2][11]).toBe("0.78~0.91");
+    expect(level1?.[2][13]).toBe("5.51~7.34");
+    const level2 = report?.tables.find((table) => table.name === "二级场景")?.rows;
+    expect(level2?.[0][7]).toBe(27.23);
+    expect(level2?.[0][11]).toBe("0.68~0.91");
+    expect(level2?.[0][13]).toBe("3.67~7.34");
   });
 });

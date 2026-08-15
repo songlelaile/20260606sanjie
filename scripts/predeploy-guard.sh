@@ -3,11 +3,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
-EXPECTED_VERSION="1.9.18"
-EXPECTED_ZIP_SHA256="ea82ed62b4c995ce1de3cb94730b576974f78639ea79ac0cc5e0f29c56074f1f"
+EXPECTED_VERSION="1.9.23"
+EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="0.9.21"
-DMP_ZIP_SHA256="64ade7855f53e0434a950ab5e007b54de6dc11e8b995a729eb091ef6e11683be"
+DMP_VERSION="0.9.44"
+DMP_ZIP_SHA256="158ee2fcccc8bb1d72207f12891c6aa96df061c14cdc2a010056e9ed77e4db47"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -64,9 +64,15 @@ for file in \
   prisma/schema.prisma \
   src/app/tools/page.tsx \
   src/app/tools/dmp-report/page.tsx \
+  src/app/api/dmp-reports/route.ts \
+  src/app/api/dmp-runtime/[action]/route.ts \
   src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpReportWorkspace.tsx \
   src/lib/dmp-product.ts \
+  src/lib/dmp-report-format.ts \
+  src/lib/dmp-report-export.ts \
+  src/lib/dmp-report-store.ts \
+  src/lib/dmp-report-types.ts \
   src/lib/tool-entitlements.ts \
   public/tools/dmp-report-engine/completeness-engine.js \
   public/tools/dmp-report-engine/report-engine.js; do
@@ -86,7 +92,9 @@ forbid_fixed "user.password !== password" src/lib/accounts.ts "检测到旧版�
 require_fixed "model Shop {" prisma/schema.prisma "缺少多店铺 Shop 模型"
 require_fixed "model ShopCalcRun {" prisma/schema.prisma "缺少多店铺 ShopCalcRun 模型"
 require_fixed "model ToolEntitlement {" prisma/schema.prisma "缺少付费工具授权模型"
+require_fixed "model DmpBusinessReport {" prisma/schema.prisma "缺少达摩盘历史报告模型"
 require_file "prisma/migrations/20260815001500_tool_entitlements/migration.sql"
+require_file "prisma/migrations/20260815160000_add_dmp_business_reports/migration.sql"
 
 # 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
@@ -104,11 +112,24 @@ require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
 
-# 达摩盘插件、付费授权、受保护下载、管理员 JSON 工程入口与本地解析引擎必须成套发布。
+# 达摩盘插件、付费授权、受保护下载与历史报告中心必须成套发布。
 require_fixed "DMP_AUTOMATION_VERSION = \"${DMP_VERSION}\"" src/lib/dmp-product.ts "达摩盘工具卡版本不是 v${DMP_VERSION}"
 require_fixed 'zipHref: "/api/tools/dmp/download"' src/app/tools/page.tsx "达摩盘工具卡未使用受保护下载接口"
-require_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少管理员角色校验"
-require_fixed "getDmpAutomationAccessForSession" src/app/tools/dmp-report/page.tsx "达摩盘 JSON 页面缺少数据库付费授权复核"
+require_fixed "getDmpReportAccess" src/app/tools/dmp-report/page.tsx "达摩盘报告中心缺少数据库付费授权复核"
+require_fixed "listDmpBusinessReports" src/app/tools/dmp-report/page.tsx "达摩盘报告中心未加载历史报告"
+forbid_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达摩盘报告中心仍被错误限制为管理员"
+require_fixed "达摩盘 → 货品 → 打爆路径" src/components/tools/DmpReportWorkspace.tsx "达摩盘使用路径不正确"
+require_fixed "历史生成报告" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少历史管理"
+require_fixed "在线查看" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少在线查看"
+require_fixed "formatDmpCell" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心未统一两位小数展示"
+require_fixed '/比|率|变化|相对|CTR|贡献|百分位/i' src/lib/dmp-report-format.ts "达摩盘比率字段未统一换算为百分比"
+forbid_fixed "JSON 工程" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心仍展示工程信息"
+require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
+require_fixed 'pathname.startsWith("/api/dmp-runtime/")' src/middleware.ts "达摩盘云端运行接口未绕过页面中间件"
+require_fixed "x-sanjie-session" src/app/api/dmp-reports/route.ts "达摩盘报告同步接口缺少插件登录令牌"
+require_fixed "getDmpReportAccessFromToken" src/app/api/dmp-runtime/[action]/route.ts "达摩盘云端运行接口缺少官网登录授权"
+require_fixed "getDmpAutomationAccessForSession" src/lib/dmp-report-store.ts "达摩盘历史报告缺少付费授权复核"
+require_fixed "tenantId: access.tenantId, userId: access.userId" src/lib/dmp-report-store.ts "达摩盘历史报告缺少账号隔离"
 require_fixed "dmpJsonImport" src/app/api/auth/me/route.ts "认证端点缺少达摩盘 JSON 权限声明"
 require_fixed "dmpAutomation: dmpAccess.allowed" src/app/api/auth/me/route.ts "认证端点未按数据库授权控制插件"
 require_fixed "getDmpAutomationAccessForSession" src/app/api/tools/dmp/download/route.ts "达摩盘下载接口缺少数据库授权校验"
@@ -118,9 +139,20 @@ require_fixed "expiresAt" src/lib/tool-entitlements.ts "达摩盘授权缺少到
 require_fixed "remainingDays" src/lib/tool-entitlements.ts "达摩盘授权缺少剩余天数"
 require_fixed "dmpEntitlement: dmpAccess" src/app/api/auth/me/route.ts "认证端点未返回达摩盘授权倒计时"
 require_fixed 'DMP_AUTOMATION_TOOL_CODE = "dmp-automation"' src/lib/dmp-product.ts "达摩盘产品码不稳定"
-require_fixed "file.text()" src/components/tools/DmpReportWorkspace.tsx "达摩盘 JSON 未在浏览器本地解析"
+require_fixed "returnOnSpend" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 ROI 区间计算"
+require_fixed "contributionRatio" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 GMV 贡献率区间计算"
+require_fixed "calculatedDirectRoi" public/tools/dmp-report-engine/completeness-engine.js "达摩盘场景未按分配后消耗计算直接 ROI"
+require_fixed "calculableMetricValue" public/tools/dmp-report-engine/completeness-engine.js "达摩盘量级区间未先转换为可计算数值"
+require_fixed "transportOnlyReason" public/tools/dmp-report-engine/completeness-engine.js "达摩盘完整性引擎未忽略 OPTIONS/HEAD/redirect 传输记录"
+require_fixed "classifyGrowthRecord" public/tools/dmp-report-engine/completeness-engine.js "达摩盘补抓响应未使用统一解析分类"
+require_fixed '["投放", "ROI"' public/tools/dmp-report-engine/report-engine.js "达摩盘业务报告缺少 ROI"
+require_fixed "periodMetricsForItem" public/tools/dmp-report-engine/report-engine.js "达摩盘商品表未按商品 ID 匹配周期指标"
 require_file "$DMP_ZIP_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'const CLOUD_RUNTIME_BASE = `${OFFICIAL_SITE}/api/dmp-runtime`' || fail "达摩盘插件未固定连接官网云端运行接口"
+if unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Eq '127\.0\.0\.1|localhost'; then
+  fail "达摩盘插件仍包含本机服务权限"
+fi
 
 actual_dmp_zip_sha256="$(sha256_file "$DMP_ZIP_PATH")"
 [[ "$actual_dmp_zip_sha256" == "$DMP_ZIP_SHA256" ]] || fail "达摩盘 v${DMP_VERSION} ZIP 哈希不一致：$actual_dmp_zip_sha256"

@@ -36,14 +36,13 @@
   ];
 
   const FORBIDDEN_COLUMN = /^(判断|结构解读|业务解读|复盘结论|趋势判断|建议动作|备注|证据等级|校验状态|反推口径|请求|接口路径|数据来源)$/;
-  const SENSITIVE_KEY = /(token|sign|cookie|authorization|password|secret|session|csrf|dynamicToken|webOpSessionId|uniqueItemCampaign)/i;
   const EMPTY = "";
   const CHANNELS = [
-    ["内容运营", "内容运营日消耗(API原值)"],
-    ["人群推广", "人群推广日消耗(API原值)"],
-    ["货品全站推", "货品全站推日消耗(API原值)"],
-    ["线索推广", "线索推广日消耗(API原值)"],
-    ["关键词推广", "关键词推广日消耗(API原值)"]
+    ["内容运营", "内容运营日消耗"],
+    ["人群推广", "人群推广日消耗"],
+    ["货品全站推", "货品全站推日消耗"],
+    ["线索推广", "线索推广日消耗"],
+    ["关键词推广", "关键词推广日消耗"]
   ];
 
   function recordPath(record) {
@@ -66,9 +65,7 @@
     if (Array.isArray(value)) {
       value.forEach((child, index) => walk(child, visitor, path.concat(index), depth + 1));
     } else if (typeof value === "object") {
-      Object.entries(value).forEach(([key, child]) => {
-        if (!SENSITIVE_KEY.test(key)) walk(child, visitor, path.concat(key), depth + 1);
-      });
+      Object.entries(value).forEach(([key, child]) => walk(child, visitor, path.concat(key), depth + 1));
     }
   }
 
@@ -132,14 +129,31 @@
   }
 
   function isPercentMetric(metric) {
-    return /率|占比|费比|百分位|CTR|转化|GMV变化/i.test(String(metric || ""));
+    return /比|率|变化|相对|CTR|贡献|百分位/i.test(String(metric || ""));
+  }
+
+  function fixedTwo(value) {
+    const number = Number(value);
+    const absolute = Math.abs(number);
+    const rounded = Math.round((absolute + Number.EPSILON * Math.max(1, absolute)) * 100) / 100;
+    return (number < 0 ? -rounded : rounded).toFixed(2);
   }
 
   function formatMetricValue(metric, value) {
     if (value === null || value === undefined || value === "") return "";
-    if (typeof value === "number" && Number.isFinite(value) && isPercentMetric(metric)) return `${(value * 100).toFixed(2)}%`;
-    if (typeof value === "number" && Number.isFinite(value)) return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
-    return String(value);
+    if (typeof value === "number" && Number.isFinite(value) && isPercentMetric(metric)) return `${fixedTwo(value * 100)}%`;
+    if (typeof value === "number" && Number.isFinite(value)) return new Intl.NumberFormat("zh-CN", {
+      minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      maximumFractionDigits: 2
+    }).format(value);
+    const text = String(value);
+    if (isPercentMetric(metric) && !text.includes("%") && /^[<>]?\s*[+-]?\d+(?:\.\d+)?(?:\s*[~～]\s*[<>]?\s*[+-]?\d+(?:\.\d+)?)?$/.test(text)) {
+      return text.replace(/[+-]?\d+(?:\.\d+)?/g, token => `${fixedTwo(Number(token) * 100)}%`);
+    }
+    if (/^[<>]?\s*[\d.,]+(?:\.\d+)?[万千%]?(?:\s*[~～]\s*[<>]?\s*[\d.,]+(?:\.\d+)?[万千%]?)?$/.test(text)) {
+      return text.replace(/-?\d+\.\d+/g, token => fixedTwo(token));
+    }
+    return text;
   }
 
   function table(name, columns, rows, extra = {}) {
@@ -373,7 +387,7 @@
       target.push(subjectRow);
       if (hasCompetitor) target.push(competitorRow);
     });
-    const columns = ["对象", "层级", "一级场景", "二级场景", "sceneId", "消耗(API精确值)", "消耗占比(API原值)", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"];
+    const columns = ["对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "消耗占比", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"];
     return [
       table("一级场景", columns, level1, { widths: [10, 8, 16, 12, 12, 17, 19, 16, 15, 12, 12, 12, 17, 13] }),
       table("二级场景", columns, level2, { widths: [10, 8, 16, 48, 11, 17, 19, 16, 15, 12, 12, 12, 17, 13] })
@@ -395,7 +409,7 @@
     const rows = CHANNELS.map(([label, apiField], index) => [label, apiField, competitorPeriod[index], competitorPeriodTotal ? competitorPeriod[index] / competitorPeriodTotal : EMPTY,
       competitorTrend[index], competitorTrendTotal ? competitorTrend[index] / competitorTrendTotal : EMPTY, subject[index], subjectTotal ? subject[index] / subjectTotal : EMPTY]);
     rows.push(["合计", "", round(competitorPeriodTotal), competitorPeriodTotal ? 1 : EMPTY, round(competitorTrendTotal), competitorTrendTotal ? 1 : EMPTY, round(subjectTotal), subjectTotal ? 1 : EMPTY]);
-    return table("渠道花费", ["渠道", "API原字段名", `对手${periodDays}日消耗`, `对手${periodDays}日占比`, "对手30日趋势消耗", "对手30日趋势占比", `主体${periodDays}日消耗`, `主体${periodDays}日占比`], rows, {
+    return table("渠道花费", ["渠道", "页面指标", `对手${periodDays}日消耗`, `对手${periodDays}日占比`, "对手30日趋势消耗", "对手30日趋势占比", `主体${periodDays}日消耗`, `主体${periodDays}日占比`], rows, {
       widths: [16, 28, 17, 17, 18, 18, 17, 17], chartTitle: `${periodDays}日渠道消耗对比`
     });
   }
@@ -465,7 +479,7 @@
         gmvs.length ? round(gmvs.reduce((sum, value) => sum + value, 0) / gmvs.length) : EMPTY, round(spend), Number.isFinite(toNumber(days)) && days ? round(spend / days) : EMPTY,
         maxIndex >= 0 ? CHANNELS[maxIndex][0] : EMPTY, maxIndex >= 0 && spend ? round(max / spend, 6) : EMPTY];
     });
-    return table("成长阶段数据", ["阶段", "开始", "结束", "阶段名称", "API阶段描述", "天数", "起始GMV", "结束GMV", "GMV变化", "平均日GMV", "阶段总消耗", "日均消耗", "第一渠道", "第一渠道占比"], rows, {
+    return table("成长阶段数据", ["阶段", "开始", "结束", "阶段名称", "阶段描述", "天数", "起始GMV", "结束GMV", "GMV变化", "平均日GMV", "阶段总消耗", "日均消耗", "第一渠道", "第一渠道占比"], rows, {
       widths: [9, 13, 13, 16, 42, 9, 16, 16, 13, 16, 16, 16, 15, 17], chartTitle: "阶段平均日GMV"
     });
   }
@@ -542,12 +556,9 @@
   }
 
   // ——— 送去 API 深度解析的载荷 ———
-  // 目的：让模型基于接口原始数值做逐字段深度解析，而不是只看已成型的表格。
-  // 边界：只送业务数值。URL、接口路径、请求头、Cookie、token 一律不出现——
-  // 模块名（"核心指标" 这类）是我们自己的标签，不暴露接口地址。
+  // 目的：让模型基于接口原始业务响应做逐字段深度解析，而不是只看已成型的表格。
+  // 请求头和 Cookie 不在 record.body 中；业务响应字段不设置黑名单，避免新接口被静默漏掉。
 
-  // 深拷贝并逐键脱敏。SENSITIVE_KEY 命中的键直接丢掉，
-  // 超长字符串截断（图片 base64、长描述会把载荷撑爆）。
   function sanitizeForAnalysis(value, depth = 0) {
     if (depth > 14) return null;
     if (value === null || value === undefined) return null;
@@ -562,9 +573,6 @@
     if (typeof value !== "object") return null;
     const out = {};
     for (const [key, child] of Object.entries(value)) {
-      if (SENSITIVE_KEY.test(key)) continue;
-      // URL 形态的值不送：可能带 query 参数和签名。
-      if (typeof child === "string" && /^https?:\/\//i.test(child)) continue;
       const clean = sanitizeForAnalysis(child, depth + 1);
       if (clean !== null && clean !== undefined) out[key] = clean;
     }
@@ -605,12 +613,29 @@
     return value === null || value === undefined || (typeof value === "number" && !Number.isFinite(value)) ? EMPTY : value;
   }
 
+  function periodMetricsForItem(model, itemId) {
+    const targetId = String(itemId || "");
+    const subjectId = String(model.item?.itemId || "");
+    const competitorId = String(model.targetSuccess?.itemId || "");
+    const metrics = targetId && targetId === subjectId
+      ? model.metrics?.subject
+      : targetId && targetId === competitorId
+        ? model.metrics?.competitor
+        : null;
+    const totalGmv = Number.isFinite(metrics?.totalGmv) ? metrics.totalGmv : null;
+    return {
+      totalGmv,
+      averageDailyGmv: totalGmv != null && Number(model.period?.days) > 0 ? round(totalGmv / Number(model.period.days)) : null
+    };
+  }
+
   function buildItemTableFromModel(model) {
     const subject = model.item || {};
+    const subjectPeriod = periodMetricsForItem(model, subject.itemId);
     const columns = ["角色", "商品ID", "商品标题", "类目/成功品描述", "标价/价格带", "上架天数", "生命周期", "30日GMV", "30日日均成交", "30日GMV排名", "排名变化", "排名百分位", "年GMV档位", "成交排名", "客群特征", "标签", "图片/详情"];
     const rows = [[
       "主体", subject.itemId || "", subject.title || "", subject.category || "", modelCell(subject.reservePrice), modelCell(subject.onlineDays), subject.lifecycle || "",
-      modelCell(subject.gmv30d), modelCell(subject.avgDailyAmount30d), modelCell(subject.gmv30dRank), modelCell(subject.gmv30dRankChange), modelCell(subject.rankPercent),
+      modelCell(subjectPeriod.totalGmv ?? subject.gmv30d), modelCell(subjectPeriod.averageDailyGmv ?? subject.avgDailyAmount30d), modelCell(subject.gmv30dRank), modelCell(subject.gmv30dRankChange), modelCell(subject.rankPercent),
       "", "", "", "", subject.detailUrl || subject.pictureUrl || ""
     ]];
     const candidates = model.successItems.slice().sort((left, right) => Number(right.itemId === model.targetSuccess?.itemId) - Number(left.itemId === model.targetSuccess?.itemId) || Number(right.source === "selected") - Number(left.source === "selected"));
@@ -618,9 +643,10 @@
     for (const candidate of candidates) {
       if (!candidate.itemId || seen.has(candidate.itemId)) continue;
       seen.add(candidate.itemId);
+      const candidatePeriod = periodMetricsForItem(model, candidate.itemId);
       rows.push([
         candidate.itemId === model.targetSuccess?.itemId ? "目标对手" : "备选成功品", candidate.itemId, candidate.title, candidate.description,
-        candidate.priceBand || "", modelCell(candidate.onlineDays), candidate.lifecycle || "", "", "", "", "", "", candidate.annualGmvBand || "",
+        candidate.priceBand || "", modelCell(candidate.onlineDays), candidate.lifecycle || "", modelCell(candidatePeriod.totalGmv), modelCell(candidatePeriod.averageDailyGmv), "", "", "", candidate.annualGmvBand || "",
         candidate.dealRank || "", candidate.audience || "", (candidate.labels || []).join("、"), candidate.pictureUrl
       ]);
     }
@@ -629,13 +655,13 @@
 
   function buildDailyTableFromModel(model) {
     const labels = completenessEngine.CHANNELS.map(([, label]) => label);
-    const columns = ["日期", "日GMV", ...labels.map(label => `${label}日消耗(API原值)`), "日总消耗", "日费比", "阶段"];
+    const columns = ["日期", "日GMV", ...labels.map(label => `${label}日消耗`), "日总消耗", "日费比", "阶段"];
     const rows = model.daily.rows.map(row => [row.date, modelCell(row.dailyGmv), ...labels.map(label => modelCell(row.channelSpend[label])), modelCell(row.totalSpend), modelCell(row.feeRatio), row.stage]);
     return table("日GMV与费比", columns, rows, { widths: [13, 16, 24, 24, 26, 24, 26, 15, 13, 15] });
   }
 
   function buildSceneTablesFromModel(model) {
-    const columns = ["对象", "层级", "一级场景", "二级场景", "sceneId", "消耗(API精确值)", "消耗占比(API原值)", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"];
+    const columns = ["对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "消耗占比", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"];
     const convert = row => [row.role, row.level, row.primary, row.secondary, row.sceneId, modelCell(row.charge), modelCell(row.ratio), modelCell(row.allocated), modelCell(row.impression), modelCell(row.click), modelCell(row.ctr), modelCell(row.cpc), modelCell(row.directDealAmount), modelCell(row.directRoi)];
     return [
       table("一级场景", columns, model.sceneRows.level1.map(convert), { widths: [10, 8, 16, 12, 12, 17, 19, 16, 15, 12, 12, 12, 17, 13] }),
@@ -659,9 +685,10 @@
         modelCell(subjectSpend), Number.isFinite(subjectSpend) && Number.isFinite(subjectTotal) && subjectTotal !== 0 ? round(subjectSpend / subjectTotal, 6) : EMPTY];
     });
     rows.push(["合计", "", modelCell(model.daily.totalSpend), Number.isFinite(competitorTotal) ? 1 : EMPTY, modelCell(model.metrics.subject.spend), Number.isFinite(subjectTotal) ? 1 : EMPTY]);
-    const days = model.period.days || model.daily.rows.length || 30;
-    return table("渠道花费", ["渠道", "API原字段名", `对手${days}日消耗`, `对手${days}日占比`, `主体${days}日消耗`, `主体${days}日占比`], rows, {
-      widths: [16, 28, 18, 18, 18, 18], chartTitle: `${days}日渠道消耗对比`
+    const subjectDays = model.period.days || model.daily.rows.length || 30;
+    const competitorDays = Number.isFinite(model.daily.totalSpend) ? (model.daily.spendCoverageDays || subjectDays) : subjectDays;
+    return table("渠道花费", ["渠道", "页面指标", `对手${competitorDays}日消耗`, `对手${competitorDays}日占比`, `主体${subjectDays}日消耗`, `主体${subjectDays}日占比`], rows, {
+      widths: [16, 28, 18, 18, 18, 18], chartTitle: `主体${subjectDays}日/对手${competitorDays}日渠道消耗对比`
     });
   }
 
@@ -676,17 +703,18 @@
   function buildPeriodTableFromModel(model, item) {
     const dailyGmv = model.daily.rows.map(row => row.dailyGmv).filter(Number.isFinite);
     const peakRow = model.daily.rows.filter(row => Number.isFinite(row.dailyGmv)).sort((left, right) => right.dailyGmv - left.dailyGmv)[0];
-    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "广告归因GMV", "广告消耗", "费比", "全域ROAS", "广告GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
-    const make = (id, label, source, peakDate = "", volatility = null) => [
+    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
+    const make = (id, label, source, peakDate = "", volatility = null, spendDays = model.period.days) => [
       id, label, model.period.startDate, model.period.endDate, model.period.days,
-      modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), "", modelCell(source.spend), modelCell(source.feeRatio), modelCell(source.roas), "", "",
+      modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(source.spend), modelCell(source.feeRatio), modelCell(source.roas),
+      modelCell(source.paidGmvContribution), modelCell(source.paidOrderContribution),
       Number.isFinite(source.totalGmv) ? round(source.totalGmv / model.period.days) : EMPTY,
-      Number.isFinite(source.spend) ? round(source.spend / model.period.days) : EMPTY,
+      Number.isFinite(source.spend) && spendDays > 0 ? round(source.spend / spendDays) : EMPTY,
       peakDate, modelCell(volatility == null ? null : round(volatility, 6))
     ];
     const rows = [
       make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject),
-      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, peakRow?.date || "", populationVolatility(dailyGmv))
+      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, peakRow?.date || "", populationVolatility(dailyGmv), model.daily.spendCoverageDays || model.period.days)
     ];
     return table("周期汇总", columns, rows, { widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14] });
   }
@@ -700,11 +728,13 @@
       ["转化", "支付转化率", metrics.subject.conversion, metrics.competitor.conversion],
       ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors],
       ["投放", "推广消耗", metrics.subject.spend, metrics.competitor.spend],
+      ["投放", "付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["投放", "ROI", metrics.subject.roi, metrics.competitor.roi],
+      ["投放", "PPC", metrics.subject.ppc, metrics.competitor.ppc],
       ["投放", "费比", metrics.subject.feeRatio, metrics.competitor.feeRatio],
       ["投放", "全域ROAS", metrics.subject.roas, metrics.competitor.roas],
       ["结构", "关键词消耗占比", metrics.subject.keywordShare, metrics.competitor.keywordShare],
-      ["结构", "渠道集中度HHI", metrics.subject.channelHhi, metrics.competitor.channelHhi],
-      ["直接效果", "直接成交金额", metrics.subject.attributedGmv, metrics.competitor.attributedGmv]
+      ["结构", "渠道集中度HHI", metrics.subject.channelHhi, metrics.competitor.channelHhi]
     ].map(row => [row[0], row[1], modelCell(row[2]), modelCell(row[3]), relative(row[2], row[3], isPercentMetric(row[1]))]);
     return table("对标总表", ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"], rows, { widths: [15, 28, 20, 22, 18] });
   }
@@ -730,7 +760,7 @@
         modelCell(spend), Number.isFinite(spend) ? round(spend / selected.length) : EMPTY,
         maxIndex >= 0 ? completenessEngine.CHANNELS[maxIndex][1] : EMPTY, maxIndex >= 0 && spend ? round(max / spend, 6) : EMPTY]);
     }
-    return table("成长阶段数据", ["阶段", "开始", "结束", "阶段名称", "API阶段描述", "广告打法", "执行细节", "运营动作", "天数", "起始GMV", "结束GMV", "GMV变化", "平均日GMV", "阶段总消耗", "日均消耗", "第一渠道", "第一渠道占比"], rows, {
+    return table("成长阶段数据", ["阶段", "开始", "结束", "阶段名称", "阶段描述", "广告打法", "执行细节", "运营动作", "天数", "起始GMV", "结束GMV", "GMV变化", "平均日GMV", "阶段总消耗", "日均消耗", "第一渠道", "第一渠道占比"], rows, {
       widths: [9, 13, 13, 16, 34, 42, 68, 68, 9, 16, 16, 13, 16, 16, 16, 15, 17], chartTitle: "阶段平均日GMV"
     });
   }
@@ -747,6 +777,9 @@
       ["访客数", metrics.subject.visitors, metrics.competitor.visitors],
       ["总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
       ["广告/推广消耗", metrics.subject.spend, metrics.competitor.spend],
+      ["付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["ROI", metrics.subject.roi, metrics.competitor.roi],
+      ["PPC", metrics.subject.ppc, metrics.competitor.ppc],
       ["费比", metrics.subject.feeRatio, metrics.competitor.feeRatio],
       ["全域ROAS", metrics.subject.roas, metrics.competitor.roas]
     ].map(row => [row[0], modelCell(row[1]), modelCell(row[2]), relative(row[1], row[2], isPercentMetric(row[0]))]);
@@ -758,14 +791,43 @@
     return table("关键词样本", ["对象", "关键词", "词类型", "展现", "点击", "CTR", "支付转化率"], rows, { widths: [10, 24, 16, 15, 15, 14, 17] });
   }
 
-  function buildOverviewFromModel(model, item, periodLabel, periodSheet) {
+  function chinaClock(value) {
+    const parsed = Date.parse(value || "");
+    const shifted = new Date((Number.isFinite(parsed) ? parsed : Date.now()) + 8 * 60 * 60 * 1000);
+    return { date: shifted.toISOString().slice(0, 10), hour: shifted.getUTCHours() };
+  }
+
+  function previousDate(date) {
+    const parsed = Date.parse(`${date}T00:00:00Z`);
+    return Number.isFinite(parsed) ? new Date(parsed - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) : "";
+  }
+
+  function morningSpendTiming(model, generatedAt) {
+    const clock = chinaClock(generatedAt);
+    const affectedDate = model.period?.endDate || "";
+    const row = model.daily?.rows?.find(candidate => candidate.date === affectedDate);
+    const channelValues = completenessEngine.CHANNELS.map(([, label]) => row?.channelSpend?.[label]);
+    const completeZeroSpend = channelValues.length > 0 && channelValues.every(value => Number.isFinite(value) && value === 0);
+    if (clock.hour >= 10 || affectedDate !== previousDate(clock.date) || !completeZeroSpend) return null;
+    return {
+      affectedDate,
+      note: `北京时间0:00–10:00，${affectedDate}消耗可能尚未产出；本报告已按当前可见数据生成，建议10:00–24:00重新获取数据。`
+    };
+  }
+
+  function buildOverviewFromModel(model, item, periodLabel, periodSheet, spendTiming = null) {
     const subject = periodSheet.rows[0] || [];
     const competitor = periodSheet.rows[1] || [];
-    return table("报告总览", ["项目", "主体", "对手", "范围"], [
+    const rows = [
       ["商品ID", item.id, item.competitorId, ""],
       ["商品标题", item.title, item.competitorTitle, ""],
       [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`]
-    ], {
+    ];
+    if (spendTiming) rows.push(["取数时段提示", `0:00–10:00 ${spendTiming.affectedDate}消耗可能未产出`, "已按当前可见数据生成", "建议10:00–24:00重新获取"]);
+    if (model.daily.spendPartial) rows.push([
+      "花费覆盖", "", `已返回${model.daily.spendCoverageDays}/${model.daily.spendExpectedDays}天`, `缺少1天：${model.daily.spendMissingDates.join("、")}`
+    ]);
+    return table("报告总览", ["项目", "主体", "对手", "范围"], rows, {
       subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}`,
       widths: [18, 46, 46, 18, 16, 16, 16, 16, 16, 16, 16, 16],
       kpis: [
@@ -794,8 +856,9 @@
     const itemSheet = buildItemTableFromModel(model);
     const periodSheet = buildPeriodTableFromModel(model, item);
     const sceneSheets = buildSceneTablesFromModel(model);
+    const spendTiming = morningSpendTiming(model, meta.finishedAt);
     const tables = [
-      buildOverviewFromModel(model, item, periodLabel, periodSheet), buildBenchmarkFromModel(model), itemSheet, periodSheet,
+      buildOverviewFromModel(model, item, periodLabel, periodSheet, spendTiming), buildBenchmarkFromModel(model), itemSheet, periodSheet,
       buildDailyTableFromModel(model), buildChannelTableFromModel(model), sceneSheets[0], sceneSheets[1],
       buildStageTableFromModel(model), buildBaseMetricTableFromModel(model), buildKeywordTableFromModel(model)
     ];
@@ -804,13 +867,13 @@
       "对标总表": `${dateRange}｜主体 ${item.id} vs 对手 ${item.competitorId}`,
       "商品与成功品": "本次分析目标与成功品候选",
       "周期汇总": `${period.days}日对象与周期严格对齐`,
-      "日GMV与费比": `${dateRange}｜共${model.daily.rows.length}天`,
+      "日GMV与费比": `竞品 ${item.competitorId}｜${model.period.startDate} ~ ${model.period.endDate}（${model.period.days}天）`,
       "渠道花费": `${dateRange}｜五渠道消耗与占比`,
       "一级场景": `${dateRange}｜主体与对手一级投放场景数据`,
       "二级场景": `${dateRange}｜主体与对手二级投放场景数据`,
       "成长阶段数据": `${dateRange}｜目标对手成长阶段金额数据`,
       "基础指标对比": `${dateRange}｜主体与目标成功品数值对比`,
-      "关键词样本": `${dateRange}｜按 API 返回顺序展示已返回样本`
+      "关键词样本": `${dateRange}｜按页面展示顺序排列`
     };
     tables.forEach(current => { if (!current.subtitle) current.subtitle = subtitles[current.name] || dateRange; });
 
@@ -842,9 +905,18 @@
       quality: {
         status: model.completeness.status, expected: moduleRules.length, observed, missing: [...new Set(missing)],
         truncated: model.completeness.endpointCoverage.filter(entry => entry.reasons.some(reason => /truncated/.test(reason))).reduce((sum, entry) => sum + entry.failed, 0),
-        complete, endpointStatus, endpointCoverage: model.completeness.endpointCoverage,
+        complete, exportAllowed: complete, partialAfterRecapture: false,
+        requiredValues: requiredValues.length, resolvedValues: requiredValues.length - deterministicMissing.length,
+        endpointStatus, endpointCoverage: model.completeness.endpointCoverage,
         parsedRecords: model.completeness.parsedRecords, failedRecords: model.completeness.failedRecords,
-        blockingIssues: model.completeness.blockingIssues, warnings: model.completeness.warnings, deterministicMissing
+        blockingIssues: model.completeness.blockingIssues, warnings: model.completeness.warnings, deterministicMissing,
+        spendTiming,
+        spendCoverage: {
+          returnedDays: model.daily.spendCoverageDays,
+          expectedDays: model.daily.spendExpectedDays,
+          missingDates: model.daily.spendMissingDates,
+          partial: model.daily.spendPartial
+        }
       }
     };
   }
@@ -868,16 +940,28 @@
     return "\ufeff" + lines.map(line => line.map(csvEscape).join(",")).join("\r\n");
   }
 
-  function canonicalCell(value) {
+  function canonicalCell(value, semantic = "") {
     if (value === null || value === undefined) return "";
-    if (typeof value === "number" && Number.isFinite(value)) return String(value);
-    return displayValue(value);
+    if (typeof value === "number" && Number.isFinite(value)) {
+      if (isPercentMetric(semantic)) return `${fixedTwo(value * 100)}%`;
+      return Number.isInteger(value) ? String(value) : fixedTwo(value);
+    }
+    return formatMetricValue(semantic, displayValue(value));
   }
 
   function toCanonicalReport(report) {
     return {
       schema_version: "3.0", title: String(report.title || ""), item_id: String(report.item?.id || ""), period: String(report.periodLabel || ""),
-      tables: (report.tables || []).map(current => ({ name: String(current.name || ""), columns: (current.columns || []).map(String), rows: (current.rows || []).map(row => ({ cells: row.map(canonicalCell) })) }))
+      tables: (report.tables || []).map(current => ({
+        name: String(current.name || ""),
+        columns: (current.columns || []).map(String),
+        rows: (current.rows || []).map(row => ({
+          cells: row.map((value, cellIndex) => {
+            const semantic = current.name === "对标总表" ? `${current.columns[cellIndex]} ${row[1]}` : current.name === "基础指标对比" ? `${current.columns[cellIndex]} ${row[0]}` : current.columns[cellIndex];
+            return canonicalCell(value, semantic);
+          })
+        }))
+      }))
     };
   }
 
@@ -932,8 +1016,6 @@
       if (typeof raw === "object") { reject("返回值不是标量"); continue; }
       const text = String(raw);
       if (text.length > 200) { reject("返回值超过 200 字符"); continue; }
-      if (SENSITIVE_KEY.test(text)) { reject("返回值疑似含敏感字段"); continue; }
-
       // 必须说明这个值出自哪个模块的哪个字段。没有出处的值不填——
       // 这是防"模型自己编一个看起来合理的数"的唯一有效手段。
       const sourceField = String(cell?.source_field || "").trim();
