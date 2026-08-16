@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.1"
-DMP_ZIP_SHA256="3ad5916621c544bdf0acf8a7a2941d3fb106f3430471a5ac0bc725649289b6ea"
+DMP_VERSION="2.1.2"
+DMP_ZIP_SHA256="3ce8b53cb4c7595cdcbe4dddc49fc5a50f821d4b62629a77c6e29688f8511f06"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -184,12 +184,15 @@ unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'const CLOUD_RUNTIME_BAS
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_CREATE_SHARE' >/dev/null || fail "达摩盘插件缺少官网分享消息"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' >/dev/null || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'url.searchParams.set("reportId"' >/dev/null || fail "达摩盘插件未按报告编号打开官网页面"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"version": "2.1.1"' >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"version": "2.1.2"' >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' >/dev/null || fail "达摩盘插件报告保存等待仍过短"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' >/dev/null || fail "达摩盘插件分享请求缺少瞬时失败重试"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
+fi
+if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -E '覆盖商品、周期、投放、场景与关键词等经营数据|自动添加 1–3 家竞店并完成近 7 天、近 30 天|当前不提供业务数据下载' >/dev/null; then
+  fail "达摩盘插件仍展示已删除的操作区说明"
 fi
 if unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Eq '127\.0\.0\.1|localhost'; then
   fail "达摩盘插件仍包含本机服务权限"
