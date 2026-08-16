@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.0"
-DMP_ZIP_SHA256="b4122e8d460189a620b1f3eee89730d0d06dabf196d891c651b88fb54100376f"
+DMP_VERSION="2.1.1"
+DMP_ZIP_SHA256="3ad5916621c544bdf0acf8a7a2941d3fb106f3430471a5ac0bc725649289b6ea"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -182,7 +182,9 @@ unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'const CLOUD_RUNTIME_BA
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'DMP_CDP_CREATE_SHARE' || fail "达摩盘插件缺少官网分享消息"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'url.searchParams.set("reportId"' || fail "达摩盘插件未按报告编号打开官网页面"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Fq '"version": "2.1.0"' || fail "达摩盘安装包 Manifest 版本不一致"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Fq '"version": "2.1.1"' || fail "达摩盘安装包 Manifest 版本不一致"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' || fail "达摩盘插件报告保存等待仍过短"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' || fail "达摩盘插件分享请求缺少瞬时失败重试"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Fq '达摩盘一体化自动取数｜少壮AI自动化' || fail "达摩盘安装包缺少品牌标题"
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
