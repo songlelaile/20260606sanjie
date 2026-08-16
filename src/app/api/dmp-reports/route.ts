@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { buildDmpReportCsv, buildDmpReportWorkbook } from "@/lib/dmp-report-export";
 import {
   deleteDmpBusinessReport,
   getDmpBusinessReport,
   getDmpReportAccess,
   getDmpReportAccessFromToken,
   listDmpBusinessReports,
+  parseDmpCompetitorIds,
   saveDmpBusinessReport,
   validItemId,
   validateDmpCanonicalReport
@@ -34,12 +34,11 @@ export async function GET(request: Request) {
   const report = await getDmpBusinessReport(access, id);
   if (!report) return NextResponse.json({ error: "报告不存在或无权访问" }, { status: 404, headers: CORS });
   const format = requestUrl.searchParams.get("format");
-  if (format === "xlsx") {
-    const file = await buildDmpReportWorkbook(report.report);
-    return downloadResponse(file, report, "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  }
-  if (format === "csv") {
-    return downloadResponse(Buffer.from(buildDmpReportCsv(report.report)), report, "csv", "text/csv;charset=utf-8");
+  if (format === "xlsx" || format === "csv" || format === "html") {
+    return NextResponse.json(
+      { error: "当前版本仅支持官网在线查看，暂不提供数据下载" },
+      { status: 403, headers: CORS }
+    );
   }
   return NextResponse.json({ data: { report } }, { headers: CORS });
 }
@@ -60,9 +59,13 @@ export async function POST(request: Request) {
   if (!checked.report) return NextResponse.json({ error: checked.error ?? "报告结构无效" }, { status: 400, headers: CORS });
 
   const subjectItemId = String(body?.subjectItemId ?? checked.report.item_id).trim();
-  const competitorItemId = String(body?.competitorItemId ?? "").trim();
-  if (!validItemId(subjectItemId) || !validItemId(competitorItemId)) {
-    return NextResponse.json({ error: "主体商品与对标商品 ID 无效" }, { status: 400, headers: CORS });
+  const competitionReport = checked.report.report_type === "competition";
+  const competitorIds = competitionReport
+    ? parseDmpCompetitorIds(checked.report.competitor_ids?.length ? checked.report.competitor_ids : body?.competitorItemId)
+    : parseDmpCompetitorIds(body?.competitorItemId);
+  const competitorItemId = competitionReport ? competitorIds.join(",") : competitorIds[0] ?? "";
+  if (!validItemId(subjectItemId) || competitorIds.length < 1 || competitorIds.some((id) => !validItemId(id)) || (!competitionReport && competitorIds.length !== 1) || (competitionReport && competitorIds.length > 3)) {
+    return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效" }, { status: 400, headers: CORS });
   }
   const report = await saveDmpBusinessReport({
     access,
@@ -92,21 +95,4 @@ async function resolveAccess(request: Request) {
 
 function unauthorized() {
   return NextResponse.json({ error: "请先登录并开通达摩盘报告权限" }, { status: 401, headers: CORS });
-}
-
-function downloadResponse(
-  body: Buffer,
-  report: { subjectItemId: string; competitorItemId: string },
-  extension: "xlsx" | "csv",
-  contentType: string
-) {
-  const filename = `达摩盘打爆路径报告_${report.subjectItemId}_vs_${report.competitorItemId}.${extension}`;
-  const content = body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer;
-  return new NextResponse(content, {
-    headers: {
-      ...CORS,
-      "Content-Type": contentType,
-      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`
-    }
-  });
 }

@@ -3,6 +3,7 @@
 import { Eye, EyeOff } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { safeDmpReportReturnPath } from "@/lib/dmp-report-share-path";
 
 type Tab = "login" | "register";
 
@@ -71,8 +72,10 @@ function LoginView() {
         setError(payload?.error ?? "登录失败，请重试");
         return;
       }
+      // 分享报告必须回到官网原链接继续做账号归属校验；只接受固定站内路径，拒绝开放重定向。
+      const returnTo = safeDmpReportReturnPath(searchParams.get("returnTo"));
       // 账号切换必须重建整个文档，避免复用上一租户的 Next Router Cache。
-      window.location.replace(payload.data.home);
+      window.location.replace(returnTo || payload.data.home);
     } catch {
       setError("网络连接失败，请检查网络后重试");
     } finally {

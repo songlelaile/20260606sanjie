@@ -177,8 +177,42 @@ model DmpBusinessReport {
   sourceVersion    String   @default("")
   report           Json
   createdAt        DateTime @default(now())
+  shares           DmpReportShare[]
 
   @@index([tenantId, userId, createdAt])
+}
+
+// 达摩盘业务报告的官网受控只读链接。打开时同时校验官网登录、付费权限、报告归属与高熵令牌。
+// 数据库只保存令牌哈希，原始令牌仅在创建时返回。
+model DmpReportShare {
+  id            String   @id @default(cuid())
+  reportId      String
+  report        DmpBusinessReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  viewCount     Int      @default(0)
+  clickCount    Int      @default(0)
+  lastViewedAt  DateTime?
+  lastClickedAt DateTime?
+  createdAt     DateTime @default(now())
+  heatBuckets   DmpReportHeatBucket[]
+
+  @@index([reportId, createdAt])
+}
+
+// 只保存匿名聚合坐标与元素键，不保存访客身份、IP、UA、Cookie 或单元格业务值。
+model DmpReportHeatBucket {
+  id         String   @id @default(cuid())
+  shareId    String
+  share      DmpReportShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  sectionKey String
+  elementKey String
+  xBucket    Int
+  yBucket    Int
+  count      Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  @@unique([shareId, sectionKey, elementKey, xBucket, yBucket])
+  @@index([shareId, sectionKey, count])
 }
 
 // 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，

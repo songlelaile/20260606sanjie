@@ -23,6 +23,7 @@ export async function middleware(request: NextRequest) {
     pathname === "/privacy" ||
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/api/dmp-reports") ||
+    pathname.startsWith("/api/dmp-report-shares") ||
     pathname.startsWith("/api/dmp-runtime/") ||
     pathname.startsWith("/v1/")
   ) {
@@ -41,6 +42,9 @@ export async function middleware(request: NextRequest) {
     }
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    if (pathname.startsWith("/shared/dmp-reports/")) {
+      url.searchParams.set("returnTo", `${pathname}${request.nextUrl.search}`);
+    }
     const response = NextResponse.redirect(url);
     response.headers.set("Cache-Control", AUTH_RESPONSE_HEADERS["Cache-Control"]);
     return response;

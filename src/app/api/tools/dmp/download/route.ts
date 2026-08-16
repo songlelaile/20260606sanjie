@@ -3,6 +3,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import {
   DMP_AUTOMATION_DOWNLOAD_NAME,
+  DMP_AUTOMATION_NAME,
   DMP_AUTOMATION_PACKAGE_PARTS
 } from "@/lib/dmp-product";
 import { getServerSession } from "@/lib/session-server";
@@ -22,8 +23,8 @@ export async function GET() {
   const access = await getDmpAutomationAccessForSession(session).catch(() => null);
   if (!access?.allowed) {
     const error = access?.status === "expired"
-      ? "达摩盘 AI 自动化的 30 天授权已到期，请联系管理员付费续费"
-      : "该账号尚未开通达摩盘 AI 自动化，请联系管理员付费开通";
+      ? `${DMP_AUTOMATION_NAME}的 30 天授权已到期，请联系管理员付费续费`
+      : `该账号尚未开通${DMP_AUTOMATION_NAME}，请联系管理员付费开通`;
     return NextResponse.json(
       { error },
       { status: 403, headers: PRIVATE_HEADERS }

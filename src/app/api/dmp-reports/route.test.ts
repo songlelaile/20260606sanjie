@@ -1,18 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  buildDmpReportCsv: vi.fn(),
-  buildDmpReportWorkbook: vi.fn(),
   getDmpBusinessReport: vi.fn(),
   getDmpReportAccess: vi.fn(),
   getDmpReportAccessFromToken: vi.fn(),
   listDmpBusinessReports: vi.fn()
 }));
 
-vi.mock("@/lib/dmp-report-export", () => ({
-  buildDmpReportCsv: mocks.buildDmpReportCsv,
-  buildDmpReportWorkbook: mocks.buildDmpReportWorkbook
-}));
 vi.mock("@/lib/dmp-report-store", () => ({
   deleteDmpBusinessReport: vi.fn(),
   getDmpBusinessReport: mocks.getDmpBusinessReport,
@@ -37,30 +31,24 @@ const REPORT = {
   report: { schema_version: "3.0", title: "报告", item_id: "593063365092", period: "近30天", tables: [] }
 };
 
-describe("GET /api/dmp-reports downloads", () => {
+describe("GET /api/dmp-reports online-only policy", () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
     mocks.getDmpBusinessReport.mockResolvedValue(REPORT);
   });
 
-  it("returns a real Excel attachment for the selected history report", async () => {
-    mocks.buildDmpReportWorkbook.mockResolvedValue(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  it("blocks Excel downloads while reports are online-only", async () => {
     const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?id=report-a&format=xlsx"));
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''");
-    expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "当前版本仅支持官网在线查看，暂不提供数据下载" });
   });
 
-  it("returns a UTF-8 CSV attachment for the selected history report", async () => {
-    mocks.buildDmpReportCsv.mockReturnValue("\ufeff报告总览");
+  it("blocks CSV downloads while reports are online-only", async () => {
     const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?id=report-a&format=csv"));
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("text/csv;charset=utf-8");
-    expect(response.headers.get("content-disposition")).toContain(".csv");
-    expect(Buffer.from(await response.arrayBuffer()).toString("utf8")).toBe("\ufeff报告总览");
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "当前版本仅支持官网在线查看，暂不提供数据下载" });
   });
 });

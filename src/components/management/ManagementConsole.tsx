@@ -18,6 +18,7 @@ import { useMemo, useState } from "react";
 import { AiApiConfigPanel } from "@/components/AiApiConfigPanel";
 import { ManagementHistoryPanel } from "@/components/management/ManagementHistoryPanel";
 import { ReviewConsole } from "@/components/management/ReviewConsole";
+import { DMP_AUTOMATION_NAME } from "@/lib/dmp-product";
 import type {
   Intervention,
   InviteCode,
@@ -138,7 +139,7 @@ export function ManagementConsole({
     const action = enabled
       ? user.dmpAutomationAccess.status === "expired" ? "续费 30 天" : "开通 30 天"
       : "关闭";
-    if (!window.confirm(`确定为「${user.name}（${user.username}）」${action}达摩盘 AI 自动化？开通或续费后到期将自动关闭。`)) {
+    if (!window.confirm(`确定为「${user.name}（${user.username}）」${action}${DMP_AUTOMATION_NAME}？开通或续费后到期将自动关闭。`)) {
       return;
     }
     setBusy(true);
@@ -160,8 +161,8 @@ export function ManagementConsole({
         )
       );
       setMessage(enabled
-        ? `已为 ${user.name}开通达摩盘 AI 自动化，有效期 30 天`
-        : `已为 ${user.name}关闭达摩盘 AI 自动化`);
+        ? `已为 ${user.name}开通${DMP_AUTOMATION_NAME}，有效期 30 天`
+        : `已为 ${user.name}关闭${DMP_AUTOMATION_NAME}`);
     } else {
       setMessage(payload?.error ?? `${action}失败，请刷新后重试`);
     }
@@ -361,7 +362,9 @@ export function ManagementConsole({
                   <th>店铺</th>
                   <th>状态</th>
                   <th>达摩盘工具</th>
-                  <th>创建时间</th>
+                  <th>账号注册时间</th>
+                  <th>达摩盘开通时间</th>
+                  <th>达摩盘到期时间</th>
                   <th>最近活跃</th>
                   <th>操作</th>
                 </tr>
@@ -389,6 +392,8 @@ export function ManagementConsole({
                       </span>
                     </td>
                     <td>{formatFullDateTime(user.createdAt)}</td>
+                    <td>{formatNullableDateTime(user.dmpAutomationAccess.grantedAt)}</td>
+                    <td>{formatNullableDateTime(user.dmpAutomationAccess.expiresAt)}</td>
                     <td>{formatFullDateTime(user.lastActiveAt)}</td>
                     <td>
                       <div className="user-actions">
@@ -471,6 +476,10 @@ function formatFullDateTime(value: string) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(
     date.getHours()
   )}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function formatNullableDateTime(value: string | null) {
+  return value ? formatFullDateTime(value) : "—";
 }
 
 function roleLabel(role: User["role"]) {

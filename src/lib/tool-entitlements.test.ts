@@ -18,6 +18,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import {
+  createDmpEntitlementWindow,
   getDmpAutomationAccessForSession,
   resolveToolEntitlementAccess,
   setDmpAutomationEntitlement
@@ -131,5 +132,47 @@ describe("DMP paid tool entitlements", () => {
       30 * 24 * 60 * 60 * 1000
     );
     expect(call.update.expiresAt).toEqual(call.create.expiresAt);
+  });
+
+  it("starts the 30-day window at the opening moment, not account registration", () => {
+    const registeredAt = new Date("2026-06-11T02:12:55.000Z");
+    const openedAt = new Date("2026-08-15T10:30:00.000Z");
+    const window = createDmpEntitlementWindow(openedAt);
+
+    expect(window.grantedAt).toEqual(openedAt);
+    expect(window.expiresAt).toEqual(new Date("2026-09-14T10:30:00.000Z"));
+    expect(window.expiresAt.getTime() - registeredAt.getTime()).not.toBe(
+      30 * 24 * 60 * 60 * 1000
+    );
+  });
+
+  it("resets an existing grant from the renewal moment", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-15T10:30:00.000Z"));
+    try {
+      mocks.userFindUnique.mockResolvedValueOnce({ id: "user-1" });
+      mocks.entitlementUpsert.mockImplementationOnce(async (args) => ({
+        status: args.update.status,
+        grantedAt: args.update.grantedAt,
+        expiresAt: args.update.expiresAt
+      }));
+
+      const result = await setDmpAutomationEntitlement({
+        userId: "user-1",
+        enabled: true,
+        grantedBy: "admin"
+      });
+
+      expect(result).toMatchObject({
+        ok: true,
+        access: {
+          grantedAt: "2026-08-15T10:30:00.000Z",
+          expiresAt: "2026-09-14T10:30:00.000Z",
+          remainingDays: 30
+        }
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

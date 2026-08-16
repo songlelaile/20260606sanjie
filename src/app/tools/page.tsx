@@ -14,6 +14,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { CopyAddress } from "@/components/tools/CopyAddress";
 import {
   DMP_AUTOMATION_DOWNLOAD_NAME,
+  DMP_AUTOMATION_NAME,
   DMP_AUTOMATION_VERSION
 } from "@/lib/dmp-product";
 import { getCurrentSession } from "@/lib/server-session";
@@ -38,7 +39,7 @@ const COLLECTOR = {
 };
 
 const DMP_AUTOMATION = {
-  name: "达摩盘 AI 自动化",
+  name: DMP_AUTOMATION_NAME,
   version: DMP_AUTOMATION_VERSION,
   zipHref: "/api/tools/dmp/download",
   downloadName: DMP_AUTOMATION_DOWNLOAD_NAME,
@@ -47,20 +48,20 @@ const DMP_AUTOMATION = {
 
 const DMP_DATA_GROUPS = [
   {
-    title: "总览与周期对标",
-    desc: "报告总览、对标总表、商品与成功品、周期汇总：按商品 ID 统一匹配主体与目标对手，补齐 30 日 GMV、日均成交、广告消耗、费比、全域 ROAS、付费 GMV 贡献率区间、GMV 峰值日和波动率。"
+    title: "打爆路径自动取数",
+    desc: "围绕主体商品与目标成功品，统一沉淀周期总览、日数据、渠道花费、一级/二级场景、成长阶段、基础指标和关键词样本。"
   },
   {
-    title: "日数据与渠道花费",
-    desc: "日 GMV 与费比、渠道花费：用同商品同周期 GMV 锚定每日走势，按天展示 GMV、五渠道消耗、日总消耗和日费比，并汇总内容、人群、全站、线索、关键词五类花费结构。"
+    title: "竞争态势店铺分析",
+    desc: "支持本店同时对标最多 3 家竞店，获取基础经营、付费/免费流量结构、一级与二级渠道以及各店独立人群画像。"
   },
   {
-    title: "场景与成长阶段",
-    desc: "一级场景、二级场景、成长阶段数据：按推广消耗逐层分配一级与二级场景花费，再结合点击和直接成交额区间计算 CPC、直接 ROI，并展示阶段 GMV 和花费；比率统一换算为百分比，小数保留 2 位。"
+    title: "统一官网 HTML 报告",
+    desc: "取数完成后自动保存到当前授权账号，并在新的浏览器窗口打开官网 HTML 报告；支持历史追溯、跨设备受控分享与匿名点击热区。"
   },
   {
-    title: "基础指标与关键词",
-    desc: "基础指标对比、关键词样本：对比点击、成交、转化、客单、访客、GMV、花费和费比；亿、万、千等量级区间会先换算为可计算数值，再参与 PPC、ROI 和汇总计算。"
+    title: "人工授权与品牌保护",
+    desc: "沿用管理员人工开通/续费机制，每次授权 30 天；报告仅允许所属官网账号查看，统一增加少壮AI自动化标题尾缀与轻水印。"
   }
 ];
 
@@ -70,16 +71,16 @@ const DMP_USAGE_STEPS = [
     body: "账号获得 30 天使用权限后下载 ZIP 并安装扩展；无需启动终端、Node.js 或本机服务，登录官网后即可使用云端数据能力。"
   },
   {
-    title: "填写对标商品",
-    body: "打开达摩盘 → 货品 → 打爆路径，填写本店主体商品 ID 和目标成功品 ID，确认两个 ID 不同后点击“一键运行”。"
+    title: "选择分析模式",
+    body: "在一体化面板选择“打爆路径”或“竞争态势·店铺”。打爆路径填写主体商品与成功品 ID；竞争态势可按顺序添加最多 3 家竞店。"
   },
   {
     title: "检查并补漏一次",
     body: "首次取数有缺口时点击一次“精准补抓缺失数据”。北京时间 0:00–10:00 若昨天消耗尚未产出，可在 10:00–24:00 重新获取。"
   },
   {
-    title: "管理与复盘报告",
-    body: "插件完成浏览器侧采集后，服务器统一解析并自动保存报告；可进入官网报告中心管理历史结果、在线查看和再次下载。"
+    title: "在线查看与复盘",
+    body: "插件完成采集后会自动保存报告并打开新的官网 HTML 报告窗口；可在报告中心管理历史结果、生成受控分享链接并追溯点击热区。"
   }
 ];
 
@@ -252,8 +253,8 @@ export default async function ToolsPage() {
             <h2>{DMP_AUTOMATION.name}</h2>
             <div className="tool-badges">
               <span className="tool-badge">v{DMP_AUTOMATION.version}</span>
-              <span className="tool-badge tool-badge-soft">过去 30 天自动取数</span>
-              <span className="tool-badge tool-badge-soft">11 张业务表</span>
+              <span className="tool-badge tool-badge-soft">打爆路径 + 竞争态势店铺</span>
+              <span className="tool-badge tool-badge-soft">自动打开官网 HTML</span>
               <span className="tool-badge tool-badge-soft">{DMP_AUTOMATION.platform}</span>
               <span className="tool-badge tool-badge-paid">付费工具 · 数据库授权</span>
               <span className={dmpAccess.allowed ? "tool-badge tool-badge-access" : "tool-badge tool-badge-locked"}>
@@ -285,7 +286,7 @@ export default async function ToolsPage() {
         </header>
 
         <p className="tool-lead">
-          用同一周期对比主体商品与目标成功品，快速看清 GMV 差距、广告投入、费比、渠道结构和投放场景，帮助经营团队判断增长机会、调整预算，并把每次结果沉淀为可在线查看和下载的历史报告。
+          一个扩展统一完成达摩盘打爆路径与竞争态势店铺分析。取数结束后自动保存并打开官网 HTML 报告，帮助经营团队查看经营差距、投放结构、渠道来源与人群画像；当前业务数据仅支持官网在线查看，暂不提供下载。
         </p>
 
         <div className="dmp-tool-capabilities">

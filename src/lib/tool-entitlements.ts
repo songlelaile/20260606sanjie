@@ -23,6 +23,17 @@ export const NO_DMP_AUTOMATION_ACCESS: ToolEntitlementAccess = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * 生成一次达摩盘授权的完整 30 天窗口。
+ * 起点只能是管理员点击“开通/续费”时的服务器时间，不能使用 User.createdAt。
+ */
+export function createDmpEntitlementWindow(now = new Date()) {
+  return {
+    grantedAt: now,
+    expiresAt: new Date(now.getTime() + DMP_AUTOMATION_ACCESS_DAYS * DAY_MS)
+  };
+}
+
 export function resolveToolEntitlementAccess(
   record: EntitlementRecord | null | undefined,
   now = new Date()
@@ -87,8 +98,8 @@ export async function setDmpAutomationEntitlement(input: {
   const user = await prisma.user.findUnique({ where: { id: input.userId }, select: { id: true } });
   if (!user) return { ok: false, error: "用户不存在", status: 404 };
 
-  const now = new Date();
-  const expiresAt = new Date(now.getTime() + DMP_AUTOMATION_ACCESS_DAYS * DAY_MS);
+  // 每次开通/续费都从本次操作时刻重新顺延 30 天；账号注册时间不参与计算。
+  const { grantedAt, expiresAt } = createDmpEntitlementWindow();
   const record = await prisma.toolEntitlement.upsert({
     where: {
       userId_toolCode: { userId: input.userId, toolCode: DMP_AUTOMATION_TOOL_CODE }
@@ -98,13 +109,13 @@ export async function setDmpAutomationEntitlement(input: {
       toolCode: DMP_AUTOMATION_TOOL_CODE,
       status: input.enabled ? "active" : "revoked",
       grantedBy: input.grantedBy,
-      grantedAt: now,
+      grantedAt,
       expiresAt: input.enabled ? expiresAt : null
     },
     update: {
       status: input.enabled ? "active" : "revoked",
       grantedBy: input.grantedBy,
-      ...(input.enabled ? { grantedAt: now, expiresAt } : {})
+      ...(input.enabled ? { grantedAt, expiresAt } : {})
     },
     select: { status: true, grantedAt: true, expiresAt: true }
   });

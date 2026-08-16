@@ -5,12 +5,17 @@ import { DmpReportWorkspace } from "@/components/tools/DmpReportWorkspace";
 import { getDmpReportAccess, listDmpBusinessReports } from "@/lib/dmp-report-store";
 
 export const metadata: Metadata = {
-  title: "打爆路径报告中心 · 三阶引擎"
+  title: "达摩盘一体化报告中心｜少壮AI自动化"
 };
 
 export const dynamic = "force-dynamic";
 
-export default async function DmpReportPage() {
+export default async function DmpReportPage({
+  searchParams
+}: {
+  searchParams: Promise<{ reportId?: string; view?: string }>;
+}) {
+  const query = await searchParams;
   const access = await getDmpReportAccess();
   if (!access) redirect("/tools?dmpAccess=paid");
   const reports = await listDmpBusinessReports(access);
@@ -18,11 +23,15 @@ export default async function DmpReportPage() {
   return (
     <>
       <PageHeader
-        eyebrow="DMP Growth Report"
-        title="打爆路径报告中心"
-        description="从达摩盘「货品 → 打爆路径」沉淀主体商品与成功品的增长对标报告，支持历史管理、在线查看和下载复盘。"
+        eyebrow="DMP Business Reports"
+        title="达摩盘一体化报告中心｜少壮AI自动化"
+        description="统一沉淀打爆路径与竞争态势分析结果，支持官网在线查看、跨设备受控分享、匿名点击热区和历史管理；当前暂不提供业务数据下载。"
       />
-      <DmpReportWorkspace initialReports={reports} />
+      <DmpReportWorkspace
+        initialReports={reports}
+        initialSelectedId={query.reportId ?? ""}
+        focusReport={query.view === "report"}
+      />
     </>
   );
 }

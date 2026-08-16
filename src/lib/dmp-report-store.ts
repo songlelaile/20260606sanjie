@@ -3,7 +3,8 @@ import type { Prisma } from "@prisma/client";
 import { parseSession, type Session } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
-  DMP_REPORT_TABLES,
+  dmpExpectedTableNames,
+  dmpReportKind,
   type DmpBusinessReportRecord,
   type DmpCanonicalReport,
   type DmpReportQuality,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/dmp-report-types";
 import { getCurrentSession } from "@/lib/server-session";
 import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
+import { withDmpAutomationBrand } from "@/lib/dmp-product";
 
 const MAX_REPORT_BYTES = 2 * 1024 * 1024;
 const MAX_TABLE_ROWS = 5_000;
@@ -58,14 +60,22 @@ export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanoni
   if (report.schema_version !== "3.0" || !validItemId(report.item_id) || !Array.isArray(report.tables)) {
     return { error: "报告结构不完整" };
   }
-  if (JSON.stringify(report.tables.map((table) => table?.name)) !== JSON.stringify(DMP_REPORT_TABLES)) {
+  const kind = dmpReportKind(report);
+  const expectedTables = dmpExpectedTableNames(kind);
+  if (JSON.stringify(report.tables.map((table) => table?.name)) !== JSON.stringify(expectedTables)) {
     return { error: "报告业务表不完整" };
   }
-  if (JSON.stringify(report).length > MAX_REPORT_BYTES) return { error: "报告内容超过保存上限" };
+  const competitorIds = kind === "competition"
+    ? [...new Set((Array.isArray(report.competitor_ids) ? report.competitor_ids : []).map(String).map((id) => id.trim()).filter(Boolean))]
+    : [];
+  if (kind === "competition" && (competitorIds.length < 1 || competitorIds.length > 3 || competitorIds.some((id) => !validItemId(id)))) {
+    return { error: "竞争态势报告的竞店 ID 无效" };
+  }
+  if (Buffer.byteLength(JSON.stringify(report), "utf8") > MAX_REPORT_BYTES) return { error: "报告内容超过保存上限" };
 
   const tables: DmpReportTableSnapshot[] = [];
   for (const candidate of report.tables) {
-    if (!candidate || !DMP_REPORT_TABLES.includes(candidate.name as DmpReportTableSnapshot["name"]) || !Array.isArray(candidate.columns) || !Array.isArray(candidate.rows)) {
+    if (!candidate || !expectedTables.includes(String(candidate.name)) || !Array.isArray(candidate.columns) || !Array.isArray(candidate.rows)) {
       return { error: "业务表结构无效" };
     }
     if (candidate.rows.length > MAX_TABLE_ROWS || candidate.columns.length === 0 || candidate.columns.length > 100) {
@@ -81,13 +91,17 @@ export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanoni
       if (cells.some((cell) => cell.length > MAX_CELL_LENGTH)) return { error: `业务表「${candidate.name}」单元格内容过长` };
       rows.push({ cells });
     }
-    tables.push({ name: candidate.name as DmpReportTableSnapshot["name"], columns, rows });
+    tables.push({ name: String(candidate.name), columns, rows });
   }
 
   return {
     report: {
       schema_version: "3.0",
-      title: String(report.title ?? "达摩盘打爆路径报告").slice(0, 200),
+      ...(kind === "competition" ? { report_type: "competition" as const, competitor_ids: competitorIds } : {}),
+      title: withDmpAutomationBrand(
+        report.title,
+        kind === "competition" ? "达摩盘竞争态势分析报告" : "达摩盘打爆路径报告"
+      ).slice(0, 200),
       item_id: String(report.item_id),
       period: String(report.period ?? "近30天").slice(0, 200),
       tables
@@ -115,6 +129,7 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
     if (!checked.report) return [];
     return [{
       id: row.id,
+      reportType: dmpReportKind(checked.report),
       subjectItemId: row.subjectItemId,
       competitorItemId: row.competitorItemId,
       period: row.period,
@@ -147,6 +162,7 @@ export async function saveDmpBusinessReport(input: {
   });
   return {
     id: row.id,
+    reportType: dmpReportKind(input.report),
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
@@ -174,6 +190,7 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
   if (!checked.report) return null;
   return {
     id: row.id,
+    reportType: dmpReportKind(checked.report),
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
@@ -192,4 +209,9 @@ export async function deleteDmpBusinessReport(access: DmpReportAccess, id: strin
 
 export function validItemId(value: unknown) {
   return /^\d{6,20}$/.test(String(value ?? ""));
+}
+
+export function parseDmpCompetitorIds(value: unknown) {
+  const source = Array.isArray(value) ? value : String(value ?? "").split(/[,，、;；\s]+/);
+  return [...new Set(source.map(String).map((item) => item.trim()).filter(Boolean))].slice(0, 4);
 }
