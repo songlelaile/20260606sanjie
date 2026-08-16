@@ -75,6 +75,100 @@ export interface DmpReportInteractionSummary {
   buckets: DmpReportHeatBucketSnapshot[];
 }
 
+export type DmpReportAnalyticsDays = 7 | 30 | 90;
+
+export interface DmpReportAnalyticsOverview {
+  totalShares: number;
+  activeShares: number;
+  activeSharesInRange: number;
+  reportCount: number;
+  sessionCount: number;
+  uniqueVisitors: number;
+  pageViews: number;
+  clickCount: number;
+  engagedSessions: number;
+  totalActiveSeconds: number;
+  averageActiveSeconds: number;
+  averageScrollDepth: number;
+  dataTruncated: boolean;
+}
+
+export interface DmpReportAnalyticsTrendRow {
+  date: string;
+  sessionCount: number;
+  uniqueVisitors: number;
+  pageViews: number;
+  clickCount: number;
+  engagedSessions: number;
+  activeSeconds: number;
+}
+
+export interface DmpReportAnalyticsSourceRow {
+  source: string;
+  medium: string;
+  campaign: string;
+  referrerHost: string;
+  sessionCount: number;
+  uniqueVisitors: number;
+  pageViews: number;
+  clickCount: number;
+  engagedSessions: number;
+  activeSeconds: number;
+}
+
+export interface DmpReportAnalyticsTopReport {
+  reportId: string;
+  subjectItemId: string;
+  competitorItemId: string;
+  period: string;
+  tenantId: string;
+  tenantName: string;
+  userId: string;
+  userName: string;
+  username: string;
+  shareCount: number;
+  sessionCount: number;
+  uniqueVisitors: number;
+  pageViews: number;
+  clickCount: number;
+  engagedSessions: number;
+  activeSeconds: number;
+  averageScrollDepth: number;
+  lastSeenAt: string | null;
+}
+
+export interface DmpReportAnalyticsRecentShare {
+  shareId: string;
+  reportId: string;
+  subjectItemId: string;
+  competitorItemId: string;
+  tenantId: string;
+  tenantName: string;
+  userId: string;
+  userName: string;
+  username: string;
+  createdAt: string;
+  revokedAt: string | null;
+  viewCount: number;
+  clickCount: number;
+  sessionCount: number;
+  lastViewedAt: string | null;
+  lastClickedAt: string | null;
+}
+
+export interface DmpReportManagementAnalytics {
+  days: DmpReportAnalyticsDays;
+  range: { from: string; to: string; timeZone: "Asia/Shanghai" };
+  overview: DmpReportAnalyticsOverview;
+  trend: DmpReportAnalyticsTrendRow[];
+  sources: DmpReportAnalyticsSourceRow[];
+  topReports: DmpReportAnalyticsTopReport[];
+  recentShares: DmpReportAnalyticsRecentShare[];
+  sections: Array<{ sectionKey: string; count: number }>;
+  topElements: Array<{ sectionKey: string; elementKey: string; count: number }>;
+  heatmapScope: "all_time";
+}
+
 export function dmpReportKind(report: Pick<DmpCanonicalReport, "report_type"> | null | undefined): DmpReportKind {
   return report?.report_type === "competition" ? "competition" : "growth";
 }

@@ -13,36 +13,36 @@ datasource db {
 }
 
 model Tenant {
-  id        String       @id @default(cuid())
-  name      String
-  slug      String       @unique
-  createdAt DateTime     @default(now())
-  users     User[]
-  invites   InviteCode[]
-  shops     Shop[]
-  workspace Workspace?
-  calcRun   CalcRun?
+  id         String              @id @default(cuid())
+  name       String
+  slug       String              @unique
+  createdAt  DateTime            @default(now())
+  users      User[]
+  invites    InviteCode[]
+  shops      Shop[]
+  workspace  Workspace?
+  calcRun    CalcRun?
   dmpReports DmpBusinessReport[]
 }
 
 model User {
-  id           String   @id @default(cuid())
-  tenantId     String
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  username     String   @unique
-  password     String
-  name         String
-  authRole     String   @default("tenant") // 登录权限：tenant | admin
-  role         String   @default("operator") // 管理视图角色：owner | admin | operator | viewer
-  email        String   @default("")
-  shopName     String   @default("")
-  status       String   @default("active")
-  createdAt    DateTime @default(now())
-  lastActiveAt DateTime @default(now())
-  gatewayWallet GatewayWallet?
-  gatewayApiKeys GatewayApiKey[]
-  gatewayOrders  GatewayOrder[]
-  gatewayUsages  GatewayUsage[]
+  id               String              @id @default(cuid())
+  tenantId         String
+  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  username         String              @unique
+  password         String
+  name             String
+  authRole         String              @default("tenant") // 登录权限：tenant | admin
+  role             String              @default("operator") // 管理视图角色：owner | admin | operator | viewer
+  email            String              @default("")
+  shopName         String              @default("")
+  status           String              @default("active")
+  createdAt        DateTime            @default(now())
+  lastActiveAt     DateTime            @default(now())
+  gatewayWallet    GatewayWallet?
+  gatewayApiKeys   GatewayApiKey[]
+  gatewayOrders    GatewayOrder[]
+  gatewayUsages    GatewayUsage[]
   toolEntitlements ToolEntitlement[]
   dmpReports       DmpBusinessReport[]
 
@@ -52,16 +52,16 @@ model User {
 // 按账号单独开通的付费工具权限。toolCode 使用稳定产品码，插件升级不要求重复授权；
 // revoked 记录保留授权/撤销痕迹，不通过删除行来表达未授权。
 model ToolEntitlement {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   toolCode  String
-  status    String   @default("active") // active | revoked
-  grantedBy String   @default("")
-  grantedAt DateTime @default(now())
+  status    String    @default("active") // active | revoked
+  grantedBy String    @default("")
+  grantedAt DateTime  @default(now())
   expiresAt DateTime?
-  note      String   @default("")
-  updatedAt DateTime @updatedAt
+  note      String    @default("")
+  updatedAt DateTime  @updatedAt
 
   @@unique([userId, toolCode])
   @@index([toolCode, status])
@@ -83,17 +83,17 @@ model InviteCode {
 }
 
 model Shop {
-  id          String          @id
-  tenantId    String
-  tenant      Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name        String
-  platform    String          @default("淘宝")
-  createdBy   String          @default("")
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  workspace   ShopWorkspace?
-  calcRun     ShopCalcRun?
-  shares      DashboardShare[]
+  id        String           @id
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  platform  String           @default("淘宝")
+  createdBy String           @default("")
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  workspace ShopWorkspace?
+  calcRun   ShopCalcRun?
+  shares    DashboardShare[]
 
   @@index([tenantId])
 }
@@ -165,54 +165,106 @@ model DashboardShare {
 }
 
 model DmpBusinessReport {
-  id               String   @id @default(cuid())
+  id               String           @id @default(cuid())
   tenantId         String
   userId           String
-  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   subjectItemId    String
   competitorItemId String
-  period           String   @default("")
-  quality          String   @default("complete")
-  sourceVersion    String   @default("")
+  period           String           @default("")
+  quality          String           @default("complete")
+  sourceVersion    String           @default("")
   report           Json
-  createdAt        DateTime @default(now())
+  createdAt        DateTime         @default(now())
   shares           DmpReportShare[]
 
   @@index([tenantId, userId, createdAt])
 }
 
-// 达摩盘业务报告的官网受控只读链接。打开时同时校验官网登录、付费权限、报告归属与高熵令牌。
-// 数据库只保存令牌哈希，原始令牌仅在创建时返回。
+// 达摩盘业务报告的官网公开只读链接。任何持有高熵令牌者均可读取，创建仍校验报告归属与付费权限。
+// 数据库只保存令牌哈希，原始令牌仅在创建时返回；管理员可随时撤销。
 model DmpReportShare {
-  id            String   @id @default(cuid())
+  id            String                  @id @default(cuid())
   reportId      String
-  report        DmpBusinessReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  tokenHash     String   @unique
-  viewCount     Int      @default(0)
-  clickCount    Int      @default(0)
+  report        DmpBusinessReport       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  tokenHash     String                  @unique
+  viewCount     Int                     @default(0)
+  clickCount    Int                     @default(0)
   lastViewedAt  DateTime?
   lastClickedAt DateTime?
-  createdAt     DateTime @default(now())
+  revokedAt     DateTime?
+  createdAt     DateTime                @default(now())
   heatBuckets   DmpReportHeatBucket[]
+  sessions      DmpReportShareSession[]
+  events        DmpReportShareEvent[]
 
   @@index([reportId, createdAt])
+  @@index([revokedAt, createdAt])
 }
 
 // 只保存匿名聚合坐标与元素键，不保存访客身份、IP、UA、Cookie 或单元格业务值。
 model DmpReportHeatBucket {
-  id         String   @id @default(cuid())
+  id         String         @id @default(cuid())
   shareId    String
   share      DmpReportShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
   sectionKey String
   elementKey String
   xBucket    Int
   yBucket    Int
-  count      Int      @default(0)
-  updatedAt  DateTime @updatedAt
+  count      Int            @default(0)
+  updatedAt  DateTime       @updatedAt
 
   @@unique([shareId, sectionKey, elementKey, xBucket, yBucket])
   @@index([shareId, sectionKey, count])
+}
+
+// 公开分享页的匿名会话聚合。浏览器随机标识进入数据库前按分享链接加盐哈希；
+// 不保存 IP、UA、Cookie、完整来源 URL 或报告业务内容。
+model DmpReportShareSession {
+  id             String         @id @default(cuid())
+  shareId        String
+  share          DmpReportShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  visitorHash    String
+  sessionHash    String
+  source         String         @default("")
+  medium         String         @default("")
+  campaign       String         @default("")
+  referrerHost   String         @default("")
+  pageViews      Int            @default(0)
+  clickCount     Int            @default(0)
+  activeSeconds  Int            @default(0)
+  maxScrollDepth Int            @default(0)
+  firstSeenAt    DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+
+  @@unique([shareId, sessionHash])
+  @@index([shareId, firstSeenAt])
+  @@index([shareId, visitorHash])
+  @@index([firstSeenAt])
+}
+
+// 只保存客户端事件编号/访客/会话的分享级哈希和低维聚合数值；不保存事件原文或业务内容。
+model DmpReportShareEvent {
+  id             String         @id @default(cuid())
+  shareId        String
+  share          DmpReportShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  eventHash      String
+  eventType      String
+  visitorHash    String
+  sessionHash    String
+  source         String         @default("")
+  medium         String         @default("")
+  campaign       String         @default("")
+  referrerHost   String         @default("")
+  count          Int            @default(0)
+  activeSeconds  Int            @default(0)
+  maxScrollDepth Int            @default(0)
+  createdAt      DateTime       @default(now())
+
+  @@unique([shareId, eventHash])
+  @@index([createdAt, eventType])
+  @@index([shareId, sessionHash, createdAt])
 }
 
 // 分日商品源指标（v2 时序底座）。date 存归一化 ISO 字符串(YYYY-MM-DD)，
@@ -244,12 +296,12 @@ model DailyProductMetric {
 
 // 分日推广宝贝指标（v2）。(tenantId, subjectId, date) 唯一，重传同日覆盖。
 model DailyPromotionMetric {
-  id          String @id @default(cuid())
+  id          String   @id @default(cuid())
   tenantId    String
-  shopId      String @default("")
+  shopId      String   @default("")
   subjectId   String
   date        String
-  subjectName String @default("")
+  subjectName String   @default("")
   impressions Int?
   clicks      Int?
   cost        Float?
@@ -262,22 +314,22 @@ model DailyPromotionMetric {
 
 // 分日人群指标（v2）。粒度 (date, planId, audienceName, subjectId)。
 model DailyAudienceMetric {
-  id                          String @id @default(cuid())
-  tenantId                    String
-  shopId                      String @default("")
-  date                        String
-  sceneId                     String @default("")
-  sceneName                   String @default("")
-  planId                      String
-  planName                    String @default("")
-  audienceName                String
-  subjectId                   String
-  subjectName                 String @default("")
-  clicks                      Int?
-  roi                         Float?
+  id                           String   @id @default(cuid())
+  tenantId                     String
+  shopId                       String   @default("")
+  date                         String
+  sceneId                      String   @default("")
+  sceneName                    String   @default("")
+  planId                       String
+  planName                     String   @default("")
+  audienceName                 String
+  subjectId                    String
+  subjectName                  String   @default("")
+  clicks                       Int?
+  roi                          Float?
   guidedPotentialCustomerRatio Float?
-  newCustomerRatio            Float?
-  updatedAt                   DateTime @updatedAt
+  newCustomerRatio             Float?
+  updatedAt                    DateTime @updatedAt
 
   @@unique([tenantId, shopId, date, planId, audienceName, subjectId])
   @@index([tenantId, shopId, date])
@@ -352,24 +404,24 @@ model GatewayOrder {
 
 // 网关调用流水。先按模型基础价格估算并扣费，后续可替换成上游返回 token 结算。
 model GatewayUsage {
-  id               String        @id @default(cuid())
+  id               String         @id @default(cuid())
   userId           String
-  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   apiKeyId         String?
   apiKey           GatewayApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
-  requestId        String        @default("")
+  requestId        String         @default("")
   endpoint         String
   provider         String
   model            String
-  promptTokens     Int           @default(0)
-  completionTokens Int           @default(0)
-  totalTokens      Int           @default(0)
-  imageCount       Int           @default(0)
-  costCents        Int           @default(0)
-  status           String        @default("ok")
-  error            String        @default("")
-  createdAt        DateTime      @default(now())
-  metadata         Json          @default("{}")
+  promptTokens     Int            @default(0)
+  completionTokens Int            @default(0)
+  totalTokens      Int            @default(0)
+  imageCount       Int            @default(0)
+  costCents        Int            @default(0)
+  status           String         @default("ok")
+  error            String         @default("")
+  createdAt        DateTime       @default(now())
+  metadata         Json           @default("{}")
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])

@@ -129,7 +129,11 @@
   }
 
   function isPercentMetric(metric) {
-    return /比|率|变化|相对|CTR|贡献|百分位/i.test(String(metric || ""));
+    const semantic = String(metric || "");
+    if (/排名变化/.test(semantic)) return false;
+    if (/变化|变动|相对|环比|同比|差异|提升|下降/.test(semantic)) return true;
+    if (/投入产出比|投产比|ROI|ROAS/i.test(semantic)) return false;
+    return /比|率|变化|相对|CTR|贡献|百分位/i.test(semantic);
   }
 
   function fixedTwo(value) {

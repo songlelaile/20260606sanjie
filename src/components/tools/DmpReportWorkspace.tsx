@@ -1,20 +1,18 @@
 "use client";
 
 import {
-  BarChart3,
   CheckCircle2,
   Copy,
   FileSpreadsheet,
-  MousePointerClick,
   RefreshCw,
   Search,
   Share2,
   Trash2
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import { canonicalToDmpReport, type DmpCell, type DmpReport, type DmpReportTable } from "@/lib/dmp-report-import";
 import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
-import type { DmpBusinessReportRecord, DmpReportInteractionSummary } from "@/lib/dmp-report-types";
+import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import { DmpBrandWatermark } from "@/components/tools/DmpBrandWatermark";
 
 const PREVIEW_ROW_LIMIT = 5_000;
@@ -75,9 +73,6 @@ export function DmpReportWorkspace({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [sharingId, setSharingId] = useState("");
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
-  const [analytics, setAnalytics] = useState<DmpReportInteractionSummary | null>(null);
-  const [heatSection, setHeatSection] = useState("");
   const [notice, setNotice] = useState(
     initialReports.length ? `已保存 ${initialReports.length} 份历史报告` : "插件生成报告后会自动保存到这里"
   );
@@ -86,7 +81,6 @@ export function DmpReportWorkspace({
     () => reports.find((record) => record.id === selectedId) ?? reports[0] ?? null,
     [reports, selectedId]
   );
-  const selectedReportId = selectedRecord?.id ?? "";
   const report = useMemo(() => reportFromRecord(selectedRecord), [selectedRecord]);
   const activeTable = useMemo(() => {
     if (!report) return null;
@@ -123,36 +117,6 @@ export function DmpReportWorkspace({
     })));
   }, [report, selectedRecord]);
 
-  const refreshAnalytics = useCallback(async (reportId: string) => {
-    if (!reportId) return;
-    setAnalyticsLoading(true);
-    try {
-      const response = await fetch(`/api/dmp-report-shares?reportId=${encodeURIComponent(reportId)}`, { cache: "no-store" });
-      const result = await response.json().catch(() => null) as { data?: { analytics?: DmpReportInteractionSummary }; error?: string } | null;
-      if (!response.ok) throw new Error(result?.error ?? "分享数据读取失败");
-      setAnalytics(result?.data?.analytics ?? null);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "分享数据读取失败");
-    } finally {
-      setAnalyticsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!selectedReportId) {
-      setAnalytics(null);
-      setHeatSection("");
-      return;
-    }
-    void refreshAnalytics(selectedReportId);
-  }, [refreshAnalytics, selectedReportId]);
-
-  useEffect(() => {
-    const sections = analytics?.sections ?? [];
-    if (!sections.length) setHeatSection("");
-    else if (!sections.some((section) => section.sectionKey === heatSection)) setHeatSection(sections[0].sectionKey);
-  }, [analytics, heatSection]);
-
   function selectReport(record: DmpBusinessReportRecord) {
     const nextReport = reportFromRecord(record);
     setSelectedId(record.id);
@@ -171,8 +135,7 @@ export function DmpReportWorkspace({
       const result = await response.json().catch(() => null) as { data?: { share?: { url?: string } }; error?: string } | null;
       if (!response.ok || !result?.data?.share?.url) throw new Error(result?.error ?? "分享链接生成失败");
       await copyText(result.data.share.url);
-      setNotice("官网报告链接已复制；其他设备需先登录报告所属的同一授权账号");
-      await refreshAnalytics(record.id);
+      setNotice("公开只读报告链接已复制；任何拿到链接的人均可直接打开");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "分享链接生成失败");
     } finally {
@@ -240,8 +203,8 @@ export function DmpReportWorkspace({
 
       <div className="dmp-business-strip">
         <div><strong>双报告归档</strong><span>统一保存打爆路径与竞争态势分析结果。</span></div>
-        <div><strong>官网受控分享</strong><span>链接只能在官网由报告所属的同一授权账号打开。</span></div>
-        <div><strong>点击行为复盘</strong><span>查看匿名点击次数、模块热区和高频点击元素。</span></div>
+        <div><strong>公开只读分享</strong><span>任何拿到链接的人无需登录即可在官网查看。</span></div>
+        <div><strong>管理员传播分析</strong><span>传播来源、阅读深度与关注度仅在管理员后台查看。</span></div>
       </div>
 
       <section className="dmp-history-section">
@@ -249,7 +212,7 @@ export function DmpReportWorkspace({
           <div>
             <span>REPORT HISTORY</span>
             <h2>历史生成报告</h2>
-            <p>{notice} · 点击报告卡片切换预览与热区统计</p>
+            <p>{notice} · 点击报告卡片切换在线预览</p>
           </div>
           <strong>{reports.length} 份</strong>
         </header>
@@ -309,14 +272,6 @@ export function DmpReportWorkspace({
             <button type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}><Copy size={14} /> 复制只读链接</button>
           </div>
 
-          <DmpShareAnalytics
-            analytics={analytics}
-            loading={analyticsLoading}
-            heatSection={heatSection}
-            setHeatSection={setHeatSection}
-            onRefresh={() => void refreshAnalytics(selectedRecord.id)}
-          />
-
           <div className="dmp-table-tabs">
             {report.tables.map((table) => (
               <button
@@ -333,67 +288,6 @@ export function DmpReportWorkspace({
           {activeTable ? <ReportTable table={activeTable} query={query} setQuery={setQuery} visibleRows={visibleRows} /> : null}
         </>
       ) : null}
-    </section>
-  );
-}
-
-function DmpShareAnalytics({
-  analytics,
-  loading,
-  heatSection,
-  setHeatSection,
-  onRefresh
-}: {
-  analytics: DmpReportInteractionSummary | null;
-  loading: boolean;
-  heatSection: string;
-  setHeatSection: (value: string) => void;
-  onRefresh: () => void;
-}) {
-  const buckets = analytics?.buckets.filter((bucket) => bucket.sectionKey === heatSection) ?? [];
-  const grid = new Map<string, number>();
-  buckets.forEach((bucket) => {
-    const key = `${bucket.xBucket}:${bucket.yBucket}`;
-    grid.set(key, (grid.get(key) ?? 0) + bucket.count);
-  });
-  const max = Math.max(1, ...grid.values());
-  const topElements = (analytics?.topElements ?? []).filter((item) => !heatSection || item.sectionKey === heatSection).slice(0, 8);
-
-  return (
-    <section className="dmp-share-analytics">
-      <header>
-        <div><strong><BarChart3 size={15} /> 分享行为与点击热区</strong><span>仅统计官网登录后的匿名聚合行为；不记录 IP、设备信息或业务单元格内容</span></div>
-        <button type="button" onClick={onRefresh} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={14} /> 刷新</button>
-      </header>
-      <div className="dmp-share-stats">
-        <div><span>分享链接</span><strong>{analytics?.shareCount ?? 0}</strong></div>
-        <div><span>有效打开</span><strong>{analytics?.viewCount ?? 0}</strong></div>
-        <div><span>点击次数</span><strong>{analytics?.clickCount ?? 0}</strong></div>
-      </div>
-      <div className="dmp-heatmap-layout">
-        <div>
-          <div className="dmp-heatmap-toolbar">
-            <MousePointerClick size={14} />
-            <select value={heatSection} onChange={(event) => setHeatSection(event.target.value)} disabled={!analytics?.sections.length}>
-              {!analytics?.sections.length ? <option value="">尚无点击</option> : null}
-              {analytics?.sections.map((section) => <option key={section.sectionKey} value={section.sectionKey}>{section.sectionKey}（{section.count}）</option>)}
-            </select>
-          </div>
-          <div className="dmp-heatmap" aria-label={`${heatSection || "报告"}点击热区`}>
-            {Array.from({ length: 400 }, (_, index) => {
-              const x = index % 20;
-              const y = Math.floor(index / 20);
-              const count = grid.get(`${x}:${y}`) ?? 0;
-              const opacity = count ? Math.min(.95, .12 + count / max * .83) : .02;
-              return <i key={index} title={count ? `${count} 次点击` : undefined} style={{ "--heat": opacity } as CSSProperties} />;
-            })}
-          </div>
-        </div>
-        <div className="dmp-top-clicks">
-          <h4>高频点击元素</h4>
-          {topElements.length ? <ol>{topElements.map((item) => <li key={`${item.sectionKey}:${item.elementKey}`}>{item.elementKey}<b>{item.count}</b></li>)}</ol> : <span>分享页产生点击后会显示在这里。</span>}
-        </div>
-      </div>
     </section>
   );
 }

@@ -65,8 +65,7 @@
 }
 
 .dmp-focus-report .dmp-business-strip,
-.dmp-focus-report .dmp-history-section,
-.dmp-focus-report .dmp-share-analytics {
+.dmp-focus-report .dmp-history-section {
   display: none;
 }
 
@@ -865,7 +864,7 @@
   .dmp-report-meta button { margin-left: 0; }
 }
 
-/* ─────────────── 达摩盘官网受控报告与匿名热区 ─────────────── */
+/* ─────────────── 达摩盘官网公开只读报告 ─────────────── */
 .dmp-shared-page {
   background:
     radial-gradient(circle at 88% 0, rgba(127, 175, 114, 0.18), transparent 34rem),
@@ -1026,6 +1025,16 @@
   font-size: 15px;
 }
 
+.dmp-shared-privacy-note {
+  background: #e7f4ef;
+  border: 1px solid #bfdcd0;
+  border-radius: 10px;
+  color: #43685d;
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 11px 14px;
+}
+
 .dmp-shared-section {
   background: #fff;
   border: 1px solid #d8e7e0;
@@ -1108,115 +1117,9 @@
   text-align: center;
 }
 
-.dmp-share-analytics {
-  background: #0a1709;
-  border: 1px solid #314a25;
-  border-radius: 10px;
-  margin: 0 24px 18px;
-  overflow: hidden;
-}
-
-.dmp-share-analytics > header {
-  align-items: center;
-  border-bottom: 1px solid #304624;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-  padding: 13px 15px;
-}
-
-.dmp-share-analytics > header strong { color: #e8f8d8; }
-.dmp-share-analytics > header span { color: #829875; font-size: 11px; }
-.dmp-share-analytics > header > div { display: grid; gap: 3px; }
-.dmp-share-analytics > header strong { align-items: center; display: flex; gap: 6px; }
-.dmp-share-analytics > header button {
-  align-items: center;
-  background: #173218;
-  border: 1px solid #3b5e31;
-  border-radius: 6px;
-  color: #d9f0cc;
-  display: inline-flex;
-  font: inherit;
-  gap: 5px;
-  padding: 6px 9px;
-}
-
-.dmp-share-stats {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 12px 14px;
-}
-
-.dmp-share-stats > div {
-  background: #10200d;
-  border: 1px solid #2e4522;
-  border-radius: 7px;
-  display: grid;
-  gap: 4px;
-  padding: 10px;
-}
-
-.dmp-share-stats span { color: #809574; font-size: 10px; }
-.dmp-share-stats strong { color: #dff1c9; font-size: 19px; }
-
-.dmp-heatmap-layout {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(280px, 1fr) minmax(220px, .42fr);
-  padding: 0 14px 14px;
-}
-
-.dmp-heatmap-toolbar {
-  align-items: center;
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.dmp-heatmap-toolbar select {
-  background: #0b1608;
-  border: 1px solid #40572f;
-  border-radius: 6px;
-  color: #d7e9c6;
-  min-height: 32px;
-  padding: 0 8px;
-}
-
-.dmp-heatmap {
-  aspect-ratio: 2 / 1;
-  background: #071006;
-  border: 1px solid #2f4423;
-  border-radius: 8px;
-  display: grid;
-  gap: 1px;
-  grid-template-columns: repeat(20, minmax(0, 1fr));
-  overflow: hidden;
-  padding: 1px;
-}
-
-.dmp-heatmap i {
-  background: rgba(174, 209, 84, var(--heat, .02));
-  min-height: 2px;
-}
-
-.dmp-top-clicks {
-  background: #0c1a0a;
-  border: 1px solid #2d4322;
-  border-radius: 8px;
-  padding: 10px;
-}
-
-.dmp-top-clicks h4 { color: #d9ebc8; margin: 0 0 8px; }
-.dmp-top-clicks ol { color: #9eb191; margin: 0; padding-left: 22px; }
-.dmp-top-clicks li { font-size: 11px; line-height: 1.7; }
-.dmp-top-clicks b { color: #e8f6d8; float: right; }
-
 @media (max-width: 840px) {
   .dmp-shared-hero-inner { padding: 30px 18px 26px; }
   .dmp-shared-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dmp-heatmap-layout { grid-template-columns: 1fr; }
-  .dmp-share-analytics { margin-inline: 14px; }
 }
 
 @media print {
@@ -3959,6 +3862,212 @@ button.kpi:hover {
 .management-console {
   display: grid;
   gap: 20px;
+}
+
+/* ─────────────── 管理员 / 达摩盘报告传播分析 ─────────────── */
+.dmp-admin-analytics {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.dmp-admin-analytics-head {
+  align-items: flex-start;
+  background:
+    radial-gradient(circle at 96% -30%, rgba(127, 175, 114, .2), transparent 42%),
+    var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding: 18px 20px;
+}
+
+.dmp-admin-analytics-head h2 {
+  color: var(--ink);
+  font-size: 22px;
+  margin: 5px 0 6px;
+}
+
+.dmp-admin-analytics-head p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 780px;
+}
+
+.dmp-admin-range {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.dmp-admin-range button,
+.dmp-admin-analytics-state button {
+  align-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  display: inline-flex;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 11px;
+}
+
+.dmp-admin-range button.active {
+  background: var(--brand);
+  border-color: #caa34d;
+  color: #172007;
+}
+
+.dmp-admin-range button:hover:not(:disabled),
+.dmp-admin-analytics-state button:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--ink);
+}
+
+.dmp-admin-analytics-state {
+  align-items: center;
+  background: var(--surface);
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+  min-height: 190px;
+  padding: 28px;
+  text-align: center;
+}
+
+.dmp-admin-analytics-state strong { color: var(--ink); }
+.dmp-admin-analytics-state span { font-size: 12px; }
+.dmp-admin-analytics-state.error { border-color: rgba(239, 124, 103, .65); color: var(--bad); }
+
+.dmp-admin-kpis {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.dmp-admin-kpis > div {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid #7faf72;
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 13px;
+}
+
+.dmp-admin-kpis span {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 11px;
+  gap: 6px;
+}
+
+.dmp-admin-kpis strong {
+  color: #fff4ce;
+  font-size: clamp(17px, 2vw, 23px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dmp-admin-data-note {
+  background: rgba(243, 199, 96, .08);
+  border: 1px solid rgba(243, 199, 96, .35);
+  border-radius: 8px;
+  color: #d8c88e;
+  font-size: 12px;
+  margin: 0;
+  padding: 9px 12px;
+}
+
+.dmp-admin-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.dmp-admin-card > header {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 11px 15px;
+}
+
+.dmp-admin-card > header > div { display: grid; gap: 3px; }
+.dmp-admin-card > header strong { color: var(--ink); font-size: 14px; }
+.dmp-admin-card > header span { color: var(--muted); font-size: 11px; }
+
+.dmp-admin-analytics-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dmp-admin-table { min-width: 560px; }
+.dmp-admin-table td > span { color: var(--muted); display: block; font-size: 11px; margin-top: 3px; }
+.dmp-admin-table td > strong { color: var(--ink); }
+.dmp-share-link-table { min-width: 1120px; }
+.dmp-share-link-table .danger-outline-button { min-height: 30px; padding: 0 9px; }
+
+.dmp-admin-trend-wrap { padding: 14px 16px 12px; }
+.dmp-admin-trend-legend { display: flex; gap: 16px; margin-bottom: 9px; }
+.dmp-admin-trend-legend span { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 5px; }
+.dmp-admin-trend-legend span::before { border-radius: 2px; content: ""; height: 8px; width: 8px; }
+.dmp-admin-trend-legend .pv::before, .dmp-admin-trend-bars .pv { background: #f6c65f; }
+.dmp-admin-trend-legend .uv::before, .dmp-admin-trend-bars .uv { background: #7faf72; }
+.dmp-admin-trend-legend .sessions::before, .dmp-admin-trend-bars .sessions { background: #47b8a3; }
+
+.dmp-admin-trend {
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 3px;
+  min-width: 620px;
+  overflow: hidden;
+}
+
+.dmp-admin-trend-wrap { overflow-x: auto; }
+.dmp-admin-trend-day { display: grid; flex: 1 0 18px; gap: 4px; min-width: 18px; }
+.dmp-admin-trend-bars { align-items: flex-end; display: flex; gap: 1px; height: 170px; justify-content: center; }
+.dmp-admin-trend-bars i { border-radius: 2px 2px 0 0; display: block; min-height: 0; opacity: .9; width: 28%; }
+.dmp-admin-trend-day > span { color: var(--muted); font-size: 9px; height: 24px; overflow: visible; text-align: center; white-space: nowrap; }
+.dmp-admin-chart-empty { color: var(--muted); font-size: 12px; padding: 46px 20px; text-align: center; }
+
+@media (max-width: 1280px) {
+  .dmp-admin-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .dmp-admin-analytics-head { flex-direction: column; }
+  .dmp-admin-range { justify-content: flex-start; }
+  .dmp-admin-analytics-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .dmp-admin-analytics-head { padding: 15px; }
+  .dmp-admin-range { width: 100%; }
+  .dmp-admin-range button { flex: 1 1 70px; justify-content: center; }
+  .dmp-admin-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .visually-hidden {

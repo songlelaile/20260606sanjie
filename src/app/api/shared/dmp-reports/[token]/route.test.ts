@@ -1,55 +1,113 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getDmpReportAccess: vi.fn(),
-  getDmpSharedReport: vi.fn(),
-  recordView: vi.fn(),
-  recordClicks: vi.fn()
+  recordEvent: vi.fn()
 }));
 
-vi.mock("@/lib/dmp-report-store", () => ({ getDmpReportAccess: mocks.getDmpReportAccess }));
 vi.mock("@/lib/dmp-report-share", () => ({
-  getDmpSharedReport: mocks.getDmpSharedReport,
-  recordDmpSharedReportView: mocks.recordView,
-  recordDmpSharedReportClicks: mocks.recordClicks
+  recordDmpPublicShareEvent: mocks.recordEvent
 }));
 
-import { GET, POST } from "./route";
+import { GET, OPTIONS, POST } from "./route";
 
-const ACCESS = { userId: "owner-a", tenantId: "tenant-a" };
 const TOKEN = "a".repeat(64);
 const CONTEXT = { params: Promise.resolve({ token: TOKEN }) };
+const IDENTITY = {
+  eventId: "event-1234567890abcdef",
+  visitorId: "visitor-1234567890abcdef",
+  sessionId: "session-1234567890abcdef"
+};
 
-describe("authenticated DMP shared report API", () => {
+function eventRequest(body: unknown, headers: Record<string, string> = {}) {
+  return new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body)
+  });
+}
+
+describe("public DMP shared report interaction API", () => {
   beforeEach(() => {
-    Object.values(mocks).forEach((mock) => mock.mockReset());
+    mocks.recordEvent.mockReset();
   });
 
-  it("requires the official-site paid account before reading a report", async () => {
-    mocks.getDmpReportAccess.mockResolvedValue(null);
-    const response = await GET(new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`), CONTEXT);
-    expect(response.status).toBe(401);
-    expect(mocks.getDmpSharedReport).not.toHaveBeenCalled();
+  it("never exposes the complete report JSON through GET", async () => {
+    const response = GET();
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST, OPTIONS");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(mocks.recordEvent).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the token does not belong to the logged-in account", async () => {
-    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
-    mocks.getDmpSharedReport.mockResolvedValue(null);
-    const response = await GET(new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`), CONTEXT);
-    expect(response.status).toBe(404);
-    expect(mocks.getDmpSharedReport).toHaveBeenCalledWith(ACCESS, TOKEN);
+  it("advertises only the anonymous event methods", () => {
+    const response = OPTIONS();
+    expect(response.status).toBe(204);
+    expect(response.headers.get("allow")).toBe("POST, OPTIONS");
   });
 
-  it("records only normalized interaction payloads after the account check", async () => {
-    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
-    mocks.recordClicks.mockResolvedValue({ accepted: 2 });
-    const events = [{ sectionKey: "hero", elementKey: "copy-link", x: 0.2, y: 0.3 }];
-    const response = await POST(new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "click", events })
+  it("accepts a normalized anonymous view without a website session", async () => {
+    mocks.recordEvent.mockResolvedValue({ accepted: 1 });
+    const response = await POST(eventRequest({
+      type: "view",
+      ...IDENTITY,
+      sourceDomain: "https://weixin.qq.com/private/path",
+      utmSource: "wechat"
     }), CONTEXT);
     expect(response.status).toBe(200);
-    expect(mocks.recordClicks).toHaveBeenCalledWith(ACCESS, TOKEN, events);
+    expect(await response.json()).toEqual({ data: { accepted: 1 } });
+    expect(mocks.recordEvent).toHaveBeenCalledWith(TOKEN, {
+      type: "view",
+      ...IDENTITY,
+      source: "wechat",
+      medium: "",
+      campaign: "",
+      referrerHost: "weixin.qq.com"
+    });
+  });
+
+  it("returns the same 404 for an invalid, missing, or revoked share token", async () => {
+    mocks.recordEvent.mockResolvedValue(null);
+    const response = await POST(eventRequest({ type: "view", ...IDENTITY }), CONTEXT);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "分享报告不存在或已失效" });
+  });
+
+  it("rejects unsupported or incomplete public events before touching storage", async () => {
+    const response = await POST(eventRequest({ type: "download", ...IDENTITY }), CONTEXT);
+    expect(response.status).toBe(400);
+    expect(mocks.recordEvent).not.toHaveBeenCalled();
+  });
+
+  it("rejects event bodies over 64KB using the declared or actual byte size", async () => {
+    const declared = await POST(eventRequest(
+      { type: "view", ...IDENTITY },
+      { "content-length": String(64 * 1024 + 1) }
+    ), CONTEXT);
+    expect(declared.status).toBe(413);
+
+    const actual = await POST(eventRequest({
+      type: "view",
+      ...IDENTITY,
+      padding: "x".repeat(64 * 1024)
+    }), CONTEXT);
+    expect(actual.status).toBe(413);
+    expect(mocks.recordEvent).not.toHaveBeenCalled();
+  });
+
+  it("requires JSON and rejects malformed JSON", async () => {
+    const wrongType = await POST(new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`, {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "view"
+    }), CONTEXT);
+    expect(wrongType.status).toBe(415);
+
+    const malformed = await POST(new Request(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{"
+    }), CONTEXT);
+    expect(malformed.status).toBe(400);
+    expect(mocks.recordEvent).not.toHaveBeenCalled();
   });
 });

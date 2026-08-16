@@ -23,24 +23,60 @@ describe("DMP shared report middleware", () => {
     mocks.canAccess.mockReset();
   });
 
-  it("sends a logged-out report viewer to the official login and preserves only the report path", async () => {
+  it.each(["GET", "HEAD"])("allows anonymous %s access to an exact high-entropy report path", async (method) => {
     mocks.parseSession.mockResolvedValue(null);
-    const response = await middleware(new NextRequest(`https://shaozhuangai.com/shared/dmp-reports/${TOKEN}`));
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toBe(`https://shaozhuangai.com/login?returnTo=%2Fshared%2Fdmp-reports%2F${TOKEN}`);
+    const response = await middleware(new NextRequest(`https://shaozhuangai.com/shared/dmp-reports/${TOKEN}`, { method }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(mocks.parseSession).not.toHaveBeenCalled();
   });
 
-  it("does not expose the shared report interaction API without a website session", async () => {
+  it("allows only read semantics on the public report page", async () => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(`https://shaozhuangai.com/shared/dmp-reports/${TOKEN}`, { method: "POST" }));
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("GET, HEAD");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-robots-tag")).toBe("noindex, nofollow");
+    expect(mocks.parseSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["POST", "OPTIONS"])("allows anonymous %s requests to the exact interaction endpoint", async (method) => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`, { method }));
+    expect(response.status).toBe(200);
+    expect(mocks.parseSession).not.toHaveBeenCalled();
+  });
+
+  it("does not expose the complete report JSON through an anonymous API GET", async () => {
     mocks.parseSession.mockResolvedValue(null);
     const response = await middleware(new NextRequest(`https://shaozhuangai.com/api/shared/dmp-reports/${TOKEN}`));
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST, OPTIONS");
+    expect(mocks.parseSession).not.toHaveBeenCalled();
   });
 
-  it("allows an authenticated role to continue to the report owner check", async () => {
-    mocks.parseSession.mockResolvedValue({ username: "owner", name: "Owner", role: "tenant", tenantId: "tenant-a" });
-    mocks.canAccess.mockReturnValue(true);
-    const response = await middleware(new NextRequest(`https://shaozhuangai.com/shared/dmp-reports/${TOKEN}`));
-    expect(response.status).toBe(200);
-    expect(mocks.canAccess).toHaveBeenCalledWith("tenant", `/shared/dmp-reports/${TOKEN}`);
+  it.each([
+    `/shared/dmp-reports/${"a".repeat(63)}`,
+    `/shared/dmp-reports/${TOKEN}/extra`,
+    `/shared/dmp-reports/not-a-token`
+  ])("keeps malformed report path %s behind page authentication", async (pathname) => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(`https://shaozhuangai.com${pathname}`));
+    expect(response.status).toBe(307);
+    expect(mocks.parseSession).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    `/api/shared/dmp-reports/${"a".repeat(63)}`,
+    `/api/shared/dmp-reports/${TOKEN}/extra`,
+    `/api/shared/dmp-reports/not-a-token`
+  ])("keeps malformed interaction path %s behind API authentication", async (pathname) => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(`https://shaozhuangai.com${pathname}`, { method: "POST" }));
+    expect(response.status).toBe(401);
+    expect(mocks.parseSession).toHaveBeenCalledOnce();
   });
 });

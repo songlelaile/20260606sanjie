@@ -7,7 +7,7 @@ EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 DMP_VERSION="2.1.2"
-DMP_ZIP_SHA256="3ce8b53cb4c7595cdcbe4dddc49fc5a50f821d4b62629a77c6e29688f8511f06"
+DMP_ZIP_SHA256="e6c242ed60e52cf4e004c7b529fe36afdc4906edb0fe185149a79f96657659af"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -67,16 +67,20 @@ for file in \
   src/app/api/dmp-reports/route.ts \
   src/app/api/dmp-report-shares/route.ts \
   src/app/api/shared/dmp-reports/[token]/route.ts \
+  src/app/api/management/dmp-report-share-analytics/route.ts \
   src/app/shared/dmp-reports/[token]/page.tsx \
   src/app/api/dmp-runtime/[action]/route.ts \
   src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpBrandWatermark.tsx \
   src/components/tools/DmpReportWorkspace.tsx \
   src/components/tools/DmpSharedReportClient.tsx \
+  src/components/management/ManagementConsole.tsx \
+  src/components/management/DmpShareAnalyticsPanel.tsx \
   src/lib/dmp-product.ts \
   src/lib/dmp-report-format.ts \
   src/lib/dmp-report-export.ts \
   src/lib/dmp-report-store.ts \
+  src/lib/dmp-public-origin.ts \
   src/lib/dmp-report-share.ts \
   src/lib/dmp-report-share-events.ts \
   src/lib/dmp-report-share-path.ts \
@@ -103,9 +107,13 @@ require_fixed "model ToolEntitlement {" prisma/schema.prisma "缺少付费工具
 require_fixed "model DmpBusinessReport {" prisma/schema.prisma "缺少达摩盘历史报告模型"
 require_fixed "model DmpReportShare {" prisma/schema.prisma "缺少达摩盘官网分享模型"
 require_fixed "model DmpReportHeatBucket {" prisma/schema.prisma "缺少达摩盘匿名点击热区模型"
+require_fixed "model DmpReportShareSession {" prisma/schema.prisma "缺少达摩盘匿名访问会话模型"
+require_fixed "model DmpReportShareEvent {" prisma/schema.prisma "缺少达摩盘匿名事件幂等模型"
+require_fixed "revokedAt" prisma/schema.prisma "达摩盘公开链接缺少管理员撤销字段"
 require_file "prisma/migrations/20260815001500_tool_entitlements/migration.sql"
 require_file "prisma/migrations/20260815160000_add_dmp_business_reports/migration.sql"
 require_file "prisma/migrations/20260816203000_add_dmp_report_sharing/migration.sql"
+require_file "prisma/migrations/20260817090000_public_dmp_share_analytics/migration.sql"
 
 # 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
@@ -133,7 +141,10 @@ forbid_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达�
 require_fixed "达摩盘 → 打爆路径 / 竞争态势分析" src/components/tools/DmpReportWorkspace.tsx "达摩盘双报告使用路径不正确"
 require_fixed "历史生成报告" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少历史管理"
 require_fixed "复制分享链接" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少官网分享入口"
-require_fixed "分享行为与点击热区" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少点击热区"
+require_fixed "管理员传播分析" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少管理员分析去向说明"
+forbid_fixed "分享行为与点击热区" src/components/tools/DmpReportWorkspace.tsx "普通达摩盘报告中心仍暴露分享点击分析"
+forbid_fixed "DmpReportInteractionSummary" src/components/tools/DmpReportWorkspace.tsx "普通达摩盘报告中心仍加载分享分析类型"
+forbid_fixed "/api/dmp-report-shares?reportId=" src/components/tools/DmpReportWorkspace.tsx "普通达摩盘报告中心仍请求分享分析数据"
 require_fixed "formatDmpCell" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心未统一两位小数展示"
 require_fixed '/比|率|变化|相对|CTR|贡献|百分位/i' src/lib/dmp-report-format.ts "达摩盘比率字段未统一换算为百分比"
 forbid_fixed "JSON 工程" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心仍展示工程信息"
@@ -147,15 +158,31 @@ require_fixed "DmpBrandWatermark" src/app/shared/dmp-reports/[token]/page.tsx "�
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
 require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
 require_fixed 'pathname.startsWith("/api/dmp-report-shares")' src/middleware.ts "达摩盘插件分享接口未绕过页面中间件"
-forbid_fixed 'pathname.startsWith("/api/shared/dmp-reports")' src/middleware.ts "达摩盘报告查看接口被错误公开"
+require_fixed 'const PUBLIC_DMP_REPORT_PATH = /^\/shared\/dmp-reports\/[a-f0-9]{64}$/i;' src/middleware.ts "达摩盘公开报告页未按精确高熵令牌路径放行"
+require_fixed 'const PUBLIC_DMP_REPORT_EVENTS_PATH = /^\/api\/shared\/dmp-reports\/[a-f0-9]{64}$/i;' src/middleware.ts "达摩盘公开事件接口未按精确高熵令牌路径放行"
+require_fixed 'request.method !== "GET" && request.method !== "HEAD"' src/middleware.ts "达摩盘公开报告页未限制为 GET/HEAD"
+require_fixed 'request.method !== "POST" && request.method !== "OPTIONS"' src/middleware.ts "达摩盘公开事件接口未限制为 POST/OPTIONS"
+forbid_fixed 'pathname.startsWith("/api/shared/dmp-reports")' src/middleware.ts "达摩盘匿名事件接口使用了过宽的前缀白名单"
 require_fixed 'pathname.startsWith("/api/dmp-runtime/")' src/middleware.ts "达摩盘云端运行接口未绕过页面中间件"
 require_fixed "x-sanjie-session" src/app/api/dmp-reports/route.ts "达摩盘报告同步接口缺少插件登录令牌"
 require_fixed "x-sanjie-session" src/app/api/dmp-report-shares/route.ts "达摩盘分享接口缺少插件登录令牌"
-require_fixed "getDmpReportAccess" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享页缺少官网付费授权复核"
-require_fixed "getDmpSharedReport(access, token)" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享页缺少报告归属校验"
-require_fixed "report: { tenantId: access.tenantId, userId: access.userId }" src/lib/dmp-report-share.ts "达摩盘分享缺少账号隔离"
+forbid_fixed "export async function GET" src/app/api/dmp-report-shares/route.ts "普通报告所有者接口仍暴露传播分析 GET"
+forbid_fixed "getDmpReportInteractionSummary" src/app/api/dmp-report-shares/route.ts "普通报告所有者仍可读取传播分析"
+require_fixed "getPublicDmpSharedReport(token)" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享页未使用公开高熵令牌读取"
+forbid_fixed "getDmpReportAccess" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘公开分享页仍强制官网登录"
+require_fixed "getDmpBusinessReport(access, reportId)" src/lib/dmp-report-share.ts "达摩盘分享创建缺少报告所有者隔离"
+require_fixed "revokedAt: null" src/lib/dmp-report-share.ts "达摩盘公开读取或事件写入缺少撤销状态过滤"
 require_fixed "createHash(\"sha256\")" src/lib/dmp-report-share.ts "达摩盘分享令牌未做哈希落库"
-require_fixed "safeDmpReportReturnPath" src/app/login/page.tsx "达摩盘分享登录后未安全返回官网报告"
+require_fixed 'const DEFAULT_PUBLIC_APP_ORIGIN = "https://shaozhuangai.com"' src/lib/dmp-public-origin.ts "达摩盘分享缺少固定官网域名"
+require_fixed "toPublicAppUrl(share.path)" src/app/api/dmp-report-shares/route.ts "达摩盘分享地址仍可能使用请求 Host 或内部端口"
+require_fixed "recordDmpPublicShareEvent" src/app/api/shared/dmp-reports/[token]/route.ts "达摩盘公开分享页缺少匿名事件写入"
+require_fixed "MAX_EVENT_BODY_BYTES = 64 * 1024" src/app/api/shared/dmp-reports/[token]/route.ts "达摩盘匿名事件请求体未限制为 64KB"
+require_fixed "公开报告数据仅由只读页面提供" src/app/api/shared/dmp-reports/[token]/route.ts "达摩盘公开事件 API 仍可能泄露完整 JSON"
+require_fixed "requireAdminResponse" src/app/api/management/dmp-report-share-analytics/route.ts "达摩盘传播分析 API 缺少管理员数据库复核"
+require_fixed "getDmpReportShareManagementAnalytics" src/app/api/management/dmp-report-share-analytics/route.ts "达摩盘管理员传播分析 API 缺少聚合查询"
+require_fixed "revokeDmpReportShare" src/app/api/management/dmp-report-share-analytics/route.ts "达摩盘管理员缺少分享撤销能力"
+require_fixed "DmpShareAnalyticsPanel" src/components/management/ManagementConsole.tsx "管理员后台缺少达摩盘传播分析入口"
+require_fixed "达摩盘报告传播分析" src/components/management/DmpShareAnalyticsPanel.tsx "管理员传播分析面板缺少稳定标识"
 require_fixed "getDmpReportAccessFromToken" src/app/api/dmp-runtime/[action]/route.ts "达摩盘云端运行接口缺少官网登录授权"
 require_fixed "getDmpAutomationAccessForSession" src/lib/dmp-report-store.ts "达摩盘历史报告缺少付费授权复核"
 require_fixed "tenantId: access.tenantId, userId: access.userId" src/lib/dmp-report-store.ts "达摩盘历史报告缺少账号隔离"
@@ -175,19 +202,25 @@ require_fixed "calculableMetricValue" public/tools/dmp-report-engine/completenes
 require_fixed "transportOnlyReason" public/tools/dmp-report-engine/completeness-engine.js "达摩盘完整性引擎未忽略 OPTIONS/HEAD/redirect 传输记录"
 require_fixed "classifyGrowthRecord" public/tools/dmp-report-engine/completeness-engine.js "达摩盘补抓响应未使用统一解析分类"
 require_fixed '["投放", "ROI"' public/tools/dmp-report-engine/report-engine.js "达摩盘业务报告缺少 ROI"
+require_fixed '投入产出比|投产比|ROI|ROAS' public/tools/dmp-report-engine/report-engine.js "达摩盘云端报告仍可能把投产比格式化为百分比"
+require_fixed 'isDmpMultipleMetric' src/lib/dmp-report-format.ts "达摩盘官网报告未区分投产倍数与百分比"
 require_fixed "periodMetricsForItem" public/tools/dmp-report-engine/report-engine.js "达摩盘商品表未按商品 ID 匹配周期指标"
 require_file "$DMP_ZIP_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
+unzip -p "$DMP_ZIP_PATH" '*official-share-url.mjs' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件缺少官网分享地址规范化模块"
 # Linux 的 unzip 在下游 grep -q 提前退出时会收到 SIGPIPE；配合 pipefail 会把“已命中”误判成失败。
 # 这里让 grep 读完整个条目再丢弃输出，保证本机与生产机得到一致结果。
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'const CLOUD_RUNTIME_BASE = `${OFFICIAL_SITE}/api/dmp-runtime`' >/dev/null || fail "达摩盘插件未固定连接官网云端运行接口"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_CREATE_SHARE' >/dev/null || fail "达摩盘插件缺少官网分享消息"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件分享地址未强制重挂生产官网"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' >/dev/null || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'url.searchParams.set("reportId"' >/dev/null || fail "达摩盘插件未按报告编号打开官网页面"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"version": "2.1.2"' >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' >/dev/null || fail "达摩盘插件报告保存等待仍过短"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' >/dev/null || fail "达摩盘插件分享请求缺少瞬时失败重试"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '可免登录打开的官网公开只读报告' >/dev/null || fail "达摩盘安装包仍是旧的受控分享说明"
+unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
 fi

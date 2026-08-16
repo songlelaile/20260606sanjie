@@ -9,6 +9,7 @@ import {
   KeyRound,
   LineChart,
   LogOut,
+  Share2,
   Trash2,
   UserRoundCheck,
   UserRoundPlus,
@@ -16,6 +17,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AiApiConfigPanel } from "@/components/AiApiConfigPanel";
+import { DmpShareAnalyticsPanel } from "@/components/management/DmpShareAnalyticsPanel";
 import { ManagementHistoryPanel } from "@/components/management/ManagementHistoryPanel";
 import { ReviewConsole } from "@/components/management/ReviewConsole";
 import { DMP_AUTOMATION_NAME } from "@/lib/dmp-product";
@@ -27,7 +29,7 @@ import type {
   User
 } from "@/lib/types/domain";
 
-type ManagementTab = "invites" | "users" | "review" | "history" | "ai";
+type ManagementTab = "invites" | "users" | "sharing" | "review" | "history" | "ai";
 
 export function ManagementConsole({
   initialInvites,
@@ -226,6 +228,14 @@ export function ManagementConsole({
           >
             <UsersRound size={17} />
             用户列表
+          </button>
+          <button
+            type="button"
+            className={clsx("management-tab", activeTab === "sharing" && "active")}
+            onClick={() => setActiveTab("sharing")}
+          >
+            <Share2 size={17} />
+            传播分析
           </button>
           <button
             type="button"
@@ -460,6 +470,8 @@ export function ManagementConsole({
           </div>
         </section>
       ) : null}
+
+      {activeTab === "sharing" ? <DmpShareAnalyticsPanel /> : null}
 
       {activeTab === "review" ? <ReviewConsole interventions={initialInterventions} /> : null}
 

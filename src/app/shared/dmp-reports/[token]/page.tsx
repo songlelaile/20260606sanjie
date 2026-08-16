@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { DmpSharedReportClient } from "@/components/tools/DmpSharedReportClient";
 import { DmpBrandWatermark } from "@/components/tools/DmpBrandWatermark";
 import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
-import { getDmpSharedReport } from "@/lib/dmp-report-share";
-import { getDmpReportAccess } from "@/lib/dmp-report-store";
+import { getPublicDmpSharedReport } from "@/lib/dmp-report-share";
 
 export const metadata: Metadata = {
   title: "达摩盘只读分享报告｜少壮AI自动化",
@@ -19,9 +18,7 @@ export default async function SharedDmpReportPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const access = await getDmpReportAccess();
-  if (!access) redirect("/tools?dmpAccess=paid");
-  const snapshot = await getDmpSharedReport(access, token);
+  const snapshot = await getPublicDmpSharedReport(token);
   if (!snapshot) notFound();
   const record = snapshot.report;
   const report = record.report;
@@ -44,7 +41,7 @@ export default async function SharedDmpReportPage({
             <span>{report.tables.length} 张表 · {rowCount} 行</span>
             <span>{record.quality === "complete" ? "数据完整" : "局部数据"}</span>
           </div>
-          <p className="dmp-shared-access-note">官网受控报告：仅报告所属的同一少壮AI授权账号可打开，链接本身不代表查看权限。</p>
+          <p className="dmp-shared-access-note">公开只读报告：任何拿到链接的人都可直接打开，无需登录；请仅转发给需要查看的人。</p>
           <DmpSharedReportClient token={token} />
         </div>
       </header>
@@ -64,8 +61,12 @@ export default async function SharedDmpReportPage({
           <div><span>报告类型</span><strong>{competition ? "竞争态势分析" : "打爆路径对标"}</strong></div>
           <div><span>报告生成</span><strong>{dateTimeLabel(record.createdAt)}</strong></div>
           <div><span>分享快照</span><strong>{dateTimeLabel(snapshot.createdAt)}</strong></div>
-          <div><span>访问口径</span><strong>官网登录 + 账号归属</strong></div>
+          <div><span>访问口径</span><strong>持链接公开只读</strong></div>
         </section>
+
+        <aside className="dmp-shared-privacy-note" data-track-section="privacy-note">
+          为帮助报告管理员分析传播与关注度，本页会匿名统计来源域名、阅读时长、阅读深度和模块点击；不记录 IP、登录账号、Cookie、设备信息或业务单元格内容。
+        </aside>
 
         {report.tables.map((table, tableIndex) => (
           <section

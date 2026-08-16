@@ -73,8 +73,15 @@ DATABASE_URL="postgresql://sanjie:改成你的强密码@localhost:5432/three_sta
 SESSION_SECRET="改成 openssl rand -hex 32 生成的高强度随机值"
 SHARE_ENCRYPTION_KEY="改成另一个 openssl rand -hex 32 生成的高强度随机值"
 AI_API_ENCRYPTION_KEY="改成第三个 openssl rand -hex 32 生成的高强度随机值"
+PUBLIC_APP_ORIGIN="https://shaozhuangai.com"
 ENV
 ```
+
+`PUBLIC_APP_ORIGIN` 是公开报告链接的唯一规范域名。分享接口不得使用 Next.js 内部端口或请求 `Host` 拼接绝对地址，避免生成 `localhost`、内网域名或反向代理端口链接。
+
+公开报告 HTML 必须由中间件返回 `Referrer-Policy: no-referrer`、`Cache-Control: private, no-store` 和 `X-Robots-Tag: noindex, nofollow`。不能只在埋点 API 上设置：否则浏览器加载同源 `/_next/*` 静态资源时，会把包含 bearer token 的完整报告地址写进 `Referer`，继而可能进入静态资源 access log。
+
+匿名埋点按“先 view、后 click/engagement”接受：客户端会等待 view 事务成功后再发送后续事件，服务端也只有在同一分享、同一匿名访客与同一会话已建立 view 后才累计；活跃秒数按 token/session 保存在浏览器 `sessionStorage` 中，刷新后接着累计，同时限制为服务端 `firstSeenAt` 以来真实经过的墙钟秒数。Nginx 限速仍必须保留，用来抑制随机事件编号持续刷量。
 
 ## 6. 建表 + 一次性管理员初始化 + 构建
 
@@ -112,10 +119,32 @@ curl -I http://localhost:3000/login      # 200/307 即应用已起
 ```bash
 dnf install -y nginx
 cat > /etc/nginx/conf.d/sanjie.conf <<'NGINX'
+limit_req_zone $binary_remote_addr zone=dmp_share_events:10m rate=20r/s;
+
 server {
     listen 80;
     server_name _;            # 有域名就填域名
     client_max_body_size 20m; # 允许上传源数据表
+
+    # 公开报告令牌和访问 IP 不写入 Nginx access log；埋点请求限制为 64KB 并做瞬时限速。
+    location ~ "^/shared/dmp-reports/[A-Fa-f0-9]{64}$" {
+        access_log off;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ "^/api/shared/dmp-reports/[A-Fa-f0-9]{64}$" {
+        access_log off;
+        client_max_body_size 64k;
+        limit_req zone=dmp_share_events burst=40 nodelay;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
@@ -127,6 +156,14 @@ server {
 }
 NGINX
 nginx -t && systemctl enable --now nginx
+```
+
+发版后用一条真实测试分享验证公开 HTML 响应头（不要把令牌粘贴到工单或群聊）：
+
+```bash
+curl -sSI "https://shaozhuangai.com/shared/dmp-reports/<64位测试令牌>" \
+  | grep -Ei '^(cache-control|referrer-policy|x-robots-tag):'
+# 预期：private, no-store / no-referrer / noindex, nofollow
 ```
 
 浏览器访问 `http://<公网IP>` → 应看到登录页。使用上一步一次性初始化的管理员账号登录。

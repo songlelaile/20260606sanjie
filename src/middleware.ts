@@ -2,6 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
 
 const AUTH_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
+const PUBLIC_DMP_REPORT_HEADERS = {
+  "Cache-Control": "private, no-store",
+  "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex, nofollow"
+};
+const PUBLIC_DMP_REPORT_PATH = /^\/shared\/dmp-reports\/[a-f0-9]{64}$/i;
+const PUBLIC_DMP_REPORT_EVENTS_PATH = /^\/api\/shared\/dmp-reports\/[a-f0-9]{64}$/i;
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -12,6 +19,34 @@ export async function middleware(request: NextRequest) {
       return new NextResponse(null, {
         status: 405,
         headers: { Allow: "GET, HEAD" }
+      });
+    }
+    return NextResponse.next();
+  }
+
+  // 达摩盘 HTML 报告以高熵令牌作为只读访问凭证。只放行格式完全匹配的页面，
+  // 避免把同前缀下的其它页面或将来的管理端点一并公开。
+  if (PUBLIC_DMP_REPORT_PATH.test(pathname)) {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new NextResponse(null, {
+        status: 405,
+        headers: { Allow: "GET, HEAD", ...PUBLIC_DMP_REPORT_HEADERS }
+      });
+    }
+    const response = NextResponse.next();
+    for (const [name, value] of Object.entries(PUBLIC_DMP_REPORT_HEADERS)) {
+      response.headers.set(name, value);
+    }
+    return response;
+  }
+
+  // 分享页的匿名行为端点只接收埋点写入。完整报告 JSON 的 GET 不对外公开；
+  // token 格式不合法的相似路径继续进入下方的正常登录鉴权。
+  if (PUBLIC_DMP_REPORT_EVENTS_PATH.test(pathname)) {
+    if (request.method !== "POST" && request.method !== "OPTIONS") {
+      return new NextResponse(null, {
+        status: 405,
+        headers: { Allow: "POST, OPTIONS", ...AUTH_RESPONSE_HEADERS }
       });
     }
     return NextResponse.next();
