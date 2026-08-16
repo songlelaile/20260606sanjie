@@ -178,14 +178,16 @@ require_fixed '["投放", "ROI"' public/tools/dmp-report-engine/report-engine.js
 require_fixed "periodMetricsForItem" public/tools/dmp-report-engine/report-engine.js "达摩盘商品表未按商品 ID 匹配周期指标"
 require_file "$DMP_ZIP_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'const CLOUD_RUNTIME_BASE = `${OFFICIAL_SITE}/api/dmp-runtime`' || fail "达摩盘插件未固定连接官网云端运行接口"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'DMP_CDP_CREATE_SHARE' || fail "达摩盘插件缺少官网分享消息"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'url.searchParams.set("reportId"' || fail "达摩盘插件未按报告编号打开官网页面"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Fq '"version": "2.1.1"' || fail "达摩盘安装包 Manifest 版本不一致"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' || fail "达摩盘插件报告保存等待仍过短"
-unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -Fq 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' || fail "达摩盘插件分享请求缺少瞬时失败重试"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Fq '达摩盘一体化自动取数｜少壮AI自动化' || fail "达摩盘安装包缺少品牌标题"
+# Linux 的 unzip 在下游 grep -q 提前退出时会收到 SIGPIPE；配合 pipefail 会把“已命中”误判成失败。
+# 这里让 grep 读完整个条目再丢弃输出，保证本机与生产机得到一致结果。
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'const CLOUD_RUNTIME_BASE = `${OFFICIAL_SITE}/api/dmp-runtime`' >/dev/null || fail "达摩盘插件未固定连接官网云端运行接口"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_CREATE_SHARE' >/dev/null || fail "达摩盘插件缺少官网分享消息"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' >/dev/null || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'url.searchParams.set("reportId"' >/dev/null || fail "达摩盘插件未按报告编号打开官网页面"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"version": "2.1.1"' >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' >/dev/null || fail "达摩盘插件报告保存等待仍过短"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' >/dev/null || fail "达摩盘插件分享请求缺少瞬时失败重试"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
 fi
