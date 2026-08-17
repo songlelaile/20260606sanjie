@@ -3,7 +3,7 @@
 ## 生产发布保护（必须先执行）
 
 - 唯一生产工程：`/Users/shaozhuang/20260606sanjie`。`/Users/shaozhuang/Desktop/20260606sanjie` 仅是历史副本，禁止整仓发布。
-- 普通公开工具插件仍放在 `public/downloads/`；达摩盘付费插件必须放在 `private-assets/dmp/`，并通过 `/api/tools/dmp/download` 的登录与数据库授权校验下载，禁止复制回 `public/`。管理员每次开通或续费默认授予 30 天，到期后下载、插件运行和 JSON 入口自动关闭。
+- 普通公开工具插件仍放在 `public/downloads/`；达摩盘付费插件必须放在 `private-assets/dmp/`，并通过 `/api/tools/dmp/download` 的登录与数据库授权校验下载，禁止复制回 `public/`。管理员每次开通或续费默认授予 30 天，到期后下载、插件运行、JSON 入口和管理员报告 XLSX 导出自动关闭。
 - 每次发布前先运行 `./scripts/predeploy-guard.sh --full`。脚本会阻断错误目录、登录眼睛缺失、明文密码比较、多店铺模型丢失、工具页版本与 ZIP 哈希不一致等回归。
 - 每次部署到新的 `/opt/sanjie-releases/<日期-版本>` 目录，先用独立端口做金丝雀验证，再切换 PM2；保留上一版目录用于快速回滚，不在 `/opt/sanjie` 原地覆盖。
 - 上线冒烟标准：登录页 200 且有“显示密码”；错误密码返回 401；未登录访问 `/tools` 返回 307；公开新版 ZIP 返回 200；未登录下载达摩盘插件返回 401、未授权账号返回 403；PM2 的 `cwd` 必须是本次新发布目录。
@@ -82,6 +82,8 @@ ENV
 公开报告 HTML 必须由中间件返回 `Referrer-Policy: no-referrer`、`Cache-Control: private, no-store` 和 `X-Robots-Tag: noindex, nofollow`。不能只在埋点 API 上设置：否则浏览器加载同源 `/_next/*` 静态资源时，会把包含 bearer token 的完整报告地址写进 `Referer`，继而可能进入静态资源 access log。
 
 匿名埋点按“先 view、后 click/engagement”接受：客户端会等待 view 事务成功后再发送后续事件，服务端也只有在同一分享、同一匿名访客与同一会话已建立 view 后才累计；活跃秒数按 token/session 保存在浏览器 `sessionStorage` 中，刷新后接着累计，同时限制为服务端 `firstSeenAt` 以来真实经过的墙钟秒数。Nginx 限速仍必须保留，用来抑制随机事件编号持续刷量。
+
+达摩盘插件中的报告表格版 XLSX 属于隐藏管理员能力。插件只能在 `/api/auth/me` 返回 `capabilities.dmpReportExport=true` 时显示入口；用户点击后还必须调用 `POST /api/dmp-report-exports` 实时重验数据库账号、平台管理员角色、DMP 有效期、报告归属和实际报告类型。只有接口返回 HTTP 201 且 `data.authorization.authorized=true` 才能在插件本地生成 XLSX。服务端仅写 `adminId/reportId/reportType/format/clientVersion/exportedAt` 审计元数据，不接收或保存报告 JSON、业务单元格、文件名或导出文件内容。部署新版本时必须先执行 `npm run db:migrate` 创建 `DmpReportExportAudit`，否则审计写入失败会按 503 fail-closed，插件不得继续导出。
 
 ## 6. 建表 + 一次性管理员初始化 + 构建
 

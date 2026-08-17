@@ -101,7 +101,8 @@ export async function GET(request: Request) {
         capabilities: {
           dmpAutomation: dmpAccess.allowed,
           dmpDownload: dmpAccess.allowed,
-          dmpJsonImport: session.role === "admin" && dmpAccess.allowed
+          dmpJsonImport: session.role === "admin" && dmpAccess.allowed,
+          dmpReportExport: session.role === "admin" && dmpAccess.allowed
         },
         dmpEntitlement: dmpAccess
       }

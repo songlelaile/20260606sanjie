@@ -64,10 +64,6 @@ export default async function SharedDmpReportPage({
           <div><span>访问口径</span><strong>持链接公开只读</strong></div>
         </section>
 
-        <aside className="dmp-shared-privacy-note" data-track-section="privacy-note">
-          为帮助报告管理员分析传播与关注度，本页会匿名统计来源域名、阅读时长、阅读深度和模块点击；不记录 IP、登录账号、Cookie、设备信息或业务单元格内容。
-        </aside>
-
         {report.tables.map((table, tableIndex) => (
           <section
             className="dmp-shared-section"

@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.2"
-DMP_ZIP_SHA256="e6c242ed60e52cf4e004c7b529fe36afdc4906edb0fe185149a79f96657659af"
+DMP_VERSION="2.1.3"
+DMP_ZIP_SHA256="5685b07a8f4b8c99bc7b1216edb2d1b356caf76c6cda605f1a11523d8c1eadca"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -66,6 +66,7 @@ for file in \
   src/app/tools/dmp-report/page.tsx \
   src/app/api/dmp-reports/route.ts \
   src/app/api/dmp-report-shares/route.ts \
+  src/app/api/dmp-report-exports/route.ts \
   src/app/api/shared/dmp-reports/[token]/route.ts \
   src/app/api/management/dmp-report-share-analytics/route.ts \
   src/app/shared/dmp-reports/[token]/page.tsx \
@@ -77,6 +78,8 @@ for file in \
   src/components/management/ManagementConsole.tsx \
   src/components/management/DmpShareAnalyticsPanel.tsx \
   src/lib/dmp-product.ts \
+  src/lib/dmp-report-export-authorization.ts \
+  src/lib/dmp-report-export-contract.ts \
   src/lib/dmp-report-format.ts \
   src/lib/dmp-report-export.ts \
   src/lib/dmp-report-store.ts \
@@ -109,11 +112,13 @@ require_fixed "model DmpReportShare {" prisma/schema.prisma "缺少达摩盘官�
 require_fixed "model DmpReportHeatBucket {" prisma/schema.prisma "缺少达摩盘匿名点击热区模型"
 require_fixed "model DmpReportShareSession {" prisma/schema.prisma "缺少达摩盘匿名访问会话模型"
 require_fixed "model DmpReportShareEvent {" prisma/schema.prisma "缺少达摩盘匿名事件幂等模型"
+require_fixed "model DmpReportExportAudit {" prisma/schema.prisma "缺少达摩盘管理员导出审计模型"
 require_fixed "revokedAt" prisma/schema.prisma "达摩盘公开链接缺少管理员撤销字段"
 require_file "prisma/migrations/20260815001500_tool_entitlements/migration.sql"
 require_file "prisma/migrations/20260815160000_add_dmp_business_reports/migration.sql"
 require_file "prisma/migrations/20260816203000_add_dmp_report_sharing/migration.sql"
 require_file "prisma/migrations/20260817090000_public_dmp_share_analytics/migration.sql"
+require_file "prisma/migrations/20260817160000_dmp_report_export_audit/migration.sql"
 
 # 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
@@ -158,6 +163,7 @@ require_fixed "DmpBrandWatermark" src/app/shared/dmp-reports/[token]/page.tsx "�
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
 require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
 require_fixed 'pathname.startsWith("/api/dmp-report-shares")' src/middleware.ts "达摩盘插件分享接口未绕过页面中间件"
+require_fixed 'pathname === "/api/dmp-report-exports"' src/middleware.ts "达摩盘插件导出授权接口未绕过页面中间件"
 require_fixed 'const PUBLIC_DMP_REPORT_PATH = /^\/shared\/dmp-reports\/[a-f0-9]{64}$/i;' src/middleware.ts "达摩盘公开报告页未按精确高熵令牌路径放行"
 require_fixed 'const PUBLIC_DMP_REPORT_EVENTS_PATH = /^\/api\/shared\/dmp-reports\/[a-f0-9]{64}$/i;' src/middleware.ts "达摩盘公开事件接口未按精确高熵令牌路径放行"
 require_fixed 'request.method !== "GET" && request.method !== "HEAD"' src/middleware.ts "达摩盘公开报告页未限制为 GET/HEAD"
@@ -187,7 +193,10 @@ require_fixed "getDmpReportAccessFromToken" src/app/api/dmp-runtime/[action]/rou
 require_fixed "getDmpAutomationAccessForSession" src/lib/dmp-report-store.ts "达摩盘历史报告缺少付费授权复核"
 require_fixed "tenantId: access.tenantId, userId: access.userId" src/lib/dmp-report-store.ts "达摩盘历史报告缺少账号隔离"
 require_fixed "dmpJsonImport" src/app/api/auth/me/route.ts "认证端点缺少达摩盘 JSON 权限声明"
+require_fixed "dmpReportExport" src/app/api/auth/me/route.ts "认证端点缺少管理员报告导出能力声明"
 require_fixed "dmpAutomation: dmpAccess.allowed" src/app/api/auth/me/route.ts "认证端点未按数据库授权控制插件"
+require_fixed "authorizeAndAuditDmpReportExport" src/app/api/dmp-report-exports/route.ts "达摩盘导出接口未执行实时授权与审计"
+require_fixed "dmpReportExportAudit.create" src/lib/dmp-report-export-authorization.ts "达摩盘导出授权缺少审计记录"
 require_fixed "getDmpAutomationAccessForSession" src/app/api/tools/dmp/download/route.ts "达摩盘下载接口缺少数据库授权校验"
 require_fixed "请联系管理员付费开通" src/app/api/tools/dmp/download/route.ts "达摩盘下载接口缺少未授权提示"
 require_fixed 'DMP_AUTOMATION_ACCESS_DAYS = 30' src/lib/dmp-product.ts "达摩盘授权周期不是 30 天"
@@ -215,12 +224,18 @@ unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_CREATE_SHARE' >
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件分享地址未强制重挂生产官网"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'chrome.windows.create({ url: reportUrl, focused: true, type: "normal" })' >/dev/null || fail "达摩盘插件完成后不会新开官网 HTML 报告窗口"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'url.searchParams.set("reportId"' >/dev/null || fail "达摩盘插件未按报告编号打开官网页面"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"version": "2.1.2"' >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F "\"version\": \"${DMP_VERSION}\"" >/dev/null || fail "达摩盘安装包 Manifest 版本不一致"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SYNC_TIMEOUT_MS = 120_000' >/dev/null || fail "达摩盘插件报告保存等待仍过短"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SHARE_ATTEMPTS = 2' >/dev/null || fail "达摩盘插件分享请求缺少瞬时失败重试"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_VERIFY_REPORT_EXPORT' >/dev/null || fail "达摩盘插件缺少管理员导出能力实时校验"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_AUTHORIZE_REPORT_EXPORT' >/dev/null || fail "达摩盘插件缺少管理员导出二次授权"
+unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F '/api/dmp-report-exports' >/dev/null || fail "达摩盘插件未连接官网导出审计接口"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '可免登录打开的官网公开只读报告' >/dev/null || fail "达摩盘安装包仍是旧的受控分享说明"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '生成免登录官网报告' >/dev/null || fail "达摩盘安装包仍是旧的受控分享说明"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '管理员受审计的内部 XLSX' >/dev/null || fail "达摩盘安装包缺少管理员隐藏导出说明"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
+unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -F 'INTERNAL_EXPORT_VISIBLE_MS = 600_000' >/dev/null || fail "达摩盘插件隐藏导出入口不是 10 分钟短时授权"
+unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -F 'button.dataset.role = "internal-export"' >/dev/null || fail "达摩盘插件缺少动态管理员导出入口"
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
 fi

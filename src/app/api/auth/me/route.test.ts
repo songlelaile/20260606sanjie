@@ -77,7 +77,12 @@ describe("GET /api/auth/me", () => {
     expect(payload.data).toMatchObject({
       ...SESSION,
       service: { online: true },
-      capabilities: { dmpAutomation: true, dmpDownload: true, dmpJsonImport: false },
+      capabilities: {
+        dmpAutomation: true,
+        dmpDownload: true,
+        dmpJsonImport: false,
+        dmpReportExport: false
+      },
       dmpEntitlement: { allowed: true, status: "active" }
     });
     expect(payload.data.service.checkedAt).toEqual(expect.any(String));
@@ -95,8 +100,28 @@ describe("GET /api/auth/me", () => {
     expect(payload.data.capabilities).toEqual({
       dmpAutomation: true,
       dmpDownload: true,
-      dmpJsonImport: true
+      dmpJsonImport: true,
+      dmpReportExport: true
     });
+  });
+
+  it("keeps the XLSX report export capability off for an administrator without active DMP access", async () => {
+    mocks.parseSession.mockResolvedValueOnce({ ...SESSION, role: "admin" });
+    mocks.getDmpAutomationAccessForSession.mockResolvedValueOnce({
+      allowed: false,
+      status: "expired",
+      grantedAt: "2026-07-01T00:00:00.000Z",
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      remainingDays: 0
+    });
+    const response = await GET(
+      new Request("http://localhost/api/auth/me", {
+        headers: { "x-sanjie-session": "signed-admin-token" }
+      })
+    );
+    const payload = await response.json();
+    expect(payload.data.capabilities.dmpReportExport).toBe(false);
+    expect(payload.data.capabilities.dmpJsonImport).toBe(false);
   });
 
   it("keeps the service online while denying an account without paid DMP access", async () => {
@@ -118,7 +143,8 @@ describe("GET /api/auth/me", () => {
     expect(payload.data.capabilities).toEqual({
       dmpAutomation: false,
       dmpDownload: false,
-      dmpJsonImport: false
+      dmpJsonImport: false,
+      dmpReportExport: false
     });
   });
 

@@ -182,6 +182,23 @@ model DmpBusinessReport {
   @@index([tenantId, userId, createdAt])
 }
 
+// 管理员在插件中导出达摩盘报告表格版 XLSX 的最小审计记录。
+// 只保存授权主体、报告引用和导出元数据，不保存报告 JSON、业务单元格、文件名或下载内容。
+// 故意不设级联外键：即使账号或报告后来删除，既有审计记录仍需保留。
+model DmpReportExportAudit {
+  id            String   @id @default(cuid())
+  adminId       String
+  reportId      String
+  reportType    String
+  format        String
+  clientVersion String   @default("")
+  exportedAt    DateTime @default(now())
+
+  @@index([adminId, exportedAt])
+  @@index([reportId, exportedAt])
+  @@index([exportedAt])
+}
+
 // 达摩盘业务报告的官网公开只读链接。任何持有高熵令牌者均可读取，创建仍校验报告归属与付费权限。
 // 数据库只保存令牌哈希，原始令牌仅在创建时返回；管理员可随时撤销。
 model DmpReportShare {

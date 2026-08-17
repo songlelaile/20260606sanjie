@@ -58,6 +58,7 @@ export async function middleware(request: NextRequest) {
     pathname === "/privacy" ||
     pathname.startsWith("/api/auth/") ||
     pathname.startsWith("/api/dmp-reports") ||
+    pathname === "/api/dmp-report-exports" ||
     pathname.startsWith("/api/dmp-report-shares") ||
     pathname.startsWith("/api/dmp-runtime/") ||
     pathname.startsWith("/v1/")

@@ -79,4 +79,14 @@ describe("DMP shared report middleware", () => {
     expect(response.status).toBe(401);
     expect(mocks.parseSession).toHaveBeenCalledOnce();
   });
+
+  it.each(["POST", "OPTIONS"])("lets the DMP export endpoint validate an extension session header for %s", async (method) => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(
+      "https://shaozhuangai.com/api/dmp-report-exports",
+      { method, headers: { "x-sanjie-session": "signed-admin-session" } }
+    ));
+    expect(response.status).toBe(200);
+    expect(mocks.parseSession).not.toHaveBeenCalled();
+  });
 });

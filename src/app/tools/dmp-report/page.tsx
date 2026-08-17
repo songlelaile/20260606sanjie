@@ -25,7 +25,7 @@ export default async function DmpReportPage({
       <PageHeader
         eyebrow="DMP Business Reports"
         title="达摩盘一体化报告中心｜少壮AI自动化"
-        description="统一沉淀打爆路径与竞争态势分析结果，支持官网在线查看、公开只读分享和历史管理；传播与关注度数据仅在管理员后台查看，当前暂不提供业务数据下载。"
+        description="统一沉淀打爆路径与竞争态势分析结果，支持官网在线查看、公开只读分享和历史管理；传播与关注度数据仅在管理员后台查看，普通报告中心不展示业务数据下载入口。"
       />
       <DmpReportWorkspace
         initialReports={reports}
