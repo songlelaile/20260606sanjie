@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.3"
-DMP_ZIP_SHA256="5685b07a8f4b8c99bc7b1216edb2d1b356caf76c6cda605f1a11523d8c1eadca"
+DMP_VERSION="2.1.4"
+DMP_ZIP_SHA256="40da0a2206b386e3088f4191c317d55c3e3e4de538bf563eddb1273ab5cc1b28"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
