@@ -46,44 +46,6 @@ const DMP_AUTOMATION = {
   platform: "Chrome / Edge 125+"
 };
 
-const DMP_DATA_GROUPS = [
-  {
-    title: "打爆路径自动取数",
-    desc: "围绕主体商品与目标成功品，统一沉淀周期总览、日数据、渠道花费、一级/二级场景、成长阶段、基础指标和关键词样本。"
-  },
-  {
-    title: "竞争态势店铺分析",
-    desc: "支持本店同时对标最多 3 家竞店，获取基础经营、付费/免费流量结构、一级与二级渠道以及各店独立人群画像。"
-  },
-  {
-    title: "统一官网 HTML 报告",
-    desc: "取数完成后自动保存到当前授权账号，并在新的浏览器窗口打开官网 HTML 报告；支持历史追溯与无需登录的公开只读分享。"
-  },
-  {
-    title: "人工授权与品牌保护",
-    desc: "沿用管理员人工开通/续费机制，每次授权 30 天；报告创建与历史管理仅限所属官网账号，公开只读链接可免登录查看，并统一增加少壮AI自动化标题尾缀与轻水印。"
-  }
-];
-
-const DMP_USAGE_STEPS = [
-  {
-    title: "开通并安装",
-    body: "账号获得 30 天使用权限后下载 ZIP 并安装扩展；无需启动终端、Node.js 或本机服务，登录官网后即可使用云端数据能力。"
-  },
-  {
-    title: "选择分析模式",
-    body: "在一体化面板选择“打爆路径”或“竞争态势·店铺”。打爆路径填写主体商品与成功品 ID；竞争态势可按顺序添加最多 3 家竞店。"
-  },
-  {
-    title: "检查并补漏一次",
-    body: "首次取数有缺口时点击一次“精准补抓缺失数据”。北京时间 0:00–10:00 若昨天消耗尚未产出，可在 10:00–24:00 重新获取。"
-  },
-  {
-    title: "在线查看与复盘",
-    body: "插件完成采集后会自动保存报告并打开新的官网 HTML 报告窗口；可在报告中心管理历史结果并生成任何人都能打开的公开只读链接。"
-  }
-];
-
 const FEATURES = [
   {
     title: "经营数据采集与市场证据",
@@ -253,7 +215,6 @@ export default async function ToolsPage() {
             <h2>{DMP_AUTOMATION.name}</h2>
             <div className="tool-badges">
               <span className="tool-badge">v{DMP_AUTOMATION.version}</span>
-              <span className="tool-badge tool-badge-soft">打爆路径 + 竞争态势店铺</span>
               <span className="tool-badge tool-badge-soft">自动打开官网 HTML</span>
               <span className="tool-badge tool-badge-soft">{DMP_AUTOMATION.platform}</span>
               <span className="tool-badge tool-badge-paid">付费工具 · 数据库授权</span>
@@ -285,33 +246,6 @@ export default async function ToolsPage() {
           </div>
         </header>
 
-        <p className="tool-lead">
-          一个扩展统一完成达摩盘打爆路径与竞争态势店铺分析。取数结束后自动保存并打开官网 HTML 报告，帮助经营团队查看经营差距、投放结构、渠道来源与人群画像；普通报告中心仅提供官网在线查看，不展示业务数据下载入口。
-        </p>
-
-        <div className="dmp-tool-capabilities">
-          {DMP_DATA_GROUPS.map((group) => (
-            <div key={group.title}><strong>{group.title}</strong><span>{group.desc}</span></div>
-          ))}
-        </div>
-
-        <div className="tool-block">
-          <div className="tool-block-label">
-            <ListChecks size={15} />
-            如何使用
-          </div>
-          <ol className="tool-steps tool-steps-plain">
-            {DMP_USAGE_STEPS.map((step, index) => (
-              <li key={step.title} className="tool-step">
-                <span className="tool-step-no">{index + 1}</span>
-                <div className="tool-step-body">
-                  <strong>{step.title}</strong>
-                  <span>{step.body}</span>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
       </section>
 
       <section className="tool-card">
