@@ -8,6 +8,7 @@ coverage/
 prisma/dev.db
 uploads/
 .claude/
+private-assets/dmp/*.zip
 
 # macOS
 .DS_Store

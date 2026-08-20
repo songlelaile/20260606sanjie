@@ -13,11 +13,14 @@ export const dynamic = "force-dynamic";
 export default async function DmpReportPage({
   searchParams
 }: {
-  searchParams: Promise<{ reportId?: string; view?: string }>;
+  searchParams: Promise<{ reportId?: string; view?: string; source?: string }>;
 }) {
   const query = await searchParams;
   const access = await getDmpReportAccess();
   if (!access) redirect("/tools?dmpAccess=paid");
+  if (query.source === "dmp-extension") {
+    return <main id="dmp-extension-report-host" />;
+  }
   const reports = await listDmpBusinessReports(access);
 
   return (

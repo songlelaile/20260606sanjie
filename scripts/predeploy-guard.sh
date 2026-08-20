@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.5"
-DMP_ZIP_SHA256="c8c19c7c31979ed718247d44e43c18d441e17184d06209abc3a37ed32cead067"
+DMP_VERSION="2.1.6"
+DMP_ZIP_SHA256="d791e5a191c4022ab85a10cc95f70478188f48b12266860bdf794a5e68007976"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -231,11 +231,26 @@ unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_VERIFY_REPORT_E
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_AUTHORIZE_REPORT_EXPORT' >/dev/null || fail "达摩盘插件缺少管理员导出二次授权"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F '/api/dmp-report-exports' >/dev/null || fail "达摩盘插件未连接官网导出审计接口"
 unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '生成免登录官网报告' >/dev/null || fail "达摩盘安装包仍是旧的受控分享说明"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '管理员受审计的内部 XLSX' >/dev/null || fail "达摩盘安装包缺少管理员隐藏导出说明"
+if unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Eq '"description"|"version_name"'; then
+  fail "达摩盘安装包 Manifest 仍展示执行说明"
+fi
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F 'official-local-report.js' >/dev/null || fail "达摩盘安装包缺少官网报告壳桥接"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F 'official-local-report.css' >/dev/null || fail "达摩盘安装包缺少官网报告壳样式"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"use_dynamic_url": true' >/dev/null || fail "达摩盘本机报告页未使用动态扩展地址"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_PREPARE_OFFICIAL_FRAME' >/dev/null || fail "达摩盘插件缺少官网报告壳启动门禁"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_GET_REPORT_FOR_FRAME' >/dev/null || fail "达摩盘插件缺少隔离报告读取门禁"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'tools/dmp-report?source=dmp-extension#launch=' >/dev/null || fail "达摩盘插件未从官网地址打开本机报告"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const SANJIE_IMPORT_ENABLED = false' >/dev/null || fail "达摩盘插件未保持 Sanjie 导入禁用占位"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'data-report-watermark' >/dev/null || fail "达摩盘本机报告缺少全篇水印"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '少壮AI · shaozhuangai.com' >/dev/null || fail "达摩盘本机报告水印品牌不一致"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'Array.from({ length: 54 }' >/dev/null || fail "达摩盘本机报告水印未覆盖全篇"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'costPerClick(allocated, click)' >/dev/null || fail "达摩盘场景 CPC 未按分配花费与点击区间计算"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'returnOnSpend(directDealAmount, allocated)' >/dev/null || fail "达摩盘场景 ROI 未按成交额区间与分配花费计算"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'const closureGroups = new Map()' >/dev/null || fail "达摩盘场景分配缺少比例与金额闭合校验"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
-unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -F 'INTERNAL_EXPORT_VISIBLE_MS = 600_000' >/dev/null || fail "达摩盘插件隐藏导出入口不是 10 分钟短时授权"
-unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -F 'button.dataset.role = "internal-export"' >/dev/null || fail "达摩盘插件缺少动态管理员导出入口"
+if unzip -p "$DMP_ZIP_PATH" '*direct-popup.html' | grep -Eq 'XLSX|下载 HTML|清除本地结果'; then
+  fail "达摩盘打爆路径弹窗仍暴露已移除的下载或清理入口"
+fi
 if unzip -p "$DMP_ZIP_PATH" '*overlay.js' | grep -Eq 'download-excel|download-html|download-csv|data-excel|data-html'; then
   fail "达摩盘插件仍暴露业务数据下载按钮"
 fi
