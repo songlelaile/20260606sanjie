@@ -142,6 +142,35 @@ describe("DMP growth report shared viewer contract", () => {
     ]);
   });
 
+  it("right-aligns competition-store exact values and masked ranges while keeping period and label columns left", () => {
+    const benchmark: DmpViewerTable = {
+      name: "对标总表",
+      columns: ["分析周期", "对比周期", "对标指标", "本店当前值", "Swisse斯维诗海外旗舰店当前值", "Swisse斯维诗海外旗舰店变化率"],
+      rows: []
+    };
+    expect(benchmark.columns.map((_, index) => isDmpViewerMetricColumn(benchmark, index))).toEqual([
+      false, false, false, true, true, true
+    ]);
+
+    const channel: DmpViewerTable = {
+      name: "渠道指标",
+      columns: ["分析周期", "天数", "归因范围", "流量来源", "对象", "展现", "点击", "ROI"],
+      rows: []
+    };
+    expect(channel.columns.map((_, index) => isDmpViewerMetricColumn(channel, index))).toEqual([
+      false, true, false, false, false, true, true, true
+    ]);
+
+    const portrait: DmpViewerTable = {
+      name: "人群画像",
+      columns: ["画像周期", "行为", "标签维度", "标签选项", "本店人数", "本店占比", "本店覆盖规模"],
+      rows: []
+    };
+    expect(portrait.columns.map((_, index) => isDmpViewerMetricColumn(portrait, index))).toEqual([
+      false, false, false, false, true, true, true
+    ]);
+  });
+
   it("uses source report widths and prints only the viewer with its watermark", () => {
     expect(viewerSource).toContain("widths?.[index]");
     expect(viewerSource).toContain("Math.round(declaredWidth * 6.6)");

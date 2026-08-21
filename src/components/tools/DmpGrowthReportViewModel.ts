@@ -153,10 +153,17 @@ export function tableHasBusinessData(table: DmpViewerTable) {
 
 export function isDmpViewerMetricColumn(table: Pick<DmpViewerTable, "name" | "columns">, index: number) {
   const column = table.columns[index] ?? "";
-  if (table.name === "对标总表" && index >= 2 && index <= 4) return true;
+  if (table.name === "报告总览") return index >= 2;
+  if (table.name === "对标总表") {
+    const growthShape = table.columns[0] === "页面模块" || table.columns.includes("主体周期值");
+    return growthShape ? index >= 2 && index <= 4 : index >= 3;
+  }
   if (table.name === "基础指标对比" && index >= 1 && index <= 3) return true;
+  if (table.name === "流量投放结构") return index === 1 || index >= 4;
+  if (table.name === "渠道指标") return index === 1 || index >= 5;
+  if (table.name === "人群画像") return index >= 4;
   if (/商品ID|场景编号|日期|开始|结束|对象|角色|渠道|层级|页面指标|标题|描述|类目|生命周期|阶段名称|阶段描述|广告打法|执行细节|运营动作|一级场景|二级场景|关键词|词类型|标签|图片|详情/.test(column)) return false;
-  return /GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|数量|日均|变化|金额|价格/i.test(column);
+  return /当前(?:值)?$|对比期值$|变化率$|GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|人数|覆盖规模|数量|日均|变化|金额|价格/i.test(column);
 }
 
 function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportViewModel {
