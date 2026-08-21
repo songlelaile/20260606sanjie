@@ -42,6 +42,9 @@ export function DmpGrowthReportViewer({
 }: DmpGrowthReportViewerProps) {
   const model = useMemo(() => projectDmpReportForViewer(record), [record]);
   const tableByName = useMemo(() => new Map(model.tables.map((table) => [table.name, table])), [model.tables]);
+  const displayTitle = model.kind === "growth"
+    ? "达摩盘商品成长竞品对标报告"
+    : "达摩盘竞争态势分析报告";
 
   return (
     <article
@@ -55,7 +58,7 @@ export function DmpGrowthReportViewer({
 
       <header className={styles.hero} data-report-hero data-track-section="hero" data-track="header">
         <p className={styles.eyebrow}>{model.kind === "growth" ? "DAMOPAN · GROWTH BENCHMARK" : "DAMOPAN · COMPETITION SITUATION"}</p>
-        <h1>{model.title}</h1>
+        <h1>{displayTitle}</h1>
         <div className={styles.heroMeta}>
           <span>{model.kind === "growth" ? "主体" : "本店"}：{model.subject.title || model.subjectId || "—"}{model.subjectId ? `（${model.subjectId}）` : ""}</span>
           <span>{model.kind === "growth" ? "目标对手" : "竞店"}：{model.competitor.title || model.competitorId || "—"}{model.competitor.title && model.competitorId ? `（${model.competitorId}）` : ""}</span>
@@ -99,6 +102,7 @@ function GrowthOverview({
   const channels = tableByName.get("渠道花费");
   const dailyChart = daily ? <DailyGmvChart table={daily} /> : null;
   const channelChart = channels ? <ChannelSpendChart table={channels} /> : null;
+  const notices = table.rows.filter((row) => /^(?:数据说明|花费覆盖|取数时段提示)$/.test(String(row[0] ?? "")));
 
   return (
     <section
@@ -127,6 +131,18 @@ function GrowthOverview({
         <span>分析周期</span>
         <strong>{model.startDate || "—"} 至 {model.endDate || "—"}</strong>
       </div>
+      {notices.length ? (
+        <ul className={styles.dataNotice}>
+          {notices.map((row, index) => (
+            <li key={`${String(row[0])}-${index}`}>
+              <strong>{String(row[0])}</strong>
+              {row.slice(1).filter((cell) => !isMissing(cell)).map((cell, cellIndex) => (
+                <span key={`${index}-${cellIndex}`}>{String(cell)}</span>
+              ))}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {dailyChart || channelChart ? (
         <>
           <h3 className={styles.subheading}>数据趋势与结构</h3>
@@ -152,12 +168,15 @@ function ProductCard({ product, role }: { product: DmpViewerProduct; role: "subj
         <span aria-hidden="true">{fallback}</span>
         {product.pictureUrl ? (
           <img
+            data-product-image
             src={product.pictureUrl}
             alt={`${product.title || label}主图`}
             loading="eager"
             decoding="async"
             referrerPolicy="no-referrer"
-            onError={(event) => { event.currentTarget.hidden = true; }}
+            ref={hideAlreadyBrokenImage}
+            onLoad={(event) => { event.currentTarget.hidden = false; }}
+            onError={hideBrokenImage}
           />
         ) : null}
       </div>
@@ -232,7 +251,7 @@ function ReportTableSection({
                   {table.columns.map((column, columnIndex) => {
                     const value = row[columnIndex];
                     const role = columnRole(table, columnIndex);
-                    const numeric = isMetricColumn(table, columnIndex) || isExactNumber(value);
+                    const numeric = isMetricColumn(table, columnIndex) || (typeof value === "number" && Number.isFinite(value));
                     const sticky = offsets[columnIndex] != null;
                     return (
                       <td
@@ -280,7 +299,7 @@ function TableCell({
   const value = row[columnIndex];
   if (table.name === "商品与成功品" && /图片|详情/.test(column)) {
     const imageUrl = safeViewerImageUrl(value);
-    if (imageUrl) return <img className={styles.tableProductImage} src={imageUrl} alt="商品主图" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} />;
+    if (imageUrl) return <img className={styles.tableProductImage} data-product-image src={imageUrl} alt="商品主图" loading="lazy" decoding="async" referrerPolicy="no-referrer" ref={hideAlreadyBrokenImage} onLoad={(event) => { event.currentTarget.hidden = false; }} onError={hideBrokenImage} />;
     const detailUrl = safeViewerHttpsUrl(value);
     if (detailUrl) return <a className={styles.detailLink} href={detailUrl} target="_blank" rel="noopener noreferrer">打开详情</a>;
   }
@@ -457,13 +476,14 @@ function cellClasses({
   wrap: boolean;
   value: DmpCell;
 }) {
+  const trend = role === "difference" ? differenceTrend(value) : "";
   return [
     numeric ? styles.numeric : "",
     sticky ? styles.stickyColumn : "",
     wrap ? styles.wrap : "",
     role === "subject" ? styles.subject : role === "competitor" ? styles.competitor : role === "difference" ? styles.difference : "",
-    role === "difference" && numericValue(value) != null && Number(value) > 0 ? styles.trendUp : "",
-    role === "difference" && numericValue(value) != null && Number(value) < 0 ? styles.trendDown : ""
+    trend === "up" ? styles.trendUp : "",
+    trend === "down" ? styles.trendDown : ""
   ].filter(Boolean).join(" ");
 }
 
@@ -487,6 +507,10 @@ function stickyOffsets(table: DmpViewerTable) {
 }
 
 function columnWidth(table: DmpViewerTable, index: number) {
+  const declaredWidth = Number((table as DmpViewerTable & { widths?: number[] }).widths?.[index]);
+  if (Number.isFinite(declaredWidth) && declaredWidth > 0) {
+    return Math.max(88, Math.min(460, Math.round(declaredWidth * 6.6)));
+  }
   const column = table.columns[index] ?? "";
   if (/商品标题|描述|执行细节|运营动作/.test(column)) return 300;
   if (/广告打法|类目|成功品描述/.test(column)) return 250;
@@ -593,8 +617,27 @@ function numericValue(value: DmpCell): number | null {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
-function isExactNumber(value: DmpCell) {
-  return numericValue(value) != null;
+function differenceTrend(value: DmpCell): "up" | "down" | "" {
+  if (typeof value === "number") return value > 0 ? "up" : value < 0 ? "down" : "";
+  const text = String(value ?? "").trim().replaceAll(",", "");
+  if (!text || text === "—") return "";
+  const matches = text.match(/[+-]?\d+(?:\.\d+)?/g);
+  if (!matches?.length) return "";
+  const values = matches.map(Number).filter(Number.isFinite);
+  if (!values.length || values.every((entry) => entry === 0)) return "";
+  if (/下降|减少|下滑|低于|落后/.test(text) && values.some((entry) => entry > 0)) return "down";
+  if (/上升|增加|增长|提升|高于|领先/.test(text) && values.some((entry) => entry > 0)) return "up";
+  if (values.every((entry) => entry >= 0)) return "up";
+  if (values.every((entry) => entry <= 0)) return "down";
+  return "";
+}
+
+function hideAlreadyBrokenImage(image: HTMLImageElement | null) {
+  if (image?.complete && image.naturalWidth === 0) image.hidden = true;
+}
+
+function hideBrokenImage(event: { currentTarget: HTMLImageElement }) {
+  event.currentTarget.hidden = true;
 }
 
 function isFiniteNumber(value: number | null): value is number {

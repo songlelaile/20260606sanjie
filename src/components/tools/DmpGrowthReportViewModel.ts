@@ -3,7 +3,6 @@ import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 
 const CORE_TABLES = new Set(["报告总览", "商品与成功品", "对标总表", "周期汇总", "基础指标对比"]);
 const FORBIDDEN_VISIBLE = /接口清单|页面字段映射|系统诊断|方法与证据|结构解读|业务解读|复盘结论|判断|建议动作|证据等级|校验状态|反推口径|备注|(?:^|\s)请求(?:$|\s)|GMV指数|指数变化|平均GMV指数/i;
-const HIDDEN_EXPLANATION_ROW = /^(?:数据说明|花费覆盖|取数时段提示)$/;
 
 export const DMP_GROWTH_SECTION_IDS: Record<string, string> = {
   报告总览: "overview",
@@ -89,8 +88,14 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
   const endDate = report?.period.endDate || dateMatches(record.period)[1] || "";
   const days = report?.period.days || inclusiveDays(startDate, endDate) || 30;
   const productTable = byName.get("商品与成功品");
-  const subject = productFromTable(productTable, "subject", subjectId);
-  const competitor = productFromTable(productTable, "competitor", competitorId);
+  const subject = productFromTable(productTable, "subject", subjectId, {
+    pictureUrl: report?.item.pictureUrl,
+    detailUrl: report?.item.detailUrl
+  });
+  const competitor = productFromTable(productTable, "competitor", competitorId, {
+    pictureUrl: report?.item.competitorPictureUrl,
+    detailUrl: report?.item.competitorDetailUrl
+  });
   const overview = byName.get("报告总览");
   subject.title ||= overviewValue(overview, "商品标题", "subject");
   competitor.title ||= overviewValue(overview, "商品标题", "competitor");
@@ -98,7 +103,7 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
   return {
     kind: "growth",
     title: record.report.title || "达摩盘商品成长竞品对标报告",
-    generatedAt: record.createdAt,
+    generatedAt: report?.generatedAt || record.createdAt,
     subjectId,
     competitorId,
     periodLabel: record.period || report?.periodLabel || "",
@@ -108,7 +113,10 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
     subject,
     competitor,
     kpis: growthKpis(byName.get("周期汇总"), days),
-    tables: withBusinessData.map((table) => ({ ...table, subtitle: growthSubtitle(table.name, startDate, endDate, subjectId, competitorId, days) }))
+    tables: withBusinessData.map((table) => ({
+      ...table,
+      subtitle: table.subtitle || growthSubtitle(table.name, startDate, endDate, subjectId, competitorId, days)
+    }))
   };
 }
 
@@ -119,13 +127,13 @@ export function sanitizeViewerTable(table: DmpViewerTable): DmpViewerTable | nul
     .map(({ index }) => index);
   if (!keptIndexes.length) return null;
   const rows = table.rows
-    .filter((row) => !HIDDEN_EXPLANATION_ROW.test(String(row[0] ?? "")))
     .filter((row) => !row.some((cell) => FORBIDDEN_VISIBLE.test(String(cell ?? ""))))
     .map((row) => keptIndexes.map((index) => row[index] ?? ""));
   return {
     ...table,
     columns: keptIndexes.map((index) => table.columns[index]),
-    rows
+    rows,
+    ...(table.widths?.length === table.columns.length ? { widths: keptIndexes.map((index) => table.widths?.[index] ?? 0) } : {})
   };
 }
 
@@ -185,7 +193,8 @@ function projectChannelTable(table: DmpViewerTable): DmpViewerTable {
     ...table,
     groupedChannel: true,
     columns: indexes.map((index) => table.columns[index]),
-    rows: total ? [...active, total] : active
+    rows: total ? [...active, total] : active,
+    ...(table.widths?.length === table.columns.length ? { widths: indexes.map((index) => table.widths?.[index] ?? 0) } : {})
   };
 }
 
@@ -193,8 +202,8 @@ function projectDailyTable(table: DmpViewerTable): DmpViewerTable {
   return {
     ...table,
     columns: table.columns.map((column, index) => {
-      if (index === 1 && column === "日GMV") return "对手日GMV";
-      if (index >= 2 && index <= 8 && !column.startsWith("对手")) return `对手${column}`;
+      if (column === "日GMV") return "对手日GMV";
+      if (index > 1 && !/^(?:主体|对手)/.test(column) && /(?:日消耗|日总消耗|日费比)$/.test(column)) return `对手${column}`;
       return column;
     })
   };
@@ -210,12 +219,17 @@ function filterSceneRows(table: DmpViewerTable) {
   return table.rows.filter((row) => active.has([row[1], row[2], row[3], row[4]].map((value) => String(value ?? "")).join("\u0001")));
 }
 
-function productFromTable(table: DmpViewerTable | undefined, role: "subject" | "competitor", fallbackId: string): DmpViewerProduct {
+function productFromTable(
+  table: DmpViewerTable | undefined,
+  role: "subject" | "competitor",
+  fallbackId: string,
+  render?: { pictureUrl?: string; detailUrl?: string }
+): DmpViewerProduct {
   const row = table?.rows.find((candidate) => role === "subject"
     ? /^主体/.test(String(candidate[0] ?? ""))
     : /目标对手|^对手|^竞品/.test(String(candidate[0] ?? ""))) ?? [];
   const media = tableCell(table, row, "图片/详情");
-  const pictureUrl = safeViewerImageUrl(media);
+  const pictureUrl = safeViewerImageUrl(render?.pictureUrl || media);
   return {
     id: String(tableCell(table, row, "商品ID") || fallbackId),
     title: String(tableCell(table, row, "商品标题") || ""),
@@ -224,7 +238,7 @@ function productFromTable(table: DmpViewerTable | undefined, role: "subject" | "
     lifecycle: tableCell(table, row, "生命周期"),
     gmv: tableCell(table, row, "30日GMV"),
     pictureUrl,
-    detailUrl: pictureUrl ? "" : safeViewerHttpsUrl(media)
+    detailUrl: safeViewerHttpsUrl(render?.detailUrl || (pictureUrl ? "" : media))
   };
 }
 
@@ -280,7 +294,14 @@ export function safeViewerHttpsUrl(value: DmpCell) {
   for (const match of matches) {
     try {
       const parsed = new URL(match.startsWith("//") ? `https:${match}` : match);
-      if (parsed.protocol === "https:") return parsed.href;
+      if (parsed.protocol !== "https:" || parsed.username || parsed.password) continue;
+      for (const key of [...parsed.searchParams.keys()]) {
+        if (/(?:token|csrf|cookie|authorization|password|secret|(?:^|[_-])sign(?:ature|data)?$|session|webopsessionid|uniqueitemcampaign)/i.test(key)) {
+          parsed.searchParams.delete(key);
+        }
+      }
+      parsed.hash = "";
+      return parsed.href;
     } catch {}
   }
   return "";

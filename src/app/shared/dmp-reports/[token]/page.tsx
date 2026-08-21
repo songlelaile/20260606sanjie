@@ -23,11 +23,8 @@ export default async function SharedDmpReportPage({
 
   return (
     <div className="dmp-shared-page" data-track-section="report">
-      <DmpGrowthReportViewer
-        record={record}
-        variant="shared"
-        actions={<DmpSharedReportClient token={token} />}
-      />
+      <DmpSharedReportClient token={token} showCopyButton={false} />
+      <DmpGrowthReportViewer record={record} variant="shared" />
     </div>
   );
 }

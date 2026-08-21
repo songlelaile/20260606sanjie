@@ -1,3 +1,10 @@
+import {
+  DMP_GROWTH_REPORT_TABLES,
+  sanitizeDmpReportRenderData,
+  type DmpReportRenderData,
+  type DmpReportTableSnapshot
+} from "@/lib/dmp-report-types";
+
 export type DmpCell = string | number | boolean | null;
 
 export interface DmpReportTable {
@@ -5,6 +12,7 @@ export interface DmpReportTable {
   columns: string[];
   rows: DmpCell[][];
   subtitle?: string;
+  widths?: number[];
 }
 
 export interface DmpReport {
@@ -22,6 +30,7 @@ export interface DmpReport {
   };
   period: { startDate: string; endDate: string; days: number };
   periodLabel: string;
+  generatedAt?: string;
   recordCount?: number;
   tables: DmpReportTable[];
   quality: {
@@ -258,7 +267,8 @@ export function reconcileDmpCrossTableMetrics(
   tables: DmpReportTable[],
   subjectItemId: string,
   competitorItemId: string,
-  days: number
+  days: number,
+  options: { preserveDisclosedRanges?: boolean } = {}
 ) {
   const gmvByItemId = new Map<string, DmpCell>();
   const remember = (itemId: string, value: DmpCell | undefined) => {
@@ -357,13 +367,13 @@ export function reconcileDmpCrossTableMetrics(
     if (!sceneTable) return allocatedByParent;
     const roleIndex = sceneTable.columns.indexOf("对象");
     const primaryIndex = sceneTable.columns.indexOf("一级场景");
-    const chargeIndex = sceneTable.columns.indexOf("消耗(API精确值)");
-    const ratioIndex = sceneTable.columns.indexOf("消耗占比(API原值)");
-    const allocatedIndex = sceneTable.columns.indexOf("分配后消耗");
-    const clickIndex = sceneTable.columns.indexOf("点击");
-    const cpcIndex = sceneTable.columns.indexOf("CPC");
+    const chargeIndex = sceneTable.columns.findIndex((column) => /^(?:消耗|花费)(?:\(API精确值\))?$/.test(column));
+    const ratioIndex = sceneTable.columns.findIndex((column) => /^(?:消耗|花费)占比(?:\(API原值\))?$/.test(column));
+    const allocatedIndex = sceneTable.columns.findIndex((column) => /^(?:分配后)?(?:消耗|花费)$/.test(column) && column !== sceneTable.columns[chargeIndex]);
+    const clickIndex = sceneTable.columns.findIndex((column) => /^点击(?:量)?$/.test(column));
+    const cpcIndex = sceneTable.columns.findIndex((column) => /^(?:CPC|点击单价)$/.test(column));
     const dealIndex = sceneTable.columns.findIndex((column) => /直接成交(金额|额)/.test(column));
-    const roiIndex = sceneTable.columns.indexOf("直接ROI");
+    const roiIndex = sceneTable.columns.findIndex((column) => /^(?:直接)?ROI$/.test(column));
     if ([roleIndex, primaryIndex, chargeIndex, ratioIndex, allocatedIndex].some((index) => index < 0)) return allocatedByParent;
     sceneTable.rows.forEach((row) => {
       const role = /主体/.test(String(row[roleIndex] ?? "")) ? "主体" : "对手";
@@ -379,11 +389,13 @@ export function reconcileDmpCrossTableMetrics(
       allocatedByParent.set(`${role}|${primary}`, allocated);
       if (clickIndex >= 0 && cpcIndex >= 0) {
         const cpc = scalarDividedByRange(allocated, row[clickIndex]);
-        if (cpc != null && shouldReplaceRange(row[cpcIndex])) row[cpcIndex] = cpc;
+        const mayReplace = options.preserveDisclosedRanges ? isBlankCell(row[cpcIndex]) : shouldReplaceRange(row[cpcIndex]);
+        if (cpc != null && mayReplace) row[cpcIndex] = cpc;
       }
       if (dealIndex >= 0 && roiIndex >= 0) {
         const roi = rangeDividedByScalar(row[dealIndex], allocated);
-        if (roi != null && shouldReplaceRange(row[roiIndex])) row[roiIndex] = roi;
+        const mayReplace = options.preserveDisclosedRanges ? isBlankCell(row[roiIndex]) : shouldReplaceRange(row[roiIndex]);
+        if (roi != null && mayReplace) row[roiIndex] = roi;
       }
     });
     return allocatedByParent;
@@ -396,15 +408,32 @@ export function reconcileDmpCrossTableMetrics(
 
 export function canonicalToDmpReport(input: unknown): DmpReport | null {
   if (!isObject(input) || input.schema_version !== "3.0" || !Array.isArray(input.tables)) return null;
-  const tables: DmpReportTable[] = input.tables.filter(isObject).map((table) => ({
+  const snapshots: DmpReportTableSnapshot[] = input.tables.filter(isObject).map((table) => ({
     name: String(table.name ?? ""),
     columns: Array.isArray(table.columns) ? table.columns.map(String) : [],
     rows: Array.isArray(table.rows)
-      ? table.rows.filter(isObject).map((row) => Array.isArray(row.cells) ? row.cells as DmpCell[] : [])
+      ? table.rows.filter(isObject).map((row) => ({ cells: Array.isArray(row.cells) ? row.cells.map(String) : [] }))
       : []
   }));
   const itemId = String(input.item_id ?? "");
   const periodLabel = String(input.period ?? "");
+  const renderData = sanitizeDmpReportRenderData(input.render_data, {
+    itemId,
+    period: periodLabel,
+    tables: snapshots,
+    expectedTableNames: DMP_GROWTH_REPORT_TABLES
+  });
+  const renderTableMeta = new Map((renderData?.tables ?? []).map((table) => [table.name, table]));
+  const tables: DmpReportTable[] = snapshots.map((table) => {
+    const meta = renderTableMeta.get(table.name);
+    return {
+      name: table.name,
+      columns: table.columns,
+      rows: table.rows.map((row) => row.cells),
+      ...(meta?.subtitle ? { subtitle: meta.subtitle } : {}),
+      ...(meta?.widths ? { widths: [...meta.widths] } : {})
+    };
+  });
   const dateMatches = [...periodLabel.matchAll(/\d{4}-\d{2}-\d{2}/g)].map((match) => match[0]);
   const overview = tables.find((table) => table.name === "报告总览");
   const itemRow = overview?.rows.find((row) => String(row[0]) === "商品ID");
@@ -426,27 +455,71 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   const startDate = dateMatches[0] ?? "";
   const endDate = dateMatches[1] ?? "";
   const days = daysInclusive(startDate, endDate) || 30;
-  reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days);
+  mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
+  reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
+    preserveDisclosedRanges: Boolean(renderData)
+  });
+  const subjectRender = renderData?.products?.subject;
+  const competitorRender = renderData?.products?.competitor;
   return {
     version: 3,
     title: String(input.title ?? "达摩盘商品成长竞品对标报告"),
     item: {
       id: itemId,
       title: titleIndex >= 0 ? String(subjectProduct?.[titleIndex] ?? "") : "",
-      ...(looksLikeImageUrl(subjectMedia) ? { pictureUrl: subjectMedia } : subjectMedia ? { detailUrl: subjectMedia } : {}),
+      ...(subjectRender?.picture_url
+        ? { pictureUrl: subjectRender.picture_url }
+        : looksLikeImageUrl(subjectMedia)
+          ? { pictureUrl: subjectMedia }
+          : {}),
+      ...(subjectRender?.detail_url
+        ? { detailUrl: subjectRender.detail_url }
+        : !looksLikeImageUrl(subjectMedia) && subjectMedia
+          ? { detailUrl: subjectMedia }
+          : {}),
       competitorId,
       competitorTitle: titleIndex >= 0 ? String(competitorProduct?.[titleIndex] ?? "") : "",
-      ...(looksLikeImageUrl(competitorMedia)
-        ? { competitorPictureUrl: competitorMedia }
-        : competitorMedia
+      ...(competitorRender?.picture_url
+        ? { competitorPictureUrl: competitorRender.picture_url }
+        : looksLikeImageUrl(competitorMedia)
+          ? { competitorPictureUrl: competitorMedia }
+          : {}),
+      ...(competitorRender?.detail_url
+        ? { competitorDetailUrl: competitorRender.detail_url }
+        : !looksLikeImageUrl(competitorMedia) && competitorMedia
           ? { competitorDetailUrl: competitorMedia }
           : {})
     },
     period: { startDate, endDate, days },
     periodLabel,
+    ...(renderData?.generated_at ? { generatedAt: renderData.generated_at } : {}),
     tables,
     quality: { status: "canonical", complete: true, expected: tables.length, observed: tables.length }
   };
+}
+
+function mergeSubjectDailyGmv(tables: DmpReportTable[], rows: DmpReportRenderData["subject_daily_gmv"] | undefined) {
+  if (!rows?.length) return;
+  const table = tables.find((candidate) => candidate.name === "日GMV与费比");
+  if (!table) return;
+  const dateIndex = table.columns.indexOf("日期");
+  if (dateIndex < 0) return;
+  const tableDates = table.rows.map((row) => String(row[dateIndex] ?? ""));
+  if (tableDates.length !== rows.length || tableDates.some((date, index) => date !== rows[index]?.date)) return;
+  let subjectIndex = table.columns.indexOf("主体日GMV");
+  if (subjectIndex < 0) {
+    const competitorIndex = table.columns.findIndex((column) => /^(?:对手)?日GMV$/.test(column));
+    subjectIndex = competitorIndex >= 0 ? competitorIndex : 1;
+    const subjectWidth = table.widths?.[competitorIndex] ?? 16;
+    table.columns.splice(subjectIndex, 0, "主体日GMV");
+    table.rows.forEach((row) => row.splice(subjectIndex, 0, ""));
+    if (table.widths) table.widths.splice(subjectIndex, 0, subjectWidth);
+  }
+  const byDate = new Map(rows.map((row) => [row.date, row.gmv]));
+  table.rows.forEach((row) => {
+    const value = byDate.get(String(row[dateIndex] ?? ""));
+    if (value !== undefined && isBlankCell(row[subjectIndex])) row[subjectIndex] = value;
+  });
 }
 
 function looksLikeImageUrl(value: string) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   canonicalToDmpReport,
   inferDmpCaptureMeta,
+  reconcileDmpCrossTableMetrics,
   unwrapDmpRecords
 } from "./dmp-report-import";
 
@@ -126,5 +127,141 @@ describe("DMP JSON 工程文件识别", () => {
     expect(level2?.[0][7]).toBe(27.23);
     expect(level2?.[0][11]).toBe("0.68~0.91");
     expect(level2?.[0][13]).toBe("3.67~7.34");
+  });
+
+  it("restores render_data product links, subject daily values, generated time and table presentation", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-02",
+      tables: [
+        { name: "报告总览", columns: ["项目", "主体", "对手"], rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }] },
+        { name: "对标总表", columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"], rows: [{ cells: ["周期", "总GMV", "300", "400", ""] }] },
+        {
+          name: "商品与成功品",
+          columns: ["角色", "商品ID", "商品标题", "图片/详情"],
+          rows: [
+            { cells: ["主体", "593063365092", "主体商品", "https://img.alicdn.com/old-subject.png"] },
+            { cells: ["目标对手", "623803508105", "目标对手", "https://img.alicdn.com/old-competitor.png"] }
+          ]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "总GMV"],
+          rows: [
+            { cells: ["593063365092", "主体", "300"] },
+            { cells: ["623803508105", "目标对手", "400"] }
+          ]
+        },
+        {
+          name: "日GMV与费比",
+          columns: ["日期", "日GMV", "人群推广日消耗", "阶段"],
+          rows: [
+            { cells: ["2026-08-01", "190", "20", "成长期"] },
+            { cells: ["2026-08-02", "210", "30", "成长期"] }
+          ]
+        }
+      ],
+      render_data: {
+        version: "1",
+        generated_at: "2026-08-03T12:00:00+08:00",
+        products: {
+          subject: {
+            picture_url: "https://img.alicdn.com/new-subject.png",
+            detail_url: "https://item.taobao.com/item.htm?id=593063365092"
+          },
+          competitor: {
+            picture_url: "https://img.alicdn.com/new-competitor.png",
+            detail_url: "https://item.taobao.com/item.htm?id=623803508105"
+          }
+        },
+        subject_daily_gmv: [
+          { date: "2026-08-01", gmv: "120" },
+          { date: "2026-08-02", gmv: "180" }
+        ],
+        tables: [{ name: "日GMV与费比", subtitle: "主体与目标对手逐日对比", widths: [13, 16, 18, 12] }]
+      }
+    });
+
+    expect(report?.generatedAt).toBe("2026-08-03T04:00:00.000Z");
+    expect(report?.item).toMatchObject({
+      pictureUrl: "https://img.alicdn.com/new-subject.png",
+      detailUrl: "https://item.taobao.com/item.htm?id=593063365092",
+      competitorPictureUrl: "https://img.alicdn.com/new-competitor.png",
+      competitorDetailUrl: "https://item.taobao.com/item.htm?id=623803508105"
+    });
+    const daily = report?.tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual(["日期", "主体日GMV", "日GMV", "人群推广日消耗", "阶段"]);
+    expect(daily?.rows.map((row) => row[1])).toEqual(["120", "180"]);
+    expect(daily?.subtitle).toBe("主体与目标对手逐日对比");
+    expect(daily?.widths).toEqual([13, 16, 16, 18, 12]);
+  });
+
+  it("matches local HTML by omitting the subject series when the platform daily table is short", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-02",
+      tables: [
+        { name: "报告总览", columns: ["项目", "主体", "对手"], rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }] },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "总GMV"],
+          rows: [
+            { cells: ["593063365092", "主体", "300"] },
+            { cells: ["623803508105", "目标对手", "190"] }
+          ]
+        },
+        { name: "日GMV与费比", columns: ["日期", "日GMV"], rows: [{ cells: ["2026-08-01", "190"] }] }
+      ],
+      render_data: {
+        version: "1",
+        subject_daily_gmv: [
+          { date: "2026-08-01", gmv: "120" },
+          { date: "2026-08-02", gmv: "180" }
+        ]
+      }
+    });
+    const daily = report?.tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual(["日期", "日GMV"]);
+    expect(daily?.rows).toEqual([["2026-08-01", "190"]]);
+  });
+
+  it("fills blank derived scene cells for both old and concise headers but preserves disclosed values and intervals", () => {
+    const tables = [
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "推广消耗"],
+        rows: [
+          ["593063365092", "主体", "1000", "100"],
+          ["623803508105", "目标对手", "2000", "200"]
+        ]
+      },
+      {
+        name: "商品与成功品",
+        columns: ["角色", "商品ID", "30日GMV"],
+        rows: [
+          ["主体", "593063365092", "1000"],
+          ["目标对手", "623803508105", "2000"]
+        ]
+      },
+      {
+        name: "一级场景",
+        columns: ["对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "消耗占比", "分配后消耗", "展现", "点击量", "CTR", "点击单价", "直接成交额", "ROI"],
+        rows: [
+          ["主体", "1", "关键词推广", "", "371", "100", "100%", "", "", "20", "", "", "300", ""],
+          ["对手", "1", "人群推广", "", "372", "", "50%", "", "", "40~50", "", "0~10", "400~500", "1~2"]
+        ]
+      }
+    ];
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 30, { preserveDisclosedRanges: true });
+    expect(tables[2].rows[0][7]).toBe(100);
+    expect(tables[2].rows[0][11]).toBe(5);
+    expect(tables[2].rows[0][13]).toBe(3);
+    expect(tables[2].rows[1][7]).toBe(100);
+    expect(tables[2].rows[1][11]).toBe("0~10");
+    expect(tables[2].rows[1][13]).toBe("1~2");
   });
 });

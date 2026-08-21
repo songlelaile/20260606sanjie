@@ -30,6 +30,15 @@
   box-sizing: border-box;
 }
 
+.shared {
+  height: 100vh;
+  height: 100dvh;
+  inset: 0;
+  overflow: auto;
+  position: fixed;
+  z-index: 2147483640;
+}
+
 .watermark {
   align-content: center;
   display: grid;
@@ -390,6 +399,31 @@
 
 .periodBand strong {
   font-size: 16px;
+}
+
+.dataNotice {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.dataNotice li {
+  align-items: baseline;
+  background: #fdf6e6;
+  border-left: 3px solid #e0a52a;
+  border-radius: 6px;
+  color: #7a5b18;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 13px;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.dataNotice strong {
+  color: #5d430c;
 }
 
 .subheading {
@@ -815,6 +849,43 @@
 }
 
 @media print {
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) {
+    background: #fff !important;
+  }
+
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.app-shell) {
+    display: block !important;
+    min-height: 0 !important;
+    width: 100% !important;
+  }
+
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.app-shell > .sidebar),
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.app-shell > .sidebar-backdrop),
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.mobile-shell-bar) {
+    display: none !important;
+  }
+
+  :global(body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.app-shell > .main) {
+    display: block !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  :global(.dmp-workspace) > :not(.root[data-testid="dmp-growth-report-viewer"]),
+  :global(.dmp-shared-page) > :not(.root[data-testid="dmp-growth-report-viewer"]) {
+    display: none !important;
+  }
+
+  :global(.dmp-workspace):has(> .root[data-testid="dmp-growth-report-viewer"]),
+  :global(.dmp-shared-page):has(> .root[data-testid="dmp-growth-report-viewer"]) {
+    display: block !important;
+    margin: 0 !important;
+    max-width: none !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
   :global(.dmp-shared-page) > .root[data-testid="dmp-growth-report-viewer"],
   :global(.dmp-workspace) > .root[data-testid="dmp-growth-report-viewer"] {
     display: block !important;
@@ -824,6 +895,13 @@
     background: #fff;
     min-height: 0;
     overflow: visible;
+  }
+
+  .shared {
+    height: auto;
+    inset: auto;
+    position: static;
+    z-index: auto;
   }
 
   .watermark {

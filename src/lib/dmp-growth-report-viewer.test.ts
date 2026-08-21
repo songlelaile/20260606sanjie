@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   projectDmpReportForViewer,
+  safeViewerHttpsUrl,
   sanitizeViewerTable,
   tableHasBusinessData
 } from "@/components/tools/DmpGrowthReportViewModel";
@@ -42,7 +43,8 @@ describe("DMP growth report shared viewer contract", () => {
     // The public wrapper keeps anonymous propagation tracking while delegating
     // all business-report rendering to the shared viewer.
     expect(sharedPageSource).toContain("DmpSharedReportClient");
-    expect(sharedPageSource).toMatch(/<DmpSharedReportClient\s+token=\{token\}\s*\/>/);
+    expect(sharedPageSource).toMatch(/<DmpSharedReportClient\s+token=\{token\}\s+showCopyButton=\{false\}\s*\/>/);
+    expect(sharedPageSource).not.toContain("actions={<DmpSharedReportClient");
     expect(sharedPageSource).toContain('data-track-section="report"');
     expect(sharedPageSource).not.toContain("report.tables.map");
     expect(workspaceSource).not.toContain("dmp-print-disabled");
@@ -71,16 +73,45 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain("data-report-watermark");
     expect(viewerSource).toMatch(/Array\.from\(\{\s*length:\s*54\s*\}/);
     expect(viewerSource).toContain("少壮AI · shaozhuangai.com");
+    expect(viewerSource).toContain('const displayTitle = model.kind === "growth"');
+    expect(viewerSource).toContain('"达摩盘商品成长竞品对标报告"');
+    expect(viewerSource).toContain('<h1>{displayTitle}</h1>');
+    expect(viewerSource).not.toContain('<h1>{model.title}</h1>');
+    expect(viewerSource).toContain("ref={hideAlreadyBrokenImage}");
+    expect(viewerSource).toContain("image?.complete && image.naturalWidth === 0");
+    expect(viewerSource).toContain("styles.dataNotice");
+    expect(viewerSource).toContain("数据说明|花费覆盖|取数时段提示");
+    expect(viewerCss).toContain(".dataNotice");
     expect(viewerSource).not.toContain("dangerouslySetInnerHTML");
+    expect(viewerSource).toContain('typeof value === "number" && Number.isFinite(value)');
+    expect(viewerSource).not.toContain("isExactNumber(value)");
   });
 
-  it("keeps numeric cells right aligned and preserves the watermark in print", () => {
+  it("keeps exact, percentage and interval metrics right aligned with difference trends", () => {
     expect(viewerSource).toMatch(/data-(?:numeric|cell-kind)=/);
+    expect(viewerSource).toContain('role === "difference" ? differenceTrend(value) : ""');
+    expect(viewerSource).toMatch(/text\.match\(\/\[\+\-\]\?\\d\+\(\?:\\\.\\d\+\)\?\/g\)/);
     expect(viewerCss).toMatch(/text-align:\s*right/);
     expect(viewerCss).toMatch(/vertical-align:\s*middle/);
+  });
+
+  it("uses source report widths and prints only the viewer with its watermark", () => {
+    expect(viewerSource).toContain("widths?.[index]");
+    expect(viewerSource).toContain("Math.round(declaredWidth * 6.6)");
+    expect(viewerSource).toContain("Math.max(88, Math.min(460");
     expect(viewerCss).toMatch(/@media\s+print/s);
     expect(viewerCss).toMatch(/@media\s+print[\s\S]*\.watermark/s);
     expect(viewerCss).not.toMatch(/@media\s+print[\s\S]*\.watermark[^}]*display:\s*none/s);
+    expect(viewerCss).toContain('body):has(.root[data-testid="dmp-growth-report-viewer"]) :global(.app-shell > .sidebar');
+    expect(viewerCss).toContain('.dmp-workspace) > :not(.root[data-testid="dmp-growth-report-viewer"])');
+    expect(viewerCss).toContain("padding: 0 !important");
+  });
+
+  it("covers the signed-in AppShell on public share pages without changing the embedded preview", () => {
+    expect(viewerSource).toContain('variant === "shared" ? styles.shared : styles.preview');
+    expect(viewerCss).toMatch(/\.shared\s*\{[^}]*inset:\s*0;[^}]*overflow:\s*auto;[^}]*position:\s*fixed;[^}]*z-index:\s*2147483640;/s);
+    expect(viewerCss).toMatch(/@media\s+print[\s\S]*\.shared\s*\{[^}]*position:\s*static;/s);
+    expect(viewerCss).not.toMatch(/\.preview\s*\{[^}]*position:\s*fixed/s);
   });
 
   it("derives navigation and sections from the fixed growth-report contract", () => {
@@ -126,6 +157,56 @@ describe("DMP growth report viewer projection", () => {
     expect(model.tables.find((table) => table.name === "渠道花费")?.groupedChannel).toBe(true);
   });
 
+  it("uses validated render_data for exact local-HTML product links, generated time, daily series and table presentation", () => {
+    const record = growthRecord();
+    addVisualTables(record);
+    const start = Date.parse("2026-07-20T00:00:00Z");
+    const subjectDaily = Array.from({ length: 30 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      gmv: index === 29 ? "62539.13" : "1000"
+    }));
+    const dailyFixture = record.report.tables.find((table) => table.name === "日GMV与费比");
+    if (!dailyFixture) throw new Error("missing daily fixture");
+    dailyFixture.rows = subjectDaily.map((entry, index) => ({
+      cells: [entry.date, String(6000 + index * 100), "0", "100", "200", "0", "50", "350", "5.83%", "成长期"]
+    }));
+    record.report.render_data = {
+      version: "1",
+      generated_at: "2026-08-21T09:30:00.000Z",
+      products: {
+        subject: {
+          picture_url: "https://img.alicdn.com/render-subject.png",
+          detail_url: "https://item.taobao.com/item.htm?id=768239824008"
+        },
+        competitor: {
+          picture_url: "https://img.alicdn.com/render-competitor.png",
+          detail_url: "https://item.taobao.com/item.htm?id=563697874317"
+        }
+      },
+      subject_daily_gmv: subjectDaily,
+      tables: [{
+        name: "日GMV与费比",
+        subtitle: "主体与目标对手真实逐日GMV",
+        widths: [13, 16, 18, 18, 18, 18, 18, 18, 16, 14]
+      }]
+    };
+
+    const model = projectDmpReportForViewer(record);
+    expect(model.generatedAt).toBe("2026-08-21T09:30:00.000Z");
+    expect(model.subject).toMatchObject({
+      pictureUrl: "https://img.alicdn.com/render-subject.png",
+      detailUrl: "https://item.taobao.com/item.htm?id=768239824008"
+    });
+    expect(model.competitor).toMatchObject({
+      pictureUrl: "https://img.alicdn.com/render-competitor.png",
+      detailUrl: "https://item.taobao.com/item.htm?id=563697874317"
+    });
+    const daily = model.tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns.slice(0, 3)).toEqual(["日期", "主体日GMV", "对手日GMV"]);
+    expect(daily?.subtitle).toBe("主体与目标对手真实逐日GMV");
+    expect(daily?.widths?.slice(0, 3)).toEqual([13, 16, 16]);
+  });
+
   it("removes method, evidence, diagnostic and GMV-index text before either page can render it", () => {
     const sanitized = sanitizeViewerTable({
       name: "基础指标对比",
@@ -140,6 +221,15 @@ describe("DMP growth report viewer projection", () => {
     expect(JSON.stringify(sanitized)).not.toMatch(/方法与证据|校验状态|GMV指数/);
   });
 
+  it("keeps the same disclosed data notices as the opened local HTML", () => {
+    const sanitized = sanitizeViewerTable({
+      name: "报告总览",
+      columns: ["项目", "主体", "对手"],
+      rows: [["花费覆盖", "已返回29天", "平台少1天"]]
+    });
+    expect(sanitized?.rows).toEqual([["花费覆盖", "已返回29天", "平台少1天"]]);
+  });
+
   it("does not promote unsafe product media into an image or detail link", () => {
     const record = growthRecord();
     const products = record.report.tables.find((table) => table.name === "商品与成功品");
@@ -148,6 +238,9 @@ describe("DMP growth report viewer projection", () => {
     const model = projectDmpReportForViewer(record);
     expect(model.subject.pictureUrl).toBe("");
     expect(model.subject.detailUrl).toBe("");
+    expect(safeViewerHttpsUrl("https://user:pass@item.taobao.com/item.htm?id=1")).toBe("");
+    expect(safeViewerHttpsUrl("https://item.taobao.com/item.htm?id=1&token=secret&webOpSessionId=private#payload"))
+      .toBe("https://item.taobao.com/item.htm?id=1");
   });
 
   it("treats zeros as disclosed business values but blanks and em dashes as missing", () => {

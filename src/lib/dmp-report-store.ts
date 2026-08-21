@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import {
   dmpExpectedTableNames,
   dmpReportKind,
+  sanitizeDmpReportRenderData,
   type DmpBusinessReportRecord,
   type DmpCanonicalReport,
   type DmpReportQuality,
@@ -94,6 +95,15 @@ export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanoni
     tables.push({ name: String(candidate.name), columns, rows });
   }
 
+  const period = String(report.period ?? "近30天").slice(0, 200);
+  const itemId = String(report.item_id);
+  const renderData = kind === "growth" ? sanitizeDmpReportRenderData(report.render_data, {
+    itemId,
+    period,
+    tables,
+    expectedTableNames: expectedTables
+  }) : undefined;
+
   return {
     report: {
       schema_version: "3.0",
@@ -102,9 +112,10 @@ export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanoni
         report.title,
         kind === "competition" ? "达摩盘竞争态势分析报告" : "达摩盘打爆路径报告"
       ).slice(0, 200),
-      item_id: String(report.item_id),
-      period: String(report.period ?? "近30天").slice(0, 200),
-      tables
+      item_id: itemId,
+      period,
+      tables,
+      ...(renderData ? { render_data: renderData } : {})
     }
   };
 }

@@ -14,7 +14,7 @@ interface PendingClick {
   y: number;
 }
 
-export function DmpSharedReportClient({ token }: { token: string }) {
+export function DmpSharedReportClient({ token, showCopyButton = true }: { token: string; showCopyButton?: boolean }) {
   const [copied, setCopied] = useState(false);
   const viewGate = useRef<{ token: string; ready: Promise<boolean> } | null>(null);
 
@@ -182,13 +182,13 @@ export function DmpSharedReportClient({ token }: { token: string }) {
     }
   }
 
-  return (
+  return showCopyButton ? (
     <div className="dmp-shared-actions" data-track-section="hero-actions">
       <button type="button" data-track="copy-link" onClick={() => void copyLink()}>
         <Copy size={15} /> {copied ? "已复制" : "复制链接"}
       </button>
     </div>
-  );
+  ) : null;
 }
 
 function browserStorageId(kind: "localStorage" | "sessionStorage", key: string) {
