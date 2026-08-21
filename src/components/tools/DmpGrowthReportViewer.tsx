@@ -52,6 +52,7 @@ export function DmpGrowthReportViewer({
       className={[styles.root, variant === "shared" ? styles.shared : styles.preview, className].filter(Boolean).join(" ")}
       data-testid="dmp-growth-report-viewer"
       data-report-kind={model.kind}
+      data-report-scroll-root={variant === "shared" ? "shared" : undefined}
     >
       <div className={styles.watermark} data-report-watermark aria-hidden="true">
         {WATERMARKS.map((index) => <span key={index}>少壮AI · shaozhuangai.com</span>)}

@@ -141,6 +141,7 @@ describe("DMP growth report shared viewer contract", () => {
 
   it("covers the signed-in AppShell on public share pages without changing the embedded preview", () => {
     expect(viewerSource).toContain('variant === "shared" ? styles.shared : styles.preview');
+    expect(viewerSource).toContain('data-report-scroll-root={variant === "shared" ? "shared" : undefined}');
     expect(viewerCss).toMatch(/\.shared\s*\{[^}]*inset:\s*0;[^}]*overflow:\s*auto;[^}]*position:\s*fixed;[^}]*z-index:\s*2147483640;/s);
     expect(viewerCss).toMatch(/@media\s+print[\s\S]*\.shared\s*\{[^}]*position:\s*static;/s);
     expect(viewerCss).not.toMatch(/\.preview\s*\{[^}]*position:\s*fixed/s);

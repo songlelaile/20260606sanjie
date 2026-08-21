@@ -2,10 +2,12 @@
 
 import { Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { calculateDmpScrollDepth } from "@/lib/dmp-scroll-depth";
 
 const VISITOR_STORAGE_KEY = "dmp-share-anonymous-visitor-v1";
 const ENGAGEMENT_INTERVAL_MS = 15_000;
 const MAX_ACTIVE_MS = 6 * 60 * 60 * 1_000;
+const SHARED_SCROLL_ROOT_SELECTOR = '[data-report-scroll-root="shared"]';
 
 interface PendingClick {
   sectionKey: string;
@@ -24,11 +26,12 @@ export function DmpSharedReportClient({ token, showCopyButton = true }: { token:
     const sessionId = browserStorageId("sessionStorage", `dmp-share-session:${token}`);
     const activeStorageKey = `dmp-share-active:${token}:${sessionId}`;
     const attribution = readAttribution();
+    const scrollRoot = document.querySelector<HTMLElement>(SHARED_SCROLL_ROOT_SELECTOR);
     const queue: PendingClick[] = [];
     let timer: ReturnType<typeof setTimeout> | null = null;
     let activeMs = readPersistedActiveMs(activeStorageKey);
     let visibleSince = document.visibilityState === "visible" ? performance.now() : null;
-    let maxScrollDepth = currentScrollDepth();
+    let maxScrollDepth = currentScrollDepth(scrollRoot);
     let sentActiveSeconds = -1;
     let sentScrollDepth = -1;
 
@@ -108,7 +111,7 @@ export function DmpSharedReportClient({ token, showCopyButton = true }: { token:
 
     const flushEngagement = (beacon = false) => {
       syncActiveTime();
-      maxScrollDepth = Math.max(maxScrollDepth, currentScrollDepth());
+      maxScrollDepth = Math.max(maxScrollDepth, currentScrollDepth(scrollRoot));
       const activeSeconds = Math.max(0, Math.floor(activeMs / 1_000));
       if (activeSeconds === sentActiveSeconds && maxScrollDepth === sentScrollDepth) return;
       sentActiveSeconds = activeSeconds;
@@ -141,7 +144,7 @@ export function DmpSharedReportClient({ token, showCopyButton = true }: { token:
     };
 
     const onScroll = () => {
-      maxScrollDepth = Math.max(maxScrollDepth, currentScrollDepth());
+      maxScrollDepth = Math.max(maxScrollDepth, currentScrollDepth(scrollRoot));
     };
     const onVisibilityChange = () => {
       syncActiveTime();
@@ -159,13 +162,15 @@ export function DmpSharedReportClient({ token, showCopyButton = true }: { token:
     const engagementTimer = window.setInterval(() => flushEngagement(), ENGAGEMENT_INTERVAL_MS);
     document.addEventListener("click", onClick, true);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("scroll", onScroll, { passive: true });
+    if (scrollRoot) scrollRoot.addEventListener("scroll", onScroll, { passive: true });
+    else window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("pagehide", onPageHide);
     return () => {
       window.clearInterval(engagementTimer);
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("scroll", onScroll);
+      if (scrollRoot) scrollRoot.removeEventListener("scroll", onScroll);
+      else window.removeEventListener("scroll", onScroll);
       window.removeEventListener("pagehide", onPageHide);
       flush(true);
       flushEngagement(true);
@@ -228,12 +233,20 @@ function persistActiveMs(key: string, value: number) {
   }
 }
 
-function currentScrollDepth() {
-  const root = document.documentElement;
-  const height = Math.max(root.scrollHeight, document.body?.scrollHeight ?? 0);
-  if (height <= 0) return 0;
-  const viewportBottom = window.scrollY + window.innerHeight;
-  return Math.max(0, Math.min(100, Math.round(viewportBottom / height * 100)));
+function currentScrollDepth(scrollRoot: HTMLElement | null) {
+  if (scrollRoot) {
+    return calculateDmpScrollDepth({
+      scrollTop: scrollRoot.scrollTop,
+      clientHeight: scrollRoot.clientHeight,
+      scrollHeight: scrollRoot.scrollHeight
+    });
+  }
+  const documentRoot = document.scrollingElement ?? document.documentElement;
+  return calculateDmpScrollDepth({
+    scrollTop: Math.max(0, window.scrollY, documentRoot.scrollTop),
+    clientHeight: window.innerHeight,
+    scrollHeight: Math.max(documentRoot.scrollHeight, document.body?.scrollHeight ?? 0)
+  });
 }
 
 function readAttribution() {

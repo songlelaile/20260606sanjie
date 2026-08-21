@@ -57,6 +57,15 @@ describe("DMP share analytics UI boundary", () => {
     expect(sharedReportClientSource).toContain("persistActiveMs");
   });
 
+  it("tracks the fixed shared viewer's own scroll root and keeps a window fallback", () => {
+    expect(sharedReportClientSource).toContain("SHARED_SCROLL_ROOT_SELECTOR");
+    expect(sharedReportClientSource).toContain("document.querySelector<HTMLElement>(SHARED_SCROLL_ROOT_SELECTOR)");
+    expect(sharedReportClientSource).toContain('scrollRoot.addEventListener("scroll", onScroll');
+    expect(sharedReportClientSource).toContain('scrollRoot.removeEventListener("scroll", onScroll)');
+    expect(sharedReportClientSource).toContain('window.addEventListener("scroll", onScroll');
+    expect(sharedReportClientSource).toContain("currentScrollDepth(scrollRoot)");
+  });
+
   it("uses an execute-only advisory lock so Prisma never deserializes PostgreSQL void", () => {
     expect(shareStoreSource).toContain("$executeRaw`SELECT pg_advisory_xact_lock");
     expect(shareStoreSource).not.toContain("$queryRaw`SELECT pg_advisory_xact_lock");
