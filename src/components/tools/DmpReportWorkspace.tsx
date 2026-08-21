@@ -3,12 +3,14 @@
 import {
   FileSpreadsheet,
   RefreshCw,
+  Search,
   Share2,
   Trash2
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
+import styles from "./DmpReportWorkspace.module.css";
 
 function createdAtLabel(value: string) {
   const date = new Date(value);
@@ -54,14 +56,25 @@ export function DmpReportWorkspace({
   const [selectedId, setSelectedId] = useState(initialId);
   const [busy, setBusy] = useState(false);
   const [sharingId, setSharingId] = useState("");
-  const [notice, setNotice] = useState(
-    initialReports.length ? `已保存 ${initialReports.length} 份历史报告` : "插件生成报告后会自动保存到这里"
-  );
+  const [query, setQuery] = useState("");
+  const [notice, setNotice] = useState("");
 
   const selectedRecord = useMemo(
     () => reports.find((record) => record.id === selectedId) ?? reports[0] ?? null,
     [reports, selectedId]
   );
+  const visibleReports = useMemo(() => {
+    const keyword = query.trim().toLocaleLowerCase("zh-CN");
+    if (!keyword) return reports;
+    return reports.filter((record) => [
+      reportTypeLabel(record),
+      record.subjectItemId,
+      record.competitorItemId,
+      record.period,
+      createdAtLabel(record.createdAt),
+      record.createdAt
+    ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword)));
+  }, [query, reports]);
 
   function selectReport(record: DmpBusinessReportRecord) {
     setSelectedId(record.id);
@@ -123,66 +136,93 @@ export function DmpReportWorkspace({
   }
 
   return (
-    <section className={`dmp-workspace${focusReport ? " dmp-focus-report" : ""}`}>
-      <div className="dmp-workspace-topbar">
-        <div className="dmp-report-path">
-          <span>使用路径</span>
-          <strong>达摩盘 → 打爆路径 / 竞争态势分析</strong>
-        </div>
-        <div className="dmp-workspace-actions">
-          <button type="button" onClick={() => void refreshReports()} disabled={busy}>
-            <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新历史
-          </button>
-          {focusReport ? <a href="/tools/dmp-report">浏览全部报告</a> : null}
-          {selectedRecord ? (
-            <button className="dmp-action-primary" type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}>
-              <Share2 size={15} /> {sharingId === selectedRecord.id ? "生成中…" : "复制分享链接"}
+    <section className={`dmp-workspace ${styles.workspace}`}>
+      {focusReport ? (
+        <div className={styles.focusToolbar}>
+          <div className={styles.focusIdentity}>
+            <span>当前报告</span>
+            <strong>{selectedRecord ? `${objectLabels(selectedRecord).subject} ${selectedRecord.subjectItemId}` : "暂无报告"}</strong>
+          </div>
+          <div className={styles.toolbar}>
+            <button type="button" onClick={() => void refreshReports()} disabled={busy}>
+              <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新
             </button>
-          ) : null}
+            <a href="/tools/dmp-report">浏览全部报告</a>
+            {selectedRecord ? (
+              <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}>
+                <Share2 size={15} /> {sharingId === selectedRecord.id ? "生成中…" : "复制分享链接"}
+              </button>
+            ) : null}
+          </div>
         </div>
-      </div>
-
-      <div className="dmp-business-strip">
-        <div><strong>双报告归档</strong><span>统一保存打爆路径与竞争态势分析结果。</span></div>
-        <div><strong>公开只读分享</strong><span>任何拿到链接的人无需登录即可在官网查看。</span></div>
-        <div><strong>管理员传播分析</strong><span>传播来源、阅读深度与关注度仅在管理员后台查看。</span></div>
-      </div>
-
-      <section className="dmp-history-section">
-        <header>
-          <div>
-            <span>REPORT HISTORY</span>
-            <h2>历史生成报告</h2>
-            <p>{notice} · 点击报告卡片切换在线预览</p>
-          </div>
-          <strong>{reports.length} 份</strong>
-        </header>
-        {reports.length ? (
-          <div className="dmp-history-grid">
-            {reports.map((record) => (
-              <article className={`dmp-history-card${selectedRecord?.id === record.id ? " active" : ""}`} key={record.id}>
-                <button className="dmp-history-main" type="button" onClick={() => selectReport(record)} aria-pressed={selectedRecord?.id === record.id}>
-                  <span>{reportTypeLabel(record)} · {createdAtLabel(record.createdAt)}</span>
-                  <strong>{objectLabels(record).subject} {record.subjectItemId}</strong>
-                  <small>{objectLabels(record).competitor} {record.competitorItemId.replaceAll(",", "、")} · {record.period}</small>
+      ) : (
+        <section className={styles.library}>
+          <header className={styles.libraryHeader}>
+            <div className={styles.headerCopy}>
+              <div className={styles.headingRow}>
+                <h2>历史报告</h2>
+                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length}` : reports.length} 份</span>
+              </div>
+              {notice ? <p aria-live="polite">{notice}</p> : null}
+            </div>
+            <div className={styles.toolbar}>
+              <label className={styles.searchField}>
+                <Search size={14} aria-hidden="true" />
+                <span className={styles.srOnly}>搜索历史报告</span>
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索商品 ID、日期或类型"
+                />
+              </label>
+              <button type="button" onClick={() => void refreshReports()} disabled={busy}>
+                <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新
+              </button>
+              {selectedRecord ? (
+                <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}>
+                  <Share2 size={15} /> {sharingId === selectedRecord.id ? "生成中…" : "分享当前报告"}
                 </button>
-                <div className="dmp-history-actions">
-                  <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId)}>
-                    <Share2 size={14} /> {sharingId === record.id ? "生成中" : "分享"}
+              ) : null}
+            </div>
+          </header>
+          {visibleReports.length ? (
+            <div className={styles.reportGrid}>
+              {visibleReports.map((record) => (
+                <article className={`${styles.reportCard}${selectedRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
+                  <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={selectedRecord?.id === record.id}>
+                    <span className={styles.cardMeta}>
+                      <span className={styles.typeBadge}>{reportTypeLabel(record)}</span>
+                      <time>{createdAtLabel(record.createdAt)}</time>
+                    </span>
+                    <strong>{objectLabels(record).subject} {record.subjectItemId}</strong>
+                    <small>{objectLabels(record).competitor} {record.competitorItemId.replaceAll(",", "、")}</small>
+                    <span className={styles.period}>{record.period}</span>
                   </button>
-                  <button className="danger" type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告"><Trash2 size={14} /></button>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="dmp-history-empty">
-            <FileSpreadsheet size={36} />
-            <strong>还没有历史报告</strong>
-            <span>达摩盘一体化插件完成任一模式取数后，报告会自动保存到当前账号。</span>
-          </div>
-        )}
-      </section>
+                  <div className={styles.cardActions}>
+                    <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId)} title="复制分享链接">
+                      <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
+                    </button>
+                    <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : reports.length ? (
+            <div className={styles.noMatches}>
+              <Search size={24} />
+              <strong>没有匹配的报告</strong>
+              <button type="button" onClick={() => setQuery("")}>清除搜索</button>
+            </div>
+          ) : (
+            <div className={styles.emptyState}>
+              <FileSpreadsheet size={36} />
+              <strong>还没有历史报告</strong>
+              <span>达摩盘一体化插件完成任一模式取数后，报告会自动保存到当前账号。</span>
+            </div>
+          )}
+        </section>
+      )}
 
       {selectedRecord ? <DmpGrowthReportViewer record={selectedRecord} variant="preview" /> : null}
     </section>
