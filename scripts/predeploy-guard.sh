@@ -7,7 +7,7 @@ EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 DMP_VERSION="2.1.6"
-DMP_ZIP_SHA256="49a2a1365857571dcd4bf5fc26c65819da260128691b0bf54a9cccec175e6a20"
+DMP_ZIP_SHA256="f3e314aecf1ab12bb223ae87d75876ffc389d507341fe4bfa2944b5ae8f16bb7"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -249,6 +249,8 @@ unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '少壮AI · shaozhuangai.c
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'Array.from({ length: 54 }' >/dev/null || fail "达摩盘本机报告水印未覆盖全篇"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘本机报告表头不是统一绿色白字"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell tbody td{background-color:#fff}' >/dev/null || fail "达摩盘本机报告正文未隔离黑色表格样式"
+unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell thead th,.extra-table thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘竞争态势报告表头不是统一绿色白字"
+unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell tbody td,.extra-table tbody td{background-color:#fff}' >/dev/null || fail "达摩盘竞争态势报告正文未使用浅色背景"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'canonicalRenderData' >/dev/null || fail "达摩盘安装包缺少官网预览渲染合同"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'subject_daily_gmv' >/dev/null || fail "达摩盘安装包缺少主体逐日 GMV 合同"
 unzip -p "$DMP_ZIP_PATH" '*direct-core.js' | grep -F 'sanitizeRenderData' >/dev/null || fail "达摩盘安装包未校验官网预览渲染数据"
