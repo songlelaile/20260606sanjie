@@ -187,7 +187,6 @@ export function DmpSharedReportClient({ token }: { token: string }) {
       <button type="button" data-track="copy-link" onClick={() => void copyLink()}>
         <Copy size={15} /> {copied ? "已复制" : "复制链接"}
       </button>
-      <span className="dmp-shared-online-only">无需登录 · 官网公开只读</span>
     </div>
   );
 }

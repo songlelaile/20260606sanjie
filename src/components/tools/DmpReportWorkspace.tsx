@@ -1,27 +1,14 @@
 "use client";
 
 import {
-  CheckCircle2,
-  Copy,
   FileSpreadsheet,
   RefreshCw,
-  Search,
   Share2,
   Trash2
 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { canonicalToDmpReport, type DmpCell, type DmpReport, type DmpReportTable } from "@/lib/dmp-report-import";
-import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
-import { DmpBrandWatermark } from "@/components/tools/DmpBrandWatermark";
-
-const PREVIEW_ROW_LIMIT = 5_000;
-
-function tableMetric(report: DmpReport, rowIndex: number, column: string): DmpCell {
-  const table = report.tables.find((candidate) => candidate.name === "周期汇总");
-  const columnIndex = table?.columns.indexOf(column) ?? -1;
-  return columnIndex >= 0 ? table?.rows[rowIndex]?.[columnIndex] ?? "" : "";
-}
+import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
 
 function createdAtLabel(value: string) {
   const date = new Date(value);
@@ -35,10 +22,6 @@ function createdAtLabel(value: string) {
         minute: "2-digit",
         hour12: false
       }).format(date);
-}
-
-function reportFromRecord(record: DmpBusinessReportRecord | null): DmpReport | null {
-  return record ? canonicalToDmpReport(record.report) : null;
 }
 
 function isCompetitionReport(record: DmpBusinessReportRecord | null) {
@@ -69,8 +52,6 @@ export function DmpReportWorkspace({
     : initialReports[0]?.id ?? "";
   const [reports, setReports] = useState(initialReports);
   const [selectedId, setSelectedId] = useState(initialId);
-  const [selectedTable, setSelectedTable] = useState("对标总表");
-  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [sharingId, setSharingId] = useState("");
   const [notice, setNotice] = useState(
@@ -81,47 +62,9 @@ export function DmpReportWorkspace({
     () => reports.find((record) => record.id === selectedId) ?? reports[0] ?? null,
     [reports, selectedId]
   );
-  const report = useMemo(() => reportFromRecord(selectedRecord), [selectedRecord]);
-  const activeTable = useMemo(() => {
-    if (!report) return null;
-    return report.tables.find((table) => table.name === selectedTable) ?? report.tables[0] ?? null;
-  }, [report, selectedTable]);
-  const visibleRows = useMemo(() => {
-    if (!activeTable) return [];
-    const keyword = query.trim().toLowerCase();
-    const filtered = keyword
-      ? activeTable.rows.filter((row) => row.some((value) => String(value ?? "").toLowerCase().includes(keyword)))
-      : activeTable.rows;
-    return filtered.slice(0, PREVIEW_ROW_LIMIT);
-  }, [activeTable, query]);
-  const kpis = useMemo(() => {
-    if (!report || !selectedRecord) return [];
-    if (!isCompetitionReport(selectedRecord)) return [
-      { label: "主体 30 日 GMV", value: tableMetric(report, 0, "总GMV"), tone: "subject" },
-      { label: "成功品 30 日 GMV", value: tableMetric(report, 1, "总GMV"), tone: "competitor" },
-      { label: "主体广告消耗", value: tableMetric(report, 0, "广告消耗"), tone: "subject" },
-      { label: "成功品广告消耗", value: tableMetric(report, 1, "广告消耗"), tone: "competitor" },
-      { label: "主体费比", value: tableMetric(report, 0, "费比"), tone: "subject" },
-      { label: "成功品费比", value: tableMetric(report, 1, "费比"), tone: "competitor" }
-    ];
-    const overview = report.tables.find((table) => table.name === "报告总览");
-    if (!overview) return [];
-    const currentColumns = overview.columns
-      .map((column, index) => ({ column, index }))
-      .filter(({ column }) => /当前(?:值)?$/.test(column));
-    if (currentColumns.length < 2) return [];
-    return overview.rows.slice(0, 3).flatMap((row) => currentColumns.map(({ column, index }, objectIndex) => ({
-      label: `${row[0]} ${row[1]} · ${column.replace(/当前(?:值)?$/, "") || (objectIndex === 0 ? "本店" : `竞店${objectIndex}`)}`,
-      value: row[index],
-      tone: objectIndex === 0 ? "subject" : "competitor"
-    })));
-  }, [report, selectedRecord]);
 
   function selectReport(record: DmpBusinessReportRecord) {
-    const nextReport = reportFromRecord(record);
     setSelectedId(record.id);
-    setSelectedTable(nextReport?.tables.some((table) => table.name === "对标总表") ? "对标总表" : nextReport?.tables[0]?.name ?? "");
-    setQuery("");
   }
 
   async function createShare(record: DmpBusinessReportRecord) {
@@ -181,8 +124,6 @@ export function DmpReportWorkspace({
 
   return (
     <section className={`dmp-workspace${focusReport ? " dmp-focus-report" : ""}`}>
-      <DmpBrandWatermark />
-      <div className="dmp-print-disabled">当前版本仅支持官网在线查看，暂不支持打印或导出。</div>
       <div className="dmp-workspace-topbar">
         <div className="dmp-report-path">
           <span>使用路径</span>
@@ -243,51 +184,7 @@ export function DmpReportWorkspace({
         )}
       </section>
 
-      {report && selectedRecord ? (
-        <>
-          <div className="dmp-report-identity">
-            <div>
-              <span className="dmp-report-kicker">ONLINE BUSINESS REPORT</span>
-              <h2>{report.title}</h2>
-              <p>{objectLabels(selectedRecord).subject} <b>{selectedRecord.subjectItemId}</b> · {objectLabels(selectedRecord).competitor} <b>{selectedRecord.competitorItemId.replaceAll(",", "、")}</b> · {selectedRecord.period}</p>
-            </div>
-            <span className={`dmp-quality-badge ${selectedRecord.quality === "complete" ? "complete" : "blocked"}`}>
-              <CheckCircle2 size={15} /> {selectedRecord.quality === "complete" ? "数据完整" : "局部数据"}
-            </span>
-          </div>
-
-          <div className="dmp-kpi-grid">
-            {kpis.map((kpi) => (
-              <div className={`dmp-kpi ${kpi.tone}`} key={kpi.label}>
-                <span>{kpi.label}</span>
-                <strong>{formatDmpCell(kpi.value, kpi.label)}</strong>
-              </div>
-            ))}
-          </div>
-
-          <div className="dmp-report-meta">
-            <span><CheckCircle2 size={14} /> 在线报告已保存</span>
-            <span>{report.tables.length} 张业务表</span>
-            <span>生成时间 {createdAtLabel(selectedRecord.createdAt)}</span>
-            <button type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}><Copy size={14} /> 复制只读链接</button>
-          </div>
-
-          <div className="dmp-table-tabs">
-            {report.tables.map((table) => (
-              <button
-                className={activeTable?.name === table.name ? "active" : ""}
-                key={table.name}
-                type="button"
-                onClick={() => { setSelectedTable(table.name); setQuery(""); }}
-              >
-                <span>{table.name}</span><small>{table.rows.length}</small>
-              </button>
-            ))}
-          </div>
-
-          {activeTable ? <ReportTable table={activeTable} query={query} setQuery={setQuery} visibleRows={visibleRows} /> : null}
-        </>
-      ) : null}
+      {selectedRecord ? <DmpGrowthReportViewer record={selectedRecord} variant="preview" /> : null}
     </section>
   );
 }
@@ -305,55 +202,4 @@ async function copyText(value: string) {
     document.execCommand("copy");
     input.remove();
   }
-}
-
-function ReportTable({
-  table,
-  query,
-  setQuery,
-  visibleRows
-}: {
-  table: DmpReportTable;
-  query: string;
-  setQuery: (value: string) => void;
-  visibleRows: DmpCell[][];
-}) {
-  return (
-    <section className="dmp-table-card">
-      <header>
-        <div>
-          <span>BUSINESS TABLE</span>
-          <h3>{table.name}</h3>
-          <p>共 {table.rows.length} 行，长内容以省略号预览，悬停可查看全部</p>
-        </div>
-        <label className="dmp-table-search">
-          <Search size={15} />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="筛选当前业务表…" />
-        </label>
-      </header>
-      {table.rows.length > PREVIEW_ROW_LIMIT ? (
-        <p className="dmp-report-preview-limit">在线页面最多显示前 {PREVIEW_ROW_LIMIT} 行，请使用上方筛选定位数据。</p>
-      ) : null}
-      <div className="dmp-table-scroll">
-        <table>
-          <thead><tr>{table.columns.map((column, index) => <th key={`${column}-${index}`}>{column}</th>)}</tr></thead>
-          <tbody>
-            {visibleRows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {table.columns.map((_, columnIndex) => {
-                  const displayValue = formatDmpCell(row[columnIndex], dmpCellSemantic(table.name, table.columns, row, columnIndex));
-                  return (
-                    <td key={columnIndex} title={displayValue === "—" ? undefined : displayValue}>
-                      <span className="dmp-table-cell-preview">{displayValue}</span>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!visibleRows.length ? <div className="dmp-table-empty">没有匹配的数据</div> : null}
-      </div>
-    </section>
-  );
 }

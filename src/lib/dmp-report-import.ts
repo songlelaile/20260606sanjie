@@ -13,8 +13,12 @@ export interface DmpReport {
   item: {
     id: string;
     title?: string;
+    pictureUrl?: string;
+    detailUrl?: string;
     competitorId: string;
     competitorTitle?: string;
+    competitorPictureUrl?: string;
+    competitorDetailUrl?: string;
   };
   period: { startDate: string; endDate: string; days: number };
   periodLabel: string;
@@ -404,7 +408,21 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   const dateMatches = [...periodLabel.matchAll(/\d{4}-\d{2}-\d{2}/g)].map((match) => match[0]);
   const overview = tables.find((table) => table.name === "报告总览");
   const itemRow = overview?.rows.find((row) => String(row[0]) === "商品ID");
-  const competitorId = String(itemRow?.[2] ?? "");
+  const productTable = tables.find((table) => table.name === "商品与成功品");
+  const roleIndex = productTable?.columns.indexOf("角色") ?? -1;
+  const productIdIndex = productTable?.columns.indexOf("商品ID") ?? -1;
+  const titleIndex = productTable?.columns.indexOf("商品标题") ?? -1;
+  const mediaIndex = productTable?.columns.indexOf("图片/详情") ?? -1;
+  const subjectProduct = productTable?.rows.find((row) => roleIndex >= 0 && /^主体/.test(String(row[roleIndex] ?? "")));
+  const competitorProduct = productTable?.rows.find((row) => roleIndex >= 0 && /目标对手|^对手|^竞品/.test(String(row[roleIndex] ?? "")));
+  const competitorId = String(
+    itemRow?.[2]
+      ?? (productIdIndex >= 0 ? competitorProduct?.[productIdIndex] : "")
+      ?? (Array.isArray(input.competitor_ids) ? input.competitor_ids[0] : "")
+      ?? ""
+  );
+  const subjectMedia = mediaIndex >= 0 ? String(subjectProduct?.[mediaIndex] ?? "") : "";
+  const competitorMedia = mediaIndex >= 0 ? String(competitorProduct?.[mediaIndex] ?? "") : "";
   const startDate = dateMatches[0] ?? "";
   const endDate = dateMatches[1] ?? "";
   const days = daysInclusive(startDate, endDate) || 30;
@@ -412,12 +430,36 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   return {
     version: 3,
     title: String(input.title ?? "达摩盘商品成长竞品对标报告"),
-    item: { id: itemId, competitorId },
+    item: {
+      id: itemId,
+      title: titleIndex >= 0 ? String(subjectProduct?.[titleIndex] ?? "") : "",
+      ...(looksLikeImageUrl(subjectMedia) ? { pictureUrl: subjectMedia } : subjectMedia ? { detailUrl: subjectMedia } : {}),
+      competitorId,
+      competitorTitle: titleIndex >= 0 ? String(competitorProduct?.[titleIndex] ?? "") : "",
+      ...(looksLikeImageUrl(competitorMedia)
+        ? { competitorPictureUrl: competitorMedia }
+        : competitorMedia
+          ? { competitorDetailUrl: competitorMedia }
+          : {})
+    },
     period: { startDate, endDate, days },
     periodLabel,
     tables,
     quality: { status: "canonical", complete: true, expected: tables.length, observed: tables.length }
   };
+}
+
+function looksLikeImageUrl(value: string) {
+  const text = value.trim();
+  if (!/^(?:https?:)?\/\//i.test(text)) return false;
+  try {
+    const parsed = new URL(text.startsWith("//") ? `https:${text}` : text);
+    return parsed.protocol === "https:"
+      && (/(?:^|\.)(?:alicdn\.com|tbcdn\.cn|taobaocdn\.com)$/i.test(parsed.hostname)
+        || /\.(?:avif|gif|jpe?g|png|webp)(?:$|[?&#])/i.test(`${parsed.pathname}${parsed.search}`));
+  } catch {
+    return false;
+  }
 }
 
 export function inferDmpCaptureMeta(records: UnknownRecord[], fileName = ""): DmpCaptureMeta {
