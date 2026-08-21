@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
+  isDmpViewerMetricColumn,
   projectDmpReportForViewer,
   safeViewerHttpsUrl,
+  safeViewerImageUrl,
   sanitizeViewerTable,
-  tableHasBusinessData
+  tableHasBusinessData,
+  type DmpViewerTable
 } from "@/components/tools/DmpGrowthReportViewModel";
 import {
   DMP_GROWTH_REPORT_TABLES,
@@ -93,6 +96,35 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toMatch(/text\.match\(\/\[\+\-\]\?\\d\+\(\?:\\\.\\d\+\)\?\/g\)/);
     expect(viewerCss).toMatch(/text-align:\s*right/);
     expect(viewerCss).toMatch(/vertical-align:\s*middle/);
+  });
+
+  it("does not right-align numeric-string identifiers while keeping business metrics right-aligned", () => {
+    const sceneTable: DmpViewerTable = {
+      name: "一级场景",
+      columns: ["对象", "层级", "场景编号", "消耗", "CPC", "直接ROI"],
+      rows: [["主体", "1", "371", "3596.63", "2.85", "0.71"]]
+    };
+    expect(sceneTable.columns.map((_, index) => isDmpViewerMetricColumn(sceneTable, index))).toEqual([
+      false, false, false, true, true, true
+    ]);
+
+    const benchmark: DmpViewerTable = {
+      name: "对标总表",
+      columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+      rows: []
+    };
+    expect(benchmark.columns.map((_, index) => isDmpViewerMetricColumn(benchmark, index))).toEqual([
+      false, false, true, true, true
+    ]);
+
+    const baseMetrics: DmpViewerTable = {
+      name: "基础指标对比",
+      columns: ["指标", "主体值", "对手值", "主体相对对手"],
+      rows: []
+    };
+    expect(baseMetrics.columns.map((_, index) => isDmpViewerMetricColumn(baseMetrics, index))).toEqual([
+      false, true, true, true
+    ]);
   });
 
   it("uses source report widths and prints only the viewer with its watermark", () => {
@@ -241,6 +273,26 @@ describe("DMP growth report viewer projection", () => {
     expect(safeViewerHttpsUrl("https://user:pass@item.taobao.com/item.htm?id=1")).toBe("");
     expect(safeViewerHttpsUrl("https://item.taobao.com/item.htm?id=1&token=secret&webOpSessionId=private#payload"))
       .toBe("https://item.taobao.com/item.htm?id=1");
+  });
+
+  it("sanitizes table-fallback product media with the render_data URL policy", () => {
+    const pictureRecord = growthRecord();
+    const pictureProducts = pictureRecord.report.tables.find((table) => table.name === "商品与成功品");
+    if (!pictureProducts) throw new Error("missing product fixture");
+    pictureProducts.rows[0].cells[8] = "https://img.alicdn.com/subject.png?keep=1&token=secret&session=private&sign=signed#payload";
+    expect(projectDmpReportForViewer(pictureRecord).subject.pictureUrl)
+      .toBe("https://img.alicdn.com/subject.png?keep=1");
+
+    const detailRecord = growthRecord();
+    const detailProducts = detailRecord.report.tables.find((table) => table.name === "商品与成功品");
+    if (!detailProducts) throw new Error("missing product fixture");
+    detailProducts.rows[0].cells[8] = "https://item.taobao.com/item.htm?id=768239824008&webOpSessionId=private&authorization=secret#payload";
+    const detailProduct = projectDmpReportForViewer(detailRecord).subject;
+    expect(detailProduct.pictureUrl).toBe("");
+    expect(detailProduct.detailUrl).toBe("https://item.taobao.com/item.htm?id=768239824008");
+
+    expect(safeViewerImageUrl("https://user:pass@img.alicdn.com/subject.png")).toBe("");
+    expect(safeViewerHttpsUrl(`https://item.taobao.com/${"a".repeat(2_048)}`)).toBe("");
   });
 
   it("treats zeros as disclosed business values but blanks and em dashes as missing", () => {

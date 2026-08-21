@@ -198,35 +198,45 @@ describe("DMP JSON 工程文件识别", () => {
     expect(daily?.widths).toEqual([13, 16, 16, 18, 12]);
   });
 
-  it("matches local HTML by omitting the subject series when the platform daily table is short", () => {
+  it.each([
+    ["30 vs 29", dates("2026-07-20", 30).slice(0, -1)],
+    ["missing middle date", [...dates("2026-07-20", 30).filter((_, index) => index !== 14), "2026-08-19"]],
+    ["out of order", (() => {
+      const values = dates("2026-07-20", 30);
+      [values[9], values[10]] = [values[10], values[9]];
+      return values;
+    })()]
+  ])("matches local HTML by omitting the subject series for %s platform dates", (_case, platformDates) => {
+    const renderDates = dates("2026-07-20", 30);
     const report = canonicalToDmpReport({
       schema_version: "3.0",
       title: "达摩盘报告",
       item_id: "593063365092",
-      period: "2026-08-01 至 2026-08-02",
+      period: "2026-07-20 至 2026-08-18",
       tables: [
         { name: "报告总览", columns: ["项目", "主体", "对手"], rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }] },
         {
           name: "周期汇总",
           columns: ["商品ID", "对象", "总GMV"],
           rows: [
-            { cells: ["593063365092", "主体", "300"] },
-            { cells: ["623803508105", "目标对手", "190"] }
+            { cells: ["593063365092", "主体", "3000"] },
+            { cells: ["623803508105", "目标对手", "3000"] }
           ]
         },
-        { name: "日GMV与费比", columns: ["日期", "日GMV"], rows: [{ cells: ["2026-08-01", "190"] }] }
+        {
+          name: "日GMV与费比",
+          columns: ["日期", "日GMV"],
+          rows: platformDates.map((date) => ({ cells: [date, "100"] }))
+        }
       ],
       render_data: {
         version: "1",
-        subject_daily_gmv: [
-          { date: "2026-08-01", gmv: "120" },
-          { date: "2026-08-02", gmv: "180" }
-        ]
+        subject_daily_gmv: renderDates.map((date) => ({ date, gmv: "100" }))
       }
     });
     const daily = report?.tables.find((table) => table.name === "日GMV与费比");
     expect(daily?.columns).toEqual(["日期", "日GMV"]);
-    expect(daily?.rows).toEqual([["2026-08-01", "190"]]);
+    expect(daily?.rows.map((row) => row[0])).toEqual(platformDates);
   });
 
   it("fills blank derived scene cells for both old and concise headers but preserves disclosed values and intervals", () => {

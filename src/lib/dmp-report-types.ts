@@ -241,8 +241,8 @@ function sanitizeRenderProducts(value: unknown): DmpReportRenderData["products"]
 
 function sanitizeRenderProduct(value: unknown): DmpReportRenderProduct | undefined {
   if (!isPlainObject(value)) return undefined;
-  const pictureUrl = safeRenderImageUrl(value.picture_url);
-  const detailUrl = safeRenderHttpsUrl(value.detail_url);
+  const pictureUrl = sanitizeDmpRenderImageUrl(value.picture_url);
+  const detailUrl = sanitizeDmpRenderHttpsUrl(value.detail_url);
   return pictureUrl || detailUrl
     ? { ...(pictureUrl ? { picture_url: pictureUrl } : {}), ...(detailUrl ? { detail_url: detailUrl } : {}) }
     : undefined;
@@ -313,7 +313,7 @@ function safeIsoInstant(value: unknown) {
   return Number.isFinite(instant.getTime()) ? instant.toISOString() : "";
 }
 
-function safeRenderHttpsUrl(value: unknown) {
+export function sanitizeDmpRenderHttpsUrl(value: unknown) {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text.startsWith("https://") || text.length > MAX_RENDER_URL_LENGTH) return "";
   try {
@@ -329,8 +329,8 @@ function safeRenderHttpsUrl(value: unknown) {
   }
 }
 
-function safeRenderImageUrl(value: unknown) {
-  const safe = safeRenderHttpsUrl(value);
+export function sanitizeDmpRenderImageUrl(value: unknown) {
+  const safe = sanitizeDmpRenderHttpsUrl(value);
   if (!safe) return "";
   const parsed = new URL(safe);
   const knownHost = /(?:^|\.)(?:alicdn\.com|tbcdn\.cn|taobaocdn\.com|img\.example)$/i.test(parsed.hostname);

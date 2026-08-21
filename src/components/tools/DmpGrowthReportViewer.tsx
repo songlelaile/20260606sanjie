@@ -11,6 +11,7 @@ import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import {
   DMP_GROWTH_FREEZE_COLUMNS,
   DMP_GROWTH_SECTION_IDS,
+  isDmpViewerMetricColumn,
   projectDmpReportForViewer,
   safeViewerHttpsUrl,
   safeViewerImageUrl,
@@ -251,7 +252,7 @@ function ReportTableSection({
                   {table.columns.map((column, columnIndex) => {
                     const value = row[columnIndex];
                     const role = columnRole(table, columnIndex);
-                    const numeric = isMetricColumn(table, columnIndex) || (typeof value === "number" && Number.isFinite(value));
+                    const numeric = isDmpViewerMetricColumn(table, columnIndex) || (typeof value === "number" && Number.isFinite(value));
                     const sticky = offsets[columnIndex] != null;
                     return (
                       <td
@@ -329,7 +330,7 @@ function renderTableHead(table: DmpViewerTable, offsets: Array<number | undefine
       const sticky = offsets[columnIndex] != null;
       return (
         <th
-          className={[isMetricColumn(table, columnIndex) ? styles.metricHead : "", sticky ? styles.stickyColumn : "", role === "subject" ? styles.subject : role === "competitor" ? styles.competitor : role === "difference" ? styles.difference : ""].filter(Boolean).join(" ")}
+          className={[isDmpViewerMetricColumn(table, columnIndex) ? styles.metricHead : "", sticky ? styles.stickyColumn : "", role === "subject" ? styles.subject : role === "competitor" ? styles.competitor : role === "difference" ? styles.difference : ""].filter(Boolean).join(" ")}
           data-track={`header:${Math.min(columnIndex, 99)}`}
           style={cellStyle(table, columnIndex, offsets[columnIndex])}
           key={`${column}-${columnIndex}`}
@@ -519,7 +520,7 @@ function columnWidth(table: DmpViewerTable, index: number) {
   if (/日期|开始|结束/.test(column)) return 118;
   if (/一级场景|二级场景|关键词|词类型/.test(column)) return 168;
   if (/对象|角色|渠道|层级|阶段/.test(column)) return 112;
-  return isMetricColumn(table, index) ? 132 : 138;
+  return isDmpViewerMetricColumn(table, index) ? 132 : 138;
 }
 
 function columnRole(table: DmpViewerTable, index: number): "subject" | "competitor" | "difference" | "" {
@@ -538,13 +539,6 @@ function rowRole(row: DmpCell[]): "subject" | "competitor" | "" {
   if (/^主体/.test(first) || /^主体/.test(second)) return "subject";
   if (/目标对手|^对手|^竞品/.test(first) || /目标对手|^对手/.test(second)) return "competitor";
   return "";
-}
-
-function isMetricColumn(table: DmpViewerTable, index: number) {
-  const column = table.columns[index] ?? "";
-  if (["对标总表", "基础指标对比"].includes(table.name) && columnRole(table, index)) return true;
-  if (/商品ID|场景编号|日期|开始|结束|对象|角色|渠道|页面指标|标题|描述|类目|生命周期|阶段名称|阶段描述|广告打法|执行细节|运营动作|一级场景|二级场景|关键词|词类型|标签|图片|详情/.test(column)) return false;
-  return /GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|数量|日均|变化|金额|价格|层级/i.test(column);
 }
 
 function wrapColumn(column: string) {

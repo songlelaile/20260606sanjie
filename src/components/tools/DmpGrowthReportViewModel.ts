@@ -1,5 +1,9 @@
 import { canonicalToDmpReport, type DmpCell, type DmpReportTable } from "@/lib/dmp-report-import";
-import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
+import {
+  sanitizeDmpRenderHttpsUrl,
+  sanitizeDmpRenderImageUrl,
+  type DmpBusinessReportRecord
+} from "@/lib/dmp-report-types";
 
 const CORE_TABLES = new Set(["报告总览", "商品与成功品", "对标总表", "周期汇总", "基础指标对比"]);
 const FORBIDDEN_VISIBLE = /接口清单|页面字段映射|系统诊断|方法与证据|结构解读|业务解读|复盘结论|判断|建议动作|证据等级|校验状态|反推口径|备注|(?:^|\s)请求(?:$|\s)|GMV指数|指数变化|平均GMV指数/i;
@@ -147,6 +151,14 @@ export function tableHasBusinessData(table: DmpViewerTable) {
   return table.rows.length > 0;
 }
 
+export function isDmpViewerMetricColumn(table: Pick<DmpViewerTable, "name" | "columns">, index: number) {
+  const column = table.columns[index] ?? "";
+  if (table.name === "对标总表" && index >= 2 && index <= 4) return true;
+  if (table.name === "基础指标对比" && index >= 1 && index <= 3) return true;
+  if (/商品ID|场景编号|日期|开始|结束|对象|角色|渠道|层级|页面指标|标题|描述|类目|生命周期|阶段名称|阶段描述|广告打法|执行细节|运营动作|一级场景|二级场景|关键词|词类型|标签|图片|详情/.test(column)) return false;
+  return /GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|数量|日均|变化|金额|价格/i.test(column);
+}
+
 function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportViewModel {
   const tables = record.report.tables.map((table) => sanitizeViewerTable({
     name: table.name,
@@ -289,35 +301,25 @@ function growthSubtitle(name: string, startDate: string, endDate: string, subjec
 }
 
 export function safeViewerHttpsUrl(value: DmpCell) {
-  const text = String(value ?? "").trim();
-  const matches = text.match(/(?:https?:)?\/\/[^\s"'<>]+/gi) ?? [];
-  for (const match of matches) {
-    try {
-      const parsed = new URL(match.startsWith("//") ? `https:${match}` : match);
-      if (parsed.protocol !== "https:" || parsed.username || parsed.password) continue;
-      for (const key of [...parsed.searchParams.keys()]) {
-        if (/(?:token|csrf|cookie|authorization|password|secret|(?:^|[_-])sign(?:ature|data)?$|session|webopsessionid|uniqueitemcampaign)/i.test(key)) {
-          parsed.searchParams.delete(key);
-        }
-      }
-      parsed.hash = "";
-      return parsed.href;
-    } catch {}
+  for (const candidate of viewerUrlCandidates(value)) {
+    const safe = sanitizeDmpRenderHttpsUrl(candidate);
+    if (safe) return safe;
   }
   return "";
 }
 
 export function safeViewerImageUrl(value: DmpCell) {
-  const safe = safeViewerHttpsUrl(value);
-  if (!safe) return "";
-  try {
-    const parsed = new URL(safe);
-    const knownHost = /(?:^|\.)(?:alicdn\.com|tbcdn\.cn|taobaocdn\.com|img\.example)$/i.test(parsed.hostname);
-    const imagePath = /\.(?:avif|gif|jpe?g|png|webp)(?:$|[?&#])/i.test(`${parsed.pathname}${parsed.search}`);
-    return knownHost || imagePath ? parsed.href : "";
-  } catch {
-    return "";
+  for (const candidate of viewerUrlCandidates(value)) {
+    const safe = sanitizeDmpRenderImageUrl(candidate);
+    if (safe) return safe;
   }
+  return "";
+}
+
+function viewerUrlCandidates(value: DmpCell) {
+  const text = String(value ?? "").trim();
+  return (text.match(/(?:https?:)?\/\/[^\s"'<>]+/gi) ?? [])
+    .map((candidate) => candidate.startsWith("//") ? `https:${candidate}` : candidate);
 }
 
 function dateMatches(value: string) {

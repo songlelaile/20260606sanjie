@@ -505,7 +505,11 @@ function mergeSubjectDailyGmv(tables: DmpReportTable[], rows: DmpReportRenderDat
   const dateIndex = table.columns.indexOf("日期");
   if (dateIndex < 0) return;
   const tableDates = table.rows.map((row) => String(row[dateIndex] ?? ""));
-  if (tableDates.length !== rows.length || tableDates.some((date, index) => date !== rows[index]?.date)) return;
+  const renderDates = rows.map((row) => row.date);
+  if (tableDates.length !== renderDates.length
+    || new Set(tableDates).size !== tableDates.length
+    || new Set(renderDates).size !== renderDates.length
+    || tableDates.some((date, index) => date !== renderDates[index])) return;
   let subjectIndex = table.columns.indexOf("主体日GMV");
   if (subjectIndex < 0) {
     const competitorIndex = table.columns.findIndex((column) => /^(?:对手)?日GMV$/.test(column));
