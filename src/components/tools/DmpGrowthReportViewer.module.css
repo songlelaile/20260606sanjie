@@ -683,8 +683,10 @@
 }
 
 .tableShell {
+  background: #fff;
   border: 1px solid var(--dmp-line);
   border-radius: 10px;
+  color-scheme: light;
   max-height: 72vh;
   max-width: 100%;
   min-width: 0;
@@ -693,6 +695,7 @@
 }
 
 .tableShell table {
+  background: #fff;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 12px;
@@ -714,11 +717,13 @@
 }
 
 .tableShell th {
-  background: #0d716b;
-  color: #fff;
+  background: #0d716b !important;
+  color: #fff !important;
   font-weight: 700;
   position: sticky;
+  print-color-adjust: exact;
   top: 0;
+  -webkit-print-color-adjust: exact;
   z-index: 8;
 }
 
@@ -739,6 +744,10 @@
   vertical-align: middle;
 }
 
+.tableShell tbody > tr > td {
+  background-color: #fff;
+}
+
 .tableShell tbody tr:nth-child(even) > td {
   background-color: #f9fbfb;
 }
@@ -755,7 +764,8 @@
 }
 
 .tableShell thead .stickyColumn {
-  background: #0b615d;
+  background: #0d716b !important;
+  color: #fff !important;
   z-index: 12;
 }
 

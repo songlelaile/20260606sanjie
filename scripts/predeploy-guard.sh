@@ -7,7 +7,7 @@ EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 DMP_VERSION="2.1.6"
-DMP_ZIP_SHA256="ad2c5eeb08262edf7dc42a723cf525f81e00786c8b44f33cbf4cb1da2bb29bf1"
+DMP_ZIP_SHA256="49a2a1365857571dcd4bf5fc26c65819da260128691b0bf54a9cccec175e6a20"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -73,6 +73,7 @@ for file in \
   src/app/api/dmp-runtime/[action]/route.ts \
   src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpBrandWatermark.tsx \
+  src/components/tools/DmpGrowthReportViewer.module.css \
   src/components/tools/DmpReportWorkspace.tsx \
   src/components/tools/DmpSharedReportClient.tsx \
   src/components/management/ManagementConsole.tsx \
@@ -159,6 +160,9 @@ forbid_fixed "buildDmpReportWorkbook" src/app/api/dmp-reports/route.ts "达摩�
 require_fixed "DmpGrowthReportViewer" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心未使用统一预览组件"
 require_fixed "DmpGrowthReportViewer" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享报告未使用统一预览组件"
 require_fixed "data-report-watermark" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘统一预览缺少全篇水印"
+require_fixed "background: #0d716b !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一绿色"
+require_fixed "color: #fff !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一白字"
+require_fixed "background-color: #fff;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告正文未隔离后台黑色表格样式"
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
 require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
 require_fixed 'pathname.startsWith("/api/dmp-report-shares")' src/middleware.ts "达摩盘插件分享接口未绕过页面中间件"
@@ -243,6 +247,8 @@ unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const SANJIE_IMP
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'data-report-watermark' >/dev/null || fail "达摩盘本机报告缺少全篇水印"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '少壮AI · shaozhuangai.com' >/dev/null || fail "达摩盘本机报告水印品牌不一致"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'Array.from({ length: 54 }' >/dev/null || fail "达摩盘本机报告水印未覆盖全篇"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘本机报告表头不是统一绿色白字"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell tbody td{background-color:#fff}' >/dev/null || fail "达摩盘本机报告正文未隔离黑色表格样式"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'canonicalRenderData' >/dev/null || fail "达摩盘安装包缺少官网预览渲染合同"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'subject_daily_gmv' >/dev/null || fail "达摩盘安装包缺少主体逐日 GMV 合同"
 unzip -p "$DMP_ZIP_PATH" '*direct-core.js' | grep -F 'sanitizeRenderData' >/dev/null || fail "达摩盘安装包未校验官网预览渲染数据"

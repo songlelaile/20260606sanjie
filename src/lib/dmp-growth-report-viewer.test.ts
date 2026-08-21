@@ -98,6 +98,21 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerCss).toMatch(/vertical-align:\s*middle/);
   });
 
+  it("uses a uniform green-and-white header while preserving subject and competitor row colors", () => {
+    expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*print-color-adjust:\s*exact;/s);
+    expect(viewerCss).toMatch(/\.tableShell thead \.stickyColumn\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
+    expect(viewerCss).toMatch(/\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
+  });
+
+  it("isolates every data cell from the dark AppShell table palette", () => {
+    expect(viewerCss).toMatch(/\.tableShell\s*\{[^}]*background:\s*#fff;[^}]*color-scheme:\s*light;/s);
+    expect(viewerCss).toMatch(/\.tableShell table\s*\{[^}]*background:\s*#fff;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\s*\{[^}]*background-color:\s*#fff;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody tr:nth-child\(even\)\s*>\s*td\s*\{[^}]*background-color:\s*#f9fbfb;/s);
+  });
+
   it("does not right-align numeric-string identifiers while keeping business metrics right-aligned", () => {
     const sceneTable: DmpViewerTable = {
       name: "一级场景",
