@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
+  reportFindMany: vi.fn(),
   create: vi.fn(),
   transaction: vi.fn(),
   eventCreateMany: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock("@/lib/db", () => ({
       groupBy: mocks.shareGroupBy,
       findMany: mocks.shareFindMany
     },
+    dmpBusinessReport: { findMany: mocks.reportFindMany },
     dmpReportShareSession: {
       count: mocks.sessionCount,
       findMany: mocks.sessionFindMany
@@ -71,6 +73,7 @@ describe("DMP public report bearer-token storage boundary", () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.findFirst.mockResolvedValue(null);
+    mocks.reportFindMany.mockResolvedValue([]);
     mocks.sessionCount.mockResolvedValue(0);
     mocks.sessionFindMany.mockResolvedValue([]);
     mocks.eventCountAnalytics.mockResolvedValue(0);
@@ -109,6 +112,8 @@ describe("DMP public report bearer-token storage boundary", () => {
       createdAt: new Date("2026-08-17T00:00:00.000Z"),
       report: {
         id: "report-a",
+        tenantId: "tenant-a",
+        userId: "user-a",
         subjectItemId: "593063365092",
         competitorItemId: "593063365093",
         period: "近30天",
@@ -127,6 +132,14 @@ describe("DMP public report bearer-token storage boundary", () => {
         report: CANONICAL_REPORT
       }
     });
+    expect(mocks.reportFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        tenantId: "tenant-a",
+        userId: "user-a",
+        subjectItemId: "593063365092",
+        createdAt: { lte: new Date("2026-08-17T00:00:00.000Z") }
+      })
+    }));
   });
 
   it("does not read storage for malformed tokens", async () => {

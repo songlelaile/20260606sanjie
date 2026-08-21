@@ -2,6 +2,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getDmpBusinessReport, type DmpReportAccess, validateDmpCanonicalReport } from "@/lib/dmp-report-store";
+import { groupDmpBusinessReports, mergeDmpReportGroupDaily } from "@/lib/dmp-report-library";
 import type { DmpNormalizedPublicShareEvent } from "@/lib/dmp-report-share-events";
 import type {
   DmpBusinessReportRecord,
@@ -61,6 +62,8 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
       report: {
         select: {
           id: true,
+          tenantId: true,
+          userId: true,
           subjectItemId: true,
           competitorItemId: true,
           period: true,
@@ -74,20 +77,68 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
   if (!row) return null;
   const checked = validateDmpCanonicalReport(row.report.report);
   if (!checked.report) return null;
+  const baseRecord: DmpBusinessReportRecord = {
+    id: row.report.id,
+    reportType: checked.report.report_type === "competition" ? "competition" : "growth",
+    subjectItemId: row.report.subjectItemId,
+    competitorItemId: row.report.competitorItemId,
+    period: row.report.period,
+    quality: row.report.quality === "partial" ? "partial" : "complete",
+    createdAt: row.report.createdAt.toISOString(),
+    report: checked.report
+  };
+  const report = baseRecord.reportType === "growth"
+    ? await sharedGroupReport(baseRecord, row.report.tenantId, row.report.userId, row.createdAt)
+    : baseRecord;
   return {
     shareId: row.id,
     createdAt: row.createdAt.toISOString(),
-    report: {
-      id: row.report.id,
-      reportType: checked.report.report_type === "competition" ? "competition" : "growth",
-      subjectItemId: row.report.subjectItemId,
-      competitorItemId: row.report.competitorItemId,
-      period: row.report.period,
-      quality: row.report.quality === "partial" ? "partial" : "complete",
-      createdAt: row.report.createdAt.toISOString(),
-      report: checked.report
-    }
+    report
   };
+}
+
+async function sharedGroupReport(
+  base: DmpBusinessReportRecord,
+  tenantId: string,
+  userId: string,
+  sharedAt: Date
+) {
+  const rows = await prisma.dmpBusinessReport.findMany({
+    where: {
+      tenantId,
+      userId,
+      subjectItemId: base.subjectItemId,
+      createdAt: { lte: sharedAt }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+    select: {
+      id: true,
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      createdAt: true,
+      report: true
+    }
+  }).catch(() => []);
+  const records = rows.flatMap((candidate) => {
+    const checked = validateDmpCanonicalReport(candidate.report);
+    if (!checked.report) return [];
+    return [{
+      id: candidate.id,
+      reportType: checked.report.report_type === "competition" ? "competition" as const : "growth" as const,
+      subjectItemId: candidate.subjectItemId,
+      competitorItemId: candidate.competitorItemId,
+      period: candidate.period,
+      quality: candidate.quality === "partial" ? "partial" as const : "complete" as const,
+      createdAt: candidate.createdAt.toISOString(),
+      report: checked.report
+    }];
+  });
+  if (!records.some((record) => record.id === base.id)) records.push(base);
+  const group = groupDmpBusinessReports(records).find((candidate) => candidate.records.some((record) => record.id === base.id));
+  return group ? mergeDmpReportGroupDaily(group.records, base.id) ?? base : base;
 }
 
 export async function recordDmpPublicShareEvent(token: string, event: DmpNormalizedPublicShareEvent) {

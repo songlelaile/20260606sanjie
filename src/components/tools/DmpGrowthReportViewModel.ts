@@ -57,6 +57,14 @@ export interface DmpViewerKpi {
   role: "subject" | "competitor";
 }
 
+export interface DmpDailyGmvChartSeries {
+  competitorIndex: number;
+  subjectIndex: number;
+  competitorValues: Array<number | null>;
+  subjectValues: Array<number | null>;
+  subjectAverage: number | null;
+}
+
 export interface DmpGrowthReportViewModel {
   kind: "growth" | "competition";
   title: string;
@@ -164,6 +172,25 @@ export function isDmpViewerMetricColumn(table: Pick<DmpViewerTable, "name" | "co
   if (table.name === "人群画像") return index >= 4;
   if (/商品ID|场景编号|日期|开始|结束|对象|角色|渠道|层级|页面指标|标题|描述|类目|生命周期|阶段名称|阶段描述|广告打法|执行细节|运营动作|一级场景|二级场景|关键词|词类型|标签|图片|详情/.test(column)) return false;
   return /当前(?:值)?$|对比期值$|变化率$|GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|人数|覆盖规模|数量|日均|变化|金额|价格/i.test(column);
+}
+
+export function projectDailyGmvChartSeries(
+  table: DmpViewerTable,
+  periodTable: DmpViewerTable | undefined
+): DmpDailyGmvChartSeries {
+  const competitorIndex = table.columns.findIndex((column) => /^(?:对手)?日GMV$/.test(column));
+  const subjectIndex = table.columns.findIndex((column) => /^主体日GMV$/.test(column));
+  return {
+    competitorIndex,
+    subjectIndex,
+    competitorValues: competitorIndex >= 0
+      ? table.rows.map((row) => numericViewerValue(row[competitorIndex]))
+      : [],
+    subjectValues: subjectIndex >= 0
+      ? table.rows.map((row) => numericViewerValue(row[subjectIndex]))
+      : [],
+    subjectAverage: numericViewerValue(periodValue(periodTable, "subject", "日均GMV"))
+  };
 }
 
 function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportViewModel {
@@ -277,6 +304,14 @@ function periodValue(table: DmpViewerTable | undefined, role: "subject" | "compe
     ? /主体/.test(String(candidate[1] ?? ""))
     : /目标对手|对手|竞品/.test(String(candidate[1] ?? "")));
   return row?.[index] ?? "";
+}
+
+function numericViewerValue(value: DmpCell): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const text = String(value ?? "").trim().replaceAll(",", "");
+  if (!/^[+-]?\d+(?:\.\d+)?$/.test(text)) return null;
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 function overviewValue(table: DmpViewerTable | undefined, label: string, role: "subject" | "competitor") {

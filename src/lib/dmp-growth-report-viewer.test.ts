@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   isDmpViewerMetricColumn,
+  projectDailyGmvChartSeries,
   projectDmpReportForViewer,
   safeViewerHttpsUrl,
   safeViewerImageUrl,
@@ -40,7 +41,7 @@ describe("DMP growth report shared viewer contract", () => {
   it("uses one report viewer for both the report-center preview and public share page", () => {
     expect(workspaceSource).toContain('from "@/components/tools/DmpGrowthReportViewer"');
     expect(sharedPageSource).toContain('from "@/components/tools/DmpGrowthReportViewer"');
-    expect(workspaceSource).toMatch(/<DmpGrowthReportViewer\b[^>]*record=\{selectedRecord\}[^>]*variant="preview"/s);
+    expect(workspaceSource).toMatch(/<DmpGrowthReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s);
     expect(sharedPageSource).toMatch(/<DmpGrowthReportViewer\b[^>]*record=\{record\}[^>]*variant="shared"/s);
 
     // The public wrapper keeps anonymous propagation tracking while delegating
@@ -65,6 +66,8 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain('data-track={`table-scroll:${index + 1}`}');
     expect(viewerSource).toContain('data-track={`cell:${Math.min(columnIndex, 99)}`}');
     expect(viewerSource).toContain('data-chart="daily-gmv"');
+    expect(viewerSource).toContain('data-series="subject-average"');
+    expect(viewerSource).toContain('tableByName.get("周期汇总")');
     expect(viewerSource).toContain('data-chart="channel-spend"');
     expect(viewerSource).toContain('data-product-role={role}');
     expect(viewerSource).toContain('<ProductCard product={model.subject} role="subject" />');
@@ -234,6 +237,23 @@ describe("DMP growth report viewer projection", () => {
     expect(model.tables.find((table) => table.name === "渠道花费")?.groupedChannel).toBe(true);
   });
 
+  it("keeps a subject benchmark in the daily chart when the report has no exact subject-daily column", () => {
+    const record = growthRecord();
+    addVisualTables(record);
+    const model = projectDmpReportForViewer(record);
+    const daily = model.tables.find((table) => table.name === "日GMV与费比");
+    const period = model.tables.find((table) => table.name === "周期汇总");
+    if (!daily) throw new Error("missing daily fixture");
+
+    expect(projectDailyGmvChartSeries(daily, period)).toEqual({
+      competitorIndex: 1,
+      subjectIndex: -1,
+      competitorValues: [3200, 3600],
+      subjectValues: [],
+      subjectAverage: 3051.3
+    });
+  });
+
   it("uses validated render_data for exact local-HTML product links, generated time, daily series and table presentation", () => {
     const record = growthRecord();
     addVisualTables(record);
@@ -280,6 +300,13 @@ describe("DMP growth report viewer projection", () => {
     });
     const daily = model.tables.find((table) => table.name === "日GMV与费比");
     expect(daily?.columns.slice(0, 3)).toEqual(["日期", "主体日GMV", "对手日GMV"]);
+    expect(daily ? projectDailyGmvChartSeries(daily, model.tables.find((table) => table.name === "周期汇总")) : null)
+      .toMatchObject({
+        competitorIndex: 2,
+        subjectIndex: 1,
+        subjectValues: subjectDaily.map((row) => Number(row.gmv)),
+        subjectAverage: 3051.3
+      });
     expect(daily?.subtitle).toBe("主体与目标对手真实逐日GMV");
     expect(daily?.widths?.slice(0, 3)).toEqual([13, 16, 16]);
   });

@@ -12,6 +12,7 @@ import {
   DMP_GROWTH_FREEZE_COLUMNS,
   DMP_GROWTH_SECTION_IDS,
   isDmpViewerMetricColumn,
+  projectDailyGmvChartSeries,
   projectDmpReportForViewer,
   safeViewerHttpsUrl,
   safeViewerImageUrl,
@@ -101,8 +102,9 @@ function GrowthOverview({
   tableByName: Map<string, DmpViewerTable>;
 }) {
   const daily = tableByName.get("日GMV与费比");
+  const period = tableByName.get("周期汇总");
   const channels = tableByName.get("渠道花费");
-  const dailyChart = daily ? <DailyGmvChart table={daily} /> : null;
+  const dailyChart = daily ? <DailyGmvChart table={daily} periodTable={period} /> : null;
   const channelChart = channels ? <ChannelSpendChart table={channels} /> : null;
   const notices = table.rows.filter((row) => /^(?:数据说明|花费覆盖|取数时段提示)$/.test(String(row[0] ?? "")));
 
@@ -364,13 +366,26 @@ function DailySummary({ periodTable }: { periodTable?: DmpViewerTable }) {
   );
 }
 
-function DailyGmvChart({ table }: { table: DmpViewerTable }) {
-  const competitorIndex = table.columns.findIndex((column) => /^(?:对手)?日GMV$/.test(column));
-  const subjectIndex = table.columns.findIndex((column) => /^主体日GMV$/.test(column));
+function DailyGmvChart({
+  table,
+  periodTable
+}: {
+  table: DmpViewerTable;
+  periodTable?: DmpViewerTable;
+}) {
+  const {
+    competitorIndex,
+    subjectIndex,
+    competitorValues,
+    subjectValues,
+    subjectAverage
+  } = projectDailyGmvChartSeries(table, periodTable);
   if (competitorIndex < 0 || table.rows.length < 2) return null;
-  const competitorValues = table.rows.map((row) => numericValue(row[competitorIndex]));
-  const subjectValues = subjectIndex >= 0 ? table.rows.map((row) => numericValue(row[subjectIndex])) : [];
-  const allValues = [...competitorValues, ...subjectValues].filter(isFiniteNumber);
+  const allValues = [
+    ...competitorValues,
+    ...subjectValues,
+    ...(subjectAverage == null ? [] : [subjectAverage])
+  ].filter(isFiniteNumber);
   if (allValues.length < 2) return null;
 
   const width = 780;
@@ -384,6 +399,7 @@ function DailyGmvChart({ table }: { table: DmpViewerTable }) {
   const yFor = (value: number) => top + (1 - value / maximum) * (height - top - bottom);
   const competitorPath = seriesPath(competitorValues, xFor, yFor);
   const subjectPath = subjectValues.length ? seriesPath(subjectValues, xFor, yFor) : "";
+  const showsSubjectAverage = !subjectPath && subjectAverage != null;
   const step = table.rows.length >= 20 ? 5 : table.rows.length >= 8 ? 2 : 1;
   const xIndexes: number[] = [];
   for (let index = 0; index < table.rows.length; index += step) xIndexes.push(index);
@@ -392,8 +408,8 @@ function DailyGmvChart({ table }: { table: DmpViewerTable }) {
   return (
     <article className={`${styles.visualCard} ${styles.dailyVisual}`} data-chart="daily-gmv">
       <div className={styles.visualTitle}><div><strong>分日 GMV 对比</strong><small>{String(table.rows[0]?.[0] ?? "")} 至 {String(table.rows.at(-1)?.[0] ?? "")}</small></div><span>{table.rows.length} 天</span></div>
-      <div className={styles.chartLegend}><span className={styles.legendCompetitor}>目标对手日GMV</span>{subjectPath ? <span className={styles.legendSubject}>主体日GMV</span> : null}</div>
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={subjectPath ? "主体与目标对手逐日" : "目标对手逐日"}>
+      <div className={styles.chartLegend}><span className={styles.legendCompetitor}>目标对手日GMV</span>{subjectPath ? <span className={styles.legendSubject}>主体日GMV</span> : showsSubjectAverage ? <span className={`${styles.legendSubject} ${styles.legendBenchmark}`}>主体日均 {formatViewerCell(subjectAverage, "GMV")}</span> : null}</div>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={subjectPath ? "主体与目标对手逐日" : showsSubjectAverage ? "目标对手逐日 · 主体日均基准" : "目标对手逐日"}>
         {[0, .25, .5, .75, 1].map((ratio) => {
           const value = maximum * ratio;
           const y = yFor(value);
@@ -408,6 +424,7 @@ function DailyGmvChart({ table }: { table: DmpViewerTable }) {
         <path data-series="competitor" d={competitorPath} className={styles.competitorPath} />
         {seriesPoints(table, competitorValues, "competitor", competitorIndex, xFor, yFor)}
         {subjectPath ? <><path data-series="subject" d={subjectPath} className={styles.subjectPath} />{seriesPoints(table, subjectValues, "subject", subjectIndex, xFor, yFor)}</> : null}
+        {showsSubjectAverage ? <line data-series="subject-average" className={styles.subjectBaseline} x1={left} y1={yFor(subjectAverage)} x2={width - right} y2={yFor(subjectAverage)} /> : null}
       </svg>
     </article>
   );

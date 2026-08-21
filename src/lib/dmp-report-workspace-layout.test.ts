@@ -42,8 +42,8 @@ describe("DMP report-center workspace layout", () => {
     expect(workspaceSource).toContain("onChange={(event) => setQuery(event.target.value)}");
 
     expect(workspaceCss).toMatch(/\.workspace\s*\{[^}]*max-width\s*:/s);
-    expect(workspaceCss).toMatch(/\.reportGrid\s*\{[^}]*max-height\s*:/s);
-    expect(workspaceCss).toMatch(/\.reportGrid\s*\{[^}]*overflow-y\s*:\s*auto/s);
+    expect(workspaceCss).toMatch(/\.reportGroups\s*\{[^}]*max-height\s*:/s);
+    expect(workspaceCss).toMatch(/\.reportGroups\s*\{[^}]*overflow-y\s*:\s*auto/s);
     expect(workspaceCss).toMatch(/\.reportGrid\s*\{[^}]*grid-template-columns\s*:/s);
     expect(workspaceCss).toMatch(/\.reportMain\s*\{[^}]*text-align\s*:\s*left/s);
     expect(workspaceCss).toMatch(/\.cardActions\s*\{[^}]*display\s*:\s*(?:flex|grid)/s);
@@ -51,7 +51,7 @@ describe("DMP report-center workspace layout", () => {
 
   it("retains report selection, refresh, sharing and deletion controls", () => {
     expect(workspaceSource).toContain("onClick={() => selectReport(record)}");
-    expect(workspaceSource).toContain("aria-pressed={selectedRecord?.id === record.id}");
+    expect(workspaceSource).toContain("aria-pressed={activeRecord?.id === record.id}");
     expect(workspaceSource).toContain("onClick={() => void refreshReports()}");
     expect(workspaceSource).toMatch(/刷新(?:历史)?/);
     expect(workspaceSource).toContain("onClick={() => void createShare(selectedRecord)}");
@@ -66,7 +66,7 @@ describe("DMP report-center workspace layout", () => {
       'from "@/components/tools/DmpGrowthReportViewer"'
     );
     expect(workspaceSource).toMatch(
-      /selectedRecord\s*\?\s*<DmpGrowthReportViewer\b[^>]*record=\{selectedRecord\}[^>]*variant="preview"/s
+      /selectedViewRecord\s*\?\s*<DmpGrowthReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s
     );
   });
 

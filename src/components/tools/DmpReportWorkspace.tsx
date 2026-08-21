@@ -1,5 +1,8 @@
 "use client";
 
+/* 达摩盘主图来自运行时报告数据，不能使用需要预配置远端域名的 next/image。 */
+/* eslint-disable @next/next/no-img-element */
+
 import {
   FileSpreadsheet,
   RefreshCw,
@@ -8,6 +11,12 @@ import {
   Trash2
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import {
+  dmpReportIdentity,
+  dmpReportSubjectThumbnail,
+  groupDmpBusinessReports,
+  mergeDmpReportGroupDaily
+} from "@/lib/dmp-report-library";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
 import styles from "./DmpReportWorkspace.module.css";
@@ -66,15 +75,27 @@ export function DmpReportWorkspace({
   const visibleReports = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("zh-CN");
     if (!keyword) return reports;
-    return reports.filter((record) => [
-      reportTypeLabel(record),
-      record.subjectItemId,
-      record.competitorItemId,
-      record.period,
-      createdAtLabel(record.createdAt),
-      record.createdAt
-    ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword)));
+    return reports.filter((record) => {
+      const identity = dmpReportIdentity(record);
+      return [
+        reportTypeLabel(record),
+        identity.subjectItemId,
+        identity.competitorItemId,
+        record.period,
+        createdAtLabel(record.createdAt),
+        record.createdAt
+      ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword));
+    });
   }, [query, reports]);
+  const visibleGroups = useMemo(() => groupDmpBusinessReports(visibleReports), [visibleReports]);
+  const reportGroups = useMemo(() => groupDmpBusinessReports(reports), [reports]);
+  const activeRecord = query.trim()
+    ? visibleReports.find((record) => record.id === selectedRecord?.id) ?? visibleReports[0] ?? null
+    : selectedRecord;
+  const selectedViewRecord = useMemo(() => {
+    const group = reportGroups.find((candidate) => candidate.records.some((record) => record.id === activeRecord?.id));
+    return group ? mergeDmpReportGroupDaily(group.records, activeRecord?.id) : activeRecord;
+  }, [activeRecord, reportGroups]);
 
   function selectReport(record: DmpBusinessReportRecord) {
     setSelectedId(record.id);
@@ -118,7 +139,8 @@ export function DmpReportWorkspace({
 
   async function deleteReport(record: DmpBusinessReportRecord) {
     const labels = objectLabels(record);
-    if (!window.confirm(`确认删除${labels.subject} ${record.subjectItemId} 的这份报告？`)) return;
+    const identity = dmpReportIdentity(record);
+    if (!window.confirm(`确认删除${labels.subject} ${identity.subjectItemId} 的这份报告？`)) return;
     setBusy(true);
     try {
       const response = await fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`, { method: "DELETE" });
@@ -126,7 +148,9 @@ export function DmpReportWorkspace({
       if (!response.ok) throw new Error(result?.error ?? "删除失败");
       const nextReports = reports.filter((candidate) => candidate.id !== record.id);
       setReports(nextReports);
-      if (selectedId === record.id) setSelectedId(nextReports[0]?.id ?? "");
+      setSelectedId((current) => current === record.id || !nextReports.some((candidate) => candidate.id === current)
+        ? nextReports[0]?.id ?? ""
+        : current);
       setNotice("报告已删除");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "删除失败，请稍后重试");
@@ -141,7 +165,7 @@ export function DmpReportWorkspace({
         <div className={styles.focusToolbar}>
           <div className={styles.focusIdentity}>
             <span>当前报告</span>
-            <strong>{selectedRecord ? `${objectLabels(selectedRecord).subject} ${selectedRecord.subjectItemId}` : "暂无报告"}</strong>
+            <strong>{selectedRecord ? `${objectLabels(selectedRecord).subject} ${dmpReportIdentity(selectedRecord).subjectItemId}` : "暂无报告"}</strong>
           </div>
           <div className={styles.toolbar}>
             <button type="button" onClick={() => void refreshReports()} disabled={busy}>
@@ -149,7 +173,7 @@ export function DmpReportWorkspace({
             </button>
             <a href="/tools/dmp-report">浏览全部报告</a>
             {selectedRecord ? (
-              <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}>
+              <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId) || busy}>
                 <Share2 size={15} /> {sharingId === selectedRecord.id ? "生成中…" : "复制分享链接"}
               </button>
             ) : null}
@@ -161,7 +185,7 @@ export function DmpReportWorkspace({
             <div className={styles.headerCopy}>
               <div className={styles.headingRow}>
                 <h2>历史报告</h2>
-                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length}` : reports.length} 份</span>
+                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length} 份` : `${reports.length} 份`} · {visibleGroups.length} 组</span>
               </div>
               {notice ? <p aria-live="polite">{notice}</p> : null}
             </div>
@@ -179,33 +203,56 @@ export function DmpReportWorkspace({
               <button type="button" onClick={() => void refreshReports()} disabled={busy}>
                 <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新
               </button>
-              {selectedRecord ? (
-                <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId)}>
-                  <Share2 size={15} /> {sharingId === selectedRecord.id ? "生成中…" : "分享当前报告"}
+              {activeRecord ? (
+                <button className={styles.primaryAction} type="button" onClick={() => void createShare(activeRecord)} disabled={Boolean(sharingId) || busy}>
+                  <Share2 size={15} /> {sharingId === activeRecord.id ? "生成中…" : "分享当前报告"}
                 </button>
               ) : null}
             </div>
           </header>
           {visibleReports.length ? (
-            <div className={styles.reportGrid}>
-              {visibleReports.map((record) => (
-                <article className={`${styles.reportCard}${selectedRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
-                  <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={selectedRecord?.id === record.id}>
-                    <span className={styles.cardMeta}>
-                      <span className={styles.typeBadge}>{reportTypeLabel(record)}</span>
-                      <time>{createdAtLabel(record.createdAt)}</time>
-                    </span>
-                    <strong>{objectLabels(record).subject} {record.subjectItemId}</strong>
-                    <small>{objectLabels(record).competitor} {record.competitorItemId.replaceAll(",", "、")}</small>
-                    <span className={styles.period}>{record.period}</span>
-                  </button>
-                  <div className={styles.cardActions}>
-                    <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId)} title="复制分享链接">
-                      <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
-                    </button>
-                    <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+            <div className={styles.reportGroups}>
+              {visibleGroups.map((group) => (
+                <section className={styles.reportGroup} key={group.key}>
+                  <header className={styles.groupHeader}>
+                    <div>
+                      <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
+                      <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
+                      <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
+                    </div>
+                    <span>{group.records.length} 份</span>
+                  </header>
+                  <div className={styles.reportGrid}>
+                    {group.records.map((record) => {
+                      const thumbnail = dmpReportSubjectThumbnail(record);
+                      const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
+                      return (
+                        <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
+                          <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
+                            <span className={styles.reportThumbnail}>
+                              <span aria-hidden="true">{fallback}</span>
+                              {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+                            </span>
+                            <span className={styles.cardCopy}>
+                              <span className={styles.cardMeta}>
+                                <time>{createdAtLabel(record.createdAt)}</time>
+                              </span>
+                              <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
+                              <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
+                              <span className={styles.period}>{record.period}</span>
+                            </span>
+                          </button>
+                          <div className={styles.cardActions}>
+                            <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId) || busy} title="复制分享链接">
+                              <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
+                            </button>
+                            <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
-                </article>
+                </section>
               ))}
             </div>
           ) : reports.length ? (
@@ -224,7 +271,7 @@ export function DmpReportWorkspace({
         </section>
       )}
 
-      {selectedRecord ? <DmpGrowthReportViewer record={selectedRecord} variant="preview" /> : null}
+      {selectedViewRecord ? <DmpGrowthReportViewer record={selectedViewRecord} variant="preview" /> : null}
     </section>
   );
 }

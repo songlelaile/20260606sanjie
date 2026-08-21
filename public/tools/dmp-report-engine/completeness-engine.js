@@ -412,7 +412,9 @@
       rankPercent: data.rankPercent ?? null,
       onlineDays: data.onlineDays ?? null,
       lifecycle: data.lifeCycleDesc ?? data.lifecycle ?? "", category: data.cateName ?? data.cateLevel2Name ?? "",
-      detailUrl: data.detailUrl ?? "", pictureUrl: data.pictUrl ?? data.picUrl ?? data.imageUrl ?? "", raw: data
+      detailUrl: data.detailUrl ?? data.itemUrl ?? "",
+      pictureUrl: data.pictUrl ?? data.picUrl ?? data.imageUrl ?? data.itemPictUrl ?? data.pictureUrl ?? data.mainPicUrl ?? "",
+      raw: data
     };
   }
 
@@ -438,7 +440,8 @@
       const parsed = successDescriptionFields(description);
       return {
         itemId: String(row.itemId ?? row.id ?? ""), title: row.itemTitle ?? row.title ?? row.name ?? "",
-        pictureUrl: row.itemPictUrl ?? row.pictureUrl ?? "", description,
+        pictureUrl: row.itemPictUrl ?? row.pictureUrl ?? row.pictUrl ?? row.picUrl ?? row.imageUrl ?? row.mainPicUrl ?? "",
+        detailUrl: row.detailUrl ?? row.itemUrl ?? "", description,
         labels: Array.isArray(row.labels) ? row.labels.map(label => typeof label === "string" ? label : label?.labelName).filter(Boolean) : [],
         annualGmvBand: row.annualGmvBand ?? parsed.annualGmvBand,
         onlineDays: row.onlineDays ?? parsed.onlineDays,
@@ -601,6 +604,49 @@
       side.visitorClosed = closed;
     }
     return { subject, competitor };
+  }
+
+  function buildSubjectDaily(cards, subjectItemId, successItemId, period, periodMetrics) {
+    const expectedDates = enumerateDates(period?.startDate, period?.endDate);
+    const byDate = new Map();
+    for (const card of cards || []) {
+      if (!card || card.start !== card.end || !expectedDates.includes(card.start)) continue;
+      if (!card.subjectItemIds.includes(subjectItemId) || !card.competitorItemIds.includes(successItemId)) continue;
+      const list = byDate.get(card.start) || [];
+      list.push(card);
+      byDate.set(card.start, list);
+    }
+    const missingDates = expectedDates.filter(date => !byDate.has(date));
+    const duplicateDates = expectedDates.filter(date => (byDate.get(date) || []).length > 1);
+    const unresolvedDates = [];
+    const rows = [];
+    for (const date of expectedDates) {
+      const candidates = (byDate.get(date) || []).sort((left, right) => String(right.capturedAt || "").localeCompare(String(left.capturedAt || "")));
+      if (!candidates.length) continue;
+      const dailyMetrics = buildMetrics(candidates[0]).subject;
+      const orders = numberOrNull(dailyMetrics.orders);
+      const aov = numberOrNull(dailyMetrics.aov);
+      let gmv = null;
+      if (orders === 0) gmv = 0;
+      else if (orders != null && orders > 0 && aov != null && aov >= 0) gmv = round(orders * aov);
+      if (orders == null || gmv == null) unresolvedDates.push(date);
+      rows.push({ date, orders, aov, gmv });
+    }
+    const resolvedRows = rows.filter(row => Number.isFinite(row.orders) && Number.isFinite(row.gmv));
+    const orderTotal = round(resolvedRows.reduce((sum, row) => sum + row.orders, 0));
+    const gmvTotal = round(resolvedRows.reduce((sum, row) => sum + row.gmv, 0));
+    const expectedOrders = numberOrNull(periodMetrics?.subject?.orders);
+    const expectedGmv = numberOrNull(periodMetrics?.subject?.totalGmv);
+    const ordersClosed = Number.isFinite(expectedOrders) && resolvedRows.length === expectedDates.length
+      && Math.abs(orderTotal - expectedOrders) <= 0.000001;
+    const gmvDifference = Number.isFinite(expectedGmv) && Number.isFinite(gmvTotal) ? round(Math.abs(gmvTotal - expectedGmv)) : null;
+    const gmvClosed = Number.isFinite(gmvDifference) && resolvedRows.length === expectedDates.length && gmvDifference <= 0.01;
+    const complete = expectedDates.length > 0 && !missingDates.length && !duplicateDates.length && !unresolvedDates.length
+      && rows.length === expectedDates.length && ordersClosed && gmvClosed;
+    return {
+      rows, expectedDates, missingDates, duplicateDates, unresolvedDates,
+      orderTotal, expectedOrders, ordersClosed, gmvTotal, expectedGmv, gmvDifference, gmvClosed, complete
+    };
   }
 
   function chooseLine(lines, subjectId, successItemId, period) {
@@ -914,6 +960,14 @@
     if (![metrics.subject.orders, metrics.subject.aov, metrics.competitor.orders, metrics.competitor.aov].every(value => numberOrNull(value) != null)) {
       blockingIssues.push("主体或目标成功品缺少同周期精确成交笔数/笔单价，无法落实总GMV");
     }
+    const subjectDaily = buildSubjectDaily(cards, subjectItemId, successItemId, period, metrics);
+    if (options.requireSubjectDaily === true) {
+      if (subjectDaily.missingDates.length) blockingIssues.push(`主体逐日核心指标缺少 ${subjectDaily.missingDates.length} 天：${subjectDaily.missingDates.join("、")}`);
+      if (subjectDaily.duplicateDates.length) blockingIssues.push(`主体逐日核心指标日期重复：${subjectDaily.duplicateDates.join("、")}`);
+      if (subjectDaily.unresolvedDates.length) blockingIssues.push(`主体逐日成交金额无法精确计算：${subjectDaily.unresolvedDates.join("、")}`);
+      if (!subjectDaily.ordersClosed) blockingIssues.push("主体逐日成交笔数合计与周期成交笔数不闭合");
+      if (!subjectDaily.gmvClosed) blockingIssues.push("主体逐日GMV合计与周期GMV不闭合");
+    }
 
     const line = chooseLine(lines, subjectItemId, successItemId, period);
     if (!line) blockingIssues.push("没有找到与主体、成功品及目标周期匹配的成长趋势序列");
@@ -956,7 +1010,7 @@
 
     const completenessStatus = blockingIssues.length ? "blocked" : warnings.length ? "ready-with-warnings" : "ready";
     return {
-      pageType: "growth", period, item, targetSuccess, successItems, targetCard, cards, datasetTables, line, daily,
+      pageType: "growth", period, item, targetSuccess, successItems, targetCard, cards, datasetTables, line, daily, subjectDaily,
       stages: line?.stages || [], sceneResponses: dedupScenes, sceneRows, keywords: targetKeywords?.rows || [], metrics,
       definitions: parsedDefinitions,
       completeness: {

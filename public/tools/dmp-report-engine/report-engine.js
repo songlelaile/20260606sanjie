@@ -640,7 +640,7 @@
     const rows = [[
       "主体", subject.itemId || "", subject.title || "", subject.category || "", modelCell(subject.reservePrice), modelCell(subject.onlineDays), subject.lifecycle || "",
       modelCell(subjectPeriod.totalGmv ?? subject.gmv30d), modelCell(subjectPeriod.averageDailyGmv ?? subject.avgDailyAmount30d), modelCell(subject.gmv30dRank), modelCell(subject.gmv30dRankChange), modelCell(subject.rankPercent),
-      "", "", "", "", subject.detailUrl || subject.pictureUrl || ""
+      "", "", "", "", subject.pictureUrl || subject.detailUrl || ""
     ]];
     const candidates = model.successItems.slice().sort((left, right) => Number(right.itemId === model.targetSuccess?.itemId) - Number(left.itemId === model.targetSuccess?.itemId) || Number(right.source === "selected") - Number(left.source === "selected"));
     const seen = new Set([subject.itemId]);
@@ -651,7 +651,7 @@
       rows.push([
         candidate.itemId === model.targetSuccess?.itemId ? "目标对手" : "备选成功品", candidate.itemId, candidate.title, candidate.description,
         candidate.priceBand || "", modelCell(candidate.onlineDays), candidate.lifecycle || "", modelCell(candidatePeriod.totalGmv), modelCell(candidatePeriod.averageDailyGmv), "", "", "", candidate.annualGmvBand || "",
-        candidate.dealRank || "", candidate.audience || "", (candidate.labels || []).join("、"), candidate.pictureUrl
+        candidate.dealRank || "", candidate.audience || "", (candidate.labels || []).join("、"), candidate.pictureUrl || candidate.detailUrl || ""
       ]);
     }
     return table("商品与成功品", columns, rows, { widths: [14, 19, 58, 70, 20, 13, 18, 18, 18, 16, 14, 14, 18, 18, 24, 20, 54] });
@@ -661,7 +661,13 @@
     const labels = completenessEngine.CHANNELS.map(([, label]) => label);
     const columns = ["日期", "日GMV", ...labels.map(label => `${label}日消耗`), "日总消耗", "日费比", "阶段"];
     const rows = model.daily.rows.map(row => [row.date, modelCell(row.dailyGmv), ...labels.map(label => modelCell(row.channelSpend[label])), modelCell(row.totalSpend), modelCell(row.feeRatio), row.stage]);
-    return table("日GMV与费比", columns, rows, { widths: [13, 16, 24, 24, 26, 24, 26, 15, 13, 15] });
+    const subjectDailyRows = model.subjectDaily?.complete
+      ? model.subjectDaily.rows.map(row => [row.date, modelCell(row.gmv)])
+      : [];
+    return table("日GMV与费比", columns, rows, {
+      widths: [13, 16, 24, 24, 26, 24, 26, 15, 13, 15],
+      subjectDailyRows
+    });
   }
 
   function buildSceneTablesFromModel(model) {
@@ -855,7 +861,9 @@
         : `近${period.days}天${range ? `（${range}，页面日期控件待确认）` : "（页面日期控件待确认）"}`;
     const item = {
       id: model.item?.itemId || String(itemId || ""), title: model.item?.title || "",
-      competitorId: model.targetSuccess?.itemId || String(meta.successItemId || ""), competitorTitle: model.targetSuccess?.title || ""
+      pictureUrl: model.item?.pictureUrl || "", detailUrl: model.item?.detailUrl || "",
+      competitorId: model.targetSuccess?.itemId || String(meta.successItemId || ""), competitorTitle: model.targetSuccess?.title || "",
+      competitorPictureUrl: model.targetSuccess?.pictureUrl || "", competitorDetailUrl: model.targetSuccess?.detailUrl || ""
     };
     const itemSheet = buildItemTableFromModel(model);
     const periodSheet = buildPeriodTableFromModel(model, item);
@@ -953,9 +961,57 @@
     return formatMetricValue(semantic, displayValue(value));
   }
 
+  function canonicalHttpsUrl(value) {
+    const text = String(value || "").trim();
+    if (!text || text.length > 2048) return "";
+    try {
+      const parsed = new URL(text.startsWith("//") ? `https:${text}` : text);
+      if (parsed.protocol !== "https:") return "";
+      parsed.hash = "";
+      for (const key of [...parsed.searchParams.keys()]) {
+        if (/(?:token|csrf|cookie|authorization|password|secret|(?:^|[_-])sign(?:ature|data)?$|session|webOpSessionId|uniqueItemCampaign)/i.test(key)) parsed.searchParams.delete(key);
+      }
+      return parsed.toString();
+    } catch {
+      return "";
+    }
+  }
+
+  function canonicalRenderData(report) {
+    const products = {};
+    const subjectPicture = canonicalHttpsUrl(report.item?.pictureUrl);
+    const subjectDetail = canonicalHttpsUrl(report.item?.detailUrl);
+    const competitorPicture = canonicalHttpsUrl(report.item?.competitorPictureUrl);
+    const competitorDetail = canonicalHttpsUrl(report.item?.competitorDetailUrl);
+    if (subjectPicture || subjectDetail) products.subject = {
+      ...(subjectPicture ? { picture_url: subjectPicture } : {}),
+      ...(subjectDetail ? { detail_url: subjectDetail } : {})
+    };
+    if (competitorPicture || competitorDetail) products.competitor = {
+      ...(competitorPicture ? { picture_url: competitorPicture } : {}),
+      ...(competitorDetail ? { detail_url: competitorDetail } : {})
+    };
+
+    const daily = (report.tables || []).find(current => current.name === "日GMV与费比");
+    const subjectDailyGmv = Array.isArray(daily?.subjectDailyRows)
+      ? daily.subjectDailyRows.map(row => ({ date: String(row?.[0] || ""), gmv: canonicalCell(row?.[1], "日GMV") }))
+        .filter(row => /^20\d{2}-\d{2}-\d{2}$/.test(row.date) && row.gmv !== "" && Number.isFinite(Number(row.gmv)) && Number(row.gmv) >= 0)
+      : [];
+    const generatedAt = String(report.finishedAt || "");
+    const renderData = {
+      version: "1",
+      ...(Number.isFinite(Date.parse(generatedAt)) ? { generated_at: new Date(generatedAt).toISOString() } : {}),
+      ...(Object.keys(products).length ? { products } : {}),
+      ...(subjectDailyGmv.length ? { subject_daily_gmv: subjectDailyGmv } : {})
+    };
+    return Object.keys(renderData).length > 1 ? renderData : null;
+  }
+
   function toCanonicalReport(report) {
+    const renderData = canonicalRenderData(report);
     return {
       schema_version: "3.0", title: String(report.title || ""), item_id: String(report.item?.id || ""), period: String(report.periodLabel || ""),
+      ...(renderData ? { render_data: renderData } : {}),
       tables: (report.tables || []).map(current => ({
         name: String(current.name || ""),
         columns: (current.columns || []).map(String),
@@ -978,6 +1034,13 @@
       const forbidden = current.columns.filter(column => FORBIDDEN_COLUMN.test(column));
       if (forbidden.length) return { ok: false, error: `${current.name} 含禁止列：${forbidden.join("、")}` };
       if (current.rows.some(row => !Array.isArray(row.cells) || row.cells.length !== current.columns.length)) return { ok: false, error: `${current.name} 行列不一致` };
+    }
+    if (report.render_data != null) {
+      const render = report.render_data;
+      if (!render || render.version !== "1" || typeof render !== "object") return { ok: false, error: "报告展示数据结构无效" };
+      if (render.subject_daily_gmv != null && (!Array.isArray(render.subject_daily_gmv) || render.subject_daily_gmv.some(row => !row || !/^20\d{2}-\d{2}-\d{2}$/.test(String(row.date || "")) || !Number.isFinite(Number(row.gmv)) || Number(row.gmv) < 0))) {
+        return { ok: false, error: "主体逐日 GMV 展示数据无效" };
+      }
     }
     return { ok: true };
   }

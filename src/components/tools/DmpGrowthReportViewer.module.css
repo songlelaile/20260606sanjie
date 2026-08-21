@@ -498,6 +498,10 @@
   background: #4d89c9;
 }
 
+.chartLegend .legendBenchmark::before {
+  background: repeating-linear-gradient(90deg, #4d89c9 0 6px, transparent 6px 9px);
+}
+
 .visualCard svg {
   display: block;
   height: auto;
@@ -528,6 +532,12 @@
 
 .subjectPath {
   stroke: #4d89c9;
+}
+
+.subjectBaseline {
+  stroke: #4d89c9;
+  stroke-dasharray: 8 6;
+  stroke-width: 3;
 }
 
 .competitorPoint {
