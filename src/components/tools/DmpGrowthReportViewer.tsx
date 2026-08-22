@@ -63,6 +63,7 @@ export function DmpGrowthReportViewer({
         <p className={styles.eyebrow}>{model.kind === "growth" ? "DAMOPAN · GROWTH BENCHMARK" : "DAMOPAN · COMPETITION SITUATION"}</p>
         <h1>{displayTitle}</h1>
         <div className={styles.heroMeta}>
+          {record.shopName ? <span data-report-shop-signature>店铺署名：{record.shopName}</span> : null}
           <span>{model.kind === "growth" ? "主体" : "本店"}：{model.subject.title || model.subjectId || "—"}{model.subjectId ? `（${model.subjectId}）` : ""}</span>
           <span>{model.kind === "growth" ? "目标对手" : "竞店"}：{model.competitor.title || model.competitorId || "—"}{model.competitor.title && model.competitorId ? `（${model.competitorId}）` : ""}</span>
           <span>生成时间：{formatGeneratedAt(model.generatedAt)}</span>
@@ -87,7 +88,7 @@ export function DmpGrowthReportViewer({
           : <ReportTableSection key={`${table.name}-${index}`} table={table} index={index} kind={model.kind} tableByName={tableByName} />)}
       </main>
 
-      <footer className={styles.footer}>{displayTitle}</footer>
+      <footer className={styles.footer}>{record.shopName ? `${record.shopName} · ` : ""}{displayTitle}</footer>
     </article>
   );
 }

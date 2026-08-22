@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  assignDmpBusinessReportsShop: vi.fn(),
   getDmpBusinessReport: vi.fn(),
   getDmpReportAccess: vi.fn(),
   getDmpReportAccessFromToken: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/dmp-report-store", () => ({
+  assignDmpBusinessReportsShop: mocks.assignDmpBusinessReportsShop,
   deleteDmpBusinessReport: vi.fn(),
   getDmpBusinessReport: mocks.getDmpBusinessReport,
   getDmpReportAccess: mocks.getDmpReportAccess,
@@ -22,7 +24,7 @@ vi.mock("@/lib/dmp-report-store", () => ({
   validateDmpCanonicalReport: mocks.validateDmpCanonicalReport
 }));
 
-import { GET, POST } from "./route";
+import { GET, PATCH, POST } from "./route";
 
 const ACCESS = { userId: "user-a", tenantId: "tenant-a" };
 const REPORT = {
@@ -43,6 +45,7 @@ describe("GET /api/dmp-reports online-only policy", () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
+    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
     vi.stubEnv("PUBLIC_APP_ORIGIN", "");
     mocks.getDmpBusinessReport.mockResolvedValue(REPORT);
   });
@@ -88,6 +91,7 @@ describe("POST /api/dmp-reports archive contract", () => {
   beforeEach(() => {
     Object.values(mocks).forEach((mock) => mock.mockReset());
     mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
+    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
     vi.stubEnv("PUBLIC_APP_ORIGIN", "");
     mocks.validItemId.mockImplementation((value: unknown) => /^\d{6,20}$/.test(String(value ?? "")));
     mocks.validateDmpCanonicalReport.mockReturnValue({ report: canonical });
@@ -104,6 +108,8 @@ describe("POST /api/dmp-reports archive contract", () => {
       period: input.report.period,
       quality: input.quality,
       createdAt: "2026-08-22T00:00:00.000Z",
+      shopId: "shop-auto",
+      shopName: "西西礼",
       report: input.report
     }));
   });
@@ -116,6 +122,7 @@ describe("POST /api/dmp-reports archive contract", () => {
         report: canonical,
         subjectItemId: "999999999999",
         competitorItemId: "888888888888",
+        shopId: "browser-active-shop",
         sourceVersion: "2.1.6"
       })
     }));
@@ -136,6 +143,7 @@ describe("POST /api/dmp-reports archive contract", () => {
         }
       })
     }));
+    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("shopId");
     await expect(response.json()).resolves.toMatchObject({
       data: {
         archived: true,
@@ -143,6 +151,8 @@ describe("POST /api/dmp-reports archive contract", () => {
           id: "report_archive_123",
           subjectItemId: "593063365092",
           competitorItemId: "623803508105",
+          shopId: "shop-auto",
+          shopName: "西西礼",
           report: {
             render_data: {
               products: {
@@ -155,5 +165,72 @@ describe("POST /api/dmp-reports archive contract", () => {
         reportUrl: "https://shaozhuangai.com/tools/dmp-report?reportId=report_archive_123&view=report"
       }
     });
+  });
+
+  it("returns the same official report identity when an archive POST is retried", async () => {
+    const request = () => POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: canonical, sourceVersion: "2.1.6" })
+    }));
+
+    const [first, retry] = await Promise.all([request(), request()]);
+    expect(first.status).toBe(201);
+    expect(retry.status).toBe(201);
+    const [firstBody, retryBody] = await Promise.all([first.json(), retry.json()]);
+    expect(retryBody.data.report.id).toBe(firstBody.data.report.id);
+    expect(retryBody.data.reportUrl).toBe(firstBody.data.reportUrl);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("PATCH /api/dmp-reports shop assignment", () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((mock) => mock.mockReset());
+    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
+  });
+
+  it("assigns a complete report group to a tenant shop without accepting client-side shop names", async () => {
+    mocks.assignDmpBusinessReportsShop.mockResolvedValue({
+      ok: true,
+      reportIds: ["report-a", "report-b"],
+      shop: { id: "shop-a", name: "西西礼" }
+    });
+    const response = await PATCH(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reportIds: ["report-a", "report-b"], shopId: "shop-a", shopName: "伪造名称" })
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.assignDmpBusinessReportsShop).toHaveBeenCalledWith({
+      access: ACCESS,
+      reportIds: ["report-a", "report-b"],
+      shopId: "shop-a"
+    });
+    await expect(response.json()).resolves.toEqual({
+      data: {
+        assignment: {
+          ok: true,
+          reportIds: ["report-a", "report-b"],
+          shop: { id: "shop-a", name: "西西礼" }
+        }
+      }
+    });
+  });
+
+  it("returns the scoped store error without changing its status", async () => {
+    mocks.assignDmpBusinessReportsShop.mockResolvedValue({
+      ok: false,
+      error: "店铺不存在或不属于当前账号",
+      status: 404
+    });
+    const response = await PATCH(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reportIds: ["report-a"], shopId: "foreign-shop" })
+    }));
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "店铺不存在或不属于当前账号" });
   });
 });

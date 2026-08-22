@@ -17,6 +17,14 @@ export interface DmpReportLibraryGroup {
   records: DmpBusinessReportRecord[];
 }
 
+export interface DmpReportShopGroup {
+  key: string;
+  shopId: string;
+  shopName: string;
+  reportCount: number;
+  groups: DmpReportLibraryGroup[];
+}
+
 export interface DmpReportThumbnail {
   url: string;
   title: string;
@@ -104,6 +112,51 @@ export function groupDmpBusinessReports(
   }
 
   return [...groups.values()];
+}
+
+export function groupDmpBusinessReportsByShop(
+  reports: DmpBusinessReportRecord[]
+): DmpReportShopGroup[] {
+  const partitions = new Map<string, {
+    shopId: string;
+    shopName: string;
+    records: DmpBusinessReportRecord[];
+  }>();
+
+  for (const record of [...reports].sort(compareReportTimeDescending)) {
+    const shopId = String(record.shopId ?? "").trim();
+    const key = shopId ? `shop:${shopId}` : "unassigned";
+    const current = partitions.get(key);
+    if (current) {
+      current.records.push(record);
+      if (!current.shopName && record.shopName?.trim()) current.shopName = record.shopName.trim();
+      continue;
+    }
+    partitions.set(key, {
+      shopId,
+      shopName: String(record.shopName ?? "").trim(),
+      records: [record]
+    });
+  }
+
+  return [...partitions].map(([key, partition]) => ({
+    key,
+    shopId: partition.shopId,
+    shopName: partition.shopName || (partition.shopId ? "未命名店铺" : "未归类店铺"),
+    reportCount: partition.records.length,
+    groups: groupDmpBusinessReports(partition.records)
+  }));
+}
+
+export function dmpReportGroupIdsByShopAndIdentity(
+  shopGroups: DmpReportShopGroup[],
+  shopGroupKey: string,
+  reportGroupKey: string
+) {
+  return shopGroups
+    .find((shopGroup) => shopGroup.key === shopGroupKey)
+    ?.groups.find((group) => group.key === reportGroupKey)
+    ?.records.map((record) => record.id) ?? [];
 }
 
 export function dmpReportSubjectThumbnail(record: DmpBusinessReportRecord): DmpReportThumbnail {

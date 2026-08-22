@@ -121,6 +121,8 @@ describe("DMP public report bearer-token storage boundary", () => {
         id: "report-a",
         tenantId: "tenant-a",
         userId: "user-a",
+        shopId: "shop-a",
+        shop: { id: "shop-a", name: "西西礼" },
         subjectItemId: "593063365092",
         competitorItemId: "593063365093",
         period: "近30天",
@@ -135,6 +137,8 @@ describe("DMP public report bearer-token storage boundary", () => {
       shareId: "share-public",
       report: {
         id: "report-a",
+        shopId: "shop-a",
+        shopName: "西西礼",
         subjectItemId: "593063365092",
         report: {
           render_data: {
@@ -150,6 +154,7 @@ describe("DMP public report bearer-token storage boundary", () => {
       where: expect.objectContaining({
         tenantId: "tenant-a",
         userId: "user-a",
+        shopId: "shop-a",
         createdAt: { lte: new Date("2026-08-17T00:00:00.000Z") }
       })
     }));

@@ -64,6 +64,8 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
           id: true,
           tenantId: true,
           userId: true,
+          shopId: true,
+          shop: { select: { id: true, name: true } },
           subjectItemId: true,
           competitorItemId: true,
           period: true,
@@ -80,6 +82,7 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
   const baseRecord: DmpBusinessReportRecord = {
     id: row.report.id,
     reportType: checked.report.report_type === "competition" ? "competition" : "growth",
+    ...(row.report.shop ? { shopId: row.report.shop.id, shopName: row.report.shop.name } : {}),
     subjectItemId: row.report.subjectItemId,
     competitorItemId: row.report.competitorItemId,
     period: row.report.period,
@@ -107,12 +110,15 @@ async function sharedGroupReport(
     where: {
       tenantId,
       userId,
+      shopId: base.shopId || null,
       createdAt: { lte: sharedAt }
     },
     orderBy: { createdAt: "desc" },
     take: 200,
     select: {
       id: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
       subjectItemId: true,
       competitorItemId: true,
       period: true,
@@ -127,6 +133,7 @@ async function sharedGroupReport(
     return [{
       id: candidate.id,
       reportType: checked.report.report_type === "competition" ? "competition" as const : "growth" as const,
+      ...(candidate.shop ? { shopId: candidate.shop.id, shopName: candidate.shop.name } : {}),
       subjectItemId: candidate.subjectItemId,
       competitorItemId: candidate.competitorItemId,
       period: candidate.period,

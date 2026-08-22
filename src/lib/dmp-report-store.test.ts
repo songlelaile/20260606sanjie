@@ -2,23 +2,31 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DMP_COMPETITION_REPORT_TABLES, DMP_GROWTH_REPORT_TABLES } from "@/lib/dmp-report-types";
 
 const mocks = vi.hoisted(() => ({
-  create: vi.fn(),
-  findMany: vi.fn()
+  upsert: vi.fn(),
+  findMany: vi.fn(),
+  transaction: vi.fn(),
+  shopFindFirst: vi.fn(),
+  shopFindMany: vi.fn(),
+  reportFindFirst: vi.fn(),
+  reportCount: vi.fn(),
+  reportUpdateMany: vi.fn()
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({
   prisma: {
     dmpBusinessReport: {
-      create: mocks.create,
       findMany: mocks.findMany
-    }
+    },
+    $transaction: mocks.transaction
   }
 }));
 vi.mock("@/lib/server-session", () => ({ getCurrentSession: vi.fn() }));
 vi.mock("@/lib/tool-entitlements", () => ({ getDmpAutomationAccessForSession: vi.fn() }));
 
 import {
+  assignDmpBusinessReportsShop,
+  dmpBusinessReportFingerprint,
   listDmpBusinessReports,
   saveDmpBusinessReport,
   validateDmpCanonicalReport
@@ -105,8 +113,28 @@ describe("DMP competition report storage contract", () => {
 
 describe("DMP growth render_data storage contract", () => {
   beforeEach(() => {
-    mocks.create.mockReset();
+    mocks.upsert.mockReset();
     mocks.findMany.mockReset();
+    mocks.transaction.mockReset();
+    mocks.shopFindFirst.mockReset();
+    mocks.shopFindMany.mockReset();
+    mocks.reportFindFirst.mockReset();
+    mocks.reportCount.mockReset();
+    mocks.reportUpdateMany.mockReset();
+    mocks.reportFindFirst.mockResolvedValue(null);
+    mocks.shopFindMany.mockResolvedValue([]);
+    mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work({
+      shop: {
+        findFirst: mocks.shopFindFirst,
+        findMany: mocks.shopFindMany
+      },
+      dmpBusinessReport: {
+        upsert: mocks.upsert,
+        findFirst: mocks.reportFindFirst,
+        count: mocks.reportCount,
+        updateMany: mocks.reportUpdateMany
+      }
+    }));
   });
 
   it("preserves only closed, ordered and HTTPS-safe optional render data", () => {
@@ -174,13 +202,15 @@ describe("DMP growth render_data storage contract", () => {
     expect(checked.error).toBeUndefined();
     const canonical = checked.report!;
     const createdAt = new Date("2026-08-22T00:00:00.000Z");
-    mocks.create.mockResolvedValue({
+    mocks.upsert.mockResolvedValue({
       id: "report-with-images",
+      shop: null,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       period: canonical.period,
       quality: "complete",
-      createdAt
+      createdAt,
+      report: canonical
     });
 
     const saved = await saveDmpBusinessReport({
@@ -191,7 +221,7 @@ describe("DMP growth render_data storage contract", () => {
       quality: "complete",
       sourceVersion: "2.1.6"
     });
-    const storedReport = mocks.create.mock.calls[0]?.[0]?.data?.report;
+    const storedReport = mocks.upsert.mock.calls[0]?.[0]?.create?.report;
     expect(storedReport?.render_data?.products).toEqual({
       subject: {
         picture_url: "https://img.alicdn.com/subject.png",
@@ -203,6 +233,8 @@ describe("DMP growth render_data storage contract", () => {
 
     mocks.findMany.mockResolvedValue([{
       id: saved.id,
+      shopId: "shop-a",
+      shop: { id: "shop-a", name: "西西礼" },
       subjectItemId: saved.subjectItemId,
       competitorItemId: saved.competitorItemId,
       period: saved.period,
@@ -212,6 +244,8 @@ describe("DMP growth render_data storage contract", () => {
     }]);
     await expect(listDmpBusinessReports({ tenantId: "tenant-a", userId: "user-a" }))
       .resolves.toMatchObject([{
+        shopId: "shop-a",
+        shopName: "西西礼",
         report: {
           render_data: {
             products: {
@@ -221,5 +255,222 @@ describe("DMP growth render_data storage contract", () => {
           }
         }
       }]);
+  });
+
+  it("upserts retries by a stable SHA-256 fingerprint that ignores only generated_at", async () => {
+    const first = validateDmpCanonicalReport(growthReport()).report!;
+    const retry = structuredClone(first);
+    retry.render_data!.generated_at = "2026-08-22T03:04:05.000Z";
+    const changed = structuredClone(retry);
+    changed.tables[0].rows[0].cells[0] = "不同数据";
+    const identity = {
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317"
+    };
+    const fingerprint = dmpBusinessReportFingerprint({ ...identity, report: first });
+
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(dmpBusinessReportFingerprint({ ...identity, report: retry })).toBe(fingerprint);
+    expect(dmpBusinessReportFingerprint({ ...identity, report: changed })).not.toBe(fingerprint);
+
+    const createdAt = new Date("2026-08-22T04:00:00.000Z");
+    mocks.upsert.mockResolvedValue({
+      id: "one-id-for-both-attempts",
+      shop: null,
+      ...identity,
+      period: first.period,
+      quality: "complete",
+      createdAt,
+      report: first
+    });
+    const save = (report: typeof first) => saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report,
+      ...identity,
+      quality: "complete",
+      sourceVersion: "2.1.6"
+    });
+
+    const [savedFirst, savedRetry] = await Promise.all([save(first), save(retry)]);
+
+    expect(savedFirst.id).toBe("one-id-for-both-attempts");
+    expect(savedRetry.id).toBe(savedFirst.id);
+    expect(savedRetry.report.render_data?.generated_at).toBe(first.render_data?.generated_at);
+    expect(mocks.upsert).toHaveBeenCalledTimes(2);
+    for (const [input] of mocks.upsert.mock.calls) {
+      expect(input).toMatchObject({
+        where: {
+          tenantId_userId_fingerprint: {
+            tenantId: "tenant-a",
+            userId: "user-a",
+            fingerprint
+          }
+        },
+        create: { fingerprint },
+        update: {}
+      });
+    }
+  });
+
+  it("inherits the latest shop for the same user and canonical subject/competitor pair", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:00:00.000Z");
+    mocks.reportFindFirst.mockResolvedValue({ shop: { id: "shop-recent", name: "最近店铺" } });
+    mocks.upsert.mockResolvedValue({
+      id: "report-inherited-shop",
+      shop: { id: "shop-recent", name: "最近店铺" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.1.6"
+    });
+
+    expect(mocks.reportFindFirst).toHaveBeenCalledWith({
+      where: {
+        tenantId: "tenant-a",
+        userId: "user-a",
+        subjectItemId: "768239824008",
+        competitorItemId: "563697874317"
+      },
+      orderBy: { createdAt: "desc" },
+      select: { shop: { select: { id: true, name: true } } }
+    });
+    expect(mocks.shopFindMany).not.toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: "shop-recent" })
+    }));
+    expect(saved).toMatchObject({ shopId: "shop-recent", shopName: "最近店铺" });
+  });
+
+  it("uses the tenant's only shop when the canonical pair has no previous assignment", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T02:00:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([{ id: "only-shop", name: "唯一店铺" }]);
+    mocks.upsert.mockResolvedValue({
+      id: "report-only-shop",
+      shop: { id: "only-shop", name: "唯一店铺" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.1.6"
+    });
+
+    expect(mocks.shopFindMany).toHaveBeenCalledWith({
+      where: { tenantId: "tenant-a" },
+      orderBy: { createdAt: "asc" },
+      take: 2,
+      select: { id: true, name: true }
+    });
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: "only-shop" })
+    }));
+    expect(saved).toMatchObject({ shopId: "only-shop", shopName: "唯一店铺" });
+  });
+
+  it("leaves a new report unassigned when multiple shops exist and the pair has no history", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T03:00:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([
+      { id: "shop-a", name: "店铺 A" },
+      { id: "shop-b", name: "店铺 B" }
+    ]);
+    mocks.upsert.mockResolvedValue({
+      id: "report-unassigned",
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.1.6"
+    });
+
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: null })
+    }));
+    expect(saved).not.toHaveProperty("shopId");
+    expect(saved).not.toHaveProperty("shopName");
+  });
+
+  it("assigns only owned reports to a tenant-scoped shop and supports returning to unassigned", async () => {
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
+    mocks.reportCount.mockResolvedValue(2);
+    mocks.reportUpdateMany.mockResolvedValue({ count: 2 });
+
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a", "report-b", "report-a"],
+      shopId: "shop-a"
+    })).resolves.toEqual({
+      ok: true,
+      reportIds: ["report-a", "report-b"],
+      shop: { id: "shop-a", name: "西西礼" }
+    });
+    expect(mocks.shopFindFirst).toHaveBeenCalledWith({
+      where: { id: "shop-a", tenantId: "tenant-a" },
+      select: { id: true, name: true }
+    });
+    expect(mocks.reportUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ tenantId: "tenant-a", userId: "user-a" }),
+      data: { shopId: "shop-a" }
+    }));
+
+    mocks.reportCount.mockResolvedValue(1);
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a"],
+      shopId: ""
+    })).resolves.toEqual({ ok: true, reportIds: ["report-a"], shop: null });
+    expect(mocks.reportUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: { shopId: null } }));
+  });
+
+  it("rejects foreign shops and mixed-ownership report batches before updating", async () => {
+    mocks.shopFindFirst.mockResolvedValue(null);
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a"],
+      shopId: "foreign-shop"
+    })).resolves.toMatchObject({ ok: false, status: 404 });
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
+    mocks.reportCount.mockResolvedValue(1);
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a", "foreign-report"],
+      shopId: "shop-a"
+    })).resolves.toMatchObject({ ok: false, status: 404 });
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
   });
 });

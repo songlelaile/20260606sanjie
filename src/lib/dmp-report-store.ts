@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { parseSession, type Session } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -18,6 +19,46 @@ import { withDmpAutomationBrand } from "@/lib/dmp-product";
 const MAX_REPORT_BYTES = 2 * 1024 * 1024;
 const MAX_TABLE_ROWS = 5_000;
 const MAX_CELL_LENGTH = 10_000;
+
+function stableJson(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return `[${value.map((item) => item === undefined ? "null" : stableJson(item)).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function dmpBusinessReportFingerprint(input: {
+  report: DmpCanonicalReport;
+  subjectItemId: string;
+  competitorItemId: string;
+}) {
+  const renderData = input.report.render_data
+    ? Object.fromEntries(Object.entries(input.report.render_data).filter(([key]) => key !== "generated_at"))
+    : undefined;
+  const comparable = {
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId,
+    report: {
+      schema_version: String(input.report.schema_version ?? ""),
+      item_id: String(input.report.item_id ?? ""),
+      period: String(input.report.period ?? ""),
+      render_data: renderData,
+      tables: input.report.tables.map((table) => ({
+        name: String(table.name ?? ""),
+        columns: table.columns.map(String),
+        rows: table.rows.map((row) => ({ cells: row.cells.map(String) }))
+      }))
+    }
+  };
+  return createHash("sha256").update(stableJson(comparable)).digest("hex");
+}
 
 export interface DmpReportAccess {
   userId: string;
@@ -127,6 +168,8 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
     take: 200,
     select: {
       id: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
       subjectItemId: true,
       competitorItemId: true,
       period: true,
@@ -141,6 +184,7 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
     return [{
       id: row.id,
       reportType: dmpReportKind(checked.report),
+      ...(row.shop ? { shopId: row.shop.id, shopName: row.shop.name } : {}),
       subjectItemId: row.subjectItemId,
       competitorItemId: row.competitorItemId,
       period: row.period,
@@ -159,27 +203,76 @@ export async function saveDmpBusinessReport(input: {
   quality: DmpReportQuality;
   sourceVersion: string;
 }): Promise<DmpBusinessReportRecord> {
-  const row = await prisma.dmpBusinessReport.create({
-    data: {
-      tenantId: input.access.tenantId,
-      userId: input.access.userId,
-      subjectItemId: input.subjectItemId,
-      competitorItemId: input.competitorItemId,
-      period: input.report.period,
-      quality: input.quality,
-      sourceVersion: input.sourceVersion,
-      report: input.report as unknown as Prisma.InputJsonValue
-    }
+  const fingerprint = dmpBusinessReportFingerprint({
+    report: input.report,
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId
   });
+  const row = await prisma.$transaction(async (tx) => {
+    const previous = await tx.dmpBusinessReport.findFirst({
+      where: {
+        tenantId: input.access.tenantId,
+        userId: input.access.userId,
+        subjectItemId: input.subjectItemId,
+        competitorItemId: input.competitorItemId
+      },
+      orderBy: { createdAt: "desc" },
+      select: { shop: { select: { id: true, name: true } } }
+    });
+    let shop = previous?.shop ?? null;
+    if (!shop) {
+      const tenantShops = await tx.shop.findMany({
+        where: { tenantId: input.access.tenantId },
+        orderBy: { createdAt: "asc" },
+        take: 2,
+        select: { id: true, name: true }
+      });
+      if (tenantShops.length === 1) shop = tenantShops[0];
+    }
+    return tx.dmpBusinessReport.upsert({
+      where: {
+        tenantId_userId_fingerprint: {
+          tenantId: input.access.tenantId,
+          userId: input.access.userId,
+          fingerprint
+        }
+      },
+      create: {
+        tenantId: input.access.tenantId,
+        userId: input.access.userId,
+        shopId: shop?.id ?? null,
+        subjectItemId: input.subjectItemId,
+        competitorItemId: input.competitorItemId,
+        period: input.report.period,
+        quality: input.quality,
+        sourceVersion: input.sourceVersion,
+        fingerprint,
+        report: input.report as unknown as Prisma.InputJsonValue
+      },
+      update: {},
+      select: {
+        id: true,
+        shop: { select: { id: true, name: true } },
+        subjectItemId: true,
+        competitorItemId: true,
+        period: true,
+        quality: true,
+        createdAt: true,
+        report: true
+      }
+    });
+  });
+  const storedReport = validateDmpCanonicalReport(row.report).report ?? input.report;
   return {
     id: row.id,
-    reportType: dmpReportKind(input.report),
+    reportType: dmpReportKind(storedReport),
+    ...(row.shop ? { shopId: row.shop.id, shopName: row.shop.name } : {}),
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
     quality: row.quality === "partial" ? "partial" : "complete",
     createdAt: row.createdAt.toISOString(),
-    report: input.report
+    report: storedReport
   };
 }
 
@@ -188,6 +281,8 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
     where: { id, tenantId: access.tenantId, userId: access.userId },
     select: {
       id: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
       subjectItemId: true,
       competitorItemId: true,
       period: true,
@@ -202,6 +297,7 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
   return {
     id: row.id,
     reportType: dmpReportKind(checked.report),
+    ...(row.shop ? { shopId: row.shop.id, shopName: row.shop.name } : {}),
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
@@ -216,6 +312,52 @@ export async function deleteDmpBusinessReport(access: DmpReportAccess, id: strin
     where: { id, tenantId: access.tenantId, userId: access.userId }
   });
   return result.count > 0;
+}
+
+export async function assignDmpBusinessReportsShop(input: {
+  access: DmpReportAccess;
+  reportIds: string[];
+  shopId: string;
+}): Promise<
+  | { ok: true; reportIds: string[]; shop: { id: string; name: string } | null }
+  | { ok: false; error: string; status: 400 | 404 }
+> {
+  const rawReportIds = input.reportIds.map((id) => String(id ?? "").trim()).filter(Boolean);
+  const reportIds = [...new Set(rawReportIds)];
+  const shopId = input.shopId.trim();
+  if (!reportIds.length || reportIds.length > 200 || reportIds.some((id) => id.length > 100)) {
+    return { ok: false, error: "请选择 1 至 200 份报告", status: 400 };
+  }
+  if (shopId.length > 100) return { ok: false, error: "店铺编号无效", status: 400 };
+
+  return prisma.$transaction(async (tx) => {
+    const shop = shopId
+      ? await tx.shop.findFirst({
+          where: { id: shopId, tenantId: input.access.tenantId },
+          select: { id: true, name: true }
+        })
+      : null;
+    if (shopId && !shop) return { ok: false as const, error: "店铺不存在或不属于当前账号", status: 404 as const };
+
+    const owned = await tx.dmpBusinessReport.count({
+      where: {
+        id: { in: reportIds },
+        tenantId: input.access.tenantId,
+        userId: input.access.userId
+      }
+    });
+    if (owned !== reportIds.length) return { ok: false as const, error: "报告不存在或无权修改", status: 404 as const };
+
+    await tx.dmpBusinessReport.updateMany({
+      where: {
+        id: { in: reportIds },
+        tenantId: input.access.tenantId,
+        userId: input.access.userId
+      },
+      data: { shopId: shop?.id ?? null }
+    });
+    return { ok: true as const, reportIds, shop };
+  });
 }
 
 export function validItemId(value: unknown) {

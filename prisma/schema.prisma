@@ -83,17 +83,18 @@ model InviteCode {
 }
 
 model Shop {
-  id        String           @id
-  tenantId  String
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String
-  platform  String           @default("淘宝")
-  createdBy String           @default("")
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  workspace ShopWorkspace?
-  calcRun   ShopCalcRun?
-  shares    DashboardShare[]
+  id         String              @id
+  tenantId   String
+  tenant     Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name       String
+  platform   String              @default("淘宝")
+  createdBy  String              @default("")
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  workspace  ShopWorkspace?
+  calcRun    ShopCalcRun?
+  shares     DashboardShare[]
+  dmpReports DmpBusinessReport[]
 
   @@index([tenantId])
 }
@@ -168,18 +169,23 @@ model DmpBusinessReport {
   id               String           @id @default(cuid())
   tenantId         String
   userId           String
+  shopId           String?
   tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shop             Shop?            @relation(fields: [shopId], references: [id], onDelete: SetNull)
   subjectItemId    String
   competitorItemId String
   period           String           @default("")
   quality          String           @default("complete")
   sourceVersion    String           @default("")
+  fingerprint      String?
   report           Json
   createdAt        DateTime         @default(now())
   shares           DmpReportShare[]
 
+  @@unique([tenantId, userId, fingerprint])
   @@index([tenantId, userId, createdAt])
+  @@index([tenantId, userId, shopId, createdAt])
 }
 
 // 管理员在插件中导出达摩盘报告表格版 XLSX 的最小审计记录。

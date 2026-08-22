@@ -5,19 +5,23 @@
 
 import {
   FileSpreadsheet,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   Share2,
+  Store,
   Trash2
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  dmpReportGroupIdsByShopAndIdentity,
   dmpReportIdentity,
   dmpReportSubjectThumbnail,
-  groupDmpBusinessReports,
+  groupDmpBusinessReportsByShop,
   mergeDmpReportGroupDaily
 } from "@/lib/dmp-report-library";
-import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
+import type { DmpBusinessReportRecord, DmpReportShop } from "@/lib/dmp-report-types";
 import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
 import styles from "./DmpReportWorkspace.module.css";
 
@@ -51,17 +55,25 @@ function objectLabels(record: DmpBusinessReportRecord) {
 
 export function DmpReportWorkspace({
   initialReports,
+  initialShops,
+  canCreateShop,
   initialSelectedId = "",
   focusReport = false
 }: {
   initialReports: DmpBusinessReportRecord[];
+  initialShops: DmpReportShop[];
+  canCreateShop: boolean;
   initialSelectedId?: string;
   focusReport?: boolean;
 }) {
-  const initialId = initialReports.some((record) => record.id === initialSelectedId)
-    ? initialSelectedId
+  const requestedInitialId = initialSelectedId.trim();
+  const initialId = requestedInitialId
+    ? initialReports.some((record) => record.id === requestedInitialId) ? requestedInitialId : ""
     : initialReports[0]?.id ?? "";
   const [reports, setReports] = useState(initialReports);
+  const [shops, setShops] = useState(initialShops);
+  const [shopEditorId, setShopEditorId] = useState(initialShops[0]?.id ?? "");
+  const [shopNameDraft, setShopNameDraft] = useState(initialShops[0]?.name ?? "");
   const [selectedId, setSelectedId] = useState(initialId);
   const [busy, setBusy] = useState(false);
   const [sharingId, setSharingId] = useState("");
@@ -69,7 +81,7 @@ export function DmpReportWorkspace({
   const [notice, setNotice] = useState("");
 
   const selectedRecord = useMemo(
-    () => reports.find((record) => record.id === selectedId) ?? reports[0] ?? null,
+    () => reports.find((record) => record.id === selectedId) ?? null,
     [reports, selectedId]
   );
   const visibleReports = useMemo(() => {
@@ -81,21 +93,25 @@ export function DmpReportWorkspace({
         reportTypeLabel(record),
         identity.subjectItemId,
         identity.competitorItemId,
+        record.shopName ?? "",
         record.period,
         createdAtLabel(record.createdAt),
         record.createdAt
       ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword));
     });
   }, [query, reports]);
-  const visibleGroups = useMemo(() => groupDmpBusinessReports(visibleReports), [visibleReports]);
-  const reportGroups = useMemo(() => groupDmpBusinessReports(reports), [reports]);
+  const visibleShopGroups = useMemo(() => groupDmpBusinessReportsByShop(visibleReports), [visibleReports]);
+  const reportShopGroups = useMemo(() => groupDmpBusinessReportsByShop(reports), [reports]);
+  const visibleGroupCount = visibleShopGroups.reduce((total, shopGroup) => total + shopGroup.groups.length, 0);
   const activeRecord = query.trim()
     ? visibleReports.find((record) => record.id === selectedRecord?.id) ?? visibleReports[0] ?? null
     : selectedRecord;
   const selectedViewRecord = useMemo(() => {
-    const group = reportGroups.find((candidate) => candidate.records.some((record) => record.id === activeRecord?.id));
+    const group = reportShopGroups
+      .flatMap((shopGroup) => shopGroup.groups)
+      .find((candidate) => candidate.records.some((record) => record.id === activeRecord?.id));
     return group ? mergeDmpReportGroupDaily(group.records, activeRecord?.id) : activeRecord;
-  }, [activeRecord, reportGroups]);
+  }, [activeRecord, reportShopGroups]);
 
   function selectReport(record: DmpBusinessReportRecord) {
     setSelectedId(record.id);
@@ -120,14 +136,93 @@ export function DmpReportWorkspace({
     }
   }
 
+  function selectShopProfile(shopId: string) {
+    const shop = shops.find((candidate) => candidate.id === shopId);
+    setShopEditorId(shopId);
+    setShopNameDraft(shop?.name ?? "");
+    setNotice("");
+  }
+
+  async function saveShopProfile() {
+    const name = shopNameDraft.trim();
+    if (!name) {
+      setNotice("请输入店铺名称");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch(shopEditorId ? `/api/shops/${encodeURIComponent(shopEditorId)}` : "/api/shops", {
+        method: shopEditorId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      });
+      const result = await response.json().catch(() => null) as { data?: { shop?: DmpReportShop }; error?: string } | null;
+      const shop = result?.data?.shop;
+      if (!response.ok || !shop) throw new Error(result?.error ?? "店铺资料保存失败");
+      setShops((current) => current.some((candidate) => candidate.id === shop.id)
+        ? current.map((candidate) => candidate.id === shop.id ? shop : candidate)
+        : [...current, shop]);
+      setReports((current) => current.map((record) => record.shopId === shop.id
+        ? { ...record, shopName: shop.name }
+        : record));
+      setShopEditorId(shop.id);
+      setShopNameDraft(shop.name);
+      setNotice(shopEditorId ? `店铺署名已更新为「${shop.name}」` : `已新增店铺「${shop.name}」`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "店铺资料保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function assignGroupToShop(reportIds: string[], shopId: string) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/dmp-reports", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportIds, shopId })
+      });
+      const result = await response.json().catch(() => null) as {
+        data?: { assignment?: { reportIds: string[]; shop: DmpReportShop | null } };
+        error?: string;
+      } | null;
+      const assignment = result?.data?.assignment;
+      if (!response.ok || !assignment) throw new Error(result?.error ?? "报告归属保存失败");
+      const assignedIds = new Set(assignment.reportIds);
+      setReports((current) => current.map((record) => assignedIds.has(record.id)
+        ? {
+            ...record,
+            shopId: assignment.shop?.id ?? "",
+            shopName: assignment.shop?.name ?? ""
+          }
+        : record));
+      setNotice(assignment.shop ? `报告组已归入「${assignment.shop.name}」` : "报告组已移至未归类");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "报告归属保存失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function refreshReports() {
     setBusy(true);
     try {
-      const response = await fetch("/api/dmp-reports", { cache: "no-store" });
-      const result = await response.json().catch(() => null) as { data?: { reports?: DmpBusinessReportRecord[] }; error?: string } | null;
-      if (!response.ok) throw new Error(result?.error ?? "刷新失败");
+      const [reportResponse, shopResponse] = await Promise.all([
+        fetch("/api/dmp-reports", { cache: "no-store" }),
+        fetch("/api/shops", { cache: "no-store" })
+      ]);
+      const result = await reportResponse.json().catch(() => null) as { data?: { reports?: DmpBusinessReportRecord[] }; error?: string } | null;
+      const shopResult = await shopResponse.json().catch(() => null) as { data?: { shops?: DmpReportShop[] }; error?: string } | null;
+      if (!reportResponse.ok) throw new Error(result?.error ?? "刷新失败");
+      if (!shopResponse.ok) throw new Error(shopResult?.error ?? "店铺资料刷新失败");
       const nextReports = result?.data?.reports ?? [];
+      const nextShops = shopResult?.data?.shops ?? [];
+      const nextEditor = nextShops.find((shop) => shop.id === shopEditorId) ?? nextShops[0];
       setReports(nextReports);
+      setShops(nextShops);
+      setShopEditorId(nextEditor?.id ?? "");
+      setShopNameDraft(nextEditor?.name ?? "");
       setSelectedId((current) => nextReports.some((record) => record.id === current) ? current : nextReports[0]?.id ?? "");
       setNotice(nextReports.length ? `已同步 ${nextReports.length} 份历史报告` : "暂时没有历史报告");
     } catch (error) {
@@ -185,7 +280,7 @@ export function DmpReportWorkspace({
             <div className={styles.headerCopy}>
               <div className={styles.headingRow}>
                 <h2>历史报告</h2>
-                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length} 份` : `${reports.length} 份`} · {visibleGroups.length} 组</span>
+                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length} 份` : `${reports.length} 份`} · {visibleGroupCount} 组</span>
               </div>
               {notice ? <p aria-live="polite">{notice}</p> : null}
             </div>
@@ -210,57 +305,121 @@ export function DmpReportWorkspace({
               ) : null}
             </div>
           </header>
+          <section className={styles.shopManager} aria-label="店铺档案">
+            <div>
+              <Store size={17} aria-hidden="true" />
+              <strong>店铺档案</strong>
+            </div>
+            <label>
+              <span className={styles.srOnly}>选择要维护的店铺</span>
+              <select value={shopEditorId} onChange={(event) => selectShopProfile(event.target.value)} disabled={busy}>
+                {shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+                <option value="" disabled={!canCreateShop}>新建店铺档案</option>
+              </select>
+            </label>
+            <label>
+              <span className={styles.srOnly}>店铺名称</span>
+              <input
+                value={shopNameDraft}
+                maxLength={40}
+                onChange={(event) => setShopNameDraft(event.target.value)}
+                placeholder="填写店铺名称"
+                disabled={busy}
+              />
+            </label>
+            <button type="button" onClick={() => void saveShopProfile()} disabled={busy || (!shopEditorId && !canCreateShop)}>
+              <Save size={14} /> {shopEditorId ? "保存名称" : "创建店铺"}
+            </button>
+            {shopEditorId && canCreateShop ? (
+              <button className={styles.secondaryAction} type="button" onClick={() => selectShopProfile("")} disabled={busy}>
+                <Plus size={14} /> 新增
+              </button>
+            ) : null}
+          </section>
           {visibleReports.length ? (
             <div className={styles.reportGroups}>
-              {visibleGroups.map((group) => {
-                const groupFallback = group.subjectThumbnail.title.slice(0, 1) || "品";
-                return (
-                  <section className={styles.reportGroup} key={group.key}>
-                    <header className={styles.groupHeader}>
-                      <div>
-                        <span className={`${styles.reportThumbnail} ${styles.groupThumbnail}`}>
-                          <span aria-hidden="true">{groupFallback}</span>
-                          {group.subjectThumbnail.url ? <img src={group.subjectThumbnail.url} alt={`${group.subjectThumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
-                        </span>
-                        <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
-                        <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
-                        <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
-                      </div>
-                      <span>{group.records.length} 份</span>
-                    </header>
-                    <div className={styles.reportGrid}>
-                      {group.records.map((record) => {
-                        const thumbnail = dmpReportSubjectThumbnail(record);
-                        const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
-                        return (
-                          <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
-                            <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
-                              <span className={styles.reportThumbnail}>
-                                <span aria-hidden="true">{fallback}</span>
-                                {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+              {visibleShopGroups.map((shopGroup) => (
+                <section className={styles.shopSection} key={shopGroup.key}>
+                  <header className={styles.shopSectionHeader}>
+                    <div><Store size={16} aria-hidden="true" /><strong>{shopGroup.shopName}</strong></div>
+                    <span>{shopGroup.reportCount} 份 · {shopGroup.groups.length} 组</span>
+                  </header>
+                  <div className={styles.shopSectionGroups}>
+                    {shopGroup.groups.map((group) => {
+                      const groupFallback = group.subjectThumbnail.title.slice(0, 1) || "品";
+                      const completeReportIds = dmpReportGroupIdsByShopAndIdentity(
+                        reportShopGroups,
+                        shopGroup.key,
+                        group.key
+                      );
+                      return (
+                        <section className={styles.reportGroup} key={group.key}>
+                          <header className={styles.groupHeader}>
+                            <div>
+                              <span className={`${styles.reportThumbnail} ${styles.groupThumbnail}`}>
+                                <span aria-hidden="true">{groupFallback}</span>
+                                {group.subjectThumbnail.url ? <img src={group.subjectThumbnail.url} alt={`${group.subjectThumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
                               </span>
-                              <span className={styles.cardCopy}>
-                                <span className={styles.cardMeta}>
-                                  <time>{createdAtLabel(record.createdAt)}</time>
-                                </span>
-                                <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
-                                <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
-                                <span className={styles.period}>{record.period}</span>
-                              </span>
-                            </button>
-                            <div className={styles.cardActions}>
-                              <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId) || busy} title="复制分享链接">
-                                <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
-                              </button>
-                              <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+                              <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
+                              <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
+                              <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
                             </div>
-                          </article>
-                        );
-                      })}
-                    </div>
-                  </section>
-                );
-              })}
+                            <label className={styles.groupAssignment}>
+                              <span>归属</span>
+                              <select
+                                value={shopGroup.shopId}
+                                onChange={(event) => {
+                                  if (!completeReportIds.length) {
+                                    setNotice("报告组加载不完整，请刷新后重试");
+                                    return;
+                                  }
+                                  void assignGroupToShop(completeReportIds, event.target.value);
+                                }}
+                                disabled={busy || !completeReportIds.length}
+                                aria-label={`设置主体 ${group.subjectItemId} 报告组的店铺归属`}
+                              >
+                                <option value="">未归类</option>
+                                {shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
+                              </select>
+                            </label>
+                            <span>{group.records.length} 份</span>
+                          </header>
+                          <div className={styles.reportGrid}>
+                            {group.records.map((record) => {
+                              const thumbnail = dmpReportSubjectThumbnail(record);
+                              const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
+                              return (
+                                <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
+                                  <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
+                                    <span className={styles.reportThumbnail}>
+                                      <span aria-hidden="true">{fallback}</span>
+                                      {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+                                    </span>
+                                    <span className={styles.cardCopy}>
+                                      <span className={styles.cardMeta}>
+                                        <time>{createdAtLabel(record.createdAt)}</time>
+                                      </span>
+                                      <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
+                                      <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
+                                      <span className={styles.period}>{record.period}</span>
+                                    </span>
+                                  </button>
+                                  <div className={styles.cardActions}>
+                                    <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId) || busy} title="复制分享链接">
+                                      <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
+                                    </button>
+                                    <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
             </div>
           ) : reports.length ? (
             <div className={styles.noMatches}>

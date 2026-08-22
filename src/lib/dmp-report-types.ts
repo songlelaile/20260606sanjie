@@ -65,9 +65,16 @@ export interface DmpCanonicalReport {
 
 export type DmpReportQuality = "complete" | "partial";
 
+export interface DmpReportShop {
+  id: string;
+  name: string;
+}
+
 export interface DmpBusinessReportRecord {
   id: string;
   reportType: DmpReportKind;
+  shopId?: string;
+  shopName?: string;
   subjectItemId: string;
   competitorItemId: string;
   period: string;

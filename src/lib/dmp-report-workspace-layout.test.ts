@@ -70,6 +70,17 @@ describe("DMP report-center workspace layout", () => {
     );
   });
 
+  it("loads an explicit reportId exactly and uses the not-found boundary instead of latest fallback", () => {
+    expect(reportPageSource).toContain("getDmpBusinessReport");
+    expect(reportPageSource).toContain("resolveDmpReportPageSelection");
+    expect(reportPageSource).toContain("requestedReportId && !listedRequestedReport");
+    expect(reportPageSource).toContain("if (!selection) notFound()");
+    expect(reportPageSource).toContain("initialReports={selection.reports}");
+    expect(reportPageSource).toContain("initialSelectedId={selection.selectedReportId}");
+    expect(workspaceSource).toContain("reports.find((record) => record.id === selectedId) ?? null");
+    expect(workspaceSource).not.toContain("reports.find((record) => record.id === selectedId) ?? reports[0]");
+  });
+
   it("shows the persisted subject thumbnail in both each report card and its canonical group card", () => {
     expect(workspaceSource).toContain("group.subjectThumbnail.url");
     expect(workspaceSource).toContain("group.subjectThumbnail.title");
@@ -77,6 +88,22 @@ describe("DMP report-center workspace layout", () => {
     expect(workspaceSource).toContain("styles.groupThumbnail");
     expect(workspaceSource).toContain('referrerPolicy="no-referrer"');
     expect(workspaceCss).toMatch(/\.groupThumbnail\s*\{[^}]*height\s*:\s*32px[^}]*width\s*:\s*32px/s);
+  });
+
+  it("maintains shop profiles, partitions history by shop and lets a canonical group change ownership", () => {
+    expect(workspaceSource).toContain("groupDmpBusinessReportsByShop");
+    expect(workspaceSource).toContain("visibleShopGroups.map");
+    expect(workspaceSource).toContain('aria-label="店铺档案"');
+    expect(workspaceSource).toContain("saveShopProfile");
+    expect(workspaceSource).toContain('fetch("/api/dmp-reports"');
+    expect(workspaceSource).toContain('method: "PATCH"');
+    expect(workspaceSource).toContain("dmpReportGroupIdsByShopAndIdentity");
+    expect(workspaceSource).toContain("assignGroupToShop(completeReportIds");
+    expect(workspaceSource).not.toContain("assignGroupToShop(group.records.map");
+    expect(workspaceSource).toContain("shopGroup.shopName");
+    expect(workspaceSource).toContain("styles.groupAssignment");
+    expect(workspaceCss).toMatch(/\.shopManager\s*\{[^}]*grid-template-columns/s);
+    expect(workspaceCss).toMatch(/\.shopSectionHeader\s*\{[^}]*display\s*:\s*flex/s);
   });
 
   it("has explicit responsive rules for the library, toolbar and report grid", () => {

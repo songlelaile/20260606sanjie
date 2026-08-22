@@ -84,6 +84,9 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain('"达摩盘竞争态势分析报告｜少壮AI自动化"');
     expect(viewerSource).toContain('<h1>{displayTitle}</h1>');
     expect(viewerSource).not.toContain('<h1>{model.title}</h1>');
+    expect(viewerSource).toContain("data-report-shop-signature");
+    expect(viewerSource).toContain("店铺署名：{record.shopName}");
+    expect(viewerSource).toContain('record.shopName ? `${record.shopName} · ` : ""');
     expect(viewerSource).toContain("ref={hideAlreadyBrokenImage}");
     expect(viewerSource).toContain("image?.complete && image.naturalWidth === 0");
     expect(viewerSource).toContain("styles.dataNotice");

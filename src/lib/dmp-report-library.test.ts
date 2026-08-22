@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   dmpCanonicalReportIdentity,
+  dmpReportGroupIdsByShopAndIdentity,
   dmpReportProductThumbnail,
   dmpReportSubjectThumbnail,
   groupDmpBusinessReports,
+  groupDmpBusinessReportsByShop,
   mergeDmpReportGroupDaily
 } from "@/lib/dmp-report-library";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
@@ -14,7 +16,9 @@ function report({
   subject = "100",
   competitor = "200",
   pictureUrl = "",
-  competitorPictureUrl = ""
+  competitorPictureUrl = "",
+  shopId = "",
+  shopName = ""
 }: {
   id: string;
   createdAt: string;
@@ -22,10 +26,13 @@ function report({
   competitor?: string;
   pictureUrl?: string;
   competitorPictureUrl?: string;
+  shopId?: string;
+  shopName?: string;
 }): DmpBusinessReportRecord {
   return {
     id,
     reportType: "growth",
+    ...(shopId ? { shopId, shopName } : {}),
     subjectItemId: subject,
     competitorItemId: competitor,
     period: "近30天（2026-07-01 至 2026-07-30）",
@@ -108,6 +115,46 @@ describe("DMP report history library", () => {
       url: "https://img.alicdn.com/competitor.png",
       title: "商品 200"
     });
+  });
+
+  it("partitions history by shop before canonical identity and keeps newest shop/group/report ordering", () => {
+    const partitions = groupDmpBusinessReportsByShop([
+      report({ id: "a-old", createdAt: "2026-08-19T03:00:00.000Z", shopId: "shop-a", shopName: "西西礼" }),
+      report({ id: "unassigned", createdAt: "2026-08-18T03:00:00.000Z" }),
+      report({ id: "b-new", createdAt: "2026-08-22T03:00:00.000Z", shopId: "shop-b", shopName: "北北店" }),
+      report({ id: "a-new", createdAt: "2026-08-21T03:00:00.000Z", shopId: "shop-a", shopName: "西西礼" })
+    ]);
+
+    expect(partitions.map((partition) => [partition.shopId, partition.shopName, partition.reportCount]))
+      .toEqual([
+        ["shop-b", "北北店", 1],
+        ["shop-a", "西西礼", 2],
+        ["", "未归类店铺", 1]
+      ]);
+    expect(partitions[1].groups).toHaveLength(1);
+    expect(partitions[1].groups[0].records.map((record) => record.id)).toEqual(["a-new", "a-old"]);
+    expect(partitions[0].groups[0].records.map((record) => record.id)).toEqual(["b-new"]);
+  });
+
+  it("resolves assignment IDs from the complete shop and identity group after history is filtered", () => {
+    const completeGroups = groupDmpBusinessReportsByShop([
+      report({ id: "a-new", createdAt: "2026-08-22T03:00:00.000Z", shopId: "shop-a", shopName: "西西礼" }),
+      report({ id: "a-old", createdAt: "2026-08-19T03:00:00.000Z", shopId: "shop-a", shopName: "西西礼" }),
+      report({ id: "a-other-product", createdAt: "2026-08-18T03:00:00.000Z", competitor: "300", shopId: "shop-a", shopName: "西西礼" }),
+      report({ id: "b-same-product", createdAt: "2026-08-17T03:00:00.000Z", shopId: "shop-b", shopName: "北北店" }),
+      report({ id: "unassigned-same-product", createdAt: "2026-08-16T03:00:00.000Z" })
+    ]);
+    const visibleGroups = groupDmpBusinessReportsByShop([
+      report({ id: "a-new", createdAt: "2026-08-22T03:00:00.000Z", shopId: "shop-a", shopName: "西西礼" })
+    ]);
+    const visibleShop = visibleGroups[0];
+    const visibleGroup = visibleShop.groups[0];
+
+    expect(dmpReportGroupIdsByShopAndIdentity(
+      completeGroups,
+      visibleShop.key,
+      visibleGroup.key
+    )).toEqual(["a-new", "a-old"]);
   });
 
   it("prefers canonical identities for legacy metadata and labels competition-store fallbacks correctly", () => {

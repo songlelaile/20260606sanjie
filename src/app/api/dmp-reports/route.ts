@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { dmpCanonicalReportIdentity } from "@/lib/dmp-report-library";
 import { toOfficialDmpReportUrl } from "@/lib/dmp-public-origin";
 import {
+  assignDmpBusinessReportsShop,
   deleteDmpBusinessReport,
   getDmpBusinessReport,
   getDmpReportAccess,
@@ -16,7 +17,7 @@ export const runtime = "nodejs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "content-type, x-sanjie-session",
   "Cache-Control": "private, no-store"
 };
@@ -80,6 +81,22 @@ export async function POST(request: Request) {
   });
   const reportUrl = toOfficialDmpReportUrl(report.id);
   return NextResponse.json({ data: { report, reportUrl, archived: true } }, { status: 201, headers: CORS });
+}
+
+export async function PATCH(request: Request) {
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
+  const body = await request.json().catch(() => null) as
+    | { reportIds?: unknown; shopId?: unknown }
+    | null;
+  const reportIds = Array.isArray(body?.reportIds) ? body.reportIds.map(String) : [];
+  const result = await assignDmpBusinessReportsShop({
+    access,
+    reportIds,
+    shopId: String(body?.shopId ?? "")
+  });
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status, headers: CORS });
+  return NextResponse.json({ data: { assignment: result } }, { headers: CORS });
 }
 
 export async function DELETE(request: Request) {
