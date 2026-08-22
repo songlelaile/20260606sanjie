@@ -32,7 +32,7 @@ export const DMP_GROWTH_FREEZE_COLUMNS: Record<string, number> = {
   二级场景: 4,
   成长阶段数据: 4,
   基础指标对比: 1,
-  关键词样本: 3
+  关键词样本: 2
 };
 
 export interface DmpViewerTable extends DmpReportTable {
@@ -151,7 +151,10 @@ export function sanitizeViewerTable(table: DmpViewerTable): DmpViewerTable | nul
 
 export function tableHasBusinessData(table: DmpViewerTable) {
   if (CORE_TABLES.has(table.name)) return true;
-  if (table.name === "关键词样本") return table.rows.some((row) => String(row[1] ?? "").trim());
+  if (table.name === "关键词样本") {
+    const keywordIndex = Math.max(0, table.columns.indexOf("关键词"));
+    return table.rows.some((row) => String(row[keywordIndex] ?? "").trim());
+  }
   if (table.name === "成长阶段数据") return table.rows.some((row) => row.some((value) => !isMissing(value)));
   if (table.name === "一级场景" || table.name === "二级场景") return table.rows.length > 0;
   if (table.name === "渠道花费") return table.rows.some((row) => row.slice(1).some((value) => !isMissing(value)));
@@ -221,7 +224,10 @@ function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportV
 function projectGrowthTable(table: DmpViewerTable): DmpViewerTable {
   if (table.name === "渠道花费") return projectChannelTable(table);
   if (table.name === "日GMV与费比") return projectDailyTable(table);
-  if (table.name === "一级场景" || table.name === "二级场景") return { ...table, rows: filterSceneRows(table) };
+  if (table.name === "一级场景" || table.name === "二级场景") {
+    return { ...table, rows: filterSceneRows({ ...table, rows: alignRoleRows(table) }) };
+  }
+  if (table.name === "关键词样本") return projectKeywordTable(table);
   return table;
 }
 
@@ -231,20 +237,18 @@ function projectChannelTable(table: DmpViewerTable): DmpViewerTable {
   const subjectShare = table.columns.findIndex((column) => /^主体\d+日占比$/.test(column));
   const competitorShare = table.columns.findIndex((column) => /^对手\d+日占比$/.test(column));
   if ([subjectSpend, competitorSpend, subjectShare, competitorShare].some((index) => index < 0)) return table;
-  const indexes = [0, subjectSpend, competitorSpend, subjectShare, competitorShare];
-  const rows = table.rows.map((row) => indexes.map((index) => row[index] ?? ""));
+  const rows = table.rows.map((row) => table.columns.map((_, index) => row[index] ?? ""));
   const active = rows.filter((row) => row[0] !== "合计" && row.slice(1).some((value) => !isMissing(value)));
   const total = rows.find((row) => row[0] === "合计");
   return {
     ...table,
-    groupedChannel: true,
-    columns: indexes.map((index) => table.columns[index]),
-    rows: total ? [...active, total] : active,
-    ...(table.widths?.length === table.columns.length ? { widths: indexes.map((index) => table.widths?.[index] ?? 0) } : {})
+    groupedChannel: table.columns.length === 5,
+    rows: total ? [...active, total] : active
   };
 }
 
 function projectDailyTable(table: DmpViewerTable): DmpViewerTable {
+  if (table.columns.includes("主体日GMV") && table.columns.includes("对手日GMV")) return table;
   return {
     ...table,
     columns: table.columns.map((column, index) => {
@@ -255,14 +259,81 @@ function projectDailyTable(table: DmpViewerTable): DmpViewerTable {
   };
 }
 
+function projectKeywordTable(table: DmpViewerTable): DmpViewerTable {
+  const roleIndex = table.columns.indexOf("对象");
+  const keywordIndex = table.columns.indexOf("关键词");
+  const typeIndex = table.columns.indexOf("词类型");
+  if (roleIndex < 0 || keywordIndex < 0) return table;
+
+  const metricIndexes = table.columns
+    .map((column, index) => ({ column, index }))
+    .filter(({ index }) => index !== roleIndex && index !== keywordIndex && index !== typeIndex);
+  const columns = ["关键词", "词类型", ...metricIndexes.flatMap(({ column }) => [`主体${column}`, `对手${column}`])];
+  const grouped = new Map<string, { keyword: DmpCell; type: DmpCell; subject?: DmpCell[]; competitor?: DmpCell[] }>();
+  for (const row of table.rows) {
+    const keyword = row[keywordIndex] ?? "";
+    const type = typeIndex >= 0 ? row[typeIndex] ?? "" : "";
+    const key = `${String(keyword).trim().toLocaleLowerCase("zh-CN")}\u0001${String(type).trim().toLocaleLowerCase("zh-CN")}`;
+    if (!String(keyword).trim()) continue;
+    const current = grouped.get(key) ?? { keyword, type };
+    const values = metricIndexes.map(({ index }) => row[index] ?? "");
+    if (/^主体/.test(String(row[roleIndex] ?? ""))) current.subject = values;
+    else if (/目标对手|^对手|^竞品/.test(String(row[roleIndex] ?? ""))) current.competitor = values;
+    grouped.set(key, current);
+  }
+  const rows = [...grouped.values()].map((entry) => [
+    entry.keyword,
+    entry.type,
+    ...metricIndexes.flatMap((_, index) => [entry.subject?.[index] ?? "", entry.competitor?.[index] ?? ""])
+  ]);
+  return { ...table, columns, rows, widths: undefined };
+}
+
+function alignRoleRows(table: DmpViewerTable): DmpCell[][] {
+  const roleIndex = table.columns.indexOf("对象");
+  if (roleIndex < 0) return table.rows;
+  const dimensionIndexes = ["层级", "一级场景", "二级场景", "场景编号", "sceneId"]
+    .map((column) => table.columns.indexOf(column))
+    .filter((index, position, values) => index >= 0 && values.indexOf(index) === position);
+  if (!dimensionIndexes.length) return table.rows;
+  const keyFor = (row: DmpCell[]) => sceneDimensionKey(table, row);
+
+  const groups = new Map<string, { template: DmpCell[]; subject?: DmpCell[]; competitor?: DmpCell[] }>();
+  for (const row of table.rows) {
+    const key = keyFor(row);
+    const current = groups.get(key) ?? { template: row };
+    if (/^主体/.test(String(row[roleIndex] ?? ""))) current.subject = row;
+    else if (/目标对手|^对手|^竞品/.test(String(row[roleIndex] ?? ""))) current.competitor = row;
+    groups.set(key, current);
+  }
+
+  return [...groups.values()].flatMap(({ template, subject, competitor }) => {
+    const placeholder = (role: "主体" | "对手") => table.columns.map((_, index) => {
+      if (index === roleIndex) return role;
+      return dimensionIndexes.includes(index) ? template[index] ?? "" : "";
+    });
+    return [subject ?? placeholder("主体"), competitor ?? placeholder("对手")];
+  });
+}
+
 function filterSceneRows(table: DmpViewerTable) {
   const groups = new Map<string, DmpCell[][]>();
   for (const row of table.rows) {
-    const key = [row[1], row[2], row[3], row[4]].map((value) => String(value ?? "")).join("\u0001");
+    const key = sceneDimensionKey(table, row);
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
   const active = new Set([...groups].filter(([, rows]) => rows.some((row) => row.slice(5).some((value) => !isMissing(value)))).map(([key]) => key));
-  return table.rows.filter((row) => active.has([row[1], row[2], row[3], row[4]].map((value) => String(value ?? "")).join("\u0001")));
+  return table.rows.filter((row) => active.has(sceneDimensionKey(table, row)));
+}
+
+function sceneDimensionKey(table: Pick<DmpViewerTable, "columns">, row: DmpCell[]) {
+  const at = (column: string) => {
+    const index = table.columns.indexOf(column);
+    return index >= 0 ? String(row[index] ?? "").trim() : "";
+  };
+  const names = [at("层级"), at("一级场景"), at("二级场景")];
+  if (names.slice(1).some(Boolean)) return names.join("\u0001");
+  return [...names, at("场景编号"), at("sceneId")].join("\u0001");
 }
 
 function productFromTable(

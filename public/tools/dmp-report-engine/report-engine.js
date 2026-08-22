@@ -617,6 +617,40 @@
     return value === null || value === undefined || (typeof value === "number" && !Number.isFinite(value)) ? EMPTY : value;
   }
 
+  function disclosedModelValue(value) {
+    if (value === null || value === undefined) return false;
+    return !(typeof value === "string" && /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim()));
+  }
+
+  function alignedMetricRows(model, fixedNames) {
+    const identity = name => typeof completenessEngine?.metricIdentity === "function"
+      ? completenessEngine.metricIdentity(name)
+      : String(name || "").trim().toLowerCase().replace(/\s+/g, "");
+    const seen = new Set(fixedNames.map(identity));
+    const rows = [];
+    for (const metric of model.metrics?.aligned || []) {
+      const key = metric.key || identity(metric.name);
+      if (seen.has(key) || (!disclosedModelValue(metric.subject) && !disclosedModelValue(metric.competitor))) continue;
+      seen.add(key);
+      rows.push(metric);
+    }
+    return rows;
+  }
+
+  function coreRowsWithAlignedFallback(model, rows, nameIndex, subjectIndex, competitorIndex) {
+    const identity = name => typeof completenessEngine?.metricIdentity === "function"
+      ? completenessEngine.metricIdentity(name)
+      : String(name || "").trim().toLowerCase().replace(/\s+/g, "");
+    const aligned = new Map((model.metrics?.aligned || []).map(metric => [metric.key || identity(metric.name), metric]));
+    return rows.map(source => {
+      const row = [...source];
+      const fallback = aligned.get(identity(row[nameIndex]));
+      if (!disclosedModelValue(row[subjectIndex]) && disclosedModelValue(fallback?.subject)) row[subjectIndex] = fallback.subject;
+      if (!disclosedModelValue(row[competitorIndex]) && disclosedModelValue(fallback?.competitor)) row[competitorIndex] = fallback.competitor;
+      return row;
+    });
+  }
+
   function periodMetricsForItem(model, itemId) {
     const targetId = String(itemId || "");
     const subjectId = String(model.item?.itemId || "");
@@ -659,13 +693,27 @@
 
   function buildDailyTableFromModel(model) {
     const labels = completenessEngine.CHANNELS.map(([, label]) => label);
-    const columns = ["日期", "日GMV", ...labels.map(label => `${label}日消耗`), "日总消耗", "日费比", "阶段"];
-    const rows = model.daily.rows.map(row => [row.date, modelCell(row.dailyGmv), ...labels.map(label => modelCell(row.channelSpend[label])), modelCell(row.totalSpend), modelCell(row.feeRatio), row.stage]);
-    const subjectDailyRows = model.subjectDaily?.complete
-      ? model.subjectDaily.rows.map(row => [row.date, modelCell(row.gmv)])
-      : [];
+    const subjectDailyRows = (model.subjectDaily?.rows || []).map(row => [row.date, modelCell(row.gmv)]);
+    const subjectByDate = new Map((model.subjectDaily?.rows || []).map(row => [row.date, row]));
+    const competitorByDate = new Map((model.daily?.rows || []).map(row => [row.date, row]));
+    const dates = [...new Set([...subjectByDate.keys(), ...competitorByDate.keys()])].sort();
+    const columns = [
+      "日期", "主体日GMV", "对手日GMV",
+      ...labels.flatMap(label => [`主体${label}日消耗`, `对手${label}日消耗`]),
+      "主体日总消耗", "对手日总消耗", "主体日费比", "对手日费比", "阶段"
+    ];
+    const rows = dates.map(date => {
+      const subject = subjectByDate.get(date);
+      const competitor = competitorByDate.get(date);
+      const stage = competitor?.stage || model.stages?.find(current => (!current.start || date >= current.start) && (!current.end || date <= current.end))?.name || "";
+      return [
+        date, modelCell(subject?.gmv), modelCell(competitor?.dailyGmv),
+        ...labels.flatMap(label => [EMPTY, modelCell(competitor?.channelSpend?.[label])]),
+        modelCell(subject?.totalSpend), modelCell(competitor?.totalSpend), modelCell(subject?.feeRatio), modelCell(competitor?.feeRatio), stage
+      ];
+    });
     return table("日GMV与费比", columns, rows, {
-      widths: [13, 16, 24, 24, 26, 24, 26, 15, 13, 15],
+      widths: [13, 16, 16, ...labels.flatMap(() => [24, 24]), 16, 16, 14, 14, 15],
       subjectDailyRows
     });
   }
@@ -682,14 +730,10 @@
   function buildChannelTableFromModel(model) {
     const subjectRows = model.sceneRows.level1.filter(row => row.role === "主体");
     const subjectByChannel = new Map(subjectRows.map(row => [row.primary, toNumber(row.charge)]));
-    const subjectRatios = subjectRows.map(row => toNumber(row.ratio));
-    const ratioSum = subjectRatios.filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
-    const subjectClosed = subjectRows.length > 0 && subjectRatios.every(Number.isFinite) && Math.abs(ratioSum - 1) <= 0.01;
     const subjectTotal = toNumber(model.metrics.subject.spend);
     const competitorTotal = toNumber(model.daily.totalSpend);
     const rows = completenessEngine.CHANNELS.map(([apiName, label]) => {
-      let subjectSpend = subjectByChannel.get(label);
-      if (!Number.isFinite(subjectSpend) && subjectClosed) subjectSpend = 0;
+      const subjectSpend = subjectByChannel.get(label);
       const competitorSpend = model.daily.channelSpend[label];
       return [label, apiName, modelCell(competitorSpend), Number.isFinite(competitorSpend) && Number.isFinite(competitorTotal) && competitorTotal !== 0 ? round(competitorSpend / competitorTotal, 6) : EMPTY,
         modelCell(subjectSpend), Number.isFinite(subjectSpend) && Number.isFinite(subjectTotal) && subjectTotal !== 0 ? round(subjectSpend / subjectTotal, 6) : EMPTY];
@@ -711,8 +755,11 @@
   }
 
   function buildPeriodTableFromModel(model, item) {
-    const dailyGmv = model.daily.rows.map(row => row.dailyGmv).filter(Number.isFinite);
-    const peakRow = model.daily.rows.filter(row => Number.isFinite(row.dailyGmv)).sort((left, right) => right.dailyGmv - left.dailyGmv)[0];
+    const competitorDailyGmv = model.daily.rows.map(row => row.dailyGmv).filter(Number.isFinite);
+    const competitorPeakRow = model.daily.rows.filter(row => Number.isFinite(row.dailyGmv)).sort((left, right) => right.dailyGmv - left.dailyGmv)[0];
+    const subjectRows = (model.subjectDaily?.rows || []).filter(row => Number.isFinite(row.gmv));
+    const subjectDailyGmv = subjectRows.map(row => row.gmv);
+    const subjectPeakRow = subjectRows.slice().sort((left, right) => right.gmv - left.gmv)[0];
     const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
     const make = (id, label, source, peakDate = "", volatility = null, spendDays = model.period.days) => [
       id, label, model.period.startDate, model.period.endDate, model.period.days,
@@ -723,15 +770,15 @@
       peakDate, modelCell(volatility == null ? null : round(volatility, 6))
     ];
     const rows = [
-      make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject),
-      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, peakRow?.date || "", populationVolatility(dailyGmv), model.daily.spendCoverageDays || model.period.days)
+      make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject, subjectPeakRow?.date || "", populationVolatility(subjectDailyGmv)),
+      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, competitorPeakRow?.date || "", populationVolatility(competitorDailyGmv))
     ];
     return table("周期汇总", columns, rows, { widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14] });
   }
 
   function buildBenchmarkFromModel(model) {
     const metrics = model.metrics;
-    const rows = [
+    const core = [
       ["成交", "总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
       ["成交", "成交笔数", metrics.subject.orders, metrics.competitor.orders],
       ["成交", "笔单价", metrics.subject.aov, metrics.competitor.aov],
@@ -745,39 +792,77 @@
       ["投放", "全域ROAS", metrics.subject.roas, metrics.competitor.roas],
       ["结构", "关键词消耗占比", metrics.subject.keywordShare, metrics.competitor.keywordShare],
       ["结构", "渠道集中度HHI", metrics.subject.channelHhi, metrics.competitor.channelHhi]
-    ].map(row => [row[0], row[1], modelCell(row[2]), modelCell(row[3]), relative(row[2], row[3], isPercentMetric(row[1]))]);
+    ];
+    const resolvedCore = coreRowsWithAlignedFallback(model, core, 1, 2, 3);
+    const appended = alignedMetricRows(model, resolvedCore.map(row => row[1]))
+      .map(metric => ["核心指标", metric.name, metric.subject, metric.competitor]);
+    const rows = [...resolvedCore, ...appended]
+      .map(row => [row[0], row[1], modelCell(row[2]), modelCell(row[3]), relative(row[2], row[3], isPercentMetric(row[1]))]);
     return table("对标总表", ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"], rows, { widths: [15, 28, 20, 22, 18] });
   }
 
   function buildStageTableFromModel(model) {
     const rows = [];
+    const stats = (selected, role) => {
+      const gmvKey = role === "主体" ? "gmv" : "dailyGmv";
+      const gmvRows = selected.filter(row => Number.isFinite(row?.[gmvKey]));
+      const gmvs = gmvRows.map(row => row[gmvKey]);
+      const spendValues = selected.map(row => row?.totalSpend);
+      const spend = selected.length && spendValues.every(Number.isFinite)
+        ? round(spendValues.reduce((sum, value) => sum + value, 0))
+        : null;
+      const channelTotals = completenessEngine.CHANNELS.map(([, label]) => {
+        const values = selected.map(row => row?.channelSpend?.[label]);
+        return selected.length && values.every(Number.isFinite)
+          ? round(values.reduce((sum, value) => sum + value, 0))
+          : null;
+      });
+      const maximum = channelTotals.filter(Number.isFinite).sort((left, right) => right - left)[0];
+      const maximumIndex = Number.isFinite(maximum) && maximum > 0 ? channelTotals.indexOf(maximum) : -1;
+      return {
+        startGmv: gmvs.length ? gmvs[0] : null,
+        endGmv: gmvs.length ? gmvs.at(-1) : null,
+        change: gmvs.length && gmvs[0] !== 0 ? round(gmvs.at(-1) / gmvs[0] - 1, 6) : null,
+        averageGmv: gmvs.length ? round(gmvs.reduce((sum, value) => sum + value, 0) / gmvs.length) : null,
+        spend,
+        averageSpend: Number.isFinite(spend) && selected.length ? round(spend / selected.length) : null,
+        firstChannel: maximumIndex >= 0 ? completenessEngine.CHANNELS[maximumIndex][1] : null,
+        firstChannelShare: maximumIndex >= 0 && spend ? round(maximum / spend, 6) : null,
+        disclosed: gmvRows.length > 0 || spendValues.some(disclosedModelValue)
+      };
+    };
     for (const stage of model.stages) {
       const start = stage.start && stage.start < model.period.startDate ? model.period.startDate : stage.start;
       const end = stage.end && stage.end > model.period.endDate ? model.period.endDate : stage.end;
-      const selected = model.daily.rows.filter(row => (!start || row.date >= start) && (!end || row.date <= end));
-      if (!selected.length) continue;
-      const gmvs = selected.map(row => row.dailyGmv).filter(Number.isFinite);
-      const spend = selected.every(row => Number.isFinite(row.totalSpend)) ? round(selected.reduce((sum, row) => sum + row.totalSpend, 0)) : null;
-      const channelTotals = completenessEngine.CHANNELS.map(([, label]) => {
-        const values = selected.map(row => row.channelSpend[label]);
-        return values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) : null;
-      });
-      const max = channelTotals.filter(Number.isFinite).sort((left, right) => right - left)[0];
-      const maxIndex = Number.isFinite(max) ? channelTotals.indexOf(max) : -1;
-      rows.push([stage.stage, start, end, stage.name, stage.description, stage.adStrategy || "", stage.executionDetails || "", stage.operations || "", selected.length, modelCell(gmvs[0]), modelCell(gmvs.at(-1)),
-        gmvs.length && gmvs[0] !== 0 ? round(gmvs.at(-1) / gmvs[0] - 1, 6) : EMPTY,
-        gmvs.length ? round(gmvs.reduce((sum, value) => sum + value, 0) / gmvs.length) : EMPTY,
-        modelCell(spend), Number.isFinite(spend) ? round(spend / selected.length) : EMPTY,
-        maxIndex >= 0 ? completenessEngine.CHANNELS[maxIndex][1] : EMPTY, maxIndex >= 0 && spend ? round(max / spend, 6) : EMPTY]);
+      const inStage = row => (!start || row.date >= start) && (!end || row.date <= end);
+      const subjectSelected = (model.subjectDaily?.rows || []).filter(inStage);
+      const competitorSelected = (model.daily?.rows || []).filter(inStage);
+      const subject = stats(subjectSelected, "主体");
+      const competitor = stats(competitorSelected, "对手");
+      if (!subject.disclosed && !competitor.disclosed) continue;
+      const dates = new Set([...subjectSelected, ...competitorSelected].map(row => row.date).filter(Boolean));
+      const days = dates.size || (start && end ? Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1 : null);
+      rows.push([
+        stage.stage, start, end, stage.name, stage.description, stage.adStrategy || "", stage.executionDetails || "", stage.operations || "", modelCell(days),
+        modelCell(subject.startGmv), modelCell(competitor.startGmv), modelCell(subject.endGmv), modelCell(competitor.endGmv),
+        modelCell(subject.change), modelCell(competitor.change), modelCell(subject.averageGmv), modelCell(competitor.averageGmv),
+        modelCell(subject.spend), modelCell(competitor.spend), modelCell(subject.averageSpend), modelCell(competitor.averageSpend),
+        modelCell(subject.firstChannel), modelCell(competitor.firstChannel), modelCell(subject.firstChannelShare), modelCell(competitor.firstChannelShare)
+      ]);
     }
-    return table("成长阶段数据", ["阶段", "开始", "结束", "阶段名称", "阶段描述", "广告打法", "执行细节", "运营动作", "天数", "起始GMV", "结束GMV", "GMV变化", "平均日GMV", "阶段总消耗", "日均消耗", "第一渠道", "第一渠道占比"], rows, {
-      widths: [9, 13, 13, 16, 34, 42, 68, 68, 9, 16, 16, 13, 16, 16, 16, 15, 17], chartTitle: "阶段平均日GMV"
+    return table("成长阶段数据", [
+      "阶段", "开始", "结束", "阶段名称", "阶段描述", "广告打法", "执行细节", "运营动作", "天数",
+      "主体起始GMV", "对手起始GMV", "主体结束GMV", "对手结束GMV", "主体GMV变化", "对手GMV变化",
+      "主体平均日GMV", "对手平均日GMV", "主体阶段总消耗", "对手阶段总消耗", "主体日均消耗", "对手日均消耗",
+      "主体第一渠道", "对手第一渠道", "主体第一渠道占比", "对手第一渠道占比"
+    ], rows, {
+      widths: [9, 13, 13, 16, 34, 42, 68, 68, 9, 16, 16, 16, 16, 13, 13, 16, 16, 16, 16, 16, 16, 15, 15, 17, 17], chartTitle: "阶段平均日GMV对比"
     });
   }
 
   function buildBaseMetricTableFromModel(model) {
     const metrics = model.metrics;
-    const rows = [
+    const core = [
       ["营销推广点击量", metrics.subject.marketingClicks, metrics.competitor.marketingClicks],
       ["自然点击量", metrics.subject.naturalClicks, metrics.competitor.naturalClicks],
       ["成交笔数", metrics.subject.orders, metrics.competitor.orders],
@@ -792,13 +877,39 @@
       ["PPC", metrics.subject.ppc, metrics.competitor.ppc],
       ["费比", metrics.subject.feeRatio, metrics.competitor.feeRatio],
       ["全域ROAS", metrics.subject.roas, metrics.competitor.roas]
-    ].map(row => [row[0], modelCell(row[1]), modelCell(row[2]), relative(row[1], row[2], isPercentMetric(row[0]))]);
+    ];
+    const resolvedCore = coreRowsWithAlignedFallback(model, core, 0, 1, 2);
+    const appended = alignedMetricRows(model, resolvedCore.map(row => row[0]))
+      .map(metric => [metric.name, metric.subject, metric.competitor]);
+    const rows = [...resolvedCore, ...appended]
+      .map(row => [row[0], modelCell(row[1]), modelCell(row[2]), relative(row[1], row[2], isPercentMetric(row[0]))]);
     return table("基础指标对比", ["指标", "主体值", "对手值", "主体相对对手"], rows, { widths: [28, 20, 20, 20] });
   }
 
   function buildKeywordTableFromModel(model) {
-    const rows = model.keywords.map(row => [row.role, row.keyword, row.type, modelCell(row.impression), modelCell(row.click), modelCell(row.ctr), modelCell(row.conversion)]);
-    return table("关键词样本", ["对象", "关键词", "词类型", "展现", "点击", "CTR", "支付转化率"], rows, { widths: [10, 24, 16, 15, 15, 14, 17] });
+    const paired = new Map();
+    for (const row of model.keywords || []) {
+      const keyword = String(row.keyword || "").trim();
+      const type = String(row.type || "").trim();
+      if (!keyword) continue;
+      const key = `${keyword}\u0001${type}`;
+      const current = paired.get(key) || { keyword, type, subject: {}, competitor: {} };
+      const side = row.role === "主体" ? current.subject : current.competitor;
+      for (const field of ["impression", "click", "ctr", "conversion"]) {
+        if (!disclosedModelValue(side[field]) && disclosedModelValue(row[field])) side[field] = row[field];
+      }
+      paired.set(key, current);
+    }
+    const rows = [...paired.values()].map(row => [
+      row.keyword, row.type,
+      modelCell(row.subject.impression), modelCell(row.competitor.impression),
+      modelCell(row.subject.click), modelCell(row.competitor.click),
+      modelCell(row.subject.ctr), modelCell(row.competitor.ctr),
+      modelCell(row.subject.conversion), modelCell(row.competitor.conversion)
+    ]);
+    return table("关键词样本", ["关键词", "词类型", "主体展现", "对手展现", "主体点击", "对手点击", "主体CTR", "对手CTR", "主体支付转化率", "对手支付转化率"], rows, {
+      widths: [24, 16, 15, 15, 15, 15, 14, 14, 17, 17]
+    });
   }
 
   function chinaClock(value) {
@@ -834,8 +945,16 @@
       [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`]
     ];
     if (spendTiming) rows.push(["取数时段提示", `0:00–10:00 ${spendTiming.affectedDate}消耗可能未产出`, "已按当前可见数据生成", "建议10:00–24:00重新获取"]);
+    // 平台还没产出的天数必须写进报告本身，读报告的人不看面板也能知道少了哪天。
+    const gap = model.completeness?.platformGap;
+    if (gap?.tolerated) rows.push([
+      "数据说明", `平台少${gap.days}天数据：${gap.dates.join("、")}`,
+      `趋势已覆盖${gap.coverageDays}/${gap.expectedDays}天，消耗已覆盖${model.daily.spendCoverageDays}/${model.daily.spendExpectedDays}天`,
+      "缺失当天数值留空，未按0计入"
+    ]);
     if (model.daily.spendPartial) rows.push([
-      "花费覆盖", "", `已返回${model.daily.spendCoverageDays}/${model.daily.spendExpectedDays}天`, `缺少1天：${model.daily.spendMissingDates.join("、")}`
+      "花费覆盖", "", `已返回${model.daily.spendCoverageDays}/${model.daily.spendExpectedDays}天`,
+      `缺少${model.daily.spendMissingDates.length}天：${model.daily.spendMissingDates.join("、")}`
     ]);
     return table("报告总览", ["项目", "主体", "对手", "范围"], rows, {
       subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}`,
@@ -879,23 +998,26 @@
       "对标总表": `${dateRange}｜主体 ${item.id} vs 对手 ${item.competitorId}`,
       "商品与成功品": "本次分析目标与成功品候选",
       "周期汇总": `${period.days}日对象与周期严格对齐`,
-      "日GMV与费比": `竞品 ${item.competitorId}｜${model.period.startDate} ~ ${model.period.endDate}（${model.period.days}天）`,
+      "日GMV与费比": `主体 ${item.id} vs 对手 ${item.competitorId}｜${model.period.startDate} ~ ${model.period.endDate}（${model.period.days}天）`,
       "渠道花费": `${dateRange}｜五渠道消耗与占比`,
       "一级场景": `${dateRange}｜主体与对手一级投放场景数据`,
       "二级场景": `${dateRange}｜主体与对手二级投放场景数据`,
-      "成长阶段数据": `${dateRange}｜目标对手成长阶段金额数据`,
+      "成长阶段数据": `${dateRange}｜主体与目标对手同阶段金额数据`,
       "基础指标对比": `${dateRange}｜主体与目标成功品数值对比`,
-      "关键词样本": `${dateRange}｜按页面展示顺序排列`
+      "关键词样本": `${dateRange}｜按关键词与词类型对齐主体和对手`
     };
     tables.forEach(current => { if (!current.subtitle) current.subtitle = subtitles[current.name] || dateRange; });
 
     const requiredValues = [
       ["主体成交笔数", model.metrics.subject.orders], ["主体笔单价", model.metrics.subject.aov], ["主体总GMV", model.metrics.subject.totalGmv],
-      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend], ["主体费比", model.metrics.subject.feeRatio], ["主体全域ROAS", model.metrics.subject.roas],
+      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend], ["主体费比", model.metrics.subject.feeRatio], ["主体全域ROAS", model.metrics.subject.roas, model.metrics.subject.spend === 0],
       ["对手成交笔数", model.metrics.competitor.orders], ["对手笔单价", model.metrics.competitor.aov], ["对手总GMV", model.metrics.competitor.totalGmv],
-      ["对手访客数", model.metrics.competitor.visitors], ["对手推广消耗", model.metrics.competitor.spend], ["对手费比", model.metrics.competitor.feeRatio], ["对手全域ROAS", model.metrics.competitor.roas]
+      ["对手访客数", model.metrics.competitor.visitors],
+      ["对手推广消耗", model.metrics.competitor.spend, model.daily.spendPartial],
+      ["对手费比", model.metrics.competitor.feeRatio, model.daily.spendPartial],
+      ["对手全域ROAS", model.metrics.competitor.roas, model.metrics.competitor.spend === 0 || model.daily.spendPartial]
     ];
-    const deterministicMissing = requiredValues.filter(([, value]) => value === null || value === undefined || value === "").map(([label]) => label);
+    const deterministicMissing = requiredValues.filter(([, value, validEmpty]) => !validEmpty && (value === null || value === undefined || value === "")).map(([label]) => label);
     const moduleRules = [
       ["商品概况", path => path === "/api/goods/item/info"],
       ["成功品", path => path === "/api/goods/grow/define/success/load" || path === "/api/goods/grow/define/success/item/list"],
@@ -921,8 +1043,8 @@
         requiredValues: requiredValues.length, resolvedValues: requiredValues.length - deterministicMissing.length,
         endpointStatus, endpointCoverage: model.completeness.endpointCoverage,
         parsedRecords: model.completeness.parsedRecords, failedRecords: model.completeness.failedRecords,
-        blockingIssues: model.completeness.blockingIssues, warnings: model.completeness.warnings, deterministicMissing,
-        spendTiming,
+        blockingIssues: model.completeness.blockingIssues, warnings: model.completeness.warnings, notes: model.completeness.notes || [], deterministicMissing,
+        spendTiming, platformGap: model.completeness.platformGap,
         spendCoverage: {
           returnedDays: model.daily.spendCoverageDays,
           expectedDays: model.daily.spendExpectedDays,
@@ -969,7 +1091,9 @@
       if (parsed.protocol !== "https:") return "";
       parsed.hash = "";
       for (const key of [...parsed.searchParams.keys()]) {
-        if (/(?:token|csrf|cookie|authorization|password|secret|(?:^|[_-])sign(?:ature|data)?$|session|webOpSessionId|uniqueItemCampaign)/i.test(key)) parsed.searchParams.delete(key);
+        if (/(?:token|csrf|cookie|authorization|password|secret|(?:^|[_-])sign(?:ature|data)?$|session|webOpSessionId|uniqueItemCampaign)/i.test(key)) {
+          parsed.searchParams.delete(key);
+        }
       }
       return parsed.toString();
     } catch {
@@ -994,15 +1118,31 @@
 
     const daily = (report.tables || []).find(current => current.name === "日GMV与费比");
     const subjectDailyGmv = Array.isArray(daily?.subjectDailyRows)
-      ? daily.subjectDailyRows.map(row => ({ date: String(row?.[0] || ""), gmv: canonicalCell(row?.[1], "日GMV") }))
-        .filter(row => /^20\d{2}-\d{2}-\d{2}$/.test(row.date) && row.gmv !== "" && Number.isFinite(Number(row.gmv)) && Number(row.gmv) >= 0)
+      ? daily.subjectDailyRows.map(row => ({
+        date: String(row?.[0] || ""),
+        gmv: canonicalCell(row?.[1], "日GMV")
+      })).filter(row => /^20\d{2}-\d{2}-\d{2}$/.test(row.date) && row.gmv !== "" && Number.isFinite(Number(row.gmv)) && Number(row.gmv) >= 0)
       : [];
+
+    const tables = (report.tables || []).map(current => {
+      const widths = Array.isArray(current.widths)
+        ? current.widths.map(Number).filter(value => Number.isFinite(value) && value >= 4 && value <= 120).map(value => Math.round(value * 100) / 100)
+        : [];
+      const subtitle = String(current.subtitle || "").slice(0, 300);
+      return {
+        name: String(current.name || ""),
+        ...(subtitle ? { subtitle } : {}),
+        ...(widths.length === current.columns?.length ? { widths } : {})
+      };
+    }).filter(current => current.name && (current.subtitle || current.widths));
+
     const generatedAt = String(report.finishedAt || "");
     const renderData = {
       version: "1",
       ...(Number.isFinite(Date.parse(generatedAt)) ? { generated_at: new Date(generatedAt).toISOString() } : {}),
       ...(Object.keys(products).length ? { products } : {}),
-      ...(subjectDailyGmv.length ? { subject_daily_gmv: subjectDailyGmv } : {})
+      ...(subjectDailyGmv.length ? { subject_daily_gmv: subjectDailyGmv } : {}),
+      ...(tables.length ? { tables } : {})
     };
     return Object.keys(renderData).length > 1 ? renderData : null;
   }

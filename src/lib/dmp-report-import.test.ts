@@ -82,7 +82,7 @@ describe("DMP JSON 工程文件识别", () => {
           name: "一级场景",
           columns: ["对象", "层级", "一级场景", "二级场景", "sceneId", "消耗(API精确值)", "消耗占比(API原值)", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"],
           rows: [
-            { cells: ["主体", "1", "关键词推广", "", "371", "150211.72", "100%", "", "", "33938", "", "", "234836.70", ""] },
+            { cells: ["主体", "1", "关键词推广", "", "", "150211.72", "100%", "", "", "33938", "", "", "234836.70", ""] },
             { cells: ["对手", "1", "人群推广", "", "372", "", "46.77%", "", "4千~5千", "90~100", "1%~2.5%", "0~10", "0~10", "0~10"] },
             { cells: ["对手", "1", "关键词推广", "", "371", "", "53.23%", "", "1千~2千", "60~70", "5%~7.5%", "0~10", "300~400", "0~10"] }
           ]
@@ -117,16 +117,23 @@ describe("DMP JSON 工程文件识别", () => {
     expect(periodRows?.[1][9]).toBe("2026-08-13");
     expect(Number(periodRows?.[1][10])).toBeGreaterThan(0);
     const level1 = report?.tables.find((table) => table.name === "一级场景")?.rows;
-    expect(level1?.[1][7]).toBe(47.86);
-    expect(level1?.[1][11]).toBe("0.48~0.53");
-    expect(level1?.[1][13]).toBe("0~0.21");
-    expect(level1?.[2][7]).toBe(54.46);
-    expect(level1?.[2][11]).toBe("0.78~0.91");
-    expect(level1?.[2][13]).toBe("5.51~7.34");
+    expect(level1).toHaveLength(4);
+    const competitorCrowd = level1?.find((row) => row[0] === "对手" && row[2] === "人群推广");
+    const competitorKeyword = level1?.find((row) => row[0] === "对手" && row[2] === "关键词推广");
+    const subjectCrowd = level1?.find((row) => row[0] === "主体" && row[2] === "人群推广");
+    expect(subjectCrowd?.[7]).toBe("");
+    expect(competitorCrowd?.[7]).toBe(47.86);
+    expect(competitorCrowd?.[11]).toBe("0.48~0.53");
+    expect(competitorCrowd?.[13]).toBe("0~0.21");
+    expect(competitorKeyword?.[7]).toBe(54.46);
+    expect(competitorKeyword?.[11]).toBe("0.78~0.91");
+    expect(competitorKeyword?.[13]).toBe("5.51~7.34");
     const level2 = report?.tables.find((table) => table.name === "二级场景")?.rows;
-    expect(level2?.[0][7]).toBe(27.23);
-    expect(level2?.[0][11]).toBe("0.68~0.91");
-    expect(level2?.[0][13]).toBe("3.67~7.34");
+    const level2Competitor = level2?.find((row) => row[0] === "对手");
+    expect(level2?.find((row) => row[0] === "主体")?.[7]).toBe("");
+    expect(level2Competitor?.[7]).toBe(27.23);
+    expect(level2Competitor?.[11]).toBe("0.68~0.91");
+    expect(level2Competitor?.[13]).toBe("3.67~7.34");
   });
 
   it("restores render_data product links, subject daily values, generated time and table presentation", () => {
@@ -206,7 +213,7 @@ describe("DMP JSON 工程文件识别", () => {
       [values[9], values[10]] = [values[10], values[9]];
       return values;
     })()]
-  ])("matches local HTML by omitting the subject series for %s platform dates", (_case, platformDates) => {
+  ])("aligns subject and competitor daily series by date union for %s platform dates", (_case, platformDates) => {
     const renderDates = dates("2026-07-20", 30);
     const report = canonicalToDmpReport({
       schema_version: "3.0",
@@ -235,8 +242,50 @@ describe("DMP JSON 工程文件识别", () => {
       }
     });
     const daily = report?.tables.find((table) => table.name === "日GMV与费比");
-    expect(daily?.columns).toEqual(["日期", "日GMV"]);
-    expect(daily?.rows.map((row) => row[0])).toEqual(platformDates);
+    expect(daily?.columns).toEqual(["日期", "主体日GMV", "日GMV"]);
+    expect(daily?.rows.map((row) => row[0])).toEqual(renderDates);
+    expect(daily?.rows.map((row) => row[1])).toEqual(renderDates.map(() => "100"));
+    const competitorByDate = new Map(platformDates.map((date) => [date, "100"]));
+    expect(daily?.rows.map((row) => row[2])).toEqual(renderDates.map((date) => competitorByDate.get(date) ?? ""));
+  });
+
+  it("deduplicates repeated platform dates and preserves disclosed cells from the repeated rows", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-02",
+      tables: [
+        { name: "报告总览", columns: ["项目", "主体", "对手"], rows: [{ cells: ["商品ID", "593063365092", "623803508105"] }] },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "总GMV"],
+          rows: [
+            { cells: ["593063365092", "主体", "300"] },
+            { cells: ["623803508105", "目标对手", "400"] }
+          ]
+        },
+        {
+          name: "日GMV与费比",
+          columns: ["日期", "日GMV", "人群推广日消耗", "阶段"],
+          rows: [
+            { cells: ["2026-08-01", "190", "", "成长期"] },
+            { cells: ["2026-08-01", "", "20", ""] },
+            { cells: ["2026-08-02", "210", "30", "成长期"] }
+          ]
+        }
+      ],
+      render_data: {
+        version: "1",
+        subject_daily_gmv: [
+          { date: "2026-08-01", gmv: "120" },
+          { date: "2026-08-02", gmv: "180" }
+        ]
+      }
+    });
+    const daily = report?.tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.rows).toHaveLength(2);
+    expect(daily?.rows[0]).toEqual(["2026-08-01", "120", "190", "20", "成长期"]);
   });
 
   it("fills blank derived scene cells for both old and concise headers but preserves disclosed values and intervals", () => {

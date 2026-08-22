@@ -239,7 +239,11 @@ describe("DMP growth report viewer projection", () => {
     expect(model.tables.map((table) => table.name)).toContain("日GMV与费比");
     expect(model.tables.map((table) => table.name)).toContain("渠道花费");
     expect(model.tables.find((table) => table.name === "日GMV与费比")?.columns[1]).toBe("对手日GMV");
-    expect(model.tables.find((table) => table.name === "渠道花费")?.groupedChannel).toBe(true);
+    const channel = model.tables.find((table) => table.name === "渠道花费");
+    expect(channel?.columns).toEqual([
+      "渠道", "页面指标", "对手30日消耗", "对手30日占比", "主体30日消耗", "主体30日占比"
+    ]);
+    expect(channel?.groupedChannel).toBe(false);
   });
 
   it("keeps a subject benchmark in the daily chart when the report has no exact subject-daily column", () => {
@@ -383,6 +387,50 @@ describe("DMP growth report viewer projection", () => {
       columns: ["渠道", "主体30日消耗"],
       rows: [["内容运营", "—"]]
     })).toBe(false);
+  });
+
+  it("pairs subject and competitor rows by the same scene dimension without turning missing values into zero", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("一级场景", [
+      "对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "点击"
+    ], [["对手", "1", "人群推广", "", "372", "1200", "400"]]));
+    const table = projectDmpReportForViewer(record).tables.find((candidate) => candidate.name === "一级场景");
+    expect(table?.rows).toEqual([
+      ["主体", "1", "人群推广", "", "372", "", ""],
+      ["对手", "1", "人群推广", "", "372", "1200", "400"]
+    ]);
+  });
+
+  it("pairs legacy scene rows by scene names when only one side discloses a scene id", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("一级场景", [
+      "对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "点击"
+    ], [
+      ["主体", "1", "人群推广", "", "", "300", "60"],
+      ["对手", "1", "人群推广", "", "372", "1200", "400"]
+    ]));
+    const table = projectDmpReportForViewer(record).tables.find((candidate) => candidate.name === "一级场景");
+    expect(table?.rows).toEqual([
+      ["主体", "1", "人群推广", "", "", "300", "60"],
+      ["对手", "1", "人群推广", "", "372", "1200", "400"]
+    ]);
+  });
+
+  it("projects legacy keyword role rows into same-dimension subject and competitor columns", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("关键词样本", ["对象", "关键词", "词类型", "展现", "点击", "CTR"], [
+      ["对手", "蜂蜜", "趋势机会词", "2000", "80", "4%"],
+      ["主体", "蜂蜜", "趋势机会词", "1200", "60", "5%"],
+      ["对手", "蜂蜜礼盒", "类目热门词", "900", "30", "3.33%"]
+    ]));
+    const table = projectDmpReportForViewer(record).tables.find((candidate) => candidate.name === "关键词样本");
+    expect(table?.columns).toEqual([
+      "关键词", "词类型", "主体展现", "对手展现", "主体点击", "对手点击", "主体CTR", "对手CTR"
+    ]);
+    expect(table?.rows).toEqual([
+      ["蜂蜜", "趋势机会词", "1200", "2000", "60", "80", "5%", "4%"],
+      ["蜂蜜礼盒", "类目热门词", "", "900", "", "30", "", "3.33%"]
+    ]);
   });
 });
 

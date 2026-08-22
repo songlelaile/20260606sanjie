@@ -332,22 +332,24 @@ export function reconcileDmpCrossTableMetrics(
 
     const daily = tables.find((table) => table.name === "日GMV与费比");
     const dailyDateIndex = daily?.columns.indexOf("日期") ?? -1;
-    const dailyGmvIndex = daily?.columns.indexOf("日GMV") ?? -1;
-    const dailyValues = dailyGmvIndex >= 0
-      ? (daily?.rows.map((row) => ({ date: String(row[dailyDateIndex] ?? ""), gmv: numericCell(row[dailyGmvIndex]) })) ?? [])
-        .filter((row): row is { date: string; gmv: number } => Boolean(row.date) && row.gmv != null)
-      : [];
-    const competitorGmv = numericCell(gmvByItemId.get(competitorItemId));
-    const dailySum = dailyValues.reduce((sum, row) => sum + row.gmv, 0);
-    const dailyClosed = dailyValues.length === days && competitorGmv != null && Math.abs(dailySum - competitorGmv) <= 0.01;
-    if (dailyClosed && peakIndex >= 0 && volatilityIndex >= 0) {
-      const peak = dailyValues.reduce((best, row) => row.gmv > best.gmv ? row : best, dailyValues[0]);
-      const volatility = populationVolatility(dailyValues.map((row) => row.gmv));
-      periodTable.rows.filter((row) => String(row[periodIdIndex] ?? "") === competitorItemId).forEach((row) => {
-        if (isBlankCell(row[peakIndex])) row[peakIndex] = peak.date;
-        if (isBlankCell(row[volatilityIndex]) && volatility != null) row[volatilityIndex] = roundMetric(volatility, 6);
+    const fillDailyStatistics = (itemId: string, columnPatterns: RegExp[]) => {
+      const gmvIndex = daily?.columns.findIndex((column) => columnPatterns.some((pattern) => pattern.test(column))) ?? -1;
+      if (!daily || dailyDateIndex < 0 || gmvIndex < 0) return;
+      const values = daily.rows
+        .map((row) => ({ date: String(row[dailyDateIndex] ?? ""), gmv: numericCell(row[gmvIndex]) }))
+        .filter((row): row is { date: string; gmv: number } => Boolean(row.date) && row.gmv != null);
+      const periodGmv = numericCell(gmvByItemId.get(itemId));
+      const sum = values.reduce((total, row) => total + row.gmv, 0);
+      if (values.length !== days || periodGmv == null || Math.abs(sum - periodGmv) > 0.01) return;
+      const peak = values.reduce((best, row) => row.gmv > best.gmv ? row : best, values[0]);
+      const volatility = populationVolatility(values.map((row) => row.gmv));
+      periodTable.rows.filter((row) => String(row[periodIdIndex] ?? "") === itemId).forEach((row) => {
+        if (peakIndex >= 0 && isBlankCell(row[peakIndex])) row[peakIndex] = peak.date;
+        if (volatilityIndex >= 0 && isBlankCell(row[volatilityIndex]) && volatility != null) row[volatilityIndex] = roundMetric(volatility, 6);
       });
-    }
+    };
+    fillDailyStatistics(subjectItemId, [/^主体日GMV$/]);
+    fillDailyStatistics(competitorItemId, [/^对手日GMV$/, /^日GMV$/]);
   }
 
   const spendByRole = new Map<string, number>();
@@ -456,6 +458,7 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   const endDate = dateMatches[1] ?? "";
   const days = daysInclusive(startDate, endDate) || 30;
   mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
+  alignComparisonRoleRows(tables);
   reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
     preserveDisclosedRanges: Boolean(renderData)
   });
@@ -504,12 +507,6 @@ function mergeSubjectDailyGmv(tables: DmpReportTable[], rows: DmpReportRenderDat
   if (!table) return;
   const dateIndex = table.columns.indexOf("日期");
   if (dateIndex < 0) return;
-  const tableDates = table.rows.map((row) => String(row[dateIndex] ?? ""));
-  const renderDates = rows.map((row) => row.date);
-  if (tableDates.length !== renderDates.length
-    || new Set(tableDates).size !== tableDates.length
-    || new Set(renderDates).size !== renderDates.length
-    || tableDates.some((date, index) => date !== renderDates[index])) return;
   let subjectIndex = table.columns.indexOf("主体日GMV");
   if (subjectIndex < 0) {
     const competitorIndex = table.columns.findIndex((column) => /^(?:对手)?日GMV$/.test(column));
@@ -520,10 +517,70 @@ function mergeSubjectDailyGmv(tables: DmpReportTable[], rows: DmpReportRenderDat
     if (table.widths) table.widths.splice(subjectIndex, 0, subjectWidth);
   }
   const byDate = new Map(rows.map((row) => [row.date, row.gmv]));
+  const allowedDates = new Set(byDate.keys());
+  const existingByDate = new Map<string, DmpCell[]>();
+  for (const source of table.rows.filter((row) => allowedDates.has(String(row[dateIndex] ?? "")))) {
+    const date = String(source[dateIndex] ?? "");
+    const current = existingByDate.get(date);
+    if (!current) {
+      existingByDate.set(date, table.columns.map((_, index) => source[index] ?? ""));
+      continue;
+    }
+    table.columns.forEach((_, index) => {
+      if (isBlankCell(current[index]) && !isBlankCell(source[index])) current[index] = source[index];
+    });
+  }
+  table.rows = [...existingByDate.values()];
+  for (const { date } of rows) {
+    if (existingByDate.has(date)) continue;
+    const row = table.columns.map(() => "" as DmpCell);
+    row[dateIndex] = date;
+    table.rows.push(row);
+    existingByDate.set(date, row);
+  }
+  table.rows.sort((left, right) => String(left[dateIndex] ?? "").localeCompare(String(right[dateIndex] ?? "")));
   table.rows.forEach((row) => {
     const value = byDate.get(String(row[dateIndex] ?? ""));
     if (value !== undefined && isBlankCell(row[subjectIndex])) row[subjectIndex] = value;
   });
+}
+
+function alignComparisonRoleRows(tables: DmpReportTable[]) {
+  for (const table of tables) {
+    if (table.name !== "一级场景" && table.name !== "二级场景") continue;
+    const roleIndex = table.columns.indexOf("对象");
+    if (roleIndex < 0) continue;
+    const dimensionIndexes = ["层级", "一级场景", "二级场景", "场景编号", "sceneId"]
+      .map((column) => table.columns.indexOf(column))
+      .filter((index, position, values) => index >= 0 && values.indexOf(index) === position);
+    if (!dimensionIndexes.length) continue;
+    const levelIndex = table.columns.indexOf("层级");
+    const primaryIndex = table.columns.indexOf("一级场景");
+    const secondaryIndex = table.columns.indexOf("二级场景");
+    const idIndexes = [table.columns.indexOf("场景编号"), table.columns.indexOf("sceneId")]
+      .filter((index, position, values) => index >= 0 && values.indexOf(index) === position);
+    const keyFor = (row: DmpCell[]) => {
+      const names = [levelIndex, primaryIndex, secondaryIndex].map((index) => index >= 0 ? String(row[index] ?? "").trim() : "");
+      if (names.slice(1).some(Boolean)) return names.join("\u0001");
+      return [...names, ...idIndexes.map((index) => String(row[index] ?? "").trim())].join("\u0001");
+    };
+
+    const groups = new Map<string, { template: DmpCell[]; subject?: DmpCell[]; competitor?: DmpCell[] }>();
+    for (const row of table.rows) {
+      const key = keyFor(row);
+      const current = groups.get(key) ?? { template: row };
+      if (/^主体/.test(String(row[roleIndex] ?? ""))) current.subject = row;
+      else if (/目标对手|^对手|^竞品/.test(String(row[roleIndex] ?? ""))) current.competitor = row;
+      groups.set(key, current);
+    }
+    table.rows = [...groups.values()].flatMap(({ template, subject, competitor }) => {
+      const placeholder = (role: "主体" | "对手") => table.columns.map((_, index) => {
+        if (index === roleIndex) return role;
+        return dimensionIndexes.includes(index) ? template[index] ?? "" : "";
+      });
+      return [subject ?? placeholder("主体"), competitor ?? placeholder("对手")];
+    });
+  }
 }
 
 function looksLikeImageUrl(value: string) {
