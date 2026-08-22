@@ -70,6 +70,15 @@ describe("DMP report-center workspace layout", () => {
     );
   });
 
+  it("shows the persisted subject thumbnail in both each report card and its canonical group card", () => {
+    expect(workspaceSource).toContain("group.subjectThumbnail.url");
+    expect(workspaceSource).toContain("group.subjectThumbnail.title");
+    expect(workspaceSource).toContain("dmpReportSubjectThumbnail(record)");
+    expect(workspaceSource).toContain("styles.groupThumbnail");
+    expect(workspaceSource).toContain('referrerPolicy="no-referrer"');
+    expect(workspaceCss).toMatch(/\.groupThumbnail\s*\{[^}]*height\s*:\s*32px[^}]*width\s*:\s*32px/s);
+  });
+
   it("has explicit responsive rules for the library, toolbar and report grid", () => {
     expect(workspaceCss).toMatch(/@media\s*\(max-width:\s*\d+px\)/);
     expect(workspaceCss).toMatch(

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
+import { dmpCanonicalReportIdentity } from "@/lib/dmp-report-library";
+import { toOfficialDmpReportUrl } from "@/lib/dmp-public-origin";
 import {
   deleteDmpBusinessReport,
   getDmpBusinessReport,
   getDmpReportAccess,
   getDmpReportAccessFromToken,
   listDmpBusinessReports,
-  parseDmpCompetitorIds,
   saveDmpBusinessReport,
   validItemId,
   validateDmpCanonicalReport
@@ -58,11 +59,13 @@ export async function POST(request: Request) {
   const checked = validateDmpCanonicalReport(body?.report);
   if (!checked.report) return NextResponse.json({ error: checked.error ?? "报告结构无效" }, { status: 400, headers: CORS });
 
-  const subjectItemId = String(body?.subjectItemId ?? checked.report.item_id).trim();
-  const competitionReport = checked.report.report_type === "competition";
-  const competitorIds = competitionReport
-    ? parseDmpCompetitorIds(checked.report.competitor_ids?.length ? checked.report.competitor_ids : body?.competitorItemId)
-    : parseDmpCompetitorIds(body?.competitorItemId);
+  const identity = dmpCanonicalReportIdentity(checked.report, {
+    subjectItemId: body?.subjectItemId,
+    competitorItemId: body?.competitorItemId
+  });
+  const subjectItemId = identity.subjectItemId;
+  const competitionReport = identity.reportType === "competition";
+  const competitorIds = identity.competitorItemIds;
   const competitorItemId = competitionReport ? competitorIds.join(",") : competitorIds[0] ?? "";
   if (!validItemId(subjectItemId) || competitorIds.length < 1 || competitorIds.some((id) => !validItemId(id)) || (!competitionReport && competitorIds.length !== 1) || (competitionReport && competitorIds.length > 3)) {
     return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效" }, { status: 400, headers: CORS });
@@ -75,7 +78,8 @@ export async function POST(request: Request) {
     quality: body?.quality === "partial" ? "partial" : "complete",
     sourceVersion: String(body?.sourceVersion ?? "").slice(0, 32)
   });
-  return NextResponse.json({ data: { report } }, { status: 201, headers: CORS });
+  const reportUrl = toOfficialDmpReportUrl(report.id);
+  return NextResponse.json({ data: { report, reportUrl, archived: true } }, { status: 201, headers: CORS });
 }
 
 export async function DELETE(request: Request) {

@@ -62,7 +62,9 @@
   font-weight: 800;
   letter-spacing: .04em;
   place-items: center;
+  print-color-adjust: exact;
   white-space: nowrap;
+  -webkit-print-color-adjust: exact;
 }
 
 .hero {
@@ -796,6 +798,17 @@
 
 .difference {
   background-color: var(--dmp-difference) !important;
+}
+
+.tableShell thead th,
+.tableShell thead th.subject,
+.tableShell thead th.competitor,
+.tableShell thead th.difference,
+.tableShell thead th.stickyColumn {
+  background: #0d716b !important;
+  color: #fff !important;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
 }
 
 .subjectRow > td {

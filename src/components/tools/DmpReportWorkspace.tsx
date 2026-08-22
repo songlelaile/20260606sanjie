@@ -212,48 +212,55 @@ export function DmpReportWorkspace({
           </header>
           {visibleReports.length ? (
             <div className={styles.reportGroups}>
-              {visibleGroups.map((group) => (
-                <section className={styles.reportGroup} key={group.key}>
-                  <header className={styles.groupHeader}>
-                    <div>
-                      <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
-                      <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
-                      <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
-                    </div>
-                    <span>{group.records.length} 份</span>
-                  </header>
-                  <div className={styles.reportGrid}>
-                    {group.records.map((record) => {
-                      const thumbnail = dmpReportSubjectThumbnail(record);
-                      const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
-                      return (
-                        <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
-                          <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
-                            <span className={styles.reportThumbnail}>
-                              <span aria-hidden="true">{fallback}</span>
-                              {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
-                            </span>
-                            <span className={styles.cardCopy}>
-                              <span className={styles.cardMeta}>
-                                <time>{createdAtLabel(record.createdAt)}</time>
+              {visibleGroups.map((group) => {
+                const groupFallback = group.subjectThumbnail.title.slice(0, 1) || "品";
+                return (
+                  <section className={styles.reportGroup} key={group.key}>
+                    <header className={styles.groupHeader}>
+                      <div>
+                        <span className={`${styles.reportThumbnail} ${styles.groupThumbnail}`}>
+                          <span aria-hidden="true">{groupFallback}</span>
+                          {group.subjectThumbnail.url ? <img src={group.subjectThumbnail.url} alt={`${group.subjectThumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
+                        </span>
+                        <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
+                        <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
+                        <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
+                      </div>
+                      <span>{group.records.length} 份</span>
+                    </header>
+                    <div className={styles.reportGrid}>
+                      {group.records.map((record) => {
+                        const thumbnail = dmpReportSubjectThumbnail(record);
+                        const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
+                        return (
+                          <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
+                            <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
+                              <span className={styles.reportThumbnail}>
+                                <span aria-hidden="true">{fallback}</span>
+                                {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
                               </span>
-                              <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
-                              <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
-                              <span className={styles.period}>{record.period}</span>
-                            </span>
-                          </button>
-                          <div className={styles.cardActions}>
-                            <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId) || busy} title="复制分享链接">
-                              <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
+                              <span className={styles.cardCopy}>
+                                <span className={styles.cardMeta}>
+                                  <time>{createdAtLabel(record.createdAt)}</time>
+                                </span>
+                                <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
+                                <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
+                                <span className={styles.period}>{record.period}</span>
+                              </span>
                             </button>
-                            <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
+                            <div className={styles.cardActions}>
+                              <button type="button" onClick={() => void createShare(record)} disabled={Boolean(sharingId) || busy} title="复制分享链接">
+                                <Share2 size={15} /> <span>{sharingId === record.id ? "生成中" : "分享"}</span>
+                              </button>
+                              <button className={styles.dangerAction} type="button" onClick={() => void deleteReport(record)} disabled={busy} aria-label="删除报告" title="删除报告"><Trash2 size={15} /></button>
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           ) : reports.length ? (
             <div className={styles.noMatches}>

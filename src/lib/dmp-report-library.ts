@@ -3,6 +3,7 @@ import {
   sanitizeDmpReportRenderData,
   sanitizeDmpRenderImageUrl,
   type DmpBusinessReportRecord,
+  type DmpCanonicalReport,
   type DmpReportKind
 } from "@/lib/dmp-report-types";
 
@@ -11,6 +12,8 @@ export interface DmpReportLibraryGroup {
   reportType: DmpReportKind;
   subjectItemId: string;
   competitorItemId: string;
+  subjectThumbnail: DmpReportThumbnail;
+  competitorThumbnail: DmpReportThumbnail;
   records: DmpBusinessReportRecord[];
 }
 
@@ -27,23 +30,38 @@ export interface DmpReportIdentity {
 }
 
 export function dmpReportIdentity(record: DmpBusinessReportRecord): DmpReportIdentity {
-  const reportType = record.reportType === "competition" || record.report.report_type === "competition"
+  return dmpCanonicalReportIdentity(record.report, {
+    reportType: record.reportType,
+    subjectItemId: record.subjectItemId,
+    competitorItemId: record.competitorItemId
+  });
+}
+
+export function dmpCanonicalReportIdentity(
+  report: DmpCanonicalReport,
+  fallback: {
+    reportType?: DmpReportKind;
+    subjectItemId?: unknown;
+    competitorItemId?: unknown;
+  } = {}
+): DmpReportIdentity {
+  const reportType = fallback.reportType === "competition" || report.report_type === "competition"
     ? "competition"
     : "growth";
-  const productTable = record.report.tables.find((table) => table.name === "商品与成功品");
+  const productTable = report.tables.find((table) => table.name === "商品与成功品");
   const productIdIndex = productTable?.columns.indexOf("商品ID") ?? -1;
   const productRoleIndex = productTable?.columns.findIndex((column) => /^(?:对象|角色)$/.test(column)) ?? -1;
   const productCompetitorId = productTable?.rows.find(({ cells }) => {
     const role = productRoleIndex >= 0 ? cells[productRoleIndex] : cells[0];
     return /目标对手|^对手|^竞品/.test(String(role ?? ""));
   })?.cells[productIdIndex];
-  const overview = record.report.tables.find((table) => table.name === "报告总览");
+  const overview = report.tables.find((table) => table.name === "报告总览");
   const overviewCompetitorId = overview?.rows.find(({ cells }) => String(cells[0] ?? "") === "商品ID")?.cells[2];
   const canonicalCompetitors = reportType === "competition"
-    ? record.report.competitor_ids?.join(",")
+    ? report.competitor_ids?.join(",")
     : String(productCompetitorId || overviewCompetitorId || "");
-  const competitorItemIds = normalizedIdList(canonicalCompetitors || record.competitorItemId);
-  const subjectItemId = String(record.report.item_id || record.subjectItemId || "").trim();
+  const competitorItemIds = normalizedIdList(canonicalCompetitors || fallback.competitorItemId);
+  const subjectItemId = String(report.item_id || fallback.subjectItemId || "").trim();
   return {
     reportType,
     subjectItemId,
@@ -65,9 +83,13 @@ export function groupDmpBusinessReports(
     const competitorItemId = competitorIds.join("、");
     const key = [reportType, subjectItemId, competitorIds.join(",")].join(":");
     const current = groups.get(key);
+    const subjectThumbnail = dmpReportProductThumbnail(record, "subject");
+    const competitorThumbnail = dmpReportProductThumbnail(record, "competitor");
 
     if (current) {
       current.records.push(record);
+      if (!current.subjectThumbnail.url && subjectThumbnail.url) current.subjectThumbnail = subjectThumbnail;
+      if (!current.competitorThumbnail.url && competitorThumbnail.url) current.competitorThumbnail = competitorThumbnail;
       continue;
     }
     groups.set(key, {
@@ -75,6 +97,8 @@ export function groupDmpBusinessReports(
       reportType,
       subjectItemId,
       competitorItemId,
+      subjectThumbnail,
+      competitorThumbnail,
       records: [record]
     });
   }
@@ -83,25 +107,43 @@ export function groupDmpBusinessReports(
 }
 
 export function dmpReportSubjectThumbnail(record: DmpBusinessReportRecord): DmpReportThumbnail {
-  const renderUrl = sanitizeDmpRenderImageUrl(record.report.render_data?.products?.subject?.picture_url);
+  return dmpReportProductThumbnail(record, "subject");
+}
+
+export function dmpReportProductThumbnail(
+  record: DmpBusinessReportRecord,
+  role: "subject" | "competitor"
+): DmpReportThumbnail {
+  const renderProduct = role === "subject"
+    ? record.report.render_data?.products?.subject
+    : record.report.render_data?.products?.competitor;
+  const renderUrl = sanitizeDmpRenderImageUrl(renderProduct?.picture_url);
   const productTable = record.report.tables.find((table) => table.name === "商品与成功品");
   const roleIndex = productTable?.columns.findIndex((column) => /^(?:对象|角色)$/.test(column)) ?? -1;
   const titleIndex = productTable?.columns.findIndex((column) => /商品标题/.test(column)) ?? -1;
   const mediaIndex = productTable?.columns.findIndex((column) => /图片|详情/.test(column)) ?? -1;
-  const subjectRow = productTable?.rows.find(({ cells }) => {
-    if (roleIndex >= 0) return /^主体/.test(String(cells[roleIndex] ?? ""));
-    return /^主体/.test(String(cells[0] ?? ""));
+  const row = productTable?.rows.find(({ cells }) => {
+    const label = String(cells[roleIndex >= 0 ? roleIndex : 0] ?? "");
+    return role === "subject"
+      ? /^(?:主体|本店)/.test(label)
+      : /^(?:目标对手|对手|竞品|成功品|竞店)/.test(label);
   })?.cells;
-  const tableUrl = mediaIndex >= 0 ? firstSafeImageUrl(subjectRow?.[mediaIndex]) : "";
+  const tableUrl = mediaIndex >= 0 ? firstSafeImageUrl(row?.[mediaIndex]) : "";
   const overview = record.report.tables.find((table) => table.name === "报告总览");
   const overviewTitleRow = overview?.rows.find(({ cells }) => String(cells[0] ?? "") === "商品标题")?.cells;
+  const identity = dmpReportIdentity(record);
+  const competition = identity.reportType === "competition";
+  const fallbackLabel = role === "subject"
+    ? competition ? "本店" : "主体商品"
+    : competition ? "竞店" : "成功品";
+  const fallbackId = role === "subject" ? identity.subjectItemId : identity.competitorItemId;
 
   return {
     url: renderUrl || tableUrl,
     title: String(
-      (titleIndex >= 0 ? subjectRow?.[titleIndex] : "")
-      || overviewTitleRow?.[1]
-      || `${record.reportType === "competition" || record.report.report_type === "competition" ? "本店" : "主体商品"} ${dmpReportIdentity(record).subjectItemId}`
+      (titleIndex >= 0 ? row?.[titleIndex] : "")
+      || overviewTitleRow?.[role === "subject" ? 1 : 2]
+      || `${fallbackLabel} ${fallbackId}`
     ).trim()
   };
 }

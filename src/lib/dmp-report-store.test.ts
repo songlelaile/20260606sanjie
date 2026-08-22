@@ -1,12 +1,28 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DMP_COMPETITION_REPORT_TABLES, DMP_GROWTH_REPORT_TABLES } from "@/lib/dmp-report-types";
 
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  findMany: vi.fn()
+}));
+
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/db", () => ({ prisma: {} }));
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    dmpBusinessReport: {
+      create: mocks.create,
+      findMany: mocks.findMany
+    }
+  }
+}));
 vi.mock("@/lib/server-session", () => ({ getCurrentSession: vi.fn() }));
 vi.mock("@/lib/tool-entitlements", () => ({ getDmpAutomationAccessForSession: vi.fn() }));
 
-import { validateDmpCanonicalReport } from "@/lib/dmp-report-store";
+import {
+  listDmpBusinessReports,
+  saveDmpBusinessReport,
+  validateDmpCanonicalReport
+} from "@/lib/dmp-report-store";
 
 function competitionReport(competitorIds = ["589538478", "342744019", "279364801"]) {
   return {
@@ -88,6 +104,11 @@ describe("DMP competition report storage contract", () => {
 });
 
 describe("DMP growth render_data storage contract", () => {
+  beforeEach(() => {
+    mocks.create.mockReset();
+    mocks.findMany.mockReset();
+  });
+
   it("preserves only closed, ordered and HTTPS-safe optional render data", () => {
     const checked = validateDmpCanonicalReport(growthReport());
     expect(checked.error).toBeUndefined();
@@ -144,5 +165,61 @@ describe("DMP growth render_data storage contract", () => {
     const checked = validateDmpCanonicalReport(report);
     expect(checked.error).toBeUndefined();
     expect(checked.report).not.toHaveProperty("render_data");
+  });
+
+  it("persists and reads both product thumbnails inside the canonical report JSON", async () => {
+    const report = growthReport();
+    report.render_data.products.competitor.picture_url = "https://img.alicdn.com/competitor.png";
+    const checked = validateDmpCanonicalReport(report);
+    expect(checked.error).toBeUndefined();
+    const canonical = checked.report!;
+    const createdAt = new Date("2026-08-22T00:00:00.000Z");
+    mocks.create.mockResolvedValue({
+      id: "report-with-images",
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.1.6"
+    });
+    const storedReport = mocks.create.mock.calls[0]?.[0]?.data?.report;
+    expect(storedReport?.render_data?.products).toEqual({
+      subject: {
+        picture_url: "https://img.alicdn.com/subject.png",
+        detail_url: "https://item.taobao.com/item.htm?id=768239824008"
+      },
+      competitor: { picture_url: "https://img.alicdn.com/competitor.png" }
+    });
+    expect(saved.report.render_data?.products).toEqual(storedReport.render_data.products);
+
+    mocks.findMany.mockResolvedValue([{
+      id: saved.id,
+      subjectItemId: saved.subjectItemId,
+      competitorItemId: saved.competitorItemId,
+      period: saved.period,
+      quality: saved.quality,
+      createdAt,
+      report: storedReport
+    }]);
+    await expect(listDmpBusinessReports({ tenantId: "tenant-a", userId: "user-a" }))
+      .resolves.toMatchObject([{
+        report: {
+          render_data: {
+            products: {
+              subject: { picture_url: "https://img.alicdn.com/subject.png" },
+              competitor: { picture_url: "https://img.alicdn.com/competitor.png" }
+            }
+          }
+        }
+      }]);
   });
 });

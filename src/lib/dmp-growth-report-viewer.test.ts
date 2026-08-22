@@ -78,9 +78,10 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain("onChange={(event) => setQuery(event.target.value)}");
     expect(viewerSource).toContain("data-report-watermark");
     expect(viewerSource).toMatch(/Array\.from\(\{\s*length:\s*54\s*\}/);
-    expect(viewerSource).toContain("少壮AI · shaozhuangai.com");
+    expect(viewerSource).toContain("少壮AI自动化 · shaozhuangai.com");
     expect(viewerSource).toContain('const displayTitle = model.kind === "growth"');
-    expect(viewerSource).toContain('"达摩盘商品成长竞品对标报告"');
+    expect(viewerSource).toContain('"达摩盘商品成长竞品对标报告｜少壮AI自动化"');
+    expect(viewerSource).toContain('"达摩盘竞争态势分析报告｜少壮AI自动化"');
     expect(viewerSource).toContain('<h1>{displayTitle}</h1>');
     expect(viewerSource).not.toContain('<h1>{model.title}</h1>');
     expect(viewerSource).toContain("ref={hideAlreadyBrokenImage}");
@@ -105,6 +106,7 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
     expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*print-color-adjust:\s*exact;/s);
     expect(viewerCss).toMatch(/\.tableShell thead \.stickyColumn\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell thead th\.subject,[\s\S]*\.tableShell thead th\.competitor,[\s\S]*\.tableShell thead th\.difference[\s\S]*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
     expect(viewerCss).toMatch(/\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
     expect(viewerCss).toMatch(/\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
   });

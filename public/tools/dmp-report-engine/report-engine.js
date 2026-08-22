@@ -912,7 +912,7 @@
     const missing = [...endpointStatus.filter(status => !status.usable).map(status => status.module), ...model.completeness.blockingIssues, ...deterministicMissing.map(label => `${label}未填`)];
     const complete = model.completeness.status === "ready" && deterministicMissing.length === 0;
     return {
-      version: 3, title: "达摩盘商品成长竞品对标报告", item, period, periodLabel, startedAt,
+      version: 3, title: "达摩盘商品成长竞品对标报告｜少壮AI自动化", item, period, periodLabel, startedAt,
       finishedAt: meta.finishedAt || new Date().toISOString(), visitedPaths: meta.visitedPaths || [], recordCount: model.completeness.businessRecords, tables,
       quality: {
         status: model.completeness.status, expected: moduleRules.length, observed, missing: [...new Set(missing)],

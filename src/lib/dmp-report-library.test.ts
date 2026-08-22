@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  dmpCanonicalReportIdentity,
+  dmpReportProductThumbnail,
   dmpReportSubjectThumbnail,
   groupDmpBusinessReports,
   mergeDmpReportGroupDaily
@@ -11,13 +13,15 @@ function report({
   createdAt,
   subject = "100",
   competitor = "200",
-  pictureUrl = ""
+  pictureUrl = "",
+  competitorPictureUrl = ""
 }: {
   id: string;
   createdAt: string;
   subject?: string;
   competitor?: string;
   pictureUrl?: string;
+  competitorPictureUrl?: string;
 }): DmpBusinessReportRecord {
   return {
     id,
@@ -41,10 +45,13 @@ function report({
           { cells: ["目标对手", competitor, `商品 ${competitor}`, ""] }
         ]
       }],
-      ...(pictureUrl ? {
+      ...(pictureUrl || competitorPictureUrl ? {
         render_data: {
           version: "1",
-          products: { subject: { picture_url: pictureUrl } }
+          products: {
+            ...(pictureUrl ? { subject: { picture_url: pictureUrl } } : {}),
+            ...(competitorPictureUrl ? { competitor: { picture_url: competitorPictureUrl } } : {})
+          }
         }
       } : {})
     }
@@ -78,6 +85,31 @@ describe("DMP report history library", () => {
     }))).toEqual({ url: "", title: "商品 100" });
   });
 
+  it("keeps subject and competitor thumbnails on a canonical group and uses the newest available image", () => {
+    const groups = groupDmpBusinessReports([
+      report({
+        id: "older-image",
+        createdAt: "2026-08-20T03:00:00.000Z",
+        pictureUrl: "https://img.alicdn.com/subject.png",
+        competitorPictureUrl: "https://img.alicdn.com/competitor.png"
+      }),
+      report({ id: "newer-without-image", createdAt: "2026-08-21T03:00:00.000Z" })
+    ]);
+
+    expect(groups[0].subjectThumbnail).toEqual({
+      url: "https://img.alicdn.com/subject.png",
+      title: "商品 100"
+    });
+    expect(groups[0].competitorThumbnail).toEqual({
+      url: "https://img.alicdn.com/competitor.png",
+      title: "商品 200"
+    });
+    expect(dmpReportProductThumbnail(groups[0].records[1], "competitor")).toEqual({
+      url: "https://img.alicdn.com/competitor.png",
+      title: "商品 200"
+    });
+  });
+
   it("prefers canonical identities for legacy metadata and labels competition-store fallbacks correctly", () => {
     const legacy = report({ id: "legacy-id", createdAt: "2026-08-20T03:00:00.000Z", competitor: "200" });
     legacy.subjectItemId = "999";
@@ -93,6 +125,28 @@ describe("DMP report history library", () => {
     competition.report.competitor_ids = ["300", "200"];
     competition.report.tables = [];
     expect(dmpReportSubjectThumbnail(competition)).toEqual({ url: "", title: "本店 100" });
+  });
+
+  it("uses the same canonical identity for a newly uploaded report before it is archived", () => {
+    const incoming = report({ id: "incoming", createdAt: "2026-08-21T03:00:00.000Z", competitor: "300,200" });
+    expect(dmpCanonicalReportIdentity(incoming.report, {
+      subjectItemId: "999",
+      competitorItemId: "888"
+    })).toEqual({
+      reportType: "growth",
+      subjectItemId: "100",
+      competitorItemIds: ["200", "300"],
+      competitorItemId: "200、300"
+    });
+
+    incoming.report.report_type = "competition";
+    incoming.report.competitor_ids = ["400", "300"];
+    incoming.report.tables = [];
+    expect(dmpCanonicalReportIdentity(incoming.report, { competitorItemId: "888" })).toMatchObject({
+      reportType: "competition",
+      subjectItemId: "100",
+      competitorItemIds: ["300", "400"]
+    });
   });
 
   it("extends same-group daily data by date and lets the newest report fill duplicate dates first", () => {

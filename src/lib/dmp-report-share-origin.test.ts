@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { getPublicAppOrigin, toPublicAppUrl } from "@/lib/dmp-public-origin";
+import { getPublicAppOrigin, toOfficialDmpReportUrl, toPublicAppUrl } from "@/lib/dmp-public-origin";
 
 describe("DMP canonical public origin", () => {
   afterEach(() => {
@@ -14,6 +14,9 @@ describe("DMP canonical public origin", () => {
     expect(getPublicAppOrigin()).toBe("https://shaozhuangai.com");
     expect(toPublicAppUrl(`/shared/dmp-reports/${"a".repeat(64)}`)).toBe(
       `https://shaozhuangai.com/shared/dmp-reports/${"a".repeat(64)}`
+    );
+    expect(toOfficialDmpReportUrl("report_archive_123")).toBe(
+      "https://shaozhuangai.com/tools/dmp-report?reportId=report_archive_123&view=report"
     );
   });
 
@@ -40,5 +43,6 @@ describe("DMP canonical public origin", () => {
 
     vi.stubEnv("PUBLIC_APP_ORIGIN", "https://shaozhuangai.com");
     expect(() => toPublicAppUrl("//attacker.example/report")).toThrow(/站内绝对路径/);
+    expect(() => toOfficialDmpReportUrl("bad/report")).toThrow(/报告编号无效/);
   });
 });

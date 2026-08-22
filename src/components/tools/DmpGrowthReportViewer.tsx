@@ -45,8 +45,8 @@ export function DmpGrowthReportViewer({
   const model = useMemo(() => projectDmpReportForViewer(record), [record]);
   const tableByName = useMemo(() => new Map(model.tables.map((table) => [table.name, table])), [model.tables]);
   const displayTitle = model.kind === "growth"
-    ? "达摩盘商品成长竞品对标报告"
-    : "达摩盘竞争态势分析报告";
+    ? "达摩盘商品成长竞品对标报告｜少壮AI自动化"
+    : "达摩盘竞争态势分析报告｜少壮AI自动化";
 
   return (
     <article
@@ -56,7 +56,7 @@ export function DmpGrowthReportViewer({
       data-report-scroll-root={variant === "shared" ? "shared" : undefined}
     >
       <div className={styles.watermark} data-report-watermark aria-hidden="true">
-        {WATERMARKS.map((index) => <span key={index}>少壮AI · shaozhuangai.com</span>)}
+        {WATERMARKS.map((index) => <span key={index}>少壮AI自动化 · shaozhuangai.com</span>)}
       </div>
 
       <header className={styles.hero} data-report-hero data-track-section="hero" data-track="header">
@@ -87,7 +87,7 @@ export function DmpGrowthReportViewer({
           : <ReportTableSection key={`${table.name}-${index}`} table={table} index={index} kind={model.kind} tableByName={tableByName} />)}
       </main>
 
-      <footer className={styles.footer}>{model.kind === "growth" ? "达摩盘商品成长竞品对标报告" : "达摩盘竞争态势分析报告"}</footer>
+      <footer className={styles.footer}>{displayTitle}</footer>
     </article>
   );
 }

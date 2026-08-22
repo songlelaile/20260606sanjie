@@ -35,3 +35,10 @@ export function toPublicAppUrl(pathname: string) {
   }
   return new URL(pathname, `${getPublicAppOrigin()}/`).toString();
 }
+
+export function toOfficialDmpReportUrl(reportId: string) {
+  const clean = String(reportId ?? "").trim();
+  if (!/^[a-z\d_-]{6,128}$/i.test(clean)) throw new Error("官网报告编号无效");
+  const query = new URLSearchParams({ reportId: clean, view: "report" });
+  return toPublicAppUrl(`/tools/dmp-report?${query.toString()}`);
+}

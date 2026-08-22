@@ -284,6 +284,14 @@
   width: 100%;
 }
 
+.groupThumbnail {
+  border-radius: 6px;
+  flex: 0 0 auto;
+  font-size: 14px;
+  height: 32px;
+  width: 32px;
+}
+
 .cardCopy {
   align-content: center;
   display: grid;

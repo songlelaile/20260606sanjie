@@ -66,7 +66,14 @@ const CANONICAL_REPORT = {
   title: "公开报告",
   item_id: "593063365092",
   period: "近30天",
-  tables: []
+  tables: [],
+  render_data: {
+    version: "1" as const,
+    products: {
+      subject: { picture_url: "https://img.alicdn.com/subject-main.png" },
+      competitor: { picture_url: "https://img.alicdn.com/competitor-main.png" }
+    }
+  }
 };
 
 describe("DMP public report bearer-token storage boundary", () => {
@@ -129,17 +136,24 @@ describe("DMP public report bearer-token storage boundary", () => {
       report: {
         id: "report-a",
         subjectItemId: "593063365092",
-        report: CANONICAL_REPORT
+        report: {
+          render_data: {
+            products: {
+              subject: { picture_url: "https://img.alicdn.com/subject-main.png" },
+              competitor: { picture_url: "https://img.alicdn.com/competitor-main.png" }
+            }
+          }
+        }
       }
     });
     expect(mocks.reportFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
         tenantId: "tenant-a",
         userId: "user-a",
-        subjectItemId: "593063365092",
         createdAt: { lte: new Date("2026-08-17T00:00:00.000Z") }
       })
     }));
+    expect(mocks.reportFindMany.mock.calls[0]?.[0]?.where).not.toHaveProperty("subjectItemId");
   });
 
   it("does not read storage for malformed tokens", async () => {

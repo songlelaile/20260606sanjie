@@ -107,7 +107,6 @@ async function sharedGroupReport(
     where: {
       tenantId,
       userId,
-      subjectItemId: base.subjectItemId,
       createdAt: { lte: sharedAt }
     },
     orderBy: { createdAt: "desc" },

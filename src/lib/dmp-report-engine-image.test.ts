@@ -32,6 +32,7 @@ describe("DMP report product-image upload contract", () => {
     runInNewContext(engineSource, context, { filename: "report-engine.js" });
     const engine = context.DmpReportEngine as {
       buildReport: (records: unknown[], itemId: string, meta: Record<string, unknown>) => {
+        title: string;
         item: Record<string, string>;
         tables: Array<{ name: string; columns: string[]; rows: unknown[][] }>;
       };
@@ -47,6 +48,7 @@ describe("DMP report product-image upload contract", () => {
     const productTable = canonical.tables.find((table) => table.name === "商品与成功品");
     const mediaIndex = productTable?.columns.indexOf("图片/详情") ?? -1;
 
+    expect(report.title).toBe("达摩盘商品成长竞品对标报告｜少壮AI自动化");
     expect(report.item).toMatchObject({
       pictureUrl: subjectPicture,
       detailUrl: "https://detail.tmall.com/item.htm?id=41564682336",
