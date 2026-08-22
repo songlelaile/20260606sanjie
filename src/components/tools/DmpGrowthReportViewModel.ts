@@ -248,14 +248,80 @@ function projectChannelTable(table: DmpViewerTable): DmpViewerTable {
 }
 
 function projectDailyTable(table: DmpViewerTable): DmpViewerTable {
-  if (table.columns.includes("主体日GMV") && table.columns.includes("对手日GMV")) return table;
+  const dimensions = new Map<string, {
+    subjectIndex: number | null;
+    competitorIndex: number | null;
+    competitorExplicit: boolean;
+  }>();
+  const parsedColumns = table.columns.map((column, index) => {
+    const parsed = dailyMetricColumn(column);
+    if (!parsed) return null;
+    const current = dimensions.get(parsed.dimension) ?? {
+      subjectIndex: null,
+      competitorIndex: null,
+      competitorExplicit: false
+    };
+    if (parsed.role === "subject") current.subjectIndex ??= index;
+    else if (parsed.explicit) {
+      current.competitorIndex = index;
+      current.competitorExplicit = true;
+    } else if (current.competitorIndex === null) current.competitorIndex = index;
+    dimensions.set(parsed.dimension, current);
+    return parsed;
+  });
+  if (!dimensions.size) return table;
+  if ([...dimensions.values()].every(({ subjectIndex, competitorIndex, competitorExplicit }) =>
+    subjectIndex !== null && competitorIndex !== null && competitorExplicit
+  )) return table;
+
+  const columns: string[] = [];
+  const sourceIndexes: Array<number | null> = [];
+  const widthSourceIndexes: number[] = [];
+  const emitted = new Set<string>();
+  table.columns.forEach((column, index) => {
+    const parsed = parsedColumns[index];
+    if (!parsed) {
+      columns.push(column);
+      sourceIndexes.push(index);
+      widthSourceIndexes.push(index);
+      return;
+    }
+    if (emitted.has(parsed.dimension)) return;
+    emitted.add(parsed.dimension);
+    const pair = dimensions.get(parsed.dimension);
+    if (!pair) return;
+    columns.push(`主体${parsed.dimension}`, `对手${parsed.dimension}`);
+    sourceIndexes.push(pair.subjectIndex, pair.competitorIndex);
+    widthSourceIndexes.push(
+      pair.subjectIndex ?? pair.competitorIndex ?? index,
+      pair.competitorIndex ?? pair.subjectIndex ?? index
+    );
+  });
+
+  const hasAlignedWidths = table.widths?.length === table.columns.length;
   return {
     ...table,
-    columns: table.columns.map((column, index) => {
-      if (column === "日GMV") return "对手日GMV";
-      if (index > 1 && !/^(?:主体|对手)/.test(column) && /(?:日消耗|日总消耗|日费比)$/.test(column)) return `对手${column}`;
-      return column;
-    })
+    columns,
+    rows: table.rows.map((row) => sourceIndexes.map((sourceIndex) =>
+      sourceIndex === null ? "" : row[sourceIndex] ?? ""
+    )),
+    widths: hasAlignedWidths
+      ? widthSourceIndexes.map((sourceIndex) => table.widths?.[sourceIndex] ?? 16)
+      : undefined
+  };
+}
+
+function dailyMetricColumn(column: string) {
+  const match = column.match(/^(主体|对手)?(.+)$/);
+  if (!match) return null;
+  const dimension = match[2];
+  if (dimension !== "日GMV" && dimension !== "日总消耗" && dimension !== "日费比" && !/.+日消耗$/.test(dimension)) {
+    return null;
+  }
+  return {
+    dimension,
+    role: match[1] === "主体" ? "subject" as const : "competitor" as const,
+    explicit: match[1] === "对手"
   };
 }
 

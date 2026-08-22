@@ -36,6 +36,15 @@ const sharedPageSource = readFileSync(
   new URL("../app/shared/dmp-reports/[token]/page.tsx", import.meta.url),
   "utf8"
 );
+const pairedDailyColumns = [
+  "日期", "主体日GMV", "对手日GMV",
+  "主体内容运营日消耗", "对手内容运营日消耗",
+  "主体人群推广日消耗", "对手人群推广日消耗",
+  "主体货品全站推日消耗", "对手货品全站推日消耗",
+  "主体线索推广日消耗", "对手线索推广日消耗",
+  "主体关键词推广日消耗", "对手关键词推广日消耗",
+  "主体日总消耗", "对手日总消耗", "主体日费比", "对手日费比", "阶段"
+];
 
 describe("DMP growth report shared viewer contract", () => {
   it("uses one report viewer for both the report-center preview and public share page", () => {
@@ -238,7 +247,7 @@ describe("DMP growth report viewer projection", () => {
     const model = projectDmpReportForViewer(record);
     expect(model.tables.map((table) => table.name)).toContain("日GMV与费比");
     expect(model.tables.map((table) => table.name)).toContain("渠道花费");
-    expect(model.tables.find((table) => table.name === "日GMV与费比")?.columns[1]).toBe("对手日GMV");
+    expect(model.tables.find((table) => table.name === "日GMV与费比")?.columns).toEqual(pairedDailyColumns);
     const channel = model.tables.find((table) => table.name === "渠道花费");
     expect(channel?.columns).toEqual([
       "渠道", "页面指标", "对手30日消耗", "对手30日占比", "主体30日消耗", "主体30日占比"
@@ -255,12 +264,73 @@ describe("DMP growth report viewer projection", () => {
     if (!daily) throw new Error("missing daily fixture");
 
     expect(projectDailyGmvChartSeries(daily, period)).toEqual({
-      competitorIndex: 1,
-      subjectIndex: -1,
+      competitorIndex: 2,
+      subjectIndex: 1,
       competitorValues: [3200, 3600],
-      subjectValues: [],
+      subjectValues: [null, null],
       subjectAverage: 3051.3
     });
+  });
+
+  it("pairs every disclosed legacy daily dimension when GMV is already paired", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("日GMV与费比", [
+      "日期", "主体日GMV", "对手日GMV",
+      "对手内容运营日消耗", "对手人群推广日消耗", "对手货品全站推日消耗",
+      "对手线索推广日消耗", "对手关键词推广日消耗", "对手日总消耗", "对手日费比", "阶段"
+    ], [[
+      "2026-07-20", "0", "3200", "0", "100", "200", "—", "50", "350", "10.94%", "驱稳爬升期"
+    ]]));
+
+    const daily = projectDmpReportForViewer(record).tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual(pairedDailyColumns);
+    expect(daily?.rows).toEqual([[
+      "2026-07-20", "0", "3200",
+      "", "0", "", "100", "", "200", "", "—", "", "50",
+      "", "350", "", "10.94%", "驱稳爬升期"
+    ]]);
+  });
+
+  it("adds the opposite-side placeholder whether the disclosed daily dimension is subject or competitor", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("日GMV与费比", [
+      "日期", "主体日GMV", "对手日总消耗", "主体日费比", "阶段"
+    ], [["2026-07-20", "0", "350", "0%", "驱稳爬升期"]]));
+
+    const daily = projectDmpReportForViewer(record).tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual([
+      "日期", "主体日GMV", "对手日GMV",
+      "主体日总消耗", "对手日总消耗", "主体日费比", "对手日费比", "阶段"
+    ]);
+    expect(daily?.rows).toEqual([[
+      "2026-07-20", "0", "", "", "350", "0%", "", "驱稳爬升期"
+    ]]);
+  });
+
+  it("normalizes an unprefixed legacy competitor column even when its subject counterpart exists", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("日GMV与费比", [
+      "日期", "主体日GMV", "日GMV", "阶段"
+    ], [["2026-07-20", "1000", "3200", "驱稳爬升期"]]));
+
+    const daily = projectDmpReportForViewer(record).tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual(["日期", "主体日GMV", "对手日GMV", "阶段"]);
+    expect(daily?.rows).toEqual([["2026-07-20", "1000", "3200", "驱稳爬升期"]]);
+  });
+
+  it("does not project the complete 18-column daily table a second time", () => {
+    const record = growthRecord();
+    const row = [
+      "2026-07-20", "1000", "3200",
+      "0", "10", "20", "100", "30", "200", "0", "0", "40", "50",
+      "90", "350", "9%", "10.94%", "驱稳爬升期"
+    ];
+    replaceTable(record, snapshot("日GMV与费比", pairedDailyColumns, [row]));
+
+    const daily = projectDmpReportForViewer(record).tables.find((table) => table.name === "日GMV与费比");
+    expect(daily?.columns).toEqual(pairedDailyColumns);
+    expect(daily?.columns).toHaveLength(18);
+    expect(daily?.rows).toEqual([row]);
   });
 
   it("uses validated render_data for exact local-HTML product links, generated time, daily series and table presentation", () => {
