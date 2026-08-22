@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/dmp-report-store", () => ({
+  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 2 * 1024 * 1024 + 64 * 1024,
   assignDmpBusinessReportsShop: mocks.assignDmpBusinessReportsShop,
   deleteDmpBusinessReport: vi.fn(),
   getDmpBusinessReport: mocks.getDmpBusinessReport,
@@ -181,6 +182,113 @@ describe("POST /api/dmp-reports archive contract", () => {
     expect(retryBody.data.report.id).toBe(firstBody.data.report.id);
     expect(retryBody.data.reportUrl).toBe(firstBody.data.reportUrl);
     expect(mocks.saveDmpBusinessReport).toHaveBeenCalledTimes(2);
+  });
+
+  it("archives malformed channel-spend columns as partial instead of rejecting the report", async () => {
+    const malformed = structuredClone(canonical);
+    malformed.tables.push({
+      name: "渠道花费",
+      columns: ["渠道", "主体30日消耗"],
+      rows: [{ cells: ["人群推广", "3921.86", "多出的业务值"] }]
+    });
+    const normalized = structuredClone(malformed);
+    normalized.tables.at(-1)!.columns.push("列3");
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({
+      report: normalized,
+      issues: ["业务表「渠道花费」列结构无效，已自动对齐"]
+    });
+
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({
+        report: malformed,
+        subjectItemId: "593063365092",
+        competitorItemId: "623803508105",
+        quality: "complete",
+        sourceVersion: "2.1.8"
+      })
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      quality: "partial",
+      report: expect.objectContaining({
+        tables: expect.arrayContaining([
+          expect.objectContaining({
+            name: "渠道花费",
+            columns: ["渠道", "主体30日消耗", "列3"]
+          })
+        ])
+      })
+    }));
+    await expect(response.json()).resolves.toMatchObject({ data: { archived: true } });
+  });
+
+  it("keeps the archive body-size boundary before parsing oversized JSON", async () => {
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(2 * 1024 * 1024 + 64 * 1024 + 1),
+        "x-sanjie-session": "extension-token"
+      },
+      body: "{}"
+    }));
+
+    expect(response.status).toBe(413);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
+  it("rejects archives whose subject and competitor identity are the same", async () => {
+    const sameIdentity = structuredClone(canonical);
+    sameIdentity.tables[0].rows[1].cells[1] = "593063365092";
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: sameIdentity });
+
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: sameIdentity })
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "主体商品与对标商品 ID 不能相同" });
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
+  it("rejects a competition archive with more than three competitor identities", async () => {
+    const overLimit = {
+      ...structuredClone(canonical),
+      report_type: "competition" as const,
+      competitor_ids: ["623803508105", "563697874317", "589538478", "342744019"]
+    };
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: overLimit });
+
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: overLimit })
+    }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "本店与竞店 ID 无效" });
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
+  it("returns a client error without saving when the report contains authentication material", async () => {
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ error: "报告包含敏感鉴权字段，禁止归档" });
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({
+        report: { ...canonical, tables: [{ name: "渠道花费", columns: ["cookie"], rows: [] }] },
+        subjectItemId: "593063365092",
+        competitorItemId: "623803508105"
+      })
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
   });
 });
 

@@ -77,7 +77,10 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
     }
   });
   if (!row) return null;
-  const checked = validateDmpCanonicalReport(row.report.report);
+  const checked = validateDmpCanonicalReport(row.report.report, {
+    subjectItemId: row.report.subjectItemId,
+    competitorItemId: row.report.competitorItemId
+  });
   if (!checked.report) return null;
   const baseRecord: DmpBusinessReportRecord = {
     id: row.report.id,
@@ -128,7 +131,10 @@ async function sharedGroupReport(
     }
   }).catch(() => []);
   const records = rows.flatMap((candidate) => {
-    const checked = validateDmpCanonicalReport(candidate.report);
+    const checked = validateDmpCanonicalReport(candidate.report, {
+      subjectItemId: candidate.subjectItemId,
+      competitorItemId: candidate.competitorItemId
+    });
     if (!checked.report) return [];
     return [{
       id: candidate.id,

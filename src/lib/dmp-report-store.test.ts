@@ -4,6 +4,7 @@ import { DMP_COMPETITION_REPORT_TABLES, DMP_GROWTH_REPORT_TABLES } from "@/lib/d
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
   findMany: vi.fn(),
+  reportGetFindFirst: vi.fn(),
   transaction: vi.fn(),
   shopFindFirst: vi.fn(),
   shopFindMany: vi.fn(),
@@ -16,7 +17,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({
   prisma: {
     dmpBusinessReport: {
-      findMany: mocks.findMany
+      findMany: mocks.findMany,
+      findFirst: mocks.reportGetFindFirst
     },
     $transaction: mocks.transaction
   }
@@ -27,6 +29,7 @@ vi.mock("@/lib/tool-entitlements", () => ({ getDmpAutomationAccessForSession: vi
 import {
   assignDmpBusinessReportsShop,
   dmpBusinessReportFingerprint,
+  getDmpBusinessReport,
   listDmpBusinessReports,
   saveDmpBusinessReport,
   validateDmpCanonicalReport
@@ -103,11 +106,26 @@ describe("DMP competition report storage contract", () => {
     expect(checked.report?.tables.map((table) => table.name)).toEqual(DMP_COMPETITION_REPORT_TABLES);
   });
 
-  it("rejects missing competitor identity and any extra or reordered business table", () => {
-    expect(validateDmpCanonicalReport(competitionReport([])).error).toMatch(/竞店 ID/);
+  it("keeps identity issues visible but accepts reordered business tables for partial archive", () => {
+    expect(validateDmpCanonicalReport(competitionReport([])).issues).toContain("竞店 ID 待补充");
     const reordered = competitionReport();
     reordered.tables.reverse();
-    expect(validateDmpCanonicalReport(reordered).error).toMatch(/业务表不完整/);
+    const checked = validateDmpCanonicalReport(reordered);
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toContain("业务表顺序或附加模块已兼容归档");
+    expect(checked.report?.tables.map((table) => table.name)).toEqual(DMP_COMPETITION_REPORT_TABLES);
+  });
+
+  it("rejects a competition identity with more than three raw or combined competitor IDs", () => {
+    expect(validateDmpCanonicalReport(competitionReport([
+      "589538478",
+      "342744019",
+      "279364801",
+      "623803508105"
+    ])).error).toContain("最多允许 3 个竞店 ID");
+    expect(validateDmpCanonicalReport(competitionReport(["589538478", "342744019", "279364801"]), {
+      competitorItemId: "623803508105"
+    }).error).toContain("最多允许 3 个竞店 ID");
   });
 });
 
@@ -115,6 +133,7 @@ describe("DMP growth render_data storage contract", () => {
   beforeEach(() => {
     mocks.upsert.mockReset();
     mocks.findMany.mockReset();
+    mocks.reportGetFindFirst.mockReset();
     mocks.transaction.mockReset();
     mocks.shopFindFirst.mockReset();
     mocks.shopFindMany.mockReset();
@@ -193,6 +212,90 @@ describe("DMP growth render_data storage contract", () => {
     const checked = validateDmpCanonicalReport(report);
     expect(checked.error).toBeUndefined();
     expect(checked.report).not.toHaveProperty("render_data");
+  });
+
+  it("repairs invalid channel-spend row widths and still returns an archivable report", () => {
+    const report = growthReport();
+    const channel = report.tables.find((table) => table.name === "渠道花费")!;
+    channel.columns = ["渠道", "主体30日消耗"];
+    channel.rows = [
+      { cells: ["人群推广", "3921.86", "15.12%"] },
+      { cells: ["货品全站推"] }
+    ];
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toContain("业务表「渠道花费」列结构无效，已自动对齐");
+    expect(checked.report?.tables.find((table) => table.name === "渠道花费")).toEqual({
+      name: "渠道花费",
+      columns: ["渠道", "主体30日消耗", "列3"],
+      rows: [
+        { cells: ["人群推广", "3921.86", "15.12%"] },
+        { cells: ["货品全站推", "", ""] }
+      ]
+    });
+  });
+
+  it.each([
+    ["table name", (report: ReturnType<typeof growthReport>) => { (report.tables[0] as { name: string }).name = "session"; }],
+    ["column name", (report: ReturnType<typeof growthReport>) => { report.tables[0].columns[0] = "authorization"; }],
+    ["cell value", (report: ReturnType<typeof growthReport>) => { report.tables[0].rows[0].cells[0] = "https://example.test/?token=private"; }],
+    ["signed field", (report: ReturnType<typeof growthReport>) => { report.tables[0].rows[0].cells[0] = "signData=private"; }]
+  ])("rejects sensitive authentication material found in a business %s", (_label, mutate) => {
+    const report = growthReport();
+    mutate(report);
+    expect(validateDmpCanonicalReport(report)).toEqual({ error: "报告包含敏感鉴权字段，禁止归档" });
+  });
+
+  it("rejects normalization amplification beyond the global cell-count limit", () => {
+    const report = growthReport();
+    const channel = report.tables.find((table) => table.name === "渠道花费")!;
+    channel.columns = Array.from({ length: 100 }, (_, index) => `列${index + 1}`);
+    channel.rows = Array.from({ length: 3_000 }, () => ({ cells: [""] }));
+
+    expect(validateDmpCanonicalReport(report)).toEqual({ error: "报告单元格总量超过保存上限" });
+  });
+
+  it("rechecks the two-megabyte limit after row-width normalization", () => {
+    const report = growthReport();
+    const channel = report.tables.find((table) => table.name === "渠道花费")!;
+    channel.columns = Array.from({ length: 100 }, (_, index) => `列${index + 1}`);
+    channel.rows = Array.from({ length: 1_800 }, () => ({ cells: ["x".repeat(900)] }));
+
+    expect(Buffer.byteLength(JSON.stringify(report), "utf8")).toBeLessThan(2 * 1024 * 1024);
+    expect(validateDmpCanonicalReport(report)).toEqual({ error: "规范化后的报告内容超过保存上限" });
+  });
+
+  it("keeps legacy history rows visible by restoring report identity from scoped database columns", async () => {
+    const legacyReport = growthReport();
+    delete (legacyReport as { item_id?: unknown }).item_id;
+    const createdAt = new Date("2026-08-22T05:00:00.000Z");
+    const stored = {
+      id: "legacy-report",
+      shopId: null,
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: legacyReport.period,
+      quality: "partial",
+      createdAt,
+      report: legacyReport
+    };
+    mocks.findMany.mockResolvedValue([stored]);
+    mocks.reportGetFindFirst.mockResolvedValue(stored);
+
+    const access = { tenantId: "tenant-a", userId: "user-a" };
+    await expect(listDmpBusinessReports(access)).resolves.toMatchObject([{
+      id: "legacy-report",
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      report: { item_id: "768239824008" }
+    }]);
+    await expect(getDmpBusinessReport(access, "legacy-report")).resolves.toMatchObject({
+      id: "legacy-report",
+      report: { item_id: "768239824008" }
+    });
   });
 
   it("persists and reads both product thumbnails inside the canonical report JSON", async () => {

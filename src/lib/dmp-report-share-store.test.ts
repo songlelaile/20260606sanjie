@@ -159,6 +159,71 @@ describe("DMP public report bearer-token storage boundary", () => {
       })
     }));
     expect(mocks.reportFindMany.mock.calls[0]?.[0]?.where).not.toHaveProperty("subjectItemId");
+    expect(mocks.validateDmpCanonicalReport).toHaveBeenCalledWith(CANONICAL_REPORT, {
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093"
+    });
+  });
+
+  it("keeps legacy public and grouped reports readable by passing database identity as fallback", async () => {
+    const legacyBase = { ...CANONICAL_REPORT } as Partial<typeof CANONICAL_REPORT>;
+    delete legacyBase.item_id;
+    const legacyCandidate = { ...CANONICAL_REPORT, title: "更早的公开报告" } as Partial<typeof CANONICAL_REPORT>;
+    delete legacyCandidate.item_id;
+    mocks.findFirst.mockResolvedValue({
+      id: "share-legacy",
+      createdAt: new Date("2026-08-22T06:00:00.000Z"),
+      report: {
+        id: "report-legacy-current",
+        tenantId: "tenant-a",
+        userId: "user-a",
+        shopId: null,
+        shop: null,
+        subjectItemId: "593063365092",
+        competitorItemId: "593063365093",
+        period: "近30天",
+        quality: "partial",
+        createdAt: new Date("2026-08-22T05:00:00.000Z"),
+        report: legacyBase
+      }
+    });
+    mocks.reportFindMany.mockResolvedValue([{
+      id: "report-legacy-previous",
+      shopId: null,
+      shop: null,
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093",
+      period: "近30天",
+      quality: "partial",
+      createdAt: new Date("2026-08-21T05:00:00.000Z"),
+      report: legacyCandidate
+    }]);
+    mocks.validateDmpCanonicalReport.mockImplementation((report: typeof legacyBase, fallback?: { subjectItemId?: unknown }) => {
+      if (!fallback?.subjectItemId) return {};
+      return {
+        report: {
+          ...CANONICAL_REPORT,
+          ...report,
+          item_id: String(fallback.subjectItemId)
+        }
+      };
+    });
+
+    await expect(getPublicDmpSharedReport(TOKEN)).resolves.toMatchObject({
+      report: {
+        id: "report-legacy-current",
+        subjectItemId: "593063365092",
+        report: { item_id: "593063365092" }
+      }
+    });
+    expect(mocks.validateDmpCanonicalReport).toHaveBeenNthCalledWith(1, legacyBase, {
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093"
+    });
+    expect(mocks.validateDmpCanonicalReport).toHaveBeenNthCalledWith(2, legacyCandidate, {
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093"
+    });
   });
 
   it("does not read storage for malformed tokens", async () => {

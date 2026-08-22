@@ -17,8 +17,15 @@ import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
 import { withDmpAutomationBrand } from "@/lib/dmp-product";
 
 const MAX_REPORT_BYTES = 2 * 1024 * 1024;
+export const DMP_REPORT_ARCHIVE_MAX_BODY_BYTES = MAX_REPORT_BYTES + 64 * 1024;
+const MAX_TABLES = 100;
 const MAX_TABLE_ROWS = 5_000;
 const MAX_CELL_LENGTH = 10_000;
+const MAX_TABLE_NAME_LENGTH = 200;
+const MAX_TABLE_COLUMNS = 100;
+const MAX_REPORT_CELLS = 250_000;
+const SENSITIVE_ARCHIVE_AUTH_WORD = /token|cookie|authorization|password|secret|session|signature/i;
+const STANDALONE_ARCHIVE_SIGN = /(?:^|[^a-z0-9])sign(?:ature|data)?(?:$|[^a-z0-9])/i;
 
 function stableJson(value: unknown): string {
   if (value === null) return "null";
@@ -96,48 +103,49 @@ export async function getDmpReportAccessFromToken(rawToken: string | null | unde
   return token ? resolveAccess(await parseExtensionSession(token)) : null;
 }
 
-export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanonicalReport; error?: string } {
+export function validateDmpCanonicalReport(
+  value: unknown,
+  fallback: { subjectItemId?: unknown; competitorItemId?: unknown } = {}
+): { report?: DmpCanonicalReport; error?: string; issues?: string[] } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { error: "报告内容无效" };
   const report = value as Partial<DmpCanonicalReport>;
-  if (report.schema_version !== "3.0" || !validItemId(report.item_id) || !Array.isArray(report.tables)) {
-    return { error: "报告结构不完整" };
-  }
+  if (Buffer.byteLength(JSON.stringify(report), "utf8") > MAX_REPORT_BYTES) return { error: "报告内容超过保存上限" };
+  if (containsSensitiveArchiveAuthData(report.tables)) return { error: "报告包含敏感鉴权字段，禁止归档" };
+
+  const issues: string[] = [];
+  if (report.schema_version !== "3.0") pushArchiveIssue(issues, "报告版本标记已兼容归档");
   const kind = dmpReportKind(report);
   const expectedTables = dmpExpectedTableNames(kind);
-  if (JSON.stringify(report.tables.map((table) => table?.name)) !== JSON.stringify(expectedTables)) {
-    return { error: "报告业务表不完整" };
-  }
-  const competitorIds = kind === "competition"
-    ? [...new Set((Array.isArray(report.competitor_ids) ? report.competitor_ids : []).map(String).map((id) => id.trim()).filter(Boolean))]
-    : [];
-  if (kind === "competition" && (competitorIds.length < 1 || competitorIds.length > 3 || competitorIds.some((id) => !validItemId(id)))) {
-    return { error: "竞争态势报告的竞店 ID 无效" };
-  }
-  if (Buffer.byteLength(JSON.stringify(report), "utf8") > MAX_REPORT_BYTES) return { error: "报告内容超过保存上限" };
+  const itemId = validItemId(report.item_id)
+    ? String(report.item_id)
+    : validItemId(fallback.subjectItemId)
+      ? String(fallback.subjectItemId)
+      : "";
+  if (!itemId) return { error: kind === "competition" ? "本店 ID 无效" : "主体商品 ID 无效" };
+  if (String(report.item_id ?? "") !== itemId) pushArchiveIssue(issues, "主体 ID 已使用请求元数据补全");
 
-  const tables: DmpReportTableSnapshot[] = [];
-  for (const candidate of report.tables) {
-    if (!candidate || !expectedTables.includes(String(candidate.name)) || !Array.isArray(candidate.columns) || !Array.isArray(candidate.rows)) {
-      return { error: "业务表结构无效" };
-    }
-    if (candidate.rows.length > MAX_TABLE_ROWS || candidate.columns.length === 0 || candidate.columns.length > 100) {
-      return { error: `业务表「${candidate.name}」超出保存范围` };
-    }
-    const columns = candidate.columns.map(String);
-    const rows: Array<{ cells: string[] }> = [];
-    for (const row of candidate.rows) {
-      if (!row || !Array.isArray(row.cells) || row.cells.length !== columns.length) {
-        return { error: `业务表「${candidate.name}」行列不一致` };
-      }
-      const cells = row.cells.map(String);
-      if (cells.some((cell) => cell.length > MAX_CELL_LENGTH)) return { error: `业务表「${candidate.name}」单元格内容过长` };
-      rows.push({ cells });
-    }
-    tables.push({ name: String(candidate.name), columns, rows });
-  }
+  const fallbackCompetitors = parseDmpCompetitorIds(fallback.competitorItemId).filter(validItemId);
+  const rawCompetitors = Array.isArray(report.competitor_ids) ? report.competitor_ids : [];
+  if (kind === "competition" && rawCompetitors.length > 3) return { error: "竞争态势报告最多允许 3 个竞店 ID" };
+  const competitorIds = kind === "competition"
+    ? [...new Set([
+        ...rawCompetitors,
+        ...fallbackCompetitors
+      ].map(String).map((id) => id.trim()).filter(validItemId))]
+    : [];
+  if (kind === "competition" && competitorIds.length > 3) return { error: "竞争态势报告最多允许 3 个竞店 ID" };
+  if (kind === "competition" && !competitorIds.length) pushArchiveIssue(issues, "竞店 ID 待补充");
+
+  const rawTables = Array.isArray(report.tables) ? report.tables : [];
+  if (!Array.isArray(report.tables)) pushArchiveIssue(issues, "业务表集合缺失，已创建空表归档");
+  if (rawTables.length > MAX_TABLES) pushArchiveIssue(issues, `业务表超过 ${MAX_TABLES} 个，已截断归档`);
+  if (estimatedArchivedCellCount(rawTables) > MAX_REPORT_CELLS) return { error: "报告单元格总量超过保存上限" };
+  const normalizedTables = rawTables
+    .slice(0, MAX_TABLES)
+    .map((candidate, index) => normalizeArchivedTable(candidate, index, issues));
+  const tables = orderArchivedTables(normalizedTables, expectedTables, issues);
 
   const period = String(report.period ?? "近30天").slice(0, 200);
-  const itemId = String(report.item_id);
   const renderData = kind === "growth" ? sanitizeDmpReportRenderData(report.render_data, {
     itemId,
     period,
@@ -145,20 +153,152 @@ export function validateDmpCanonicalReport(value: unknown): { report?: DmpCanoni
     expectedTableNames: expectedTables
   }) : undefined;
 
-  return {
-    report: {
-      schema_version: "3.0",
-      ...(kind === "competition" ? { report_type: "competition" as const, competitor_ids: competitorIds } : {}),
-      title: withDmpAutomationBrand(
-        report.title,
-        kind === "competition" ? "达摩盘竞争态势分析报告" : "达摩盘打爆路径报告"
-      ).slice(0, 200),
-      item_id: itemId,
-      period,
-      tables,
-      ...(renderData ? { render_data: renderData } : {})
-    }
+  const normalizedReport: DmpCanonicalReport = {
+    schema_version: "3.0",
+    ...(kind === "competition" ? { report_type: "competition" as const, competitor_ids: competitorIds } : {}),
+    title: withDmpAutomationBrand(
+      report.title,
+      kind === "competition" ? "达摩盘竞争态势分析报告" : "达摩盘打爆路径报告"
+    ).slice(0, 200),
+    item_id: itemId,
+    period,
+    tables,
+    ...(renderData ? { render_data: renderData } : {})
   };
+  if (Buffer.byteLength(JSON.stringify(normalizedReport), "utf8") > MAX_REPORT_BYTES) {
+    return { error: "规范化后的报告内容超过保存上限" };
+  }
+  return {
+    report: normalizedReport,
+    ...(issues.length ? { issues } : {})
+  };
+}
+
+function containsSensitiveArchiveAuthData(value: unknown) {
+  if (value == null) return false;
+  let text = "";
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return SENSITIVE_ARCHIVE_AUTH_WORD.test(text) || STANDALONE_ARCHIVE_SIGN.test(text);
+}
+
+function estimatedArchivedCellCount(tables: unknown[]) {
+  let total = 0;
+  for (const candidate of tables.slice(0, MAX_TABLES)) {
+    const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+      ? candidate as { columns?: unknown; rows?: unknown }
+      : null;
+    const rawColumns = Array.isArray(record?.columns) ? record.columns : [];
+    const rawRows = Array.isArray(record?.rows) ? record.rows.slice(0, MAX_TABLE_ROWS) : record ? [] : [candidate];
+    const widestRow = rawRows.reduce((width, row) => {
+      if (row && typeof row === "object" && !Array.isArray(row) && Array.isArray((row as { cells?: unknown }).cells)) {
+        return Math.max(width, (row as { cells: unknown[] }).cells.length);
+      }
+      return Math.max(width, Array.isArray(row) ? row.length : 1);
+    }, 0);
+    const normalizedWidth = Math.min(MAX_TABLE_COLUMNS, Math.max(1, rawColumns.length, widestRow));
+    total += normalizedWidth * rawRows.length;
+    if (total > MAX_REPORT_CELLS) return total;
+  }
+  return total;
+}
+
+function normalizeArchivedTable(candidate: unknown, index: number, issues: string[]): DmpReportTableSnapshot {
+  const record = candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    ? candidate as { name?: unknown; columns?: unknown; rows?: unknown }
+    : null;
+  const rawName = String(record?.name ?? "").trim();
+  const name = (rawName || `未命名模块 ${index + 1}`).slice(0, MAX_TABLE_NAME_LENGTH);
+  if (!record) pushArchiveIssue(issues, `业务表 ${index + 1} 结构异常，已作为原始值归档`);
+  if (!rawName) pushArchiveIssue(issues, `业务表 ${index + 1} 缺少名称，已自动命名`);
+  if (rawName.length > MAX_TABLE_NAME_LENGTH) pushArchiveIssue(issues, `业务表「${name}」名称过长，已截断`);
+
+  const rawColumns = Array.isArray(record?.columns) ? record.columns : [];
+  const rawRows = Array.isArray(record?.rows) ? record.rows : record ? [] : [candidate];
+  if (!Array.isArray(record?.columns)) pushArchiveIssue(issues, `业务表「${name}」列结构无效，已自动修复`);
+  if (!Array.isArray(record?.rows)) pushArchiveIssue(issues, `业务表「${name}」行结构无效，已自动修复`);
+  if (rawRows.length > MAX_TABLE_ROWS) pushArchiveIssue(issues, `业务表「${name}」超过 ${MAX_TABLE_ROWS} 行，已截断归档`);
+
+  const rowValues = rawRows.slice(0, MAX_TABLE_ROWS).map((row) => {
+    if (row && typeof row === "object" && !Array.isArray(row) && Array.isArray((row as { cells?: unknown }).cells)) {
+      return (row as { cells: unknown[] }).cells;
+    }
+    if (Array.isArray(row)) return row;
+    pushArchiveIssue(issues, `业务表「${name}」存在无效行，已按单元格归档`);
+    return [row];
+  });
+  const widestRow = rowValues.reduce((width, row) => Math.max(width, row.length), 0);
+  const normalizedWidth = Math.min(MAX_TABLE_COLUMNS, Math.max(1, rawColumns.length, widestRow));
+  if (rawColumns.length > MAX_TABLE_COLUMNS || widestRow > MAX_TABLE_COLUMNS) {
+    pushArchiveIssue(issues, `业务表「${name}」超过 ${MAX_TABLE_COLUMNS} 列，已截断归档`);
+  }
+  if (!rawColumns.length || rowValues.some((row) => row.length !== rawColumns.length)) {
+    pushArchiveIssue(issues, `业务表「${name}」列结构无效，已自动对齐`);
+  }
+  const columns = Array.from({ length: normalizedWidth }, (_, columnIndex) => {
+    const text = archiveCellText(rawColumns[columnIndex], name, issues);
+    return text || `列${columnIndex + 1}`;
+  });
+  const rows = rowValues.map((row) => ({
+    cells: Array.from({ length: normalizedWidth }, (_, columnIndex) => archiveCellText(row[columnIndex], name, issues))
+  }));
+  return { name, columns, rows };
+}
+
+function orderArchivedTables(
+  tables: DmpReportTableSnapshot[],
+  expectedNames: readonly string[],
+  issues: string[]
+) {
+  const remaining = [...tables];
+  const ordered: DmpReportTableSnapshot[] = [];
+  for (const expectedName of expectedNames) {
+    const index = remaining.findIndex((table) => table.name === expectedName);
+    if (index >= 0) {
+      ordered.push(remaining.splice(index, 1)[0]);
+      continue;
+    }
+    pushArchiveIssue(issues, `业务表「${expectedName}」缺失，已创建空表归档`);
+    ordered.push({ name: expectedName, columns: ["数据"], rows: [] });
+  }
+  const usedNames = new Set(ordered.map((table) => table.name));
+  for (const table of remaining) {
+    const originalName = table.name;
+    let name = originalName;
+    let copy = 2;
+    while (usedNames.has(name)) name = `${originalName}（归档副本${copy++}）`.slice(0, MAX_TABLE_NAME_LENGTH);
+    usedNames.add(name);
+    ordered.push(name === table.name ? table : { ...table, name });
+  }
+  const originalExpectedOrder = tables.filter((table) => expectedNames.includes(table.name)).map((table) => table.name);
+  const presentExpectedOrder = expectedNames.filter((name) => originalExpectedOrder.includes(name));
+  if (JSON.stringify(originalExpectedOrder) !== JSON.stringify(presentExpectedOrder) || remaining.length) {
+    pushArchiveIssue(issues, "业务表顺序或附加模块已兼容归档");
+  }
+  return ordered;
+}
+
+function archiveCellText(value: unknown, tableName: string, issues: string[]) {
+  let text = "";
+  if (typeof value === "string") text = value;
+  else if (value == null) text = "";
+  else if (typeof value === "object") {
+    try {
+      text = JSON.stringify(value);
+    } catch {
+      text = String(value);
+    }
+  } else text = String(value);
+  if (text.length <= MAX_CELL_LENGTH) return text;
+  pushArchiveIssue(issues, `业务表「${tableName}」存在过长单元格，已截断归档`);
+  return text.slice(0, MAX_CELL_LENGTH);
+}
+
+function pushArchiveIssue(issues: string[], issue: string) {
+  if (!issues.includes(issue)) issues.push(issue);
 }
 
 export async function listDmpBusinessReports(access: DmpReportAccess): Promise<DmpBusinessReportRecord[]> {
@@ -179,7 +319,10 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
     }
   });
   return rows.flatMap((row) => {
-    const checked = validateDmpCanonicalReport(row.report);
+    const checked = validateDmpCanonicalReport(row.report, {
+      subjectItemId: row.subjectItemId,
+      competitorItemId: row.competitorItemId
+    });
     if (!checked.report) return [];
     return [{
       id: row.id,
@@ -262,7 +405,10 @@ export async function saveDmpBusinessReport(input: {
       }
     });
   });
-  const storedReport = validateDmpCanonicalReport(row.report).report ?? input.report;
+  const storedReport = validateDmpCanonicalReport(row.report, {
+    subjectItemId: row.subjectItemId,
+    competitorItemId: row.competitorItemId
+  }).report ?? input.report;
   return {
     id: row.id,
     reportType: dmpReportKind(storedReport),
@@ -292,7 +438,10 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
     }
   });
   if (!row) return null;
-  const checked = validateDmpCanonicalReport(row.report);
+  const checked = validateDmpCanonicalReport(row.report, {
+    subjectItemId: row.subjectItemId,
+    competitorItemId: row.competitorItemId
+  });
   if (!checked.report) return null;
   return {
     id: row.id,

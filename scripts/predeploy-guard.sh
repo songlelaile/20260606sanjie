@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.8"
-DMP_ZIP_SHA256="f5cf49fc8a9cd91b40bb45fe5c9b833110df9ef8379eb44dd75e5a3fcfd17e94"
+DMP_VERSION="2.1.9"
+DMP_ZIP_SHA256="d22df802b31f393138a3d2eced3288b5de8987af40cb3d5457518d8c0c8c36ae"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -256,7 +256,8 @@ unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'scheduleStoredRe
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onInstalled?.addListener' >/dev/null || fail "达摩盘插件升级后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onStartup?.addListener' >/dev/null || fail "达摩盘插件启动后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.cookies.onChanged?.addListener' >/dev/null || fail "达摩盘插件登录恢复后不会自动补归档"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F '{ autoOpen: false }' >/dev/null || fail "达摩盘后台补归档仍会自动弹出报告"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'async function synchronizeArchiveOutboxEntry(state, entry)' >/dev/null || fail "达摩盘后台补归档缺少静默队列同步"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'autoOpened: false' >/dev/null || fail "达摩盘后台补归档仍会自动弹出报告"
 if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_IMPORT_ENABLED' >/dev/null; then
   fail "达摩盘插件仍保留已淘汰的导入占位开关"
 fi

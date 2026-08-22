@@ -9,9 +9,11 @@ import {
   getDmpReportAccessFromToken,
   listDmpBusinessReports,
   saveDmpBusinessReport,
+  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES,
   validItemId,
   validateDmpCanonicalReport
 } from "@/lib/dmp-report-store";
+import { readJsonWithLimit, RequestBodyTooLargeError } from "@/lib/read-json-with-limit";
 
 export const runtime = "nodejs";
 
@@ -48,7 +50,16 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const access = await resolveAccess(request);
   if (!access) return unauthorized();
-  const body = (await request.json().catch(() => null)) as
+  let rawBody: unknown;
+  try {
+    rawBody = await readJsonWithLimit(request, DMP_REPORT_ARCHIVE_MAX_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return NextResponse.json({ error: "报告归档请求超过保存上限" }, { status: 413, headers: CORS });
+    }
+    return NextResponse.json({ error: "报告归档请求读取失败" }, { status: 400, headers: CORS });
+  }
+  const body = rawBody as
     | {
         report?: unknown;
         subjectItemId?: unknown;
@@ -57,7 +68,10 @@ export async function POST(request: Request) {
         sourceVersion?: unknown;
       }
     | null;
-  const checked = validateDmpCanonicalReport(body?.report);
+  const checked = validateDmpCanonicalReport(body?.report, {
+    subjectItemId: body?.subjectItemId,
+    competitorItemId: body?.competitorItemId
+  });
   if (!checked.report) return NextResponse.json({ error: checked.error ?? "报告结构无效" }, { status: 400, headers: CORS });
 
   const identity = dmpCanonicalReportIdentity(checked.report, {
@@ -71,12 +85,15 @@ export async function POST(request: Request) {
   if (!validItemId(subjectItemId) || competitorIds.length < 1 || competitorIds.some((id) => !validItemId(id)) || (!competitionReport && competitorIds.length !== 1) || (competitionReport && competitorIds.length > 3)) {
     return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效" }, { status: 400, headers: CORS });
   }
+  if (competitorIds.includes(subjectItemId)) {
+    return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 不能相同" : "主体商品与对标商品 ID 不能相同" }, { status: 400, headers: CORS });
+  }
   const report = await saveDmpBusinessReport({
     access,
     report: checked.report,
     subjectItemId,
     competitorItemId,
-    quality: body?.quality === "partial" ? "partial" : "complete",
+    quality: body?.quality === "partial" || checked.issues?.length ? "partial" : "complete",
     sourceVersion: String(body?.sourceVersion ?? "").slice(0, 32)
   });
   const reportUrl = toOfficialDmpReportUrl(report.id);
