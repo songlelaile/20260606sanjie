@@ -241,11 +241,28 @@ describe("DMP growth render_data storage contract", () => {
     ["table name", (report: ReturnType<typeof growthReport>) => { (report.tables[0] as { name: string }).name = "session"; }],
     ["column name", (report: ReturnType<typeof growthReport>) => { report.tables[0].columns[0] = "authorization"; }],
     ["cell value", (report: ReturnType<typeof growthReport>) => { report.tables[0].rows[0].cells[0] = "https://example.test/?token=private"; }],
-    ["signed field", (report: ReturnType<typeof growthReport>) => { report.tables[0].rows[0].cells[0] = "signData=private"; }]
-  ])("rejects sensitive authentication material found in a business %s", (_label, mutate) => {
+    ["signed field", (report: ReturnType<typeof growthReport>) => { report.tables[0].rows[0].cells[0] = "signData=private"; }],
+    ["report title", (report: ReturnType<typeof growthReport>) => { report.title = "authorization=Bearer private"; }],
+    ["report period", (report: ReturnType<typeof growthReport>) => { report.period = "session=private"; }],
+    ["render subtitle", (report: ReturnType<typeof growthReport>) => {
+      report.render_data.tables[0].subtitle = "token=private";
+    }]
+  ])("rejects sensitive authentication material retained in the final %s", (_label, mutate) => {
     const report = growthReport();
     mutate(report);
     expect(validateDmpCanonicalReport(report)).toEqual({ error: "报告包含敏感鉴权字段，禁止归档" });
+  });
+
+  it("does not reject sensitive-looking fields that are discarded before archive", () => {
+    const report = growthReport() as ReturnType<typeof growthReport> & {
+      transport_debug?: { authorization: string };
+    };
+    report.transport_debug = { authorization: "Bearer private" };
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.report).not.toHaveProperty("transport_debug");
   });
 
   it("rejects normalization amplification beyond the global cell-count limit", () => {

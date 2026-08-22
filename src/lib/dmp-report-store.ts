@@ -110,7 +110,6 @@ export function validateDmpCanonicalReport(
   if (!value || typeof value !== "object" || Array.isArray(value)) return { error: "报告内容无效" };
   const report = value as Partial<DmpCanonicalReport>;
   if (Buffer.byteLength(JSON.stringify(report), "utf8") > MAX_REPORT_BYTES) return { error: "报告内容超过保存上限" };
-  if (containsSensitiveArchiveAuthData(report.tables)) return { error: "报告包含敏感鉴权字段，禁止归档" };
 
   const issues: string[] = [];
   if (report.schema_version !== "3.0") pushArchiveIssue(issues, "报告版本标记已兼容归档");
@@ -165,6 +164,11 @@ export function validateDmpCanonicalReport(
     tables,
     ...(renderData ? { render_data: renderData } : {})
   };
+  // 仅检查最终会落库并通过公开分享展示的规范化合同。这样能覆盖标题、周期、业务表及
+  // render_data（含副标题），又不会因随后会被丢弃的调试/传输字段误阻断归档。
+  if (containsSensitiveArchiveAuthData(normalizedReport)) {
+    return { error: "报告包含敏感鉴权字段，禁止归档" };
+  }
   if (Buffer.byteLength(JSON.stringify(normalizedReport), "utf8") > MAX_REPORT_BYTES) {
     return { error: "规范化后的报告内容超过保存上限" };
   }
