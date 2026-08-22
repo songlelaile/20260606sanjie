@@ -30,7 +30,7 @@ export function normalizeDmpReportExportRequest(value: unknown): DmpReportExport
   if (!reportId || !clientVersion) return null;
   if (!/^[a-z0-9_-]{1,128}$/i.test(reportId)) return null;
   if (!/^[a-z0-9][a-z0-9._+-]{0,63}$/i.test(clientVersion)) return null;
-  if (input.reportType !== "growth" && input.reportType !== "competition") return null;
+  if (input.reportType !== "growth" && input.reportType !== "competition" && input.reportType !== "market") return null;
   if (input.format !== DMP_REPORT_EXPORT_FORMAT) return null;
   return {
     reportId,

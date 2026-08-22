@@ -20,10 +20,29 @@ export const DMP_COMPETITION_REPORT_TABLES = [
   "人群画像"
 ] as const;
 
+/**
+ * 类目大盘报告由插件按页面真实业务模块归档，不强制补造固定表。这里列出的名称只用于
+ * 优先排序；没有对应模块时不会生成空表。
+ */
+export const DMP_MARKET_REPORT_TABLES = [
+  "市场总览",
+  "规模与成交",
+  "供给结构",
+  "人群结构",
+  "营销结构",
+  "趋势明细"
+] as const;
+
 // 兼容现有打爆路径代码的旧导出名。
 export const DMP_REPORT_TABLES = DMP_GROWTH_REPORT_TABLES;
 
-export type DmpReportKind = "growth" | "competition";
+export type DmpReportKind = "growth" | "competition" | "market";
+
+export interface DmpMarketScope {
+  category_id: string;
+  category_name: string;
+  category_path: string[];
+}
 
 export interface DmpReportTableSnapshot {
   name: string;
@@ -51,6 +70,8 @@ export interface DmpCanonicalReport {
   schema_version: "3.0";
   /** 旧版打爆路径报告没有该字段，缺省时按 growth 处理。 */
   report_type?: DmpReportKind;
+  /** 仅 report_type=market 使用；不把类目伪装成商品或竞品。 */
+  market_scope?: DmpMarketScope;
   title: string;
   item_id: string;
   competitor_ids?: string[];
@@ -198,11 +219,15 @@ export interface DmpReportManagementAnalytics {
 }
 
 export function dmpReportKind(report: Pick<DmpCanonicalReport, "report_type"> | null | undefined): DmpReportKind {
-  return report?.report_type === "competition" ? "competition" : "growth";
+  if (report?.report_type === "competition") return "competition";
+  if (report?.report_type === "market") return "market";
+  return "growth";
 }
 
 export function dmpExpectedTableNames(kind: DmpReportKind): readonly string[] {
-  return kind === "competition" ? DMP_COMPETITION_REPORT_TABLES : DMP_GROWTH_REPORT_TABLES;
+  if (kind === "competition") return DMP_COMPETITION_REPORT_TABLES;
+  if (kind === "market") return DMP_MARKET_REPORT_TABLES;
+  return DMP_GROWTH_REPORT_TABLES;
 }
 
 const MAX_RENDER_URL_LENGTH = 2_048;

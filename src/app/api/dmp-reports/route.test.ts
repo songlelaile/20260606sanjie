@@ -145,6 +145,8 @@ describe("POST /api/dmp-reports archive contract", () => {
       })
     }));
     expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("shopId");
+    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("sourceShopId");
+    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("sourceShop");
     await expect(response.json()).resolves.toMatchObject({
       data: {
         archived: true,
@@ -165,6 +167,112 @@ describe("POST /api/dmp-reports archive contract", () => {
         },
         reportUrl: "https://shaozhuangai.com/tools/dmp-report?reportId=report_archive_123&view=report"
       }
+    });
+  });
+
+  it("passes an external source ID and shop-name hint without treating either as an internal relation", async () => {
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({
+        report: canonical,
+        sourceVersion: "2.2.0",
+        sourceShop: { sourceShopId: "123456789012", shopName: "西西礼" }
+      })
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      access: ACCESS,
+      sourceShop: { sourceShopId: "123456789012", shopName: "西西礼" }
+    }));
+  });
+
+  it("accepts a name-only source hint and rejects malformed external IDs", async () => {
+    const nameOnly = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: canonical, sourceShop: { shopName: "西西礼" } })
+    }));
+    expect(nameOnly.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      sourceShop: { shopName: "西西礼" }
+    }));
+
+    mocks.saveDmpBusinessReport.mockClear();
+    const malformed = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: canonical, sourceShop: { sourceShopId: "not-numeric" } })
+    }));
+    expect(malformed.status).toBe(400);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
+  it("returns the scoped storage error for an explicit foreign internal shop ID", async () => {
+    const foreignError = Object.assign(new Error("店铺不存在或不属于当前账号"), {
+      code: "DMP_REPORT_SOURCE_SHOP_INVALID",
+      status: 404
+    });
+    mocks.saveDmpBusinessReport.mockRejectedValueOnce(foreignError);
+    const foreign = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: canonical, sourceShop: { shopId: "foreign-shop" } })
+    }));
+    expect(foreign.status).toBe(404);
+    await expect(foreign.json()).resolves.toEqual({ error: "店铺不存在或不属于当前账号" });
+  });
+
+  it("archives a category-market report with category ID as the internal subject and no competitor", async () => {
+    const market = {
+      schema_version: "3.0" as const,
+      report_type: "market" as const,
+      title: "达摩盘类目大盘报告｜少壮AI自动化",
+      item_id: "350511",
+      period: "2026-03-01 至 2026-07-31",
+      market_scope: {
+        category_id: "350511",
+        category_name: "油烟机",
+        category_path: ["大家电", "厨房大电", "油烟机"]
+      },
+      tables: [{
+        name: "滚动7天市场数据",
+        columns: ["请求截止日", "成交金额"],
+        rows: [{ cells: ["2026-03-31", "3000万~4000万"] }]
+      }]
+    };
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: market });
+    mocks.saveDmpBusinessReport.mockImplementationOnce(async (input: {
+      subjectItemId: string;
+      competitorItemId: string;
+      report: typeof market;
+      quality: "complete" | "partial";
+    }) => ({
+      id: "market-report-1",
+      reportType: "market",
+      subjectItemId: input.subjectItemId,
+      competitorItemId: input.competitorItemId,
+      period: input.report.period,
+      quality: input.quality,
+      createdAt: "2026-08-22T00:00:00.000Z",
+      report: input.report
+    }));
+
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({ report: market, subjectItemId: "350511", competitorItemId: "" })
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      subjectItemId: "350511",
+      competitorItemId: "",
+      report: expect.objectContaining({ report_type: "market", market_scope: market.market_scope })
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      data: { report: { reportType: "market", subjectItemId: "350511", competitorItemId: "" } }
     });
   });
 

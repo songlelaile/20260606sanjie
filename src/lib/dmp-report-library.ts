@@ -4,6 +4,7 @@ import {
   sanitizeDmpRenderImageUrl,
   type DmpBusinessReportRecord,
   type DmpCanonicalReport,
+  type DmpMarketScope,
   type DmpReportKind
 } from "@/lib/dmp-report-types";
 
@@ -14,6 +15,7 @@ export interface DmpReportLibraryGroup {
   competitorItemId: string;
   subjectThumbnail: DmpReportThumbnail;
   competitorThumbnail: DmpReportThumbnail;
+  marketScope?: DmpMarketScope;
   records: DmpBusinessReportRecord[];
 }
 
@@ -35,6 +37,7 @@ export interface DmpReportIdentity {
   subjectItemId: string;
   competitorItemIds: string[];
   competitorItemId: string;
+  marketScope?: DmpMarketScope;
 }
 
 export function dmpReportIdentity(record: DmpBusinessReportRecord): DmpReportIdentity {
@@ -53,9 +56,12 @@ export function dmpCanonicalReportIdentity(
     competitorItemId?: unknown;
   } = {}
 ): DmpReportIdentity {
-  const reportType = fallback.reportType === "competition" || report.report_type === "competition"
-    ? "competition"
-    : "growth";
+  const reportType: DmpReportKind = fallback.reportType === "market" || report.report_type === "market"
+    ? "market"
+    : fallback.reportType === "competition" || report.report_type === "competition"
+      ? "competition"
+      : "growth";
+  const marketScope = reportType === "market" ? normalizedMarketScope(report.market_scope, report.item_id || fallback.subjectItemId) : undefined;
   const productTable = report.tables.find((table) => table.name === "商品与成功品");
   const productIdIndex = productTable?.columns.indexOf("商品ID") ?? -1;
   const productRoleIndex = productTable?.columns.findIndex((column) => /^(?:对象|角色)$/.test(column)) ?? -1;
@@ -67,14 +73,17 @@ export function dmpCanonicalReportIdentity(
   const overviewCompetitorId = overview?.rows.find(({ cells }) => String(cells[0] ?? "") === "商品ID")?.cells[2];
   const canonicalCompetitors = reportType === "competition"
     ? report.competitor_ids?.join(",")
-    : String(productCompetitorId || overviewCompetitorId || "");
-  const competitorItemIds = normalizedIdList(canonicalCompetitors || fallback.competitorItemId);
-  const subjectItemId = String(report.item_id || fallback.subjectItemId || "").trim();
+    : reportType === "growth" ? String(productCompetitorId || overviewCompetitorId || "") : "";
+  const competitorItemIds = reportType === "market"
+    ? []
+    : normalizedIdList(canonicalCompetitors || fallback.competitorItemId);
+  const subjectItemId = String(marketScope?.category_id || report.item_id || fallback.subjectItemId || "").trim();
   return {
     reportType,
     subjectItemId,
     competitorItemIds,
-    competitorItemId: competitorItemIds.join("、")
+    competitorItemId: competitorItemIds.join("、"),
+    ...(marketScope ? { marketScope } : {})
   };
 }
 
@@ -89,7 +98,10 @@ export function groupDmpBusinessReports(
     const { reportType, subjectItemId } = identity;
     const competitorIds = identity.competitorItemIds;
     const competitorItemId = competitorIds.join("、");
-    const key = [reportType, subjectItemId, competitorIds.join(",")].join(":");
+    const marketScope = identity.marketScope;
+    const key = reportType === "market"
+      ? [reportType, marketScope?.category_path.join("/"), subjectItemId].join(":")
+      : [reportType, subjectItemId, competitorIds.join(",")].join(":");
     const current = groups.get(key);
     const subjectThumbnail = dmpReportProductThumbnail(record, "subject");
     const competitorThumbnail = dmpReportProductThumbnail(record, "competitor");
@@ -107,6 +119,7 @@ export function groupDmpBusinessReports(
       competitorItemId,
       subjectThumbnail,
       competitorThumbnail,
+      ...(marketScope ? { marketScope } : {}),
       records: [record]
     });
   }
@@ -167,6 +180,11 @@ export function dmpReportProductThumbnail(
   record: DmpBusinessReportRecord,
   role: "subject" | "competitor"
 ): DmpReportThumbnail {
+  const identity = dmpReportIdentity(record);
+  if (identity.reportType === "market") {
+    const fullPath = identity.marketScope?.category_path.join(" / ") || identity.marketScope?.category_name || "类目大盘";
+    return { url: "", title: fullPath };
+  }
   const renderProduct = role === "subject"
     ? record.report.render_data?.products?.subject
     : record.report.render_data?.products?.competitor;
@@ -184,7 +202,6 @@ export function dmpReportProductThumbnail(
   const tableUrl = mediaIndex >= 0 ? firstSafeImageUrl(row?.[mediaIndex]) : "";
   const overview = record.report.tables.find((table) => table.name === "报告总览");
   const overviewTitleRow = overview?.rows.find(({ cells }) => String(cells[0] ?? "") === "商品标题")?.cells;
-  const identity = dmpReportIdentity(record);
   const competition = identity.reportType === "competition";
   const fallbackLabel = role === "subject"
     ? competition ? "本店" : "主体商品"
@@ -205,9 +222,14 @@ export function mergeDmpReportGroupDaily(
   records: DmpBusinessReportRecord[],
   selectedId = ""
 ): DmpBusinessReportRecord | null {
-  const sorted = [...records].sort(compareReportTimeDescending);
-  const base = sorted.find((record) => record.id === selectedId) ?? sorted[0] ?? null;
-  if (!base || dmpReportIdentity(base).reportType === "competition" || sorted.length < 2) return base;
+  const ordered = [...records].sort(compareReportTimeDescending);
+  const base = ordered.find((record) => record.id === selectedId) ?? ordered[0] ?? null;
+  if (!base) return null;
+  const baseShopId = String(base.shopId ?? "").trim();
+  const sorted = ordered.filter((record) => String(record.shopId ?? "").trim() === baseShopId);
+  if (sorted.length < 2) return base;
+  if (dmpReportIdentity(base).reportType === "market") return mergeMarketReportGroupDaily(sorted, base);
+  if (dmpReportIdentity(base).reportType !== "growth") return base;
 
   const dailySources = sorted.map((record) => dailySource(record)).filter((source): source is DailySource => Boolean(source));
   if (dailySources.length < 2) return base;
@@ -228,18 +250,20 @@ export function mergeDmpReportGroupDaily(
     for (const row of source.table.rows) {
       const date = String(row.cells[source.dateIndex] ?? "").trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
-      const target = byDate.get(date) ?? new Map<string, string>([["日期", date]]);
+      // 报告已按生成时间从新到旧排序。同一业务日期必须整行由最新报告负责：
+      // 空串表示该次报告确实缺失，不能再用旧报告补值；字符串 "0" 则是有效业务值。
+      if (byDate.has(date)) continue;
+      const target = new Map<string, string>([["日期", date]]);
       source.columns.forEach((column, index) => {
-        const value = String(row.cells[index] ?? "");
-        if (isBlank(target.get(column)) && !isBlank(value)) target.set(column, value);
+        if (column !== "日期") target.set(column, String(row.cells[index] ?? ""));
       });
       const subjectValue = source.subjectByDate.get(date);
-      if (isBlank(target.get("主体日GMV")) && !isBlank(subjectValue)) target.set("主体日GMV", subjectValue ?? "");
+      if (subjectValue !== undefined) target.set("主体日GMV", subjectValue);
       byDate.set(date, target);
     }
   }
   const dates = [...byDate.keys()].sort();
-  if (dates.length < 2) return base;
+  if (!dates.length) return base;
   const mergedDaily = {
     name: "日GMV与费比",
     columns,
@@ -247,20 +271,104 @@ export function mergeDmpReportGroupDaily(
   };
   const tables = base.report.tables.map((table) => table.name === "日GMV与费比" ? mergedDaily : table);
   const renderData = mergedRenderData(base, dates[0], dates.at(-1) ?? dates[0], dates.length);
+  const period = `${dates[0]} 至 ${dates.at(-1)}`;
 
   return {
     ...base,
+    period,
     report: {
       ...base.report,
+      period,
       tables,
       ...(renderData ? { render_data: renderData } : { render_data: undefined })
     }
   };
 }
 
+function mergeMarketReportGroupDaily(
+  sorted: DmpBusinessReportRecord[],
+  base: DmpBusinessReportRecord
+): DmpBusinessReportRecord {
+  const sources = sorted.map((record) => marketDailySource(record)).filter((source): source is MarketDailySource => Boolean(source));
+  if (sources.length < 2) return base;
+  const columns = ["日期"];
+  for (const source of sources) {
+    for (const column of source.columns) if (column !== "日期" && !columns.includes(column)) columns.push(column);
+  }
+  const byDate = new Map<string, Map<string, string>>();
+  // sources 已按报告生成时间从新到旧排序：重叠截止日整行以最新值为准，绝不累加或用旧值补空。
+  for (const source of sources) {
+    for (const row of source.table.rows) {
+      const date = String(row.cells[source.dateIndex] ?? "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      if (byDate.has(date)) continue;
+      const target = new Map<string, string>([["日期", date]]);
+      source.columns.forEach((column, index) => {
+        if (column !== "日期") target.set(column, String(row.cells[index] ?? ""));
+      });
+      byDate.set(date, target);
+    }
+  }
+  const dates = [...byDate.keys()].sort();
+  if (!dates.length) return base;
+  const mergedDaily = {
+    name: "滚动7日明细",
+    columns,
+    rows: dates.map((date) => ({ cells: columns.map((column) => byDate.get(date)?.get(column) ?? "") }))
+  };
+  let replaced = false;
+  const tables = base.report.tables.map((table) => {
+    if (!marketDailyTableName(table.name)) return table;
+    if (replaced) return null;
+    replaced = true;
+    return mergedDaily;
+  }).filter((table): table is DmpCanonicalReport["tables"][number] => Boolean(table));
+  if (!replaced) tables.push(mergedDaily);
+  return {
+    ...base,
+    period: `${dates[0]} 至 ${dates.at(-1)}`,
+    report: {
+      ...base.report,
+      period: `${dates[0]} 至 ${dates.at(-1)}`,
+      tables
+    }
+  };
+}
+
+interface MarketDailySource {
+  table: DmpCanonicalReport["tables"][number];
+  columns: string[];
+  dateIndex: number;
+}
+
+function marketDailySource(record: DmpBusinessReportRecord): MarketDailySource | null {
+  const table = record.report.tables.find((candidate) => marketDailyTableName(candidate.name));
+  if (!table) return null;
+  const dateIndex = table.columns.findIndex((column) => /^(?:日期|请求截止日|截止日)$/.test(String(column).trim()));
+  if (dateIndex < 0) return null;
+  const columns = table.columns.map((column, index) => index === dateIndex ? "日期" : String(column).trim());
+  return { table, columns, dateIndex };
+}
+
+function marketDailyTableName(value: string) {
+  return /^(?:滚动\s*7\s*(?:日明细|天市场数据)|市场核心指标)$/.test(String(value).trim());
+}
+
 function normalizedIdList(value: unknown) {
   return [...new Set(String(value ?? "").split(/[,，、;；]+/).map((item) => item.trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
+}
+
+function normalizedMarketScope(value: DmpCanonicalReport["market_scope"], fallbackId: unknown): DmpMarketScope | undefined {
+  if (!value) return undefined;
+  const categoryId = String(value.category_id || fallbackId || "").trim();
+  const categoryPath = (Array.isArray(value.category_path) ? value.category_path : [])
+    .map((segment) => String(segment ?? "").trim())
+    .filter(Boolean);
+  const categoryName = String(value.category_name || categoryPath.at(-1) || "").trim();
+  if (!categoryId || !categoryName) return undefined;
+  if (!categoryPath.length) categoryPath.push(categoryName);
+  return { category_id: categoryId, category_name: categoryName, category_path: categoryPath };
 }
 
 function compareReportTimeDescending(left: DmpBusinessReportRecord, right: DmpBusinessReportRecord) {
@@ -323,10 +431,6 @@ function mergedRenderData(
     version: "1" as const,
     tables: tableMeta
   };
-}
-
-function isBlank(value: string | undefined) {
-  return value == null || value.trim() === "" || /^(?:[-–—]|null|undefined)$/i.test(value.trim());
 }
 
 function firstSafeImageUrl(value: unknown) {

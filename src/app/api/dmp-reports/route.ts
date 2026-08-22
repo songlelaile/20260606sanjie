@@ -66,8 +66,13 @@ export async function POST(request: Request) {
         competitorItemId?: unknown;
         quality?: unknown;
         sourceVersion?: unknown;
+        sourceShop?: unknown;
       }
     | null;
+  const sourceShop = parseSourceShop(body?.sourceShop);
+  if (!sourceShop.ok) {
+    return NextResponse.json({ error: sourceShop.error }, { status: 400, headers: CORS });
+  }
   const checked = validateDmpCanonicalReport(body?.report, {
     subjectItemId: body?.subjectItemId,
     competitorItemId: body?.competitorItemId
@@ -80,22 +85,41 @@ export async function POST(request: Request) {
   });
   const subjectItemId = identity.subjectItemId;
   const competitionReport = identity.reportType === "competition";
+  const marketReport = identity.reportType === "market";
   const competitorIds = identity.competitorItemIds;
-  const competitorItemId = competitionReport ? competitorIds.join(",") : competitorIds[0] ?? "";
-  if (!validItemId(subjectItemId) || competitorIds.length < 1 || competitorIds.some((id) => !validItemId(id)) || (!competitionReport && competitorIds.length !== 1) || (competitionReport && competitorIds.length > 3)) {
-    return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效" }, { status: 400, headers: CORS });
+  const competitorItemId = competitionReport ? competitorIds.join(",") : marketReport ? "" : competitorIds[0] ?? "";
+  const invalidIdentity = marketReport
+    ? !validItemId(subjectItemId) || competitorIds.length > 0
+    : !validItemId(subjectItemId)
+      || competitorIds.length < 1
+      || competitorIds.some((id) => !validItemId(id))
+      || (!competitionReport && competitorIds.length !== 1)
+      || (competitionReport && competitorIds.length > 3);
+  if (invalidIdentity) {
+    return NextResponse.json({
+      error: marketReport ? "类目 ID 或类目范围无效" : competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效"
+    }, { status: 400, headers: CORS });
   }
-  if (competitorIds.includes(subjectItemId)) {
+  if (!marketReport && competitorIds.includes(subjectItemId)) {
     return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 不能相同" : "主体商品与对标商品 ID 不能相同" }, { status: 400, headers: CORS });
   }
-  const report = await saveDmpBusinessReport({
-    access,
-    report: checked.report,
-    subjectItemId,
-    competitorItemId,
-    quality: body?.quality === "partial" || checked.issues?.length ? "partial" : "complete",
-    sourceVersion: String(body?.sourceVersion ?? "").slice(0, 32)
-  });
+  let report;
+  try {
+    report = await saveDmpBusinessReport({
+      access,
+      report: checked.report,
+      subjectItemId,
+      competitorItemId,
+      quality: body?.quality === "partial" || checked.issues?.length ? "partial" : "complete",
+      sourceVersion: String(body?.sourceVersion ?? "").slice(0, 32),
+      ...(sourceShop.value ? { sourceShop: sourceShop.value } : {})
+    });
+  } catch (error) {
+    if (isSourceShopArchiveError(error)) {
+      return NextResponse.json({ error: error.message }, { status: error.status, headers: CORS });
+    }
+    throw error;
+  }
   const reportUrl = toOfficialDmpReportUrl(report.id);
   return NextResponse.json({ data: { report, reportUrl, archived: true } }, { status: 201, headers: CORS });
 }
@@ -133,4 +157,40 @@ async function resolveAccess(request: Request) {
 
 function unauthorized() {
   return NextResponse.json({ error: "请先登录并开通达摩盘报告权限" }, { status: 401, headers: CORS });
+}
+
+function parseSourceShop(value: unknown):
+  | {
+      ok: true;
+      value?: { shopId?: string; shopName?: string; sourceShopId?: string };
+    }
+  | { ok: false; error: string } {
+  if (value == null) return { ok: true };
+  if (typeof value !== "object" || Array.isArray(value)) return { ok: false, error: "来源店铺信息无效" };
+  const source = value as { shopId?: unknown; shopName?: unknown; sourceShopId?: unknown };
+  if (source.shopId != null && typeof source.shopId !== "string") return { ok: false, error: "来源店铺信息无效" };
+  if (source.shopName != null && typeof source.shopName !== "string") return { ok: false, error: "来源店铺信息无效" };
+  if (source.sourceShopId != null && typeof source.sourceShopId !== "string") return { ok: false, error: "来源店铺信息无效" };
+  const shopId = String(source.shopId ?? "").trim();
+  const shopName = String(source.shopName ?? "").trim();
+  const sourceShopId = String(source.sourceShopId ?? "").trim();
+  if (shopId.length > 100 || shopName.length > 100 || (sourceShopId && !/^\d{5,32}$/.test(sourceShopId))) {
+    return { ok: false, error: "来源店铺信息无效" };
+  }
+  if (!shopId && !shopName && !sourceShopId) return { ok: false, error: "来源店铺信息无效" };
+  return {
+    ok: true,
+    value: {
+      ...(shopId ? { shopId } : {}),
+      ...(shopName ? { shopName } : {}),
+      ...(sourceShopId ? { sourceShopId } : {})
+    }
+  };
+}
+
+function isSourceShopArchiveError(error: unknown): error is Error & { status: 400 | 404 } {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return candidate.code === "DMP_REPORT_SOURCE_SHOP_INVALID"
+    && (candidate.status === 400 || candidate.status === 404);
 }

@@ -66,6 +66,86 @@ function report({
 }
 
 describe("DMP report history library", () => {
+  it("groups category-market history by full Chinese category path and ID, newest first", () => {
+    const market = (id: string, createdAt: string, path = ["大家电", "厨房大电", "油烟机"]) => {
+      const record = report({ id, createdAt, subject: "350511", competitor: "" });
+      record.reportType = "market";
+      record.competitorItemId = "";
+      record.report.report_type = "market";
+      record.report.item_id = "350511";
+      record.report.competitor_ids = undefined;
+      record.report.market_scope = {
+        category_id: "350511",
+        category_name: path.at(-1) ?? "油烟机",
+        category_path: path
+      };
+      record.report.tables = [{
+        name: "滚动7天市场数据",
+        columns: ["请求截止日", "成交金额"],
+        rows: [{ cells: ["2026-08-20", "3000万~4000万"] }]
+      }];
+      return record;
+    };
+    const groups = groupDmpBusinessReports([
+      market("old-market", "2026-08-20T03:00:00.000Z"),
+      market("new-market", "2026-08-22T03:00:00.000Z"),
+      market("other-path", "2026-08-21T03:00:00.000Z", ["家电", "烟机灶具", "油烟机"])
+    ]);
+
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      reportType: "market",
+      subjectItemId: "350511",
+      competitorItemId: "",
+      marketScope: { category_path: ["大家电", "厨房大电", "油烟机"] }
+    });
+    expect(groups[0].records.map((record) => record.id)).toEqual(["new-market", "old-market"]);
+    expect(dmpReportSubjectThumbnail(groups[0].records[0])).toEqual({
+      url: "",
+      title: "大家电 / 厨房大电 / 油烟机"
+    });
+    expect(mergeDmpReportGroupDaily(groups[0].records, "old-market")?.id).toBe("old-market");
+  });
+
+  it("同中文类目组的滚动7日明细按日期延长，重叠日取最新报告且不累加", () => {
+    const create = (id: string, createdAt: string, rows: string[][]) => {
+      const record = report({ id, createdAt, subject: "350511", competitor: "" });
+      record.reportType = "market";
+      record.subjectItemId = "350511";
+      record.competitorItemId = "";
+      record.report.report_type = "market";
+      record.report.item_id = "350511";
+      record.report.market_scope = {
+        category_id: "350511",
+        category_name: "油烟机",
+        category_path: ["大家电", "厨房大电", "油烟机"]
+      };
+      record.report.tables = [{
+        name: "滚动7日明细",
+        columns: ["日期", "市场成交额", "新客人数"],
+        rows: rows.map((cells) => ({ cells }))
+      }];
+      return record;
+    };
+    const older = create("market-old", "2026-08-20T03:00:00.000Z", [
+      ["2026-08-18", "3000万", "1500"],
+      ["2026-08-19", "3200万", "1550"]
+    ]);
+    const newer = create("market-new", "2026-08-22T03:00:00.000Z", [
+      ["2026-08-19", "3500万", ""],
+      ["2026-08-20", "3600万", "0"]
+    ]);
+    const merged = mergeDmpReportGroupDaily([older, newer], "market-new");
+    const daily = merged?.report.tables.find((table) => table.name === "滚动7日明细");
+    expect(merged?.period).toBe("2026-08-18 至 2026-08-20");
+    expect(merged?.report.period).toBe("2026-08-18 至 2026-08-20");
+    expect(daily?.rows.map((row) => row.cells)).toEqual([
+      ["2026-08-18", "3000万", "1500"],
+      ["2026-08-19", "3500万", ""],
+      ["2026-08-20", "3600万", "0"]
+    ]);
+  });
+
   it("groups the same subject and competitor set and sorts every group newest first", () => {
     const groups = groupDmpBusinessReports([
       report({ id: "old", createdAt: "2026-08-19T03:00:00.000Z", competitor: "300,200" }),
@@ -205,17 +285,19 @@ describe("DMP report history library", () => {
     ]));
     newer.report.tables.push(dailyTable([
       ["2026-08-19", "120", ""],
-      ["2026-08-20", "130", "13"]
+      ["2026-08-20", "130", "0"]
     ]));
 
     const merged = mergeDmpReportGroupDaily([older, newer], "newer");
     const daily = merged?.report.tables.find((table) => table.name === "日GMV与费比");
     expect(daily?.rows.map((row) => row.cells)).toEqual([
       ["2026-08-18", "100", "10"],
-      ["2026-08-19", "120", "11"],
-      ["2026-08-20", "130", "13"]
+      ["2026-08-19", "120", ""],
+      ["2026-08-20", "130", "0"]
     ]);
     expect(merged?.id).toBe("newer");
+    expect(merged?.period).toBe("2026-08-18 至 2026-08-20");
+    expect(merged?.report.period).toBe("2026-08-18 至 2026-08-20");
     expect(merged?.report.render_data?.tables?.find((table) => table.name === "日GMV与费比")?.subtitle)
       .toBe("同组分日合并｜2026-08-18 至 2026-08-20｜3天");
   });
@@ -238,6 +320,41 @@ describe("DMP report history library", () => {
       ["2026-08-19", "12", "120"],
       ["2026-08-20", "13", "130"]
     ]);
+  });
+
+  it("uses the newest complete row even when a group contains only one business date", () => {
+    const older = report({ id: "one-day-old", createdAt: "2026-08-19T03:00:00.000Z" });
+    const newer = report({ id: "one-day-new", createdAt: "2026-08-20T03:00:00.000Z" });
+    older.report.tables.push(dailyTable([["2026-08-19", "100", "12"]]));
+    newer.report.tables.push(dailyTable([["2026-08-19", "0", ""]]));
+
+    const merged = mergeDmpReportGroupDaily([older, newer], "one-day-old");
+    expect(merged?.report.tables.find((table) => table.name === "日GMV与费比")?.rows[0]?.cells)
+      .toEqual(["2026-08-19", "0", ""]);
+    expect(merged?.period).toBe("2026-08-19 至 2026-08-19");
+    expect(merged?.report.period).toBe("2026-08-19 至 2026-08-19");
+  });
+
+  it("never merges daily values across shop boundaries even for the same product identity", () => {
+    const shopA = report({
+      id: "shop-a-report",
+      createdAt: "2026-08-19T03:00:00.000Z",
+      shopId: "shop-a",
+      shopName: "店铺 A"
+    });
+    const shopB = report({
+      id: "shop-b-report",
+      createdAt: "2026-08-20T03:00:00.000Z",
+      shopId: "shop-b",
+      shopName: "店铺 B"
+    });
+    shopA.report.tables.push(dailyTable([["2026-08-18", "100", "10"]]));
+    shopB.report.tables.push(dailyTable([["2026-08-19", "200", "20"]]));
+
+    const selected = mergeDmpReportGroupDaily([shopA, shopB], "shop-a-report");
+    expect(selected?.id).toBe("shop-a-report");
+    expect(selected?.report.tables.find((table) => table.name === "日GMV与费比")?.rows)
+      .toEqual([{ cells: ["2026-08-18", "100", "10"] }]);
   });
 });
 

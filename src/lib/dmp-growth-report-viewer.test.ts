@@ -48,10 +48,10 @@ const pairedDailyColumns = [
 
 describe("DMP growth report shared viewer contract", () => {
   it("uses one report viewer for both the report-center preview and public share page", () => {
-    expect(workspaceSource).toContain('from "@/components/tools/DmpGrowthReportViewer"');
-    expect(sharedPageSource).toContain('from "@/components/tools/DmpGrowthReportViewer"');
-    expect(workspaceSource).toMatch(/<DmpGrowthReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s);
-    expect(sharedPageSource).toMatch(/<DmpGrowthReportViewer\b[^>]*record=\{record\}[^>]*variant="shared"/s);
+    expect(workspaceSource).toContain('from "@/components/tools/DmpReportViewer"');
+    expect(sharedPageSource).toContain('from "@/components/tools/DmpReportViewer"');
+    expect(workspaceSource).toMatch(/<DmpReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s);
+    expect(sharedPageSource).toMatch(/<DmpReportViewer\b[^>]*record=\{record\}[^>]*variant="shared"/s);
 
     // The public wrapper keeps anonymous propagation tracking while delegating
     // all business-report rendering to the shared viewer.

@@ -96,6 +96,68 @@ function growthReport() {
   };
 }
 
+function marketReport() {
+  return {
+    schema_version: "3.0",
+    report_type: "market",
+    title: "达摩盘类目大盘报告",
+    item_id: "350511",
+    period: "2026-03-01 至 2026-07-31",
+    market_scope: {
+      category_id: "350511",
+      category_name: "油烟机",
+      category_path: ["大家电", "厨房大电", "油烟机"]
+    },
+    tables: [{
+      name: "滚动7天市场数据",
+      columns: ["请求截止日", "成交金额", "新客人数"],
+      rows: [
+        { cells: ["2026-03-31", "3000万~4000万", "1500~1505"] },
+        { cells: ["2026-04-01", "3000万~4000万", "1510~1515"] }
+      ]
+    }]
+  };
+}
+
+describe("DMP category market report storage contract", () => {
+  it("preserves the market kind and normalized Chinese category scope without competitors", () => {
+    const checked = validateDmpCanonicalReport(marketReport());
+    expect(checked.error).toBeUndefined();
+    expect(checked.report).toMatchObject({
+      report_type: "market",
+      item_id: "350511",
+      title: "达摩盘类目大盘报告｜少壮AI自动化",
+      market_scope: {
+        category_id: "350511",
+        category_name: "油烟机",
+        category_path: ["大家电", "厨房大电", "油烟机"]
+      }
+    });
+    expect(checked.report).not.toHaveProperty("competitor_ids");
+    expect(checked.report?.tables.map((table) => table.name)).toEqual(["滚动7天市场数据"]);
+  });
+
+  it("rejects a market archive without a complete category scope or business table", () => {
+    const missingScope = structuredClone(marketReport()) as Record<string, unknown>;
+    delete missingScope.market_scope;
+    expect(validateDmpCanonicalReport(missingScope).error).toContain("类目范围无效");
+    const empty = marketReport();
+    empty.tables = [];
+    expect(validateDmpCanonicalReport(empty).error).toContain("缺少业务数据");
+  });
+
+  it("includes market scope in retry fingerprints", () => {
+    const first = validateDmpCanonicalReport(marketReport()).report!;
+    const changed = structuredClone(first);
+    changed.market_scope!.category_path = ["家电", "厨房电器", "油烟机"];
+    const identity = { subjectItemId: "350511", competitorItemId: "" };
+    expect(dmpBusinessReportFingerprint({ ...identity, report: changed }))
+      .not.toBe(dmpBusinessReportFingerprint({ ...identity, report: first }));
+    expect(dmpBusinessReportFingerprint({ ...identity, report: first, shopId: "shop-a" }))
+      .not.toBe(dmpBusinessReportFingerprint({ ...identity, report: first, shopId: "shop-b" }));
+  });
+});
+
 describe("DMP competition report storage contract", () => {
   it("accepts exactly the five selected business tables and one to three competitor IDs", () => {
     const checked = validateDmpCanonicalReport(competitionReport());
@@ -471,6 +533,215 @@ describe("DMP growth render_data storage contract", () => {
       create: expect.objectContaining({ shopId: "shop-recent" })
     }));
     expect(saved).toMatchObject({ shopId: "shop-recent", shopName: "最近店铺" });
+  });
+
+  it("uses an explicitly supplied source shop only after tenant-scoped validation", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:30:00.000Z");
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-source", name: "采集来源店铺" });
+    mocks.upsert.mockResolvedValue({
+      id: "report-source-shop",
+      shop: { id: "shop-source", name: "采集来源店铺" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.2.0",
+      sourceShop: { shopId: "shop-source", shopName: "不可信提示名" }
+    });
+
+    expect(mocks.shopFindFirst).toHaveBeenCalledWith({
+      where: { id: "shop-source", tenantId: "tenant-a" },
+      select: { id: true, name: true }
+    });
+    expect(mocks.reportFindFirst).not.toHaveBeenCalled();
+    expect(mocks.shopFindMany).not.toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: "shop-source" })
+    }));
+    expect(saved).toMatchObject({ shopId: "shop-source", shopName: "采集来源店铺" });
+  });
+
+  it("rejects an explicit source shop outside the current tenant before archiving", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    mocks.shopFindFirst.mockResolvedValue(null);
+
+    await expect(saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.2.0",
+      sourceShop: { shopId: "foreign-shop", shopName: "同名也不能绕过内部 ID 校验" }
+    })).rejects.toMatchObject({
+      code: "DMP_REPORT_SOURCE_SHOP_INVALID",
+      status: 404,
+      message: "店铺不存在或不属于当前账号"
+    });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+
+  it("maps an external numeric source ID only through a unique normalized tenant shop name", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:40:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([
+      { id: "shop-other", name: "其他店铺" },
+      { id: "shop-match", name: "西西礼 旗舰店" }
+    ]);
+    mocks.upsert.mockResolvedValue({
+      id: "report-external-source",
+      shop: { id: "shop-match", name: "西西礼 旗舰店" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.2.0",
+      sourceShop: { sourceShopId: "123456789012", shopName: "  西西礼　旗舰店  " }
+    });
+
+    expect(mocks.shopFindFirst).not.toHaveBeenCalled();
+    expect(mocks.shopFindMany).toHaveBeenCalledWith({
+      where: { tenantId: "tenant-a" },
+      orderBy: { createdAt: "asc" },
+      take: 201,
+      select: { id: true, name: true }
+    });
+    expect(mocks.reportFindFirst).not.toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: "shop-match" })
+    }));
+    expect(saved).toMatchObject({ shopId: "shop-match", shopName: "西西礼 旗舰店" });
+  });
+
+  it("matches a name-only source to one existing tenant shop without creating a relationship from text", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:45:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([
+      { id: "shop-match", name: "西西礼" },
+      { id: "shop-other", name: "北北店" }
+    ]);
+    mocks.upsert.mockResolvedValue({
+      id: "report-name-source",
+      shop: { id: "shop-match", name: "西西礼" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.2.0",
+      sourceShop: { shopName: " 西西礼 " }
+    });
+
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: "shop-match" })
+    }));
+    expect(saved).toMatchObject({ shopId: "shop-match", shopName: "西西礼" });
+  });
+
+  it("does not guess a shop when a source name has no unique match in a multi-shop tenant", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:50:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([
+      { id: "shop-a", name: "店铺 A" },
+      { id: "shop-b", name: "店铺 B" }
+    ]);
+    mocks.upsert.mockResolvedValue({
+      id: "report-unmatched-source",
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    });
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.2.0",
+      sourceShop: { sourceShopId: "123456789012", shopName: "不存在的店铺" }
+    });
+
+    expect(mocks.reportFindFirst).toHaveBeenCalled();
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ shopId: null })
+    }));
+    expect(saved).not.toHaveProperty("shopId");
+  });
+
+  it("keeps unmatched external shops in separate dedup scopes without writing them as internal relations", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const createdAt = new Date("2026-08-22T01:55:00.000Z");
+    mocks.shopFindMany.mockResolvedValue([
+      { id: "shop-a", name: "店铺 A" },
+      { id: "shop-b", name: "店铺 B" }
+    ]);
+    mocks.upsert.mockImplementation(async (args: {
+      create: { fingerprint: string; shopId: string | null };
+    }) => ({
+      id: args.create.fingerprint,
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt,
+      report: canonical
+    }));
+    const save = (sourceShopId: string) => saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete" as const,
+      sourceVersion: "2.2.0",
+      sourceShop: { sourceShopId, shopName: "未匹配店铺" }
+    });
+
+    await save("123456789012");
+    await save("987654321098");
+
+    const firstCreate = mocks.upsert.mock.calls[0]?.[0]?.create;
+    const secondCreate = mocks.upsert.mock.calls[1]?.[0]?.create;
+    expect(firstCreate.shopId).toBeNull();
+    expect(secondCreate.shopId).toBeNull();
+    expect(firstCreate).not.toHaveProperty("sourceShopId");
+    expect(firstCreate.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondCreate.fingerprint).not.toBe(firstCreate.fingerprint);
   });
 
   it("uses the tenant's only shop when the canonical pair has no previous assignment", async () => {

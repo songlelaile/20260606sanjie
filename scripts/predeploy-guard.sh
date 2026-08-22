@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.2.0"
-DMP_ZIP_SHA256="94b6b011903f1e19faa315df6377d1ad7d8094c0278737ea683c0056ab3c4e92"
+DMP_VERSION="2.2.1"
+DMP_ZIP_SHA256="02616a62b3fa789c9c8b822dd7a569863fe42a77fbbf7f28afb08a1d11158d32"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -74,6 +74,9 @@ for file in \
   src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpBrandWatermark.tsx \
   src/components/tools/DmpGrowthReportViewer.module.css \
+  src/components/tools/DmpMarketReportViewer.tsx \
+  src/components/tools/DmpMarketReportViewer.module.css \
+  src/components/tools/DmpReportViewer.tsx \
   src/components/tools/DmpReportWorkspace.tsx \
   src/components/tools/DmpSharedReportClient.tsx \
   src/components/management/ManagementConsole.tsx \
@@ -161,14 +164,19 @@ forbid_fixed "下载 CSV" src/components/tools/DmpReportWorkspace.tsx "达摩盘
 forbid_fixed "打印 / 保存 PDF" src/components/tools/DmpSharedReportClient.tsx "达摩盘分享页仍开放 PDF 下载"
 require_fixed "当前版本仅支持官网在线查看，暂不提供数据下载" src/app/api/dmp-reports/route.ts "达摩盘报告接口未关闭业务数据下载"
 forbid_fixed "buildDmpReportWorkbook" src/app/api/dmp-reports/route.ts "达摩盘报告接口仍能生成 Excel"
-require_fixed "DmpGrowthReportViewer" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心未使用统一预览组件"
-require_fixed "DmpGrowthReportViewer" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享报告未使用统一预览组件"
+require_fixed "DmpReportViewer" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心未使用多类型统一预览组件"
+require_fixed "DmpReportViewer" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享报告未使用多类型统一预览组件"
+require_fixed "DmpMarketReportViewer" src/components/tools/DmpReportViewer.tsx "达摩盘统一预览未接入类目大盘报告"
 require_fixed "data-report-watermark" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘统一预览缺少全篇水印"
+require_fixed "data-report-watermark" src/components/tools/DmpMarketReportViewer.tsx "达摩盘类目大盘预览缺少全篇水印"
 require_fixed "background: #0d716b !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一绿色"
 require_fixed "color: #fff !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一白字"
 require_fixed "background-color: #fff;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告正文未隔离后台黑色表格样式"
 require_fixed "text-align: right;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告数值未靠右展示"
 require_fixed "vertical-align: middle;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告数值未垂直居中"
+require_fixed "background: var(--market-green) !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘表头不是统一绿色"
+require_fixed "color: #fff !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘表头不是统一白字"
+require_fixed "text-align: right !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘数值未靠右展示"
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
 require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
 require_fixed 'pathname.startsWith("/api/dmp-report-shares")' src/middleware.ts "达摩盘插件分享接口未绕过页面中间件"

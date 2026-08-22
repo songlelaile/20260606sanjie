@@ -45,15 +45,22 @@ export function dmpBusinessReportFingerprint(input: {
   report: DmpCanonicalReport;
   subjectItemId: string;
   competitorItemId: string;
+  shopId?: string;
+  sourceScope?: string;
 }) {
   const renderData = input.report.render_data
     ? Object.fromEntries(Object.entries(input.report.render_data).filter(([key]) => key !== "generated_at"))
     : undefined;
+  const sourceScope = input.sourceScope?.trim()
+    || (input.shopId?.trim() ? `internal-shop:${input.shopId.trim()}` : "");
   const comparable = {
+    ...(sourceScope ? { sourceScope } : {}),
     subjectItemId: input.subjectItemId,
     competitorItemId: input.competitorItemId,
     report: {
       schema_version: String(input.report.schema_version ?? ""),
+      report_type: dmpReportKind(input.report),
+      market_scope: input.report.market_scope,
       item_id: String(input.report.item_id ?? ""),
       period: String(input.report.period ?? ""),
       render_data: renderData,
@@ -70,6 +77,24 @@ export function dmpBusinessReportFingerprint(input: {
 export interface DmpReportAccess {
   userId: string;
   tenantId: string;
+}
+
+export class DmpReportSourceShopError extends Error {
+  readonly code = "DMP_REPORT_SOURCE_SHOP_INVALID";
+
+  constructor(message: string, readonly status: 400 | 404) {
+    super(message);
+    this.name = "DmpReportSourceShopError";
+  }
+}
+
+export interface DmpReportSourceShopInput {
+  /** 官网 Shop.id；扩展从达摩盘页面读取的纯数字来源 ID 不属于此字段。 */
+  shopId?: string;
+  /** 仅用于当前租户既有店铺的规范化唯一匹配，绝不据此创建店铺。 */
+  shopName?: string;
+  /** 达摩盘外部来源标识，只作来源提示，绝不写入 DmpBusinessReport.shopId。 */
+  sourceShopId?: string;
 }
 
 async function parseExtensionSession(token: string) {
@@ -115,13 +140,18 @@ export function validateDmpCanonicalReport(
   if (report.schema_version !== "3.0") pushArchiveIssue(issues, "报告版本标记已兼容归档");
   const kind = dmpReportKind(report);
   const expectedTables = dmpExpectedTableNames(kind);
-  const itemId = validItemId(report.item_id)
-    ? String(report.item_id)
+  const marketScope = kind === "market" ? sanitizeMarketScope(report.market_scope) : null;
+  if (kind === "market" && !marketScope) return { error: "类目范围无效，请提供中文类目名称、完整路径与类目 ID" };
+  const itemIdSource = marketScope?.category_id ?? report.item_id;
+  const itemId = validItemId(itemIdSource)
+    ? String(itemIdSource)
     : validItemId(fallback.subjectItemId)
       ? String(fallback.subjectItemId)
       : "";
-  if (!itemId) return { error: kind === "competition" ? "本店 ID 无效" : "主体商品 ID 无效" };
-  if (String(report.item_id ?? "") !== itemId) pushArchiveIssue(issues, "主体 ID 已使用请求元数据补全");
+  if (!itemId) return { error: kind === "competition" ? "本店 ID 无效" : kind === "market" ? "类目 ID 无效" : "主体商品 ID 无效" };
+  if (String(report.item_id ?? "") !== itemId) {
+    pushArchiveIssue(issues, kind === "market" ? "类目 ID 已使用类目范围补全" : "主体 ID 已使用请求元数据补全");
+  }
 
   const fallbackCompetitors = parseDmpCompetitorIds(fallback.competitorItemId).filter(validItemId);
   const rawCompetitors = Array.isArray(report.competitor_ids) ? report.competitor_ids : [];
@@ -142,7 +172,10 @@ export function validateDmpCanonicalReport(
   const normalizedTables = rawTables
     .slice(0, MAX_TABLES)
     .map((candidate, index) => normalizeArchivedTable(candidate, index, issues));
-  const tables = orderArchivedTables(normalizedTables, expectedTables, issues);
+  if (kind === "market" && !normalizedTables.length) return { error: "类目大盘报告缺少业务数据" };
+  const tables = kind === "market"
+    ? orderMarketTables(normalizedTables, expectedTables)
+    : orderArchivedTables(normalizedTables, expectedTables, issues);
 
   const period = String(report.period ?? "近30天").slice(0, 200);
   const renderData = kind === "growth" ? sanitizeDmpReportRenderData(report.render_data, {
@@ -155,9 +188,14 @@ export function validateDmpCanonicalReport(
   const normalizedReport: DmpCanonicalReport = {
     schema_version: "3.0",
     ...(kind === "competition" ? { report_type: "competition" as const, competitor_ids: competitorIds } : {}),
+    ...(kind === "market" ? { report_type: "market" as const, market_scope: marketScope! } : {}),
     title: withDmpAutomationBrand(
       report.title,
-      kind === "competition" ? "达摩盘竞争态势分析报告" : "达摩盘打爆路径报告"
+      kind === "competition"
+        ? "达摩盘竞争态势分析报告"
+        : kind === "market"
+          ? "达摩盘类目大盘报告"
+          : "达摩盘打爆路径报告"
     ).slice(0, 200),
     item_id: itemId,
     period,
@@ -176,6 +214,34 @@ export function validateDmpCanonicalReport(
     report: normalizedReport,
     ...(issues.length ? { issues } : {})
   };
+}
+
+function sanitizeMarketScope(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as { category_id?: unknown; category_name?: unknown; category_path?: unknown };
+  const categoryId = String(source.category_id ?? "").trim();
+  if (!validItemId(categoryId)) return null;
+  const rawPath = Array.isArray(source.category_path)
+    ? source.category_path
+    : String(source.category_path ?? "").split(/[>/｜|]+/);
+  const categoryPath = rawPath
+    .map((segment) => cleanMarketLabel(segment))
+    .filter(Boolean)
+    .slice(0, 12);
+  const categoryName = cleanMarketLabel(source.category_name) || categoryPath.at(-1) || "";
+  if (!categoryName) return null;
+  if (!categoryPath.length) categoryPath.push(categoryName);
+  else if (categoryPath.at(-1) !== categoryName) categoryPath.push(categoryName);
+  return { category_id: categoryId, category_name: categoryName, category_path: categoryPath };
+}
+
+function cleanMarketLabel(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
 }
 
 function containsSensitiveArchiveAuthData(value: unknown) {
@@ -285,6 +351,17 @@ function orderArchivedTables(
   return ordered;
 }
 
+function orderMarketTables(tables: DmpReportTableSnapshot[], preferredNames: readonly string[]) {
+  return [...tables].sort((left, right) => {
+    const leftIndex = preferredNames.indexOf(left.name);
+    const rightIndex = preferredNames.indexOf(right.name);
+    if (leftIndex < 0 && rightIndex < 0) return 0;
+    if (leftIndex < 0) return 1;
+    if (rightIndex < 0) return -1;
+    return leftIndex - rightIndex;
+  });
+}
+
 function archiveCellText(value: unknown, tableName: string, issues: string[]) {
   let text = "";
   if (typeof value === "string") text = value;
@@ -349,33 +426,64 @@ export async function saveDmpBusinessReport(input: {
   competitorItemId: string;
   quality: DmpReportQuality;
   sourceVersion: string;
+  sourceShop?: DmpReportSourceShopInput;
 }): Promise<DmpBusinessReportRecord> {
-  const fingerprint = dmpBusinessReportFingerprint({
-    report: input.report,
-    subjectItemId: input.subjectItemId,
-    competitorItemId: input.competitorItemId
-  });
+  const sourceShop = normalizeDmpReportSourceShop(input.sourceShop);
   const row = await prisma.$transaction(async (tx) => {
-    const previous = await tx.dmpBusinessReport.findFirst({
-      where: {
-        tenantId: input.access.tenantId,
-        userId: input.access.userId,
-        subjectItemId: input.subjectItemId,
-        competitorItemId: input.competitorItemId
-      },
-      orderBy: { createdAt: "desc" },
-      select: { shop: { select: { id: true, name: true } } }
-    });
-    let shop = previous?.shop ?? null;
-    if (!shop) {
-      const tenantShops = await tx.shop.findMany({
+    let tenantShops: Array<{ id: string; name: string }> | null = null;
+    let shop = sourceShop?.internalShopId
+      ? await tx.shop.findFirst({
+          where: { id: sourceShop.internalShopId, tenantId: input.access.tenantId },
+          select: { id: true, name: true }
+        })
+      : null;
+    if (sourceShop?.internalShopId && !shop) {
+      throw new DmpReportSourceShopError("店铺不存在或不属于当前账号", 404);
+    }
+    if (!shop && sourceShop?.normalizedShopName) {
+      tenantShops = await tx.shop.findMany({
         where: { tenantId: input.access.tenantId },
         orderBy: { createdAt: "asc" },
-        take: 2,
+        take: 201,
         select: { id: true, name: true }
       });
-      if (tenantShops.length === 1) shop = tenantShops[0];
+      // 只在已完整读取租户店铺且规范化名称唯一命中时归类；歧义/未命中均继续走安全回退。
+      if (tenantShops.length < 201) {
+        const matches = tenantShops.filter((candidate) => normalizedDmpShopName(candidate.name) === sourceShop.normalizedShopName);
+        if (matches.length === 1) shop = matches[0];
+      }
     }
+    if (!shop) {
+      const previous = await tx.dmpBusinessReport.findFirst({
+        where: {
+          tenantId: input.access.tenantId,
+          userId: input.access.userId,
+          subjectItemId: input.subjectItemId,
+          competitorItemId: input.competitorItemId
+        },
+        orderBy: { createdAt: "desc" },
+        select: { shop: { select: { id: true, name: true } } }
+      });
+      shop = previous?.shop ?? null;
+    }
+    if (!shop) {
+      const fallbackShops = tenantShops ?? await tx.shop.findMany({
+          where: { tenantId: input.access.tenantId },
+          orderBy: { createdAt: "asc" },
+          take: 2,
+          select: { id: true, name: true }
+        });
+      if (fallbackShops.length === 1) shop = fallbackShops[0];
+    }
+    const fingerprint = dmpBusinessReportFingerprint({
+      report: input.report,
+      subjectItemId: input.subjectItemId,
+      competitorItemId: input.competitorItemId,
+      // 匹配成功时按内部店铺隔离；未匹配时只让外部来源进入哈希，绝不写入关系字段。
+      ...(sourceShop ? {
+        sourceScope: shop ? `internal-shop:${shop.id}` : sourceShop.fingerprintScope
+      } : {})
+    });
     return tx.dmpBusinessReport.upsert({
       where: {
         tenantId_userId_fingerprint: {
@@ -424,6 +532,42 @@ export async function saveDmpBusinessReport(input: {
     createdAt: row.createdAt.toISOString(),
     report: storedReport
   };
+}
+
+function normalizeDmpReportSourceShop(value: DmpReportSourceShopInput | undefined) {
+  if (!value) return null;
+  const rawShopId = String(value.shopId ?? "").trim();
+  const rawSourceShopId = String(value.sourceShopId ?? "").trim();
+  if (/^\d+$/.test(rawShopId) && !/^\d{5,32}$/.test(rawShopId)) {
+    throw new DmpReportSourceShopError("来源店铺编号无效", 400);
+  }
+  const numericShopId = /^\d{5,32}$/.test(rawShopId) ? rawShopId : "";
+  const internalShopId = numericShopId ? "" : rawShopId;
+  const sourceShopId = rawSourceShopId || numericShopId;
+  const normalizedShopName = normalizedDmpShopName(value.shopName);
+  if (internalShopId.length > 100) throw new DmpReportSourceShopError("店铺编号无效", 400);
+  if (sourceShopId && !/^\d{5,32}$/.test(sourceShopId)) {
+    throw new DmpReportSourceShopError("来源店铺编号无效", 400);
+  }
+  if (!internalShopId && !sourceShopId && !normalizedShopName) {
+    throw new DmpReportSourceShopError("来源店铺信息无效", 400);
+  }
+  const fingerprintScope = sourceShopId
+    ? `dmp-source-shop:${sourceShopId}`
+    : internalShopId
+      ? `internal-shop:${internalShopId}`
+      : `shop-name:${normalizedShopName}`;
+  return { internalShopId, sourceShopId, normalizedShopName, fingerprintScope };
+}
+
+function normalizedDmpShopName(value: unknown) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLocaleLowerCase("zh-CN")
+    .slice(0, 100);
 }
 
 export async function getDmpBusinessReport(access: DmpReportAccess, id: string) {

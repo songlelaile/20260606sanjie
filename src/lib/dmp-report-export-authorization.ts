@@ -121,6 +121,7 @@ function storedReportType(value: unknown): DmpReportKind | null {
   const report = value as { schema_version?: unknown; report_type?: unknown };
   if (report.schema_version !== "3.0") return null;
   if (report.report_type === "competition") return "competition";
+  if (report.report_type === "market") return "market";
   if (report.report_type === undefined || report.report_type === "growth") return "growth";
   return null;
 }

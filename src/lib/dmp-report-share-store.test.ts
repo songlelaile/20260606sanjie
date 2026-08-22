@@ -165,6 +165,126 @@ describe("DMP public report bearer-token storage boundary", () => {
     });
   });
 
+  it("merges a category-market share through its same-shop identity timeline and keeps newest overlap values", async () => {
+    const market = {
+      schema_version: "3.0" as const,
+      report_type: "market" as const,
+      title: "达摩盘类目大盘报告｜少壮AI自动化",
+      item_id: "350511",
+      period: "2026-08-20 至 2026-08-21",
+      market_scope: {
+        category_id: "350511",
+        category_name: "油烟机",
+        category_path: ["大家电", "厨房大电", "油烟机"]
+      },
+      tables: [{
+        name: "滚动7日明细",
+        columns: ["日期", "成交金额", "新客人数"],
+        rows: [
+          { cells: ["2026-08-20", "4000万", ""] },
+          { cells: ["2026-08-21", "0", "1600"] }
+        ]
+      }]
+    };
+    const olderMarket = {
+      ...market,
+      period: "2026-08-19 至 2026-08-20",
+      tables: [{
+        name: "滚动7日明细",
+        columns: ["日期", "成交金额", "新客人数"],
+        rows: [
+          { cells: ["2026-08-19", "3000万", "1500"] },
+          { cells: ["2026-08-20", "3500万", "1550"] }
+        ]
+      }]
+    };
+    mocks.findFirst.mockResolvedValue({
+      id: "share-market",
+      createdAt: new Date("2026-08-22T06:00:00.000Z"),
+      report: {
+        id: "market-report",
+        tenantId: "tenant-a",
+        userId: "user-a",
+        shopId: null,
+        shop: null,
+        subjectItemId: "350511",
+        competitorItemId: "",
+        period: market.period,
+        quality: "complete",
+        createdAt: new Date("2026-08-22T05:00:00.000Z"),
+        report: market
+      }
+    });
+    mocks.reportFindMany.mockResolvedValue([{
+      id: "market-report-older",
+      shopId: null,
+      shop: null,
+      subjectItemId: "350511",
+      competitorItemId: "",
+      period: olderMarket.period,
+      quality: "complete",
+      createdAt: new Date("2026-08-20T05:00:00.000Z"),
+      report: olderMarket
+    }]);
+    mocks.validateDmpCanonicalReport.mockImplementation((candidate: unknown) => ({ report: candidate }));
+
+    const snapshot = await getPublicDmpSharedReport(TOKEN);
+    expect(snapshot).toMatchObject({
+      report: {
+        reportType: "market",
+        subjectItemId: "350511",
+        competitorItemId: "",
+        period: "2026-08-19 至 2026-08-21",
+        report: { report_type: "market", market_scope: market.market_scope }
+      }
+    });
+    const daily = snapshot?.report.report.tables.find((table) => table.name === "滚动7日明细");
+    expect(daily?.rows.map((row) => row.cells)).toEqual([
+      ["2026-08-19", "3000万", "1500"],
+      ["2026-08-20", "4000万", ""],
+      ["2026-08-21", "0", "1600"]
+    ]);
+    expect(mocks.reportFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        tenantId: "tenant-a",
+        userId: "user-a",
+        shopId: null,
+        createdAt: { lte: new Date("2026-08-22T06:00:00.000Z") }
+      })
+    }));
+  });
+
+  it("keeps a competition share as a single immutable report", async () => {
+    const competition = {
+      ...CANONICAL_REPORT,
+      report_type: "competition" as const,
+      competitor_ids: ["593063365093"]
+    };
+    mocks.findFirst.mockResolvedValue({
+      id: "share-competition",
+      createdAt: new Date("2026-08-22T06:00:00.000Z"),
+      report: {
+        id: "competition-report",
+        tenantId: "tenant-a",
+        userId: "user-a",
+        shopId: "shop-a",
+        shop: { id: "shop-a", name: "西西礼" },
+        subjectItemId: "593063365092",
+        competitorItemId: "593063365093",
+        period: "近30天",
+        quality: "complete",
+        createdAt: new Date("2026-08-22T05:00:00.000Z"),
+        report: competition
+      }
+    });
+    mocks.validateDmpCanonicalReport.mockReturnValue({ report: competition });
+
+    await expect(getPublicDmpSharedReport(TOKEN)).resolves.toMatchObject({
+      report: { id: "competition-report", reportType: "competition" }
+    });
+    expect(mocks.reportFindMany).not.toHaveBeenCalled();
+  });
+
   it("keeps legacy public and grouped reports readable by passing database identity as fallback", async () => {
     const legacyBase = { ...CANONICAL_REPORT } as Partial<typeof CANONICAL_REPORT>;
     delete legacyBase.item_id;

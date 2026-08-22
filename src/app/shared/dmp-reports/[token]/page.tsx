@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
+import { DmpReportViewer } from "@/components/tools/DmpReportViewer";
 import { DmpSharedReportClient } from "@/components/tools/DmpSharedReportClient";
 import { getPublicDmpSharedReport } from "@/lib/dmp-report-share";
 
@@ -24,7 +24,7 @@ export default async function SharedDmpReportPage({
   return (
     <div className="dmp-shared-page" data-track-section="report">
       <DmpSharedReportClient token={token} showCopyButton={false} />
-      <DmpGrowthReportViewer record={record} variant="shared" />
+      <DmpReportViewer record={record} variant="shared" />
     </div>
   );
 }

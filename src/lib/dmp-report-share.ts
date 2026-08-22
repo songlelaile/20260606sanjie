@@ -9,6 +9,7 @@ import type {
   DmpReportAnalyticsDays,
   DmpReportManagementAnalytics
 } from "@/lib/dmp-report-types";
+import { dmpReportKind } from "@/lib/dmp-report-types";
 
 const SHARE_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 const MAX_ANALYTICS_EVENTS = 100_000;
@@ -84,7 +85,7 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
   if (!checked.report) return null;
   const baseRecord: DmpBusinessReportRecord = {
     id: row.report.id,
-    reportType: checked.report.report_type === "competition" ? "competition" : "growth",
+    reportType: dmpReportKind(checked.report),
     ...(row.report.shop ? { shopId: row.report.shop.id, shopName: row.report.shop.name } : {}),
     subjectItemId: row.report.subjectItemId,
     competitorItemId: row.report.competitorItemId,
@@ -93,7 +94,7 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
     createdAt: row.report.createdAt.toISOString(),
     report: checked.report
   };
-  const report = baseRecord.reportType === "growth"
+  const report = baseRecord.reportType === "growth" || baseRecord.reportType === "market"
     ? await sharedGroupReport(baseRecord, row.report.tenantId, row.report.userId, row.createdAt)
     : baseRecord;
   return {
@@ -138,7 +139,7 @@ async function sharedGroupReport(
     if (!checked.report) return [];
     return [{
       id: candidate.id,
-      reportType: checked.report.report_type === "competition" ? "competition" as const : "growth" as const,
+      reportType: dmpReportKind(checked.report),
       ...(candidate.shop ? { shopId: candidate.shop.id, shopName: candidate.shop.name } : {}),
       subjectItemId: candidate.subjectItemId,
       competitorItemId: candidate.competitorItemId,

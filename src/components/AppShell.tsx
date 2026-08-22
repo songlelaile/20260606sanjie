@@ -8,14 +8,16 @@ import {
   DatabaseZap,
   LineChart,
   LogOut,
+  Menu,
   Network,
   Puzzle,
   Settings2,
-  Target
+  Target,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "@/lib/auth";
 import type { ShopSummary } from "@/lib/types/domain";
 import { ShopSwitcher } from "@/components/ShopSwitcher";
@@ -55,6 +57,34 @@ export function AppShell({
   const pathname = usePathname();
   const navItems = role === "admin" ? ADMIN_NAV : TENANT_NAV;
   const home = "/dashboards/operating-network";
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const desktopQuery = window.matchMedia("(min-width: 1025px)");
+    const closeOnDesktop = (event: MediaQueryListEvent) => {
+      if (event.matches) setSidebarOpen(false);
+    };
+    desktopQuery.addEventListener("change", closeOnDesktop);
+    return () => desktopQuery.removeEventListener("change", closeOnDesktop);
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSidebarOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [sidebarOpen]);
 
   async function logout() {
     try {
@@ -67,8 +97,29 @@ export function AppShell({
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <Link href={home} prefetch={false} className="brand" aria-label="三阶引擎">
+      <button
+        type="button"
+        className={clsx("sidebar-backdrop", sidebarOpen && "is-visible")}
+        aria-label="关闭主导航"
+        tabIndex={sidebarOpen ? 0 : -1}
+        onClick={() => setSidebarOpen(false)}
+      />
+      <aside id="primary-sidebar" className={clsx("sidebar", sidebarOpen && "is-open")}>
+        <button
+          type="button"
+          className="sidebar-close-button"
+          aria-label="关闭主导航"
+          onClick={() => setSidebarOpen(false)}
+        >
+          <X size={18} />
+        </button>
+        <Link
+          href={home}
+          prefetch={false}
+          className="brand"
+          aria-label="三阶引擎"
+          onClick={() => setSidebarOpen(false)}
+        >
           <span className="brand-mark">
             <BarChart3 size={23} />
           </span>
@@ -88,6 +139,7 @@ export function AppShell({
                 href={item.href}
                 prefetch={false}
                 className={clsx("nav-item", active && "active")}
+                onClick={() => setSidebarOpen(false)}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
@@ -106,7 +158,23 @@ export function AppShell({
           </button>
         </div>
       </aside>
-      <main className="main">{children}</main>
+      <main className="main">
+        <div className="mobile-shell-bar">
+          <button
+            type="button"
+            className="sidebar-open-button"
+            aria-label="打开主导航"
+            aria-controls="primary-sidebar"
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen(true)}
+          >
+            <Menu size={19} />
+            菜单
+          </button>
+          <span>三阶引擎</span>
+        </div>
+        {children}
+      </main>
     </div>
   );
 }

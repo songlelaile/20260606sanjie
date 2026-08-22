@@ -63,10 +63,10 @@ describe("DMP report-center workspace layout", () => {
 
   it("keeps the unified latest viewer below the compact library", () => {
     expect(workspaceSource).toContain(
-      'from "@/components/tools/DmpGrowthReportViewer"'
+      'from "@/components/tools/DmpReportViewer"'
     );
     expect(workspaceSource).toMatch(
-      /selectedViewRecord\s*\?\s*<DmpGrowthReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s
+      /selectedViewRecord\s*\?\s*<DmpReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s
     );
   });
 
@@ -104,6 +104,15 @@ describe("DMP report-center workspace layout", () => {
     expect(workspaceSource).toContain("styles.groupAssignment");
     expect(workspaceCss).toMatch(/\.shopManager\s*\{[^}]*grid-template-columns/s);
     expect(workspaceCss).toMatch(/\.shopSectionHeader\s*\{[^}]*display\s*:\s*flex/s);
+  });
+
+  it("shows each identity group's merged business-date coverage without duplicating the merge path", () => {
+    expect(workspaceSource).toContain("function mergedGroupDateRange");
+    expect(workspaceSource).toContain("mergeDmpReportGroupDaily(records)");
+    expect(workspaceSource).toContain("mergedGroupDateRange(group.records)");
+    expect(workspaceSource).toContain("styles.groupCoverage");
+    expect(workspaceCss).toMatch(/\.groupHeader \.groupCoverage\s*\{[^}]*font-variant-numeric\s*:\s*tabular-nums/s);
+    expect(workspaceSource).toMatch(/selectedViewRecord[\s\S]*mergeDmpReportGroupDaily\(group\.records, activeRecord\?\.id\)/);
   });
 
   it("has explicit responsive rules for the library, toolbar and report grid", () => {

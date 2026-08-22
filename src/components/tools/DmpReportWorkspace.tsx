@@ -22,7 +22,7 @@ import {
   mergeDmpReportGroupDaily
 } from "@/lib/dmp-report-library";
 import type { DmpBusinessReportRecord, DmpReportShop } from "@/lib/dmp-report-types";
-import { DmpGrowthReportViewer } from "@/components/tools/DmpGrowthReportViewer";
+import { DmpReportViewer } from "@/components/tools/DmpReportViewer";
 import styles from "./DmpReportWorkspace.module.css";
 
 function createdAtLabel(value: string) {
@@ -43,14 +43,57 @@ function isCompetitionReport(record: DmpBusinessReportRecord | null) {
   return record?.reportType === "competition" || record?.report.report_type === "competition";
 }
 
+function isMarketReport(record: DmpBusinessReportRecord | null) {
+  return record?.reportType === "market" || record?.report.report_type === "market";
+}
+
 function reportTypeLabel(record: DmpBusinessReportRecord) {
-  return isCompetitionReport(record) ? "竞争态势" : "打爆路径";
+  return isMarketReport(record) ? "类目大盘" : isCompetitionReport(record) ? "竞争态势" : "打爆路径";
 }
 
 function objectLabels(record: DmpBusinessReportRecord) {
+  if (isMarketReport(record)) return { subject: "类目", competitor: "" };
   return isCompetitionReport(record)
     ? { subject: "本店", competitor: "竞店" }
     : { subject: "主体商品", competitor: "成功品" };
+}
+
+function marketScopeLabel(record: DmpBusinessReportRecord) {
+  const scope = record.report.market_scope;
+  return scope?.category_path.join(" / ") || scope?.category_name || "类目大盘";
+}
+
+function primaryReportLabel(record: DmpBusinessReportRecord) {
+  return isMarketReport(record)
+    ? `${marketScopeLabel(record)}（${dmpReportIdentity(record).subjectItemId}）`
+    : `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`;
+}
+
+function mergedGroupDateRange(records: DmpBusinessReportRecord[]) {
+  const merged = mergeDmpReportGroupDaily(records);
+  const dates = new Set<string>();
+  if (merged) {
+    for (const table of merged.report.tables) {
+      const dateIndex = table.columns.findIndex((column) => /^(?:日期|请求截止日|截止日)$/.test(String(column).trim()));
+      if (dateIndex < 0) continue;
+      for (const row of table.rows) {
+        const date = String(row.cells[dateIndex] ?? "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.add(date);
+      }
+    }
+  }
+  if (!dates.size) {
+    for (const record of records) {
+      for (const value of [record.period, record.report.period]) {
+        for (const date of String(value ?? "").match(/\d{4}-\d{2}-\d{2}/g) ?? []) dates.add(date);
+      }
+    }
+  }
+  const ordered = [...dates].sort();
+  if (!ordered.length) return "";
+  const start = ordered[0];
+  const end = ordered.at(-1) ?? start;
+  return start === end ? start : `${start} — ${end}`;
 }
 
 export function DmpReportWorkspace({
@@ -93,6 +136,7 @@ export function DmpReportWorkspace({
         reportTypeLabel(record),
         identity.subjectItemId,
         identity.competitorItemId,
+        marketScopeLabel(record),
         record.shopName ?? "",
         record.period,
         createdAtLabel(record.createdAt),
@@ -260,7 +304,7 @@ export function DmpReportWorkspace({
         <div className={styles.focusToolbar}>
           <div className={styles.focusIdentity}>
             <span>当前报告</span>
-            <strong>{selectedRecord ? `${objectLabels(selectedRecord).subject} ${dmpReportIdentity(selectedRecord).subjectItemId}` : "暂无报告"}</strong>
+            <strong>{selectedRecord ? primaryReportLabel(selectedRecord) : "暂无报告"}</strong>
           </div>
           <div className={styles.toolbar}>
             <button type="button" onClick={() => void refreshReports()} disabled={busy}>
@@ -292,7 +336,7 @@ export function DmpReportWorkspace({
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索商品 ID、日期或类型"
+                  placeholder="搜索商品/类目 ID、名称、日期或类型"
                 />
               </label>
               <button type="button" onClick={() => void refreshReports()} disabled={busy}>
@@ -347,6 +391,7 @@ export function DmpReportWorkspace({
                   <div className={styles.shopSectionGroups}>
                     {shopGroup.groups.map((group) => {
                       const groupFallback = group.subjectThumbnail.title.slice(0, 1) || "品";
+                      const mergedDateRange = mergedGroupDateRange(group.records);
                       const completeReportIds = dmpReportGroupIdsByShopAndIdentity(
                         reportShopGroups,
                         shopGroup.key,
@@ -360,10 +405,20 @@ export function DmpReportWorkspace({
                                 <span aria-hidden="true">{groupFallback}</span>
                                 {group.subjectThumbnail.url ? <img src={group.subjectThumbnail.url} alt={`${group.subjectThumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
                               </span>
-                              <span className={styles.typeBadge}>{group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
-                              <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
-                              <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
+                              <span className={styles.typeBadge}>{group.reportType === "market" ? "类目大盘" : group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
+                              {group.reportType === "market" ? (
+                                <>
+                                  <strong>{group.marketScope?.category_path.join(" / ") || group.marketScope?.category_name || "类目大盘"}</strong>
+                                  <small>类目 ID {group.subjectItemId}</small>
+                                </>
+                              ) : (
+                                <>
+                                  <strong>{group.reportType === "competition" ? "本店" : "主体商品"} {group.subjectItemId}</strong>
+                                  <small>{group.reportType === "competition" ? "竞店" : "成功品"} {group.competitorItemId || "—"}</small>
+                                </>
+                              )}
                             </div>
+                            {mergedDateRange ? <time className={styles.groupCoverage}>{mergedDateRange}</time> : null}
                             <label className={styles.groupAssignment}>
                               <span>归属</span>
                               <select
@@ -376,7 +431,7 @@ export function DmpReportWorkspace({
                                   void assignGroupToShop(completeReportIds, event.target.value);
                                 }}
                                 disabled={busy || !completeReportIds.length}
-                                aria-label={`设置主体 ${group.subjectItemId} 报告组的店铺归属`}
+                                aria-label={`设置${group.reportType === "market" ? "类目" : "主体"} ${group.subjectItemId} 报告组的店铺归属`}
                               >
                                 <option value="">未归类</option>
                                 {shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
@@ -399,8 +454,8 @@ export function DmpReportWorkspace({
                                       <span className={styles.cardMeta}>
                                         <time>{createdAtLabel(record.createdAt)}</time>
                                       </span>
-                                      <strong>{thumbnail.title || `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</strong>
-                                      <small>{objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
+                                      <strong>{thumbnail.title || primaryReportLabel(record)}</strong>
+                                      <small>{isMarketReport(record) ? "类目 ID" : objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
                                       <span className={styles.period}>{record.period}</span>
                                     </span>
                                   </button>
@@ -437,7 +492,7 @@ export function DmpReportWorkspace({
         </section>
       )}
 
-      {selectedViewRecord ? <DmpGrowthReportViewer record={selectedViewRecord} variant="preview" /> : null}
+      {selectedViewRecord ? <DmpReportViewer key={selectedViewRecord.id} record={selectedViewRecord} variant="preview" /> : null}
     </section>
   );
 }
