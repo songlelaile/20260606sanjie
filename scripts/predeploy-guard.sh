@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.1.6"
-DMP_ZIP_SHA256="acc6ebb11942bf39a59bd530f45295fb16932652a19e2f638ed282707eb3148c"
+DMP_VERSION="2.1.8"
+DMP_ZIP_SHA256="f5cf49fc8a9cd91b40bb45fe5c9b833110df9ef8379eb44dd75e5a3fcfd17e94"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -120,6 +120,10 @@ require_file "prisma/migrations/20260815160000_add_dmp_business_reports/migratio
 require_file "prisma/migrations/20260816203000_add_dmp_report_sharing/migration.sql"
 require_file "prisma/migrations/20260817090000_public_dmp_share_analytics/migration.sql"
 require_file "prisma/migrations/20260817160000_dmp_report_export_audit/migration.sql"
+require_file "prisma/migrations/20260822093000_add_dmp_report_shop/migration.sql"
+require_fixed "fingerprint" prisma/schema.prisma "达摩盘历史报告缺少幂等指纹字段"
+require_fixed "tenantId_userId_fingerprint" src/lib/dmp-report-store.ts "达摩盘报告保存缺少账号内幂等约束"
+require_fixed "dmpBusinessReportFingerprint" src/lib/dmp-report-store.ts "达摩盘报告保存缺少稳定指纹计算"
 
 # 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
@@ -248,9 +252,16 @@ unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '"use_dynamic_url": true' >/
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_PREPARE_OFFICIAL_FRAME' >/dev/null || fail "达摩盘插件缺少官网报告壳启动门禁"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_GET_REPORT_FOR_FRAME' >/dev/null || fail "达摩盘插件缺少隔离报告读取门禁"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'tools/dmp-report?source=dmp-extension#launch=' >/dev/null || fail "达摩盘插件未从官网地址打开本机报告"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const SANJIE_IMPORT_ENABLED = false' >/dev/null || fail "达摩盘插件未保持 Sanjie 导入禁用占位"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'scheduleStoredReportArchive("worker-wake")' >/dev/null || fail "达摩盘插件缺少后台唤醒自动补归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onInstalled?.addListener' >/dev/null || fail "达摩盘插件升级后不会自动补归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onStartup?.addListener' >/dev/null || fail "达摩盘插件启动后不会自动补归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.cookies.onChanged?.addListener' >/dev/null || fail "达摩盘插件登录恢复后不会自动补归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F '{ autoOpen: false }' >/dev/null || fail "达摩盘后台补归档仍会自动弹出报告"
+if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_IMPORT_ENABLED' >/dev/null; then
+  fail "达摩盘插件仍保留已淘汰的导入占位开关"
+fi
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'data-report-watermark' >/dev/null || fail "达摩盘本机报告缺少全篇水印"
-unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '少壮AI · shaozhuangai.com' >/dev/null || fail "达摩盘本机报告水印品牌不一致"
+unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '少壮AI自动化 · shaozhuangai.com' >/dev/null || fail "达摩盘本机报告水印品牌不一致"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'Array.from({ length: 54 }' >/dev/null || fail "达摩盘本机报告水印未覆盖全篇"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘本机报告表头不是统一绿色白字"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell tbody td{background-color:#fff}' >/dev/null || fail "达摩盘本机报告正文未隔离黑色表格样式"

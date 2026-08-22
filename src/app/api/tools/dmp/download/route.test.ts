@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import path from "node:path";
 
 const mocks = vi.hoisted(() => ({
   getServerSession: vi.fn(),
@@ -60,6 +61,13 @@ describe("GET /api/tools/dmp/download", () => {
     expect(response.headers.get("content-type")).toBe("application/zip");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''");
+    expect(response.headers.get("content-disposition")).toContain("v2.1.8");
+    expect(mocks.readFile).toHaveBeenCalledWith(path.join(
+      process.cwd(),
+      "private-assets",
+      "dmp",
+      "shaozhuang-dmp-unified-automation-v2.1.8.zip"
+    ));
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("zip-bytes");
   });
 });
