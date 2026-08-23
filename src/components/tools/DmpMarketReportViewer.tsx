@@ -4,8 +4,9 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import {
+  dmpMarketCategoryLabel,
   formatMarketMetric,
-  marketMedianMetrics,
+  marketKpiMetrics,
   parseBusinessNumber,
   projectDmpMarketReport,
   selectDmpMarketPeriod,
@@ -37,9 +38,9 @@ export function DmpMarketReportViewer({
     () => selectDmpMarketPeriod(model, mode, periodKeys[mode]),
     [mode, model, periodKeys]
   );
-  const medians = useMemo(() => marketMedianMetrics(selected.tables), [selected.tables]);
+  const kpis = useMemo(() => marketKpiMetrics(selected.tables), [selected.tables]);
   const periodLabel = selected.selected?.label || model.period;
-  const scopePath = model.scope.category_path.join(" / ") || model.scope.category_name;
+  const scopePath = dmpMarketCategoryLabel(model.scope, record.subjectItemId);
 
   return (
     <article
@@ -53,12 +54,11 @@ export function DmpMarketReportViewer({
       </div>
 
       <header className={styles.hero} data-report-hero data-track-section="hero" data-track="header">
-        <p>DAMOPAN · CATEGORY MARKET</p>
-        <h1>达摩盘类目大盘报告｜少壮AI自动化</h1>
+        <p>达摩盘 · 类目大盘</p>
+        <h1>少壮AI自动化报告</h1>
         <div className={styles.scopeLine}>
           {record.shopName ? <span data-report-shop-signature>店铺署名：{record.shopName}</span> : null}
           <strong>{scopePath}</strong>
-          <small>类目 ID {model.scope.category_id}</small>
           <div className={styles.actions}>
             {actions}
             <button type="button" data-report-print data-track="print" onClick={() => window.print()}>打印 / 保存 PDF</button>
@@ -68,9 +68,9 @@ export function DmpMarketReportViewer({
 
       <main className={styles.main}>
         <section className={styles.periodPanel} aria-label="选择自然周期">
-          <div>
-            <span>报告周期</span>
-            <strong>{periodLabel || "全部可用日期"}</strong>
+          <div className={styles.categoryIdentity}>
+            <span>类目</span>
+            <strong>{scopePath}</strong>
           </div>
           <div className={styles.periodControls}>
             <label>
@@ -90,17 +90,20 @@ export function DmpMarketReportViewer({
               </select>
             </label>
           </div>
+          <div className={styles.periodIdentity}>
+            <span>当前周期</span>
+            <strong>{periodLabel || "全部可用日期"}</strong>
+          </div>
         </section>
 
-        {medians.length ? (
+        {kpis.length ? (
           <section className={styles.summary} data-track-section="market-summary">
-            <header><h2>经营概览</h2><span>{mode === "month" ? "自然月" : "自然周"}滚动值中位数</span></header>
+            <header><h2>核心指标</h2></header>
             <div>
-              {medians.map((metric) => (
+              {kpis.map((metric) => (
                 <article key={metric.label}>
                   <span>{metric.label.replace(/区间/g, "")}</span>
                   <strong>{formatMarketMetric(metric.value, metric.percent)}</strong>
-                  <small>中位数参考</small>
                 </article>
               ))}
             </div>
@@ -129,7 +132,7 @@ export function DmpMarketReportViewer({
           </section>
         ))}
       </main>
-      <footer className={styles.footer}>{record.shopName ? `${record.shopName} · ` : ""}达摩盘类目大盘报告｜少壮AI自动化</footer>
+      <footer className={styles.footer}>{record.shopName ? `${record.shopName} · ` : ""}少壮AI自动化报告</footer>
     </article>
   );
 }

@@ -5,7 +5,7 @@ import { DmpSharedReportClient } from "@/components/tools/DmpSharedReportClient"
 import { getPublicDmpSharedReport } from "@/lib/dmp-report-share";
 
 export const metadata: Metadata = {
-  title: "达摩盘分享报告｜少壮AI自动化",
+  title: "少壮AI自动化报告",
   robots: { index: false, follow: false }
 };
 

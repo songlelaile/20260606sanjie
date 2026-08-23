@@ -13,14 +13,15 @@
 .watermark {
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: 3;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 110px 90px;
   padding: 180px 20px;
   overflow: hidden;
   pointer-events: none;
-  color: rgba(13, 113, 107, .075);
+  color: #0d716b;
+  opacity: .075;
   font-size: 18px;
   font-weight: 800;
   white-space: nowrap;
@@ -30,7 +31,7 @@
 .hero {
   position: relative;
   z-index: 1;
-  padding: 44px max(36px, calc((100% - 1660px) / 2));
+  padding: 34px max(36px, calc((100% - 1720px) / 2));
   color: #fff;
   background: linear-gradient(110deg, #074d4d, #0f8d76);
 }
@@ -44,32 +45,32 @@
 .actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .actions button { min-height: 42px; padding: 0 18px; border: 0; border-radius: 8px; color: var(--market-green-dark); background: #fff; font-weight: 800; cursor: pointer; }
 
-.main { position: relative; z-index: 1; width: min(1660px, calc(100% - 36px)); margin: 28px auto 48px; display: grid; gap: 22px; }
+.main { position: relative; z-index: 1; width: min(1720px, calc(100% - 36px)); margin: 22px auto 44px; display: grid; gap: 16px; }
 .periodPanel, .summary, .reportSection { border: 1px solid var(--market-line); border-radius: 16px; background: rgba(255,255,255,.96); box-shadow: 0 12px 30px rgba(16,64,61,.07); }
-.periodPanel { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px 22px; }
-.periodPanel > div:first-child { display: grid; gap: 4px; }
-.periodPanel span, .summary small, .summary header span { color: #607981; font-size: 13px; }
+.periodPanel { display: grid; grid-template-columns: minmax(260px, 1fr) auto minmax(220px, .7fr); align-items: end; gap: 20px; padding: 16px 20px; }
+.categoryIdentity, .periodIdentity { display: grid; gap: 4px; }
+.periodIdentity { text-align: right; }
+.periodPanel span, .summary header span { color: #607981; font-size: 13px; }
 .periodPanel strong { font-size: 20px; }
 .periodControls { display: flex; gap: 12px; flex-wrap: wrap; }
 .periodControls label { display: grid; gap: 5px; }
 .periodControls select { min-width: 150px; height: 40px; padding: 0 34px 0 12px; border: 1px solid #b9d0cd; border-radius: 8px; color: var(--market-ink); background: #fff; }
 
-.summary { padding: 22px; }
+.summary { padding: 18px; border-top: 4px solid var(--market-green); }
 .summary > header, .reportSection > header { display: flex; align-items: center; gap: 10px; }
 .summary h2, .reportSection h2 { margin: 0; font-size: 22px; }
 .summary > header span { margin-left: auto; }
-.summary > div { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-top: 16px; }
-.summary article { display: grid; gap: 6px; min-height: 110px; padding: 18px; border-radius: 12px; background: #edf7f5; }
+.summary > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 14px; }
+.summary article { display: grid; align-content: space-between; gap: 8px; min-height: 92px; padding: 15px 16px; border: 1px solid #dbeae8; border-radius: 10px; background: #edf7f5; }
 .summary article strong { text-align: right; font-size: 27px; color: var(--market-green-dark); font-variant-numeric: tabular-nums; }
-.summary article small { text-align: right; }
 
-.reportSection { padding: 22px; overflow: hidden; }
-.reportSection > header { margin-bottom: 16px; }
+.reportSection { padding: 18px; overflow: hidden; }
+.reportSection > header { margin-bottom: 12px; }
 .reportSection > header > span { display: grid; place-items: center; width: 32px; height: 28px; border-radius: 8px; color: #fff; background: var(--market-green); font-size: 12px; font-weight: 800; }
 .reportSection > header small { margin-left: auto; color: #607981; }
 .tableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 10px; }
-.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; font-size: 13px; }
-.tableShell th, .tableShell td { min-width: 112px; padding: 11px 12px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
+.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
+.tableShell th, .tableShell td { min-width: 104px; height: 40px; padding: 8px 10px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
 .tableShell thead th { position: sticky; top: 0; z-index: 2; color: #fff !important; background: var(--market-green) !important; text-align: left; font-weight: 800; white-space: nowrap; }
 .tableShell tbody tr:nth-child(even) td { background: #f5f9f8; }
 .tableShell tr > :last-child { border-right: 0; }
@@ -81,7 +82,8 @@
   .hero { padding: 30px 18px; }
   .actions { width: 100%; margin-left: 0; }
   .main { width: min(100% - 20px, 1660px); margin-top: 12px; }
-  .periodPanel { align-items: stretch; flex-direction: column; }
+  .periodPanel { grid-template-columns: 1fr; align-items: stretch; }
+  .periodIdentity { text-align: left; }
   .periodControls, .periodControls label, .periodControls select { width: 100%; }
   .summary > div { grid-template-columns: 1fr 1fr; }
   .reportSection { padding: 14px; }

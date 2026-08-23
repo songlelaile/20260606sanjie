@@ -23,6 +23,7 @@ import {
 } from "@/lib/dmp-report-library";
 import type { DmpBusinessReportRecord, DmpReportShop } from "@/lib/dmp-report-types";
 import { DmpReportViewer } from "@/components/tools/DmpReportViewer";
+import { dmpMarketCategoryLabel } from "@/components/tools/DmpMarketReportViewModel";
 import styles from "./DmpReportWorkspace.module.css";
 
 function createdAtLabel(value: string) {
@@ -59,13 +60,12 @@ function objectLabels(record: DmpBusinessReportRecord) {
 }
 
 function marketScopeLabel(record: DmpBusinessReportRecord) {
-  const scope = record.report.market_scope;
-  return scope?.category_path.join(" / ") || scope?.category_name || "类目大盘";
+  return dmpMarketCategoryLabel(record.report.market_scope, record.subjectItemId);
 }
 
 function primaryReportLabel(record: DmpBusinessReportRecord) {
   return isMarketReport(record)
-    ? `${marketScopeLabel(record)}（${dmpReportIdentity(record).subjectItemId}）`
+    ? marketScopeLabel(record)
     : `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`;
 }
 
@@ -279,7 +279,10 @@ export function DmpReportWorkspace({
   async function deleteReport(record: DmpBusinessReportRecord) {
     const labels = objectLabels(record);
     const identity = dmpReportIdentity(record);
-    if (!window.confirm(`确认删除${labels.subject} ${identity.subjectItemId} 的这份报告？`)) return;
+    const subject = isMarketReport(record)
+      ? marketScopeLabel(record)
+      : `${labels.subject} ${identity.subjectItemId}`;
+    if (!window.confirm(`确认删除${subject}的这份报告？`)) return;
     setBusy(true);
     try {
       const response = await fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`, { method: "DELETE" });
@@ -336,7 +339,7 @@ export function DmpReportWorkspace({
                   type="search"
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索商品/类目 ID、名称、日期或类型"
+                  placeholder="搜索商品、类目名称、日期或类型"
                 />
               </label>
               <button type="button" onClick={() => void refreshReports()} disabled={busy}>
@@ -408,8 +411,8 @@ export function DmpReportWorkspace({
                               <span className={styles.typeBadge}>{group.reportType === "market" ? "类目大盘" : group.reportType === "competition" ? "竞争态势" : "打爆路径"}</span>
                               {group.reportType === "market" ? (
                                 <>
-                                  <strong>{group.marketScope?.category_path.join(" / ") || group.marketScope?.category_name || "类目大盘"}</strong>
-                                  <small>类目 ID {group.subjectItemId}</small>
+                                  <strong>{dmpMarketCategoryLabel(group.marketScope, group.subjectItemId)}</strong>
+                                  <small>类目大盘</small>
                                 </>
                               ) : (
                                 <>
@@ -431,7 +434,9 @@ export function DmpReportWorkspace({
                                   void assignGroupToShop(completeReportIds, event.target.value);
                                 }}
                                 disabled={busy || !completeReportIds.length}
-                                aria-label={`设置${group.reportType === "market" ? "类目" : "主体"} ${group.subjectItemId} 报告组的店铺归属`}
+                                aria-label={group.reportType === "market"
+                                  ? `设置${dmpMarketCategoryLabel(group.marketScope, group.subjectItemId)}报告组的店铺归属`
+                                  : `设置主体 ${group.subjectItemId} 报告组的店铺归属`}
                               >
                                 <option value="">未归类</option>
                                 {shops.map((shop) => <option key={shop.id} value={shop.id}>{shop.name}</option>)}
@@ -442,7 +447,10 @@ export function DmpReportWorkspace({
                           <div className={styles.reportGrid}>
                             {group.records.map((record) => {
                               const thumbnail = dmpReportSubjectThumbnail(record);
-                              const fallback = (thumbnail.title || objectLabels(record).subject).slice(0, 1) || "品";
+                              const cardTitle = isMarketReport(record)
+                                ? marketScopeLabel(record)
+                                : thumbnail.title || primaryReportLabel(record);
+                              const fallback = (cardTitle || objectLabels(record).subject).slice(0, 1) || "品";
                               return (
                                 <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
                                   <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
@@ -454,8 +462,10 @@ export function DmpReportWorkspace({
                                       <span className={styles.cardMeta}>
                                         <time>{createdAtLabel(record.createdAt)}</time>
                                       </span>
-                                      <strong>{thumbnail.title || primaryReportLabel(record)}</strong>
-                                      <small>{isMarketReport(record) ? "类目 ID" : objectLabels(record).subject} {dmpReportIdentity(record).subjectItemId}</small>
+                                      <strong>{cardTitle}</strong>
+                                      <small>{isMarketReport(record)
+                                        ? marketScopeLabel(record)
+                                        : `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</small>
                                       <span className={styles.period}>{record.period}</span>
                                     </span>
                                   </button>
