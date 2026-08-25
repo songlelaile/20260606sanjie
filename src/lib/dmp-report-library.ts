@@ -311,8 +311,9 @@ function mergeMarketReportGroupDaily(
   }
   const dates = [...byDate.keys()].sort();
   if (!dates.length) return base;
+  const mergedName = sources.some((source) => /自然日/.test(source.table.name)) ? "自然日汇总" : "滚动7日明细";
   const mergedDaily = {
-    name: "滚动7日明细",
+    name: mergedName,
     columns,
     rows: dates.map((date) => ({ cells: columns.map((column) => byDate.get(date)?.get(column) ?? "") }))
   };
@@ -351,7 +352,7 @@ function marketDailySource(record: DmpBusinessReportRecord): MarketDailySource |
 }
 
 function marketDailyTableName(value: string) {
-  return /^(?:滚动\s*7\s*(?:日明细|天市场数据)|市场核心指标)$/.test(String(value).trim());
+  return /^(?:自然日汇总|滚动\s*7\s*(?:日明细|天市场数据)|市场核心指标)$/.test(String(value).trim());
 }
 
 function normalizedIdList(value: unknown) {

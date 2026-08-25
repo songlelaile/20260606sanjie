@@ -1,15 +1,20 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import {
+  buildDmpMarketTrackMatrix,
+  dmpMarketTrackHeatOpacity,
   dmpMarketCategoryLabel,
+  formatDmpMarketTrackScore,
   formatMarketMetric,
   marketKpiMetrics,
   parseBusinessNumber,
   projectDmpMarketReport,
   selectDmpMarketPeriod,
+  type DmpMarketTrackMatrix,
+  type DmpMarketViewerTable,
   type DmpMarketPeriodMode
 } from "@/components/tools/DmpMarketReportViewModel";
 import styles from "./DmpMarketReportViewer.module.css";
@@ -28,9 +33,14 @@ export function DmpMarketReportViewer({
   className?: string;
 }) {
   const model = useMemo(() => projectDmpMarketReport(record), [record]);
-  const defaultMode: DmpMarketPeriodMode = model.periods.month.length ? "month" : "week";
+  const defaultMode: DmpMarketPeriodMode = model.periods.month.length
+    ? "month"
+    : model.periods.week.length
+      ? "week"
+      : "day";
   const [mode, setMode] = useState<DmpMarketPeriodMode>(defaultMode);
   const [periodKeys, setPeriodKeys] = useState<Record<DmpMarketPeriodMode, string>>({
+    day: model.periods.day.at(-1)?.key ?? "",
     month: model.periods.month.at(-1)?.key ?? "",
     week: model.periods.week.at(-1)?.key ?? ""
   });
@@ -76,12 +86,13 @@ export function DmpMarketReportViewer({
             <label>
               <span>周期类型</span>
               <select value={mode} onChange={(event) => setMode(event.target.value as DmpMarketPeriodMode)}>
+                {model.periods.day.length ? <option value="day">自然日</option> : null}
                 {model.periods.week.length ? <option value="week">自然周</option> : null}
                 {model.periods.month.length ? <option value="month">自然月</option> : null}
               </select>
             </label>
             <label>
-              <span>选择周期</span>
+              <span>{mode === "day" ? "选择日期" : "选择周期"}</span>
               <select
                 value={periodKeys[mode]}
                 onChange={(event) => setPeriodKeys((current) => ({ ...current, [mode]: event.target.value }))}
@@ -91,7 +102,7 @@ export function DmpMarketReportViewer({
             </label>
           </div>
           <div className={styles.periodIdentity}>
-            <span>当前周期</span>
+            <span>{mode === "day" ? "当前日期" : "当前周期"}</span>
             <strong>{periodLabel || "全部可用日期"}</strong>
           </div>
         </section>
@@ -111,29 +122,152 @@ export function DmpMarketReportViewer({
         ) : null}
 
         {selected.tables.map((table, tableIndex) => (
-          <section className={styles.reportSection} data-report-section={table.name} data-track-section={`table:${table.name}`} key={`${table.name}-${tableIndex}`}>
-            <header><span>{String(tableIndex + 1).padStart(2, "0")}</span><h2>{table.name}</h2><small>{periodLabel}</small></header>
-            <div className={styles.tableShell} data-report-table={table.name}>
-              <table>
-                <thead><tr>{table.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
-                <tbody>
-                  {table.rows.map((row, rowIndex) => (
-                    <tr key={rowIndex}>
-                      {table.columns.map((column, columnIndex) => {
-                        const value = row[columnIndex] ?? "";
-                        const numeric = parseBusinessNumber(value, column) !== null && column !== "日期";
-                        return <td className={numeric ? styles.numeric : ""} data-numeric={numeric ? "true" : undefined} key={`${column}-${columnIndex}`}>{formatTableCell(value, column)}</td>;
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
+          <DmpMarketTableSection
+            table={table}
+            tableIndex={tableIndex}
+            periodLabel={periodLabel}
+            key={`${table.name}-${tableIndex}`}
+          />
         ))}
+
+        {!kpis.length && !selected.tables.length ? (
+          <section className={styles.emptyState} role="status" data-testid="dmp-market-empty-state">
+            <strong>暂无业务数据</strong>
+            <span>{periodLabel || "所选日期"} 没有可展示的达摩盘业务数据</span>
+          </section>
+        ) : null}
       </main>
       <footer className={styles.footer}>{record.shopName ? `${record.shopName} · ` : ""}少壮AI自动化报告</footer>
     </article>
+  );
+}
+
+function DmpMarketTableSection({
+  table,
+  tableIndex,
+  periodLabel
+}: {
+  table: DmpMarketViewerTable;
+  tableIndex: number;
+  periodLabel: string;
+}) {
+  const trackMatrix = useMemo(() => buildDmpMarketTrackMatrix(table), [table]);
+  if (trackMatrix) return <DmpMarketTrackMatrixSection matrix={trackMatrix} tableIndex={tableIndex} />;
+  return (
+    <section className={styles.reportSection} data-report-section={table.name} data-track-section={`table:${table.name}`}>
+      <header><span>{String(tableIndex + 1).padStart(2, "0")}</span><h2>{table.name}</h2><small>{periodLabel}</small></header>
+      <div className={styles.tableShell} data-report-table={table.name}>
+        <table>
+          <thead><tr>{table.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
+          <tbody>
+            {table.rows.map((row, rowIndex) => (
+              <tr key={rowIndex}>
+                {table.columns.map((column, columnIndex) => {
+                  const value = row[columnIndex] ?? "";
+                  const numeric = parseBusinessNumber(value, column) !== null && column !== "日期";
+                  return <td className={numeric ? styles.numeric : ""} data-numeric={numeric ? "true" : undefined} key={`${column}-${columnIndex}`}>{formatTableCell(value, column)}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function DmpMarketTrackMatrixSection({
+  matrix,
+  tableIndex
+}: {
+  matrix: DmpMarketTrackMatrix;
+  tableIndex: number;
+}) {
+  const [metricLabel, setMetricLabel] = useState(matrix.metrics[0]?.label ?? "");
+  const metric = matrix.metrics.find((candidate) => candidate.label === metricLabel) ?? matrix.metrics[0];
+  if (!metric) return null;
+  return (
+    <section
+      className={`${styles.reportSection} ${styles.trackSection}`}
+      data-report-section={matrix.tableName}
+      data-track-section={`table:${matrix.tableName}`}
+      data-track-matrix={matrix.tableName}
+    >
+      <header>
+        <span>{String(tableIndex + 1).padStart(2, "0")}</span>
+        <h2>细分赛道：价格带 × {matrix.propertyName}</h2>
+        <small>本期对比上一周期</small>
+      </header>
+      <div className={styles.trackToolbar}>
+        <label className={styles.trackMetricControl}>
+          <span>矩阵指标</span>
+          <select value={metric.label} onChange={(event) => setMetricLabel(event.target.value)}>
+            {matrix.metrics.map((candidate) => (
+              <option value={candidate.label} key={candidate.label}>{candidate.label}</option>
+            ))}
+          </select>
+        </label>
+        <div className={styles.trackPeriodPair} aria-label="赛道对比周期">
+          <span><b>本期</b>{matrix.currentLabel}</span>
+          <span><b>上一周期</b>{matrix.previousLabel}</span>
+        </div>
+      </div>
+      <div className={styles.trackLegend}>
+        <strong>{metric.label}</strong>
+        <span>价格带为行、属性值为列；背景深浅仅编码本期赛道分值，环比为本期减上一周期的分值差。</span>
+      </div>
+      <div className={styles.trackHeatmapShell} data-report-table={matrix.tableName} data-track-visualization="heatmap">
+        <table className={styles.trackHeatmapTable}>
+          <thead>
+            <tr>
+              <th scope="col">价格带</th>
+              {matrix.propertyValues.map((propertyValue) => <th scope="col" key={propertyValue}>{propertyValue}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {metric.rows.map((row) => (
+              <tr key={row.priceBand}>
+                <th scope="row">{row.priceBand}</th>
+                {row.cells.map((cell) => {
+                  const state = cell.current === null ? "missing" : cell.current === 0 ? "zero" : "value";
+                  const changeTone = cell.change === null
+                    ? styles.trackDeltaMissing
+                    : cell.change > 0
+                      ? styles.trackDeltaPositive
+                      : cell.change < 0
+                        ? styles.trackDeltaNegative
+                        : styles.trackDeltaZero;
+                  const heat = dmpMarketTrackHeatOpacity(cell.current, metric.scale);
+                  const style = { "--market-track-heat": String(heat) } as CSSProperties;
+                  return (
+                    <td
+                      className={[
+                        styles.trackHeatCell,
+                        state === "missing" ? styles.trackHeatMissing : "",
+                        state === "zero" ? styles.trackHeatZero : ""
+                      ].filter(Boolean).join(" ")}
+                      data-track-state={state}
+                      style={style}
+                      aria-label={`${row.priceBand}，${cell.propertyValue}：本期 ${formatDmpMarketTrackScore(cell.current)}，上一周期 ${formatDmpMarketTrackScore(cell.previous)}，环比 ${formatDmpMarketTrackScore(cell.change, true)}`}
+                      key={cell.propertyValue}
+                    >
+                      <div className={styles.trackCurrentValue}>
+                        <span>本期</span>
+                        <strong>{formatDmpMarketTrackScore(cell.current)}</strong>
+                      </div>
+                      <div className={styles.trackComparisons}>
+                        <span>上期 <b>{formatDmpMarketTrackScore(cell.previous)}</b></span>
+                        <span className={changeTone}>环比 {formatDmpMarketTrackScore(cell.change, true)}</span>
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 

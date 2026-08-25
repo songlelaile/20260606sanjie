@@ -21,6 +21,7 @@ const ALLOWED_SECTION_KEYS = new Set([
   "table:成长阶段数据",
   "table:基础指标对比",
   "table:关键词样本",
+  "table:赛道价格带洞察",
   "table:流量投放结构",
   "table:渠道指标",
   "table:人群画像"

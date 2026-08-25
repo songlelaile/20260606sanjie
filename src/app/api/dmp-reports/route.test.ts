@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   getDmpReportAccessFromToken: vi.fn(),
   listDmpBusinessReports: vi.fn(),
   saveDmpBusinessReport: vi.fn(),
+  validCategoryId: vi.fn(),
   validItemId: vi.fn(),
   validateDmpCanonicalReport: vi.fn()
 }));
@@ -21,6 +22,7 @@ vi.mock("@/lib/dmp-report-store", () => ({
   getDmpReportAccessFromToken: mocks.getDmpReportAccessFromToken,
   listDmpBusinessReports: mocks.listDmpBusinessReports,
   saveDmpBusinessReport: mocks.saveDmpBusinessReport,
+  validCategoryId: mocks.validCategoryId,
   validItemId: mocks.validItemId,
   validateDmpCanonicalReport: mocks.validateDmpCanonicalReport
 }));
@@ -94,6 +96,7 @@ describe("POST /api/dmp-reports archive contract", () => {
     mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
     mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
     vi.stubEnv("PUBLIC_APP_ORIGIN", "");
+    mocks.validCategoryId.mockImplementation((value: unknown) => /^\d{1,20}$/.test(String(value ?? "")));
     mocks.validItemId.mockImplementation((value: unknown) => /^\d{6,20}$/.test(String(value ?? "")));
     mocks.validateDmpCanonicalReport.mockReturnValue({ report: canonical });
     mocks.saveDmpBusinessReport.mockImplementation(async (input: {
@@ -229,12 +232,12 @@ describe("POST /api/dmp-reports archive contract", () => {
       schema_version: "3.0" as const,
       report_type: "market" as const,
       title: "达摩盘类目大盘报告｜少壮AI自动化",
-      item_id: "350511",
+      item_id: "16",
       period: "2026-03-01 至 2026-07-31",
       market_scope: {
-        category_id: "350511",
-        category_name: "油烟机",
-        category_path: ["大家电", "厨房大电", "油烟机"]
+        category_id: "16",
+        category_name: "女装",
+        category_path: ["服饰", "女装"]
       },
       tables: [{
         name: "滚动7天市场数据",
@@ -262,17 +265,17 @@ describe("POST /api/dmp-reports archive contract", () => {
     const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: market, subjectItemId: "350511", competitorItemId: "" })
+      body: JSON.stringify({ report: market, subjectItemId: "16", competitorItemId: "" })
     }));
 
     expect(response.status).toBe(201);
     expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      subjectItemId: "350511",
+      subjectItemId: "16",
       competitorItemId: "",
       report: expect.objectContaining({ report_type: "market", market_scope: market.market_scope })
     }));
     await expect(response.json()).resolves.toMatchObject({
-      data: { report: { reportType: "market", subjectItemId: "350511", competitorItemId: "" } }
+      data: { report: { reportType: "market", subjectItemId: "16", competitorItemId: "" } }
     });
   });
 

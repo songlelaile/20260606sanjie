@@ -137,6 +137,26 @@ describe("DMP category market report storage contract", () => {
     expect(checked.report?.tables.map((table) => table.name)).toEqual(["滚动7天市场数据"]);
   });
 
+  it("accepts the plugin category-ID contract without relaxing product item IDs", () => {
+    const shortCategory = marketReport();
+    shortCategory.item_id = "16";
+    shortCategory.market_scope.category_id = "16";
+    shortCategory.market_scope.category_name = "女装";
+    shortCategory.market_scope.category_path = ["服饰", "女装"];
+
+    const checked = validateDmpCanonicalReport(shortCategory);
+    expect(checked.error).toBeUndefined();
+    expect(checked.report).toMatchObject({
+      report_type: "market",
+      item_id: "16",
+      market_scope: { category_id: "16", category_name: "女装", category_path: ["服饰", "女装"] }
+    });
+
+    const shortProduct = growthReport();
+    shortProduct.item_id = "16";
+    expect(validateDmpCanonicalReport(shortProduct).error).toBe("主体商品 ID 无效");
+  });
+
   it("rejects a market archive without a complete category scope or business table", () => {
     const missingScope = structuredClone(marketReport()) as Record<string, unknown>;
     delete missingScope.market_scope;
@@ -236,6 +256,23 @@ describe("DMP growth render_data storage contract", () => {
         { name: "周期汇总", subtitle: "主体与目标对手周期汇总", widths: [30, 20, 24] }
       ]
     });
+  });
+
+  it("keeps the optional price-band module after products without creating it for legacy reports", () => {
+    const legacy = validateDmpCanonicalReport(growthReport()).report!;
+    expect(legacy.tables.some((table) => table.name === "赛道价格带洞察")).toBe(false);
+
+    const extended = growthReport();
+    (extended.tables as Array<{ name: string; columns: string[]; rows: Array<{ cells: string[] }> }>).push({
+      name: "赛道价格带洞察",
+      columns: ["价格带区间", "增长潜力得分(dScore)", "规则型指导"],
+      rows: [{ cells: ["0~330", "1.83", "依据：dScore 1.83；规则：同周期原值首位"] }]
+    });
+    const checked = validateDmpCanonicalReport(extended);
+    expect(checked.error).toBeUndefined();
+    expect(checked.report?.tables.map((table) => table.name).slice(0, 5)).toEqual([
+      "报告总览", "对标总表", "商品与成功品", "赛道价格带洞察", "周期汇总"
+    ]);
   });
 
   it("ignores an unclosed or incomplete subject series without rejecting legacy business tables", () => {

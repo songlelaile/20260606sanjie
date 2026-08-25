@@ -240,6 +240,19 @@ describe("DMP growth report viewer projection", () => {
     ]);
   });
 
+  it("shows a non-empty optional price-band module and treats score columns as numeric", () => {
+    const record = growthRecord();
+    record.report.tables.splice(3, 0, snapshot("赛道价格带洞察", [
+      "价格带区间", "增长潜力得分(dScore)", "蓝海指数原值(eScore)", "规则型指导"
+    ], [["0~330", "1.83", "3.20", "依据：1.83；规则：同周期首位"]]));
+    const model = projectDmpReportForViewer(record);
+    const table = model.tables.find((candidate) => candidate.name === "赛道价格带洞察");
+    expect(table?.rows).toHaveLength(1);
+    expect(isDmpViewerMetricColumn(table!, 1)).toBe(true);
+    expect(isDmpViewerMetricColumn(table!, 2)).toBe(true);
+    expect(viewModelSource).toContain('赛道价格带洞察: "price-band"');
+  });
+
   it("shows daily and channel modules only after their business values exist", () => {
     const record = growthRecord();
     addVisualTables(record);

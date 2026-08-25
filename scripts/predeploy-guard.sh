@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.2.0"
-DMP_ZIP_SHA256="94b6b011903f1e19faa315df6377d1ad7d8094c0278737ea683c0056ab3c4e92"
+DMP_VERSION="2.3.4"
+DMP_ZIP_SHA256="b2e2d613920e32155a2b4c454b81627880dd4897cb54a71cdc53b06b980cc6a6"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -64,6 +64,7 @@ for file in \
   prisma/schema.prisma \
   src/app/tools/page.tsx \
   src/app/tools/dmp-report/page.tsx \
+  src/app/api/dmp-market-reports/route.ts \
   src/app/api/dmp-reports/route.ts \
   src/app/api/dmp-report-shares/route.ts \
   src/app/api/dmp-report-exports/route.ts \
@@ -178,7 +179,10 @@ require_fixed "background: var(--market-green) !important;" src/components/tools
 require_fixed "color: #fff !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘表头不是统一白字"
 require_fixed "text-align: right !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘数值未靠右展示"
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
+require_fixed 'body?.reportType !== "market" || body?.report?.report_type !== "market"' src/app/api/dmp-market-reports/route.ts "达摩盘类目大盘独立归档接口缺少双重类型校验"
+require_fixed 'archiveDmpReport(new Request' src/app/api/dmp-market-reports/route.ts "达摩盘类目大盘归档未复用受保护存储入口"
 require_fixed 'pathname.startsWith("/api/dmp-reports")' src/middleware.ts "达摩盘报告同步接口未绕过页面中间件"
+require_fixed 'pathname === "/api/dmp-market-reports"' src/middleware.ts "达摩盘类目大盘归档接口未绕过页面中间件"
 require_fixed 'pathname.startsWith("/api/dmp-report-shares")' src/middleware.ts "达摩盘插件分享接口未绕过页面中间件"
 require_fixed 'pathname === "/api/dmp-report-exports"' src/middleware.ts "达摩盘插件导出授权接口未绕过页面中间件"
 require_fixed 'const PUBLIC_DMP_REPORT_PATH = /^\/shared\/dmp-reports\/[a-f0-9]{64}$/i;' src/middleware.ts "达摩盘公开报告页未按精确高熵令牌路径放行"
@@ -256,7 +260,7 @@ unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'OFFICIAL_REPORT_SHARE_A
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_VERIFY_REPORT_EXPORT' >/dev/null || fail "达摩盘插件缺少管理员导出能力实时校验"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F 'DMP_CDP_AUTHORIZE_REPORT_EXPORT' >/dev/null || fail "达摩盘插件缺少管理员导出二次授权"
 unzip -p "$DMP_ZIP_PATH" '*service-worker.js' | grep -F '/api/dmp-report-exports' >/dev/null || fail "达摩盘插件未连接官网导出审计接口"
-unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘一体化自动取数｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少品牌标题"
+unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -F '达摩盘商品机会大盘归档｜少壮AI自动化' >/dev/null || fail "达摩盘安装包缺少商品机会大盘品牌标题"
 if unzip -p "$DMP_ZIP_PATH" '*manifest.json' | grep -Eq '"description"|"version_name"'; then
   fail "达摩盘安装包 Manifest 仍展示执行说明"
 fi

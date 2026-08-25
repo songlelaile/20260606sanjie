@@ -10,6 +10,7 @@ import {
   listDmpBusinessReports,
   saveDmpBusinessReport,
   DMP_REPORT_ARCHIVE_MAX_BODY_BYTES,
+  validCategoryId,
   validItemId,
   validateDmpCanonicalReport
 } from "@/lib/dmp-report-store";
@@ -89,7 +90,7 @@ export async function POST(request: Request) {
   const competitorIds = identity.competitorItemIds;
   const competitorItemId = competitionReport ? competitorIds.join(",") : marketReport ? "" : competitorIds[0] ?? "";
   const invalidIdentity = marketReport
-    ? !validItemId(subjectItemId) || competitorIds.length > 0
+    ? !validCategoryId(subjectItemId) || competitorIds.length > 0
     : !validItemId(subjectItemId)
       || competitorIds.length < 1
       || competitorIds.some((id) => !validItemId(id))

@@ -561,7 +561,7 @@ function rowRole(row: DmpCell[]): "subject" | "competitor" | "" {
 }
 
 function wrapColumn(column: string) {
-  return /标题|描述|打法|细节|动作|标签|图片|详情/.test(column);
+  return /标题|描述|打法|细节|动作|标签|图片|详情|指导/.test(column);
 }
 
 function periodValue(table: DmpViewerTable, role: "subject" | "competitor", column: string) {

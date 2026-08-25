@@ -19,7 +19,8 @@ export const DMP_GROWTH_SECTION_IDS: Record<string, string> = {
   二级场景: "scene-secondary",
   成长阶段数据: "stages",
   基础指标对比: "metrics",
-  关键词样本: "keywords"
+  关键词样本: "keywords",
+  赛道价格带洞察: "price-band"
 };
 
 export const DMP_GROWTH_FREEZE_COLUMNS: Record<string, number> = {
@@ -32,7 +33,8 @@ export const DMP_GROWTH_FREEZE_COLUMNS: Record<string, number> = {
   二级场景: 4,
   成长阶段数据: 4,
   基础指标对比: 1,
-  关键词样本: 2
+  关键词样本: 2,
+  赛道价格带洞察: 3
 };
 
 export interface DmpViewerTable extends DmpReportTable {
@@ -174,7 +176,7 @@ export function isDmpViewerMetricColumn(table: Pick<DmpViewerTable, "name" | "co
   if (table.name === "渠道指标") return index === 1 || index >= 5;
   if (table.name === "人群画像") return index >= 4;
   if (/商品ID|场景编号|日期|开始|结束|对象|角色|渠道|层级|页面指标|标题|描述|类目|生命周期|阶段名称|阶段描述|广告打法|执行细节|运营动作|一级场景|二级场景|关键词|词类型|标签|图片|详情/.test(column)) return false;
-  return /当前(?:值)?$|对比期值$|变化率$|GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|人数|覆盖规模|数量|日均|变化|金额|价格/i.test(column);
+  return /当前(?:值)?$|对比期值$|变化率$|GMV|消耗|占比|展现|点击|CTR|CPC|成交|ROI|ROAS|费比|转化率|贡献率|笔单价|天数|上架|排名|百分位|访客|人数|覆盖规模|数量|日均|变化|金额|价格|得分|Score|指数原值|规模|增速|买家|商品数|集中度|供给比/i.test(column);
 }
 
 export function projectDailyGmvChartSeries(
@@ -474,7 +476,8 @@ function growthSubtitle(name: string, startDate: string, endDate: string, subjec
     二级场景: `${range}｜主体与对手二级投放场景数据`,
     成长阶段数据: `${range}｜目标对手成长阶段金额数据`,
     基础指标对比: `${range}｜主体与目标成功品数值对比`,
-    关键词样本: `${range}｜按页面展示顺序排列`
+    关键词样本: `${range}｜按页面展示顺序排列`,
+    赛道价格带洞察: `${range}｜同类目、同周期价格带原值与规则型指导`
   };
   return subtitles[name] ?? range;
 }

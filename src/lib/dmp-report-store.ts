@@ -143,9 +143,10 @@ export function validateDmpCanonicalReport(
   const marketScope = kind === "market" ? sanitizeMarketScope(report.market_scope) : null;
   if (kind === "market" && !marketScope) return { error: "类目范围无效，请提供中文类目名称、完整路径与类目 ID" };
   const itemIdSource = marketScope?.category_id ?? report.item_id;
-  const itemId = validItemId(itemIdSource)
+  const validIdentityId = kind === "market" ? validCategoryId : validItemId;
+  const itemId = validIdentityId(itemIdSource)
     ? String(itemIdSource)
-    : validItemId(fallback.subjectItemId)
+    : validIdentityId(fallback.subjectItemId)
       ? String(fallback.subjectItemId)
       : "";
   if (!itemId) return { error: kind === "competition" ? "本店 ID 无效" : kind === "market" ? "类目 ID 无效" : "主体商品 ID 无效" };
@@ -220,7 +221,7 @@ function sanitizeMarketScope(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const source = value as { category_id?: unknown; category_name?: unknown; category_path?: unknown };
   const categoryId = String(source.category_id ?? "").trim();
-  if (!validItemId(categoryId)) return null;
+  if (!validCategoryId(categoryId)) return null;
   const rawPath = Array.isArray(source.category_path)
     ? source.category_path
     : String(source.category_path ?? "").split(/[>/｜|]+/);
@@ -342,6 +343,14 @@ function orderArchivedTables(
     while (usedNames.has(name)) name = `${originalName}（归档副本${copy++}）`.slice(0, MAX_TABLE_NAME_LENGTH);
     usedNames.add(name);
     ordered.push(name === table.name ? table : { ...table, name });
+  }
+  // 价格带洞察是增长报告的可选模块：有数据才归档，并固定跟在“商品与成功品”之后；
+  // 旧报告不补空表，其他未知附加模块仍保持原有兼容逻辑。
+  const priceBandIndex = ordered.findIndex((table) => table.name === "赛道价格带洞察");
+  const productIndex = ordered.findIndex((table) => table.name === "商品与成功品");
+  if (priceBandIndex >= 0 && productIndex >= 0 && priceBandIndex !== productIndex + 1) {
+    const [priceBand] = ordered.splice(priceBandIndex, 1);
+    ordered.splice(productIndex + 1, 0, priceBand);
   }
   const originalExpectedOrder = tables.filter((table) => expectedNames.includes(table.name)).map((table) => table.name);
   const presentExpectedOrder = expectedNames.filter((name) => originalExpectedOrder.includes(name));
@@ -659,6 +668,11 @@ export async function assignDmpBusinessReportsShop(input: {
 
 export function validItemId(value: unknown) {
   return /^\d{6,20}$/.test(String(value ?? ""));
+}
+
+/** 达摩盘叶子类目 ID 合同与商品 ID 不同，插件允许 1 至 20 位纯数字。 */
+export function validCategoryId(value: unknown) {
+  return /^\d{1,20}$/.test(String(value ?? ""));
 }
 
 export function parseDmpCompetitorIds(value: unknown) {

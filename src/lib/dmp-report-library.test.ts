@@ -146,6 +146,42 @@ describe("DMP report history library", () => {
     ]);
   });
 
+  it("同中文类目组的新自然日汇总跨归档延长并保留显式0与缺失", () => {
+    const create = (id: string, createdAt: string, rows: string[][]) => {
+      const record = report({ id, createdAt, subject: "350511", competitor: "" });
+      record.reportType = "market";
+      record.report.report_type = "market";
+      record.report.item_id = "350511";
+      record.report.market_scope = {
+        category_id: "350511",
+        category_name: "油烟机",
+        category_path: ["大家电", "厨房大电", "油烟机"]
+      };
+      record.report.tables = [{
+        name: "自然日汇总",
+        columns: ["日期", "成交金额", "新客人数"],
+        rows: rows.map((cells) => ({ cells }))
+      }];
+      return record;
+    };
+    const older = create("natural-day-old", "2026-08-20T03:00:00.000Z", [
+      ["2026-08-18", "3000万", "1500"],
+      ["2026-08-19", "3200万", "1550"]
+    ]);
+    const newer = create("natural-day-new", "2026-08-22T03:00:00.000Z", [
+      ["2026-08-19", "0", ""],
+      ["2026-08-20", "3600万", "0"]
+    ]);
+
+    const merged = mergeDmpReportGroupDaily([older, newer], "natural-day-new");
+    const daily = merged?.report.tables.find((table) => table.name === "自然日汇总");
+    expect(daily?.rows.map((row) => row.cells)).toEqual([
+      ["2026-08-18", "3000万", "1500"],
+      ["2026-08-19", "0", ""],
+      ["2026-08-20", "3600万", "0"]
+    ]);
+  });
+
   it("groups the same subject and competitor set and sorts every group newest first", () => {
     const groups = groupDmpBusinessReports([
       report({ id: "old", createdAt: "2026-08-19T03:00:00.000Z", competitor: "300,200" }),

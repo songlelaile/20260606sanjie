@@ -1,17 +1,21 @@
 import type { DmpBusinessReportRecord, DmpMarketScope } from "@/lib/dmp-report-types";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const DMP_MARKET_TIME_ZONE = "Asia/Shanghai" as const;
 const ENGINEERING_FIELD = /(?:^|\b)(?:periodType|requestDate|queryRange|analysisRange|purpose|conflict)(?:$|\b)|请求截止日|任务|轮次|工程(?:信息|数据|文件)?|接口(?:名称|地址|状态|数量)?|响应(?:体|状态|数量|结果)|采集(?:时间|状态|进度|数量)|窗口(?:开始|结束|总数)?|对比(?:开始|结束|窗口)|数据(?:开始|结束)|分析(?:开始|结束)|生成时间|叶子类目\s*ID|类目\s*ID|冲突|缺失/i;
 const DATE_FIELD = /^(?:日期|截止日|请求截止日|周期)$/;
 const REFERENCE_ONLY = /^(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const REFERENCE_SUFFIX = /(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const GENERIC_CATEGORY_NAME = /^(?:类目|类目大盘|叶子类目)$/;
+const PERIOD_CONTEXT_TABLE = /^(?:类目周期环比|类目历史周期|细分赛道周期对比(?:-|$))/;
+const TRACK_COMPARISON_TABLE = /^细分赛道周期对比-(.+)$/;
+const TRACK_COMPARISON_COLUMNS = ["属性维度", "属性值", "价格带", "指标"] as const;
 
 const KNOWN_CATEGORY_PATHS: Record<string, string[]> = {
   "50015382": ["大家电", "厨房大电", "油烟机"]
 };
 
-export type DmpMarketPeriodMode = "week" | "month";
+export type DmpMarketPeriodMode = "day" | "week" | "month";
 
 export interface DmpMarketPeriodOption {
   key: string;
@@ -42,14 +46,56 @@ export interface DmpMarketKpiMetric {
   percent: boolean;
 }
 
+export interface DmpMarketTrackMatrixCell {
+  propertyValue: string;
+  current: number | null;
+  previous: number | null;
+  change: number | null;
+}
+
+export interface DmpMarketTrackMatrixRow {
+  priceBand: string;
+  cells: DmpMarketTrackMatrixCell[];
+}
+
+export interface DmpMarketTrackMatrixMetric {
+  label: string;
+  scale: number;
+  rows: DmpMarketTrackMatrixRow[];
+}
+
+export interface DmpMarketTrackMatrix {
+  tableName: string;
+  propertyName: string;
+  currentLabel: string;
+  previousLabel: string;
+  propertyValues: string[];
+  priceBands: string[];
+  metrics: DmpMarketTrackMatrixMetric[];
+}
+
 export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMarketReportViewModel {
   const scope = resolveDmpMarketScope(record.report.market_scope, record.subjectItemId);
+  const availableDays = new Set<string>();
   const tables = record.report.tables.flatMap((table) => {
     const tableName = businessTableName(table.name);
     if (!tableName || ENGINEERING_FIELD.test(tableName)) return [];
+    const trackComparison = matchesDmpMarketTrackContract(tableName, table.columns);
     const dateIndex = table.columns.findIndex((column) => DATE_FIELD.test(String(column).trim()));
     const dateColumn = dateIndex >= 0 && String(table.columns[dateIndex]).trim() === "周期" ? "周期" : "日期";
-    const periodMode = /自然周/.test(tableName) ? "week" as const : /自然月/.test(tableName) ? "month" as const : undefined;
+    const periodMode = /自然日/.test(tableName)
+      ? "day" as const
+      : /自然周/.test(tableName)
+        ? "week" as const
+        : /自然月/.test(tableName)
+          ? "month" as const
+          : undefined;
+    if (dateIndex >= 0 && (!periodMode || periodMode === "day")) {
+      for (const row of table.rows) {
+        const period = parseBusinessPeriod(row.cells[dateIndex]);
+        if (period && period.start === period.end) availableDays.add(period.start);
+      }
+    }
     const seenColumns = new Set<string>();
     const kept = table.columns
       .map((column, index) => {
@@ -61,7 +107,9 @@ export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMark
         && Boolean(column)
         && !REFERENCE_ONLY.test(rawColumn)
         && !ENGINEERING_FIELD.test(column)
-        && table.rows.some((row) => hasBusinessValue(String(row.cells[index] ?? "").trim()))
+        // 赛道上一周期或变化列允许整列缺失；仍要保留完整七列合同，才能明确展示“—”，
+        // 而不是把缺失列悄悄删掉后退回普通表格。
+        && (trackComparison || table.rows.some((row) => hasBusinessValue(String(row.cells[index] ?? "").trim())))
       ))
       .filter(({ column }) => {
         const key = column.toLocaleLowerCase("zh-CN");
@@ -80,7 +128,7 @@ export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMark
       if (ENGINEERING_FIELD.test(firstBusinessLabel) || REFERENCE_ONLY.test(firstBusinessLabel)) continue;
       const rowPeriod = dateIndex >= 0 ? parseBusinessPeriod(source[dateIndex]) : null;
       const projected = [
-        ...(dateIndex >= 0 ? [rowPeriod ? source[dateIndex] : ""] : []),
+        ...(dateIndex >= 0 ? [rowPeriod ? dateColumn === "日期" && rowPeriod.start === rowPeriod.end ? rowPeriod.start : source[dateIndex] : ""] : []),
         ...kept.map(({ column, index }) => visibleCellValue(source[index], column))
       ];
       const businessOffset = dateIndex >= 0 ? 1 : 0;
@@ -105,6 +153,7 @@ export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMark
     period: record.period,
     tables,
     periods: {
+      day: buildDayPeriods([...availableDays]),
       week: buildDirectPeriods(tables, "week") || buildWeekPeriods(dates),
       month: buildDirectPeriods(tables, "month") || buildMonthPeriods(dates)
     }
@@ -150,7 +199,11 @@ export function selectDmpMarketPeriod(
   const hasPeriodSpecificTable = model.tables.some((table) => table.periodMode === mode && table.rowPeriods.some(Boolean));
   const tables = model.tables.flatMap((table) => {
     if (table.periodMode && table.periodMode !== mode) return [];
-    if (!table.rowPeriods.some(Boolean)) return hasPeriodSpecificTable ? [] : [table];
+    // v2.3.4 的周期汇总表负责随自然日/周/月切换；赛道矩阵与周期对比则是该份报告的
+    // 独立业务上下文，没有逐行日期。不能因为存在周期汇总就把这些模块一并过滤掉。
+    if (!table.rowPeriods.some(Boolean)) {
+      return hasPeriodSpecificTable && !PERIOD_CONTEXT_TABLE.test(table.name) ? [] : [table];
+    }
     const rows: string[][] = [];
     const dates: string[] = [];
     const rowPeriods: Array<{ start: string; end: string } | null> = [];
@@ -165,7 +218,9 @@ export function selectDmpMarketPeriod(
       dates.push(rowPeriod.end);
       rowPeriods.push(rowPeriod);
     });
-    return rows.length ? [{ ...table, rows, dates, rowPeriods }] : [];
+    if (!rows.length) return [];
+    const selectedTable = pruneEmptySelectedColumns({ ...table, rows, dates, rowPeriods });
+    return selectedTable ? [selectedTable] : [];
   });
   return { selected, tables };
 }
@@ -173,6 +228,9 @@ export function selectDmpMarketPeriod(
 export function marketKpiMetrics(tables: DmpMarketViewerTable[]): DmpMarketKpiMetric[] {
   const candidates: Array<DmpMarketKpiMetric & { priority: number; sourceRank: number }> = [];
   for (const table of tables) {
+    // 周期对比和价格带属性赛道用于正文对照，不参与顶部 KPI 候选，避免把价格带区间
+    // 或 dScore 等赛道分值误识别为类目核心指标。
+    if (PERIOD_CONTEXT_TABLE.test(table.name)) continue;
     const labelIndex = table.columns.findIndex((column) => /^(?:指标|业务指标|指标名称|名称)$/.test(column));
     if (labelIndex >= 0) {
       const valueColumns = table.columns
@@ -235,6 +293,129 @@ export function marketMedianMetrics(tables: DmpMarketViewerTable[]) {
   return marketKpiMetrics(tables);
 }
 
+/**
+ * 仅识别 v2.3.4 输出的“细分赛道周期对比-*”七列纯数据合同。
+ * 其它类目表即使碰巧含“价格带”字样，也继续走普通业务表渲染。
+ */
+export function isDmpMarketTrackComparisonTable(table: DmpMarketViewerTable) {
+  return matchesDmpMarketTrackContract(table.name, table.columns);
+}
+
+export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarketTrackMatrix | null {
+  if (!isDmpMarketTrackComparisonTable(table)) return null;
+  const tableMatch = table.name.match(TRACK_COMPARISON_TABLE);
+  const records: Array<{
+    propertyName: string;
+    propertyValue: string;
+    priceBand: string;
+    metric: string;
+    current: number | null;
+    previous: number | null;
+  }> = [];
+  const propertyValues: string[] = [];
+  const priceBands: string[] = [];
+  const metricLabels: string[] = [];
+  const seenCoordinates = new Set<string>();
+  let propertyName = "";
+
+  for (const row of table.rows) {
+    if (row.length < 7) return null;
+    const rowPropertyName = String(row[0] ?? "").trim();
+    const propertyValue = String(row[1] ?? "").trim();
+    const priceBand = normalizeDmpMarketPriceBand(row[2]);
+    const metric = String(row[3] ?? "").trim();
+    if (!rowPropertyName || !propertyValue || !priceBand || !metric) return null;
+    if (propertyName && rowPropertyName !== propertyName) return null;
+    propertyName = rowPropertyName;
+    const coordinate = [metric, priceBand, propertyValue].join("\u001f");
+    if (seenCoordinates.has(coordinate)) return null;
+    seenCoordinates.add(coordinate);
+    if (!propertyValues.includes(propertyValue)) propertyValues.push(propertyValue);
+    if (!priceBands.includes(priceBand)) priceBands.push(priceBand);
+    if (!metricLabels.includes(metric)) metricLabels.push(metric);
+    records.push({
+      propertyName: rowPropertyName,
+      propertyValue,
+      priceBand,
+      metric,
+      current: parseDmpMarketTrackScore(row[4]),
+      previous: parseDmpMarketTrackScore(row[5])
+    });
+  }
+  if (!records.length || !propertyValues.length || !priceBands.length || !metricLabels.length) return null;
+
+  const metrics = [...metricLabels]
+    .sort((left, right) => trackMetricPriority(left) - trackMetricPriority(right))
+    .map((label) => {
+      const metricRecords = records.filter((record) => record.metric === label);
+      const byCoordinate = new Map(metricRecords.map((record) => [
+        [record.priceBand, record.propertyValue].join("\u001f"),
+        record
+      ]));
+      const values = metricRecords.flatMap((record) => [record.current, record.previous])
+        .filter((value): value is number => value !== null);
+      const scale = Math.max(0, ...values.map((value) => Math.abs(value)));
+      return {
+        label,
+        scale,
+        rows: priceBands.map((priceBand) => ({
+          priceBand,
+          cells: propertyValues.map((propertyValue) => {
+            const record = byCoordinate.get([priceBand, propertyValue].join("\u001f"));
+            const current = record?.current ?? null;
+            const previous = record?.previous ?? null;
+            return {
+              propertyValue,
+              current,
+              previous,
+              change: current !== null && previous !== null ? normalizedTrackScore(current - previous) : null
+            };
+          })
+        }))
+      };
+    });
+
+  return {
+    tableName: table.name,
+    propertyName: propertyName || String(tableMatch?.[1] ?? "").trim(),
+    currentLabel: table.columns[4],
+    previousLabel: table.columns[5],
+    propertyValues,
+    priceBands,
+    metrics
+  };
+}
+
+export function formatDmpMarketTrackScore(value: number | null, signed = false) {
+  if (value === null || !Number.isFinite(value)) return "—";
+  const normalized = normalizedTrackScore(value);
+  const text = new Intl.NumberFormat("zh-CN", {
+    maximumFractionDigits: 4,
+    useGrouping: false
+  }).format(normalized);
+  return signed && normalized > 0 ? `+${text}` : text;
+}
+
+export function dmpMarketTrackHeatOpacity(value: number | null, scale: number) {
+  if (value === null || value === 0 || !Number.isFinite(value) || !Number.isFinite(scale) || scale <= 0) return 0;
+  const intensity = Math.max(0, Math.min(1, Math.abs(value) / scale));
+  return Number((0.08 + intensity * 0.34).toFixed(3));
+}
+
+export function normalizeDmpMarketPriceBand(value: unknown) {
+  const text = String(value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  const alreadyAbove = text.match(/^(?:>=|≥|>)\s*(.+)$/);
+  if (alreadyAbove) return `≥${alreadyAbove[1].trim()}`;
+  const alreadyBelow = text.match(/^(?:<=|≤|<)\s*(.+)$/);
+  if (alreadyBelow) return `≤${alreadyBelow[1].trim()}`;
+  const above = text.match(/^(.+?)(?:及)?以上$/) || text.match(/^(.+?)\+$/);
+  if (above) return `≥${above[1].trim()}`;
+  const below = text.match(/^(.+?)(?:及)?以下$/);
+  if (below) return `≤${below[1].trim()}`;
+  return text.replace(/\s*(?:~|～|至)\s*/g, "~");
+}
+
 export function parseBusinessNumber(value: unknown, semantic = ""): number | null {
   const text = String(value ?? "").trim().replaceAll(",", "");
   if (!text || /^(?:[-–—]|null|undefined)$/i.test(text)) return null;
@@ -269,6 +450,12 @@ function buildMonthPeriods(dates: string[]) {
   });
 }
 
+function buildDayPeriods(dates: string[]) {
+  return [...new Set(dates.filter((date) => ISO_DATE.test(date)))]
+    .sort()
+    .map((date) => ({ key: date, label: date, start: date, end: date }));
+}
+
 function buildDirectPeriods(tables: DmpMarketViewerTable[], mode: DmpMarketPeriodMode) {
   const byKey = new Map<string, DmpMarketPeriodOption>();
   for (const table of tables) {
@@ -279,7 +466,7 @@ function buildDirectPeriods(tables: DmpMarketViewerTable[], mode: DmpMarketPerio
       const [year, month] = period.start.split("-").map(Number);
       byKey.set(key, {
         key,
-        label: mode === "month" ? `${year}年${month}月` : `${period.start} 至 ${period.end}`,
+        label: mode === "month" ? `${year}年${month}月` : mode === "day" ? period.start : `${period.start} 至 ${period.end}`,
         start: period.start,
         end: period.end
       });
@@ -307,7 +494,10 @@ function buildWeekPeriods(dates: string[]) {
 
 function parseBusinessPeriod(value: unknown) {
   const text = String(value ?? "").trim();
-  if (ISO_DATE.test(text)) return { start: text, end: text };
+  const exactDate = ISO_DATE.test(text) || /^\d{4}-\d{2}-\d{2}T/.test(text) ? shanghaiDateKey(text) : "";
+  if (exactDate) {
+    return { start: exactDate, end: exactDate };
+  }
   const range = text.match(/(\d{4}-\d{2}-\d{2})\s*(?:至|~|～|—|–)\s*(\d{4}-\d{2}-\d{2})/);
   if (range && range[1] <= range[2]) return { start: range[1], end: range[2] };
   const month = text.match(/^(\d{4})[-年](\d{1,2})(?:月)?$/);
@@ -320,11 +510,79 @@ function parseBusinessPeriod(value: unknown) {
   return { start: `${key}-01`, end: `${key}-${String(lastDay).padStart(2, "0")}` };
 }
 
+export function shanghaiDateKey(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (ISO_DATE.test(text)) {
+    const parsed = new Date(`${text}T00:00:00Z`);
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === text ? text : "";
+  }
+  const normalized = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(text)
+    ? `${text}+08:00`
+    : text;
+  const parsed = new Date(normalized);
+  if (!Number.isFinite(parsed.getTime())) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: DMP_MARKET_TIME_ZONE,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).formatToParts(parsed);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return values.year && values.month && values.day ? `${values.year}-${values.month}-${values.day}` : "";
+  } catch {
+    return new Date(parsed.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+}
+
+function pruneEmptySelectedColumns(table: DmpMarketViewerTable): DmpMarketViewerTable | null {
+  const dateIndex = table.columns.findIndex((column) => DATE_FIELD.test(column));
+  const keptIndices = table.columns
+    .map((_, index) => index)
+    .filter((index) => index === dateIndex || table.rows.some((row) => hasBusinessValue(row[index] ?? "")));
+  if (!keptIndices.some((index) => index !== dateIndex)) return null;
+  return {
+    ...table,
+    columns: keptIndices.map((index) => table.columns[index]),
+    rows: table.rows.map((row) => keptIndices.map((index) => row[index] ?? ""))
+  };
+}
+
 function businessTableName(name: string) {
   if (/滚动\s*7\s*天市场数据/.test(name)) return "市场核心指标";
   if (/滚动\s*7\s*日明细/.test(name)) return "市场趋势明细";
   if (/报告总览/.test(name)) return "类目经营概览";
   return businessColumnName(name).replace(/滚动\s*7\s*(?:天|日)/g, "").trim();
+}
+
+function matchesDmpMarketTrackContract(name: string, columns: readonly unknown[]) {
+  if (!TRACK_COMPARISON_TABLE.test(String(name).trim()) || columns.length !== 7) return false;
+  const normalized = columns.map((column) => String(column ?? "").trim());
+  return TRACK_COMPARISON_COLUMNS.every((column, index) => normalized[index] === column)
+    && Boolean(normalized[4])
+    && Boolean(normalized[5])
+    && normalized[6] === "变化值";
+}
+
+function parseDmpMarketTrackScore(value: unknown) {
+  const text = String(value ?? "").normalize("NFKC").replaceAll(",", "").trim();
+  if (!/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/.test(text)) return null;
+  const numeric = Number(text);
+  return Number.isFinite(numeric) ? normalizedTrackScore(numeric) : null;
+}
+
+function normalizedTrackScore(value: number) {
+  const rounded = Math.round(value * 10_000) / 10_000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function trackMetricPriority(label: string) {
+  if (/dScore|增长潜力/i.test(label)) return 0;
+  if (/eScore|蓝海/i.test(label)) return 1;
+  if (/aScore/i.test(label)) return 2;
+  if (/bScore/i.test(label)) return 3;
+  if (/cScore/i.test(label)) return 4;
+  return 10;
 }
 
 function businessColumnName(name: string) {

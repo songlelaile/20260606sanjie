@@ -89,4 +89,14 @@ describe("DMP shared report middleware", () => {
     expect(response.status).toBe(200);
     expect(mocks.parseSession).not.toHaveBeenCalled();
   });
+
+  it.each(["POST", "OPTIONS"])("lets the isolated market archive endpoint validate the extension session for %s", async (method) => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(new NextRequest(
+      "https://shaozhuangai.com/api/dmp-market-reports",
+      { method, headers: { "x-sanjie-session": "signed-extension-session" } }
+    ));
+    expect(response.status).toBe(200);
+    expect(mocks.parseSession).not.toHaveBeenCalled();
+  });
 });
