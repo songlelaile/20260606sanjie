@@ -356,7 +356,7 @@
 .metricGrid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   min-width: 0;
 }
 
@@ -377,9 +377,36 @@
 .metricGrid strong {
   color: #103d46;
   display: block;
-  font-size: 25px;
-  margin-top: 8px;
+  font-size: 20px;
+  margin-top: 4px;
   text-align: right;
+}
+
+.metricPair {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8px;
+}
+
+.metricPair > span {
+  border-radius: 9px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.metricPair small {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.metricScope {
+  color: var(--dmp-muted);
+  display: block;
+  font-size: 10px;
+  line-height: 1.4;
+  margin-top: 9px;
 }
 
 .periodBand {

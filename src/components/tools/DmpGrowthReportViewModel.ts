@@ -55,8 +55,9 @@ export interface DmpViewerProduct {
 
 export interface DmpViewerKpi {
   label: string;
-  value: DmpCell;
-  role: "subject" | "competitor";
+  subject: DmpCell;
+  competitor: DmpCell;
+  scope: DmpCell;
 }
 
 export interface DmpDailyGmvChartSeries {
@@ -126,7 +127,7 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
     days,
     subject,
     competitor,
-    kpis: growthKpis(byName.get("周期汇总"), days),
+    kpis: growthKpis(byName, startDate, endDate, days),
     tables: withBusinessData.map((table) => ({
       ...table,
       subtitle: table.subtitle || growthSubtitle(table.name, startDate, endDate, subjectId, competitorId, days)
@@ -427,22 +428,130 @@ function productFromTable(
   };
 }
 
-function growthKpis(period: DmpViewerTable | undefined, days: number): DmpViewerKpi[] {
-  return [
-    { label: `主体${days}日GMV`, value: periodValue(period, "subject", "总GMV"), role: "subject" },
-    { label: `对手${days}日GMV`, value: periodValue(period, "competitor", "总GMV"), role: "competitor" },
-    { label: "主体费比", value: periodValue(period, "subject", "费比"), role: "subject" },
-    { label: "对手费比", value: periodValue(period, "competitor", "费比"), role: "competitor" }
-  ].filter((metric) => !isMissing(metric.value)) as DmpViewerKpi[];
+const GROWTH_OVERVIEW_METRICS = [
+  { label: "总GMV", aliases: ["总GMV"] },
+  { label: "推广消耗", aliases: ["推广消耗", "广告消耗", "广告/推广消耗"] },
+  { label: "费比", aliases: ["费比", "推广费比", "广告费比"] },
+  { label: "ROI", aliases: ["ROI", "直接ROI"] },
+  { label: "PPC", aliases: ["PPC", "CPC", "点击成本", "平均点击成本"] },
+  { label: "全域ROAS", aliases: ["全域ROAS", "ROAS"] }
+] as const;
+
+function growthKpis(
+  tables: Map<string, DmpViewerTable>,
+  startDate: string,
+  endDate: string,
+  days: number
+): DmpViewerKpi[] {
+  const overview = tables.get("报告总览");
+  const period = tables.get("周期汇总");
+  const benchmark = tables.get("对标总表");
+  const base = tables.get("基础指标对比");
+  const defaultScope = startDate && endDate ? `${startDate} 至 ${endDate}（${days}天）` : `近${days}天`;
+
+  return GROWTH_OVERVIEW_METRICS.map((metric) => {
+    const primary = overviewMetricPair(overview, metric.aliases);
+    const fallbacks = [
+      periodMetricPair(period, metric.aliases),
+      comparisonMetricPair(benchmark, metric.aliases, {
+        metric: ["对标指标", "指标"],
+        subject: ["主体周期值", "主体值"],
+        competitor: ["对手周期值", "目标对手周期值", "竞品周期值", "对手值"]
+      }),
+      comparisonMetricPair(base, metric.aliases, {
+        metric: ["指标", "对标指标"],
+        subject: ["主体值", "主体周期值"],
+        competitor: ["对手值", "目标对手值", "竞品值", "对手周期值"]
+      })
+    ];
+    return {
+      label: metric.label,
+      subject: firstDisclosed(primary.subject, ...fallbacks.map((pair) => pair.subject)),
+      competitor: firstDisclosed(primary.competitor, ...fallbacks.map((pair) => pair.competitor)),
+      scope: firstDisclosed(primary.scope, defaultScope)
+    };
+  });
+}
+
+type MetricPair = { subject: DmpCell; competitor: DmpCell; scope: DmpCell };
+
+function overviewMetricPair(table: DmpViewerTable | undefined, aliases: readonly string[]): MetricPair {
+  const row = metricRow(table, aliases, ["项目", "指标", "对标指标"]);
+  if (!table || !row) return emptyMetricPair();
+  return {
+    subject: cellByColumn(table, row, ["主体", "主体值"], 1),
+    competitor: cellByColumn(table, row, ["对手", "目标对手", "竞品", "对手值"], 2),
+    scope: cellByColumn(table, row, ["范围", "数据范围", "周期"], 3)
+  };
+}
+
+function periodMetricPair(table: DmpViewerTable | undefined, aliases: readonly string[]): MetricPair {
+  if (!table) return emptyMetricPair();
+  const metricIndex = columnByAliases(table, aliases);
+  const roleIndex = columnByAliases(table, ["对象", "角色"]);
+  if (metricIndex < 0 || roleIndex < 0) return emptyMetricPair();
+  const subject = table.rows.find((row) => /主体/.test(String(row[roleIndex] ?? "")));
+  const competitor = table.rows.find((row) => /目标对手|对手|竞品/.test(String(row[roleIndex] ?? "")));
+  return {
+    subject: subject?.[metricIndex] ?? "",
+    competitor: competitor?.[metricIndex] ?? "",
+    scope: ""
+  };
+}
+
+function comparisonMetricPair(
+  table: DmpViewerTable | undefined,
+  aliases: readonly string[],
+  columns: { metric: readonly string[]; subject: readonly string[]; competitor: readonly string[] }
+): MetricPair {
+  const row = metricRow(table, aliases, columns.metric);
+  if (!table || !row) return emptyMetricPair();
+  return {
+    subject: cellByColumn(table, row, columns.subject),
+    competitor: cellByColumn(table, row, columns.competitor),
+    scope: ""
+  };
+}
+
+function metricRow(table: DmpViewerTable | undefined, aliases: readonly string[], metricColumns: readonly string[]) {
+  if (!table) return undefined;
+  const metricIndex = columnByAliases(table, metricColumns);
+  if (metricIndex < 0) return undefined;
+  const accepted = new Set(aliases.map(normalizeMetricLabel));
+  return table.rows.find((row) => accepted.has(normalizeMetricLabel(row[metricIndex])));
+}
+
+function cellByColumn(
+  table: DmpViewerTable,
+  row: DmpCell[],
+  aliases: readonly string[],
+  fallbackIndex = -1
+) {
+  const index = columnByAliases(table, aliases);
+  if (index >= 0) return row[index] ?? "";
+  return fallbackIndex >= 0 ? row[fallbackIndex] ?? "" : "";
+}
+
+function columnByAliases(table: Pick<DmpViewerTable, "columns">, aliases: readonly string[]) {
+  const accepted = new Set(aliases.map(normalizeMetricLabel));
+  return table.columns.findIndex((column) => accepted.has(normalizeMetricLabel(column)));
+}
+
+function normalizeMetricLabel(value: DmpCell) {
+  return String(value ?? "").trim().toLocaleLowerCase("zh-CN").replace(/[\s_\-/（）()【】\[\]：:]+/g, "");
+}
+
+function firstDisclosed(...values: DmpCell[]) {
+  return values.find((value) => !isMissing(value)) ?? "";
+}
+
+function emptyMetricPair(): MetricPair {
+  return { subject: "", competitor: "", scope: "" };
 }
 
 function periodValue(table: DmpViewerTable | undefined, role: "subject" | "competitor", column: string) {
-  const index = table?.columns.indexOf(column) ?? -1;
-  if (index < 0) return "";
-  const row = table?.rows.find((candidate) => role === "subject"
-    ? /主体/.test(String(candidate[1] ?? ""))
-    : /目标对手|对手|竞品/.test(String(candidate[1] ?? "")));
-  return row?.[index] ?? "";
+  const pair = periodMetricPair(table, [column]);
+  return pair[role];
 }
 
 function numericViewerValue(value: DmpCell): number | null {
@@ -515,7 +624,9 @@ function inclusiveDays(startDate: string, endDate: string) {
 }
 
 function isMissing(value: DmpCell) {
-  return value == null || value === "" || value === "—";
+  if (value == null) return true;
+  if (typeof value !== "string") return false;
+  return /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim());
 }
 
 function emptyProduct(id: string): DmpViewerProduct {

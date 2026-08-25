@@ -101,6 +101,11 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain("styles.dataNotice");
     expect(viewerSource).toContain("数据说明|花费覆盖|取数时段提示");
     expect(viewerCss).toContain(".dataNotice");
+    expect(viewerSource).toContain("data-overview-metric={metric.label}");
+    expect(viewerSource).toContain("data-overview-scope");
+    expect(viewerSource).toContain("formatViewerCell(metric.subject, metric.label)");
+    expect(viewerSource).toContain("formatViewerCell(metric.competitor, metric.label)");
+    expect(viewerCss).toContain(".metricScope");
     expect(viewerSource).not.toContain("dangerouslySetInnerHTML");
     expect(viewerSource).toContain('typeof value === "number" && Number.isFinite(value)');
     expect(viewerSource).not.toContain("isExactNumber(value)");
@@ -232,12 +237,45 @@ describe("DMP growth report viewer projection", () => {
     ]);
     expect(model.subject.pictureUrl).toBe("https://img.alicdn.com/subject.png");
     expect(model.competitor.pictureUrl).toBe("https://img.alicdn.com/competitor.png");
-    expect(model.kpis.map((item) => item.label)).toEqual([
-      "主体30日GMV",
-      "对手30日GMV",
-      "主体费比",
-      "对手费比"
+    expect(model.kpis).toEqual([
+      { label: "总GMV", subject: "91539.13", competitor: "227027.62", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "推广消耗", subject: "25942.88", competitor: "42242.14", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "费比", subject: "28.34%", competitor: "18.61%", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "ROI", subject: "2.31", competitor: "3.41", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "PPC", subject: "1.23", competitor: "1.56", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "全域ROAS", subject: "3.53", competitor: "5.37", scope: "2026-07-20 至 2026-08-18（30天）" }
     ]);
+  });
+
+  it("prefers scoped overview rows and falls back one side at a time without replacing explicit zero", () => {
+    const record = growthRecord();
+    const partialScope = "对手已返回29/30日（2026-07-20 至 2026-08-17）";
+    replaceTable(record, snapshot("报告总览", ["项目", "主体", "对手", "范围"], [
+      ["商品ID", "768239824008", "563697874317", ""],
+      ["总GMV", "100000", "200000", "30日严格同周期"],
+      ["推广消耗", "0", "40000", partialScope],
+      ["费比", "20%", "", partialScope],
+      ["ROI", "0", "4.25", "30日严格同周期"],
+      ["PPC", "", "1.75", "30日严格同周期"],
+      ["全域ROAS", "5", "6.1", "30日严格同周期"]
+    ]));
+
+    const metrics = new Map(projectDmpReportForViewer(record).kpis.map((metric) => [metric.label, metric]));
+    expect(metrics.get("总GMV")).toEqual({
+      label: "总GMV", subject: "100000", competitor: "200000", scope: "30日严格同周期"
+    });
+    expect(metrics.get("推广消耗")).toEqual({
+      label: "推广消耗", subject: "0", competitor: "40000", scope: partialScope
+    });
+    expect(metrics.get("费比")).toEqual({
+      label: "费比", subject: "20%", competitor: "18.61%", scope: partialScope
+    });
+    expect(metrics.get("ROI")).toEqual({
+      label: "ROI", subject: "0", competitor: "4.25", scope: "30日严格同周期"
+    });
+    expect(metrics.get("PPC")).toEqual({
+      label: "PPC", subject: "1.23", competitor: "1.75", scope: "30日严格同周期"
+    });
   });
 
   it("shows a non-empty optional price-band module and treats score columns as numeric", () => {
@@ -523,7 +561,9 @@ function growthRecord(): DmpBusinessReportRecord {
       ["商品ID", "768239824008", "563697874317", "2026-07-20 至 2026-08-18"]
     ]);
     if (name === "对标总表") return snapshot(name, ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"], [
-      ["周期汇总", "总GMV", "91539.13", "227027.62", "-59.68%"]
+      ["周期汇总", "总GMV", "91539.13", "227027.62", "-59.68%"],
+      ["投放", "ROI", "2.31", "3.41", "-32.26%"],
+      ["投放", "PPC", "1.23", "1.56", "-21.15%"]
     ]);
     if (name === "商品与成功品") return snapshot(name, [
       "角色", "商品ID", "商品标题", "类目/成功品描述", "标价/价格带", "上架天数", "生命周期", "30日GMV", "图片/详情"
@@ -538,7 +578,9 @@ function growthRecord(): DmpBusinessReportRecord {
       ["563697874317", "目标对手", "2026-07-20", "2026-08-18", "30", "950", "238.98", "227027.62", "", "42242.14", "18.61%", "5.37", "", "", "7567.59", "1408.07", "2026-08-11", "28.1%"]
     ]);
     if (name === "基础指标对比") return snapshot(name, ["指标", "主体值", "对手值", "主体相对对手"], [
-      ["总GMV", "91539.13", "227027.62", "-59.68%"]
+      ["总GMV", "91539.13", "227027.62", "-59.68%"],
+      ["ROI", "9.99", "9.99", "0%"],
+      ["PPC", "9.99", "9.99", "0%"]
     ]);
     if (name === "日GMV与费比") return snapshot(name, ["日期", "日GMV", "阶段"], [["2026-07-20", "", ""]]);
     if (name === "渠道花费") return snapshot(name, ["渠道", "主体30日消耗"], [["内容运营", ""]]);

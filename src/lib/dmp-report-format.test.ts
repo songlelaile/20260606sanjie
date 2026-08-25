@@ -14,6 +14,10 @@ describe("DMP report value formatting", () => {
     expect(formatDmpCell("4.567", "ROAS")).toBe("4.57");
     expect(formatDmpCell("3.4886~4.1863", "PPC")).toBe("3.49~4.19");
     expect(formatDmpCell("2.5%~5%", "CTR")).toBe("2.50%~5%");
+    expect(formatDmpCell("", "ROI")).toBe("—");
+    expect(formatDmpCell("0", "费比")).toBe("0.00%");
+    expect(formatDmpCell("0", "ROI")).toBe("0");
+    expect(formatDmpCell("0", "PPC")).toBe("0");
   });
 
   it("keeps identifiers and integers unchanged", () => {

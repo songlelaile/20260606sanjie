@@ -125,9 +125,19 @@ function GrowthOverview({
       {model.kpis.length ? (
         <div className={styles.metricGrid}>
           {model.kpis.map((metric) => (
-            <article className={metric.role === "subject" ? styles.subject : styles.competitor} key={metric.label}>
+            <article data-overview-metric={metric.label} key={metric.label}>
               <p>{metric.label}</p>
-              <strong>{formatViewerCell(metric.value, metric.label)}</strong>
+              <div className={styles.metricPair}>
+                <span className={styles.subject}>
+                  <small>主体</small>
+                  <strong>{formatViewerCell(metric.subject, metric.label)}</strong>
+                </span>
+                <span className={styles.competitor}>
+                  <small>目标对手</small>
+                  <strong>{formatViewerCell(metric.competitor, metric.label)}</strong>
+                </span>
+              </div>
+              {!isMissing(metric.scope) ? <small className={styles.metricScope} data-overview-scope>{String(metric.scope)}</small> : null}
             </article>
           ))}
         </div>

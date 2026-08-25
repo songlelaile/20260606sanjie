@@ -708,7 +708,7 @@
       const stage = competitor?.stage || model.stages?.find(current => (!current.start || date >= current.start) && (!current.end || date <= current.end))?.name || "";
       return [
         date, modelCell(subject?.gmv), modelCell(competitor?.dailyGmv),
-        ...labels.flatMap(label => [EMPTY, modelCell(competitor?.channelSpend?.[label])]),
+        ...labels.flatMap(label => [modelCell(subject?.channelSpend?.[label]), modelCell(competitor?.channelSpend?.[label])]),
         modelCell(subject?.totalSpend), modelCell(competitor?.totalSpend), modelCell(subject?.feeRatio), modelCell(competitor?.feeRatio), stage
       ];
     });
@@ -729,7 +729,7 @@
 
   function buildChannelTableFromModel(model) {
     const subjectRows = model.sceneRows.level1.filter(row => row.role === "主体");
-    const subjectByChannel = new Map(subjectRows.map(row => [row.primary, toNumber(row.charge)]));
+    const subjectByChannel = new Map(subjectRows.map(row => [row.primary, Number.isFinite(toNumber(row.charge)) ? toNumber(row.charge) : toNumber(row.allocated)]));
     const subjectTotal = toNumber(model.metrics.subject.spend);
     const competitorTotal = toNumber(model.daily.totalSpend);
     const rows = completenessEngine.CHANNELS.map(([apiName, label]) => {
@@ -839,7 +839,9 @@
       const competitorSelected = (model.daily?.rows || []).filter(inStage);
       const subject = stats(subjectSelected, "主体");
       const competitor = stats(competitorSelected, "对手");
-      if (!subject.disclosed && !competitor.disclosed) continue;
+      const hasPromotionDetails = [stage.description, stage.adStrategy, stage.executionDetails, stage.operations]
+        .some(value => String(value || "").trim());
+      if (!subject.disclosed && !competitor.disclosed && !hasPromotionDetails) continue;
       const dates = new Set([...subjectSelected, ...competitorSelected].map(row => row.date).filter(Boolean));
       const days = dates.size || (start && end ? Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1 : null);
       rows.push([
@@ -937,12 +939,31 @@
   }
 
   function buildOverviewFromModel(model, item, periodLabel, periodSheet, spendTiming = null) {
-    const subject = periodSheet.rows[0] || [];
-    const competitor = periodSheet.rows[1] || [];
+    const subject = model.metrics?.subject || {};
+    const competitor = model.metrics?.competitor || {};
+    const coverage = model.daily?.coverageSummary || {};
+    const coverageScope = coverage.coverageDays > 0
+      ? `对手已返回${coverage.coverageDays}/${coverage.expectedDays}日（${coverage.startDate} 至 ${coverage.endDate}）`
+      : "";
+    const strictScope = `${model.period.days}日严格同周期`;
+    const competitorSpendExact = disclosedModelValue(competitor.spend);
+    const competitorFeeExact = disclosedModelValue(competitor.feeRatio);
+    const competitorRoasExact = disclosedModelValue(competitor.roas);
+    const competitorFeeCovered = !competitorFeeExact && coverage.coverageDays > 0 && Number.isFinite(coverage.feeRatio);
+    const competitorSpend = competitorSpendExact ? modelCell(competitor.spend) : modelCell(coverage.spend);
+    const competitorFee = competitorFeeExact ? modelCell(competitor.feeRatio) : modelCell(coverage.feeRatio);
+    const competitorRoas = competitorRoasExact ? modelCell(competitor.roas) : modelCell(coverage.roas);
     const rows = [
       ["商品ID", item.id, item.competitorId, ""],
       ["商品标题", item.title, item.competitorTitle, ""],
-      [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`]
+      [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`],
+      ["总GMV", modelCell(subject.totalGmv), modelCell(competitor.totalGmv), strictScope],
+      ["付费成交额", modelCell(subject.paidGmv), modelCell(competitor.paidGmv), strictScope],
+      ["推广消耗", modelCell(subject.spend), competitorSpend, competitorSpendExact ? strictScope : coverageScope],
+      ["费比", modelCell(subject.feeRatio), competitorFee, competitorFeeExact ? strictScope : coverageScope],
+      ["ROI", modelCell(subject.roi), modelCell(competitor.roi), strictScope],
+      ["PPC", modelCell(subject.ppc), modelCell(competitor.ppc), strictScope],
+      ["全域ROAS", modelCell(subject.roas), competitorRoas, competitorRoasExact ? strictScope : coverageScope]
     ];
     if (spendTiming) rows.push(["取数时段提示", `0:00–10:00 ${spendTiming.affectedDate}消耗可能未产出`, "已按当前可见数据生成", "建议10:00–24:00重新获取"]);
     // 平台还没产出的天数必须写进报告本身，读报告的人不看面板也能知道少了哪天。
@@ -960,8 +981,19 @@
       subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}`,
       widths: [18, 46, 46, 18, 16, 16, 16, 16, 16, 16, 16, 16],
       kpis: [
-        { label: `主体${model.period.days}日GMV`, value: subject[7] }, { label: `对手${model.period.days}日GMV`, value: competitor[7] },
-        { label: "主体费比", value: subject[10] }, { label: "对手费比", value: competitor[10] }
+        { role: "subject", label: `主体${model.period.days}日GMV`, value: modelCell(subject.totalGmv), source: "'周期汇总'!H5" },
+        { role: "competitor", label: `对手${model.period.days}日GMV`, value: modelCell(competitor.totalGmv), source: "'周期汇总'!H6" },
+        { role: "subject", label: "主体费比", value: modelCell(subject.feeRatio), source: "'周期汇总'!K5" },
+        {
+          role: "competitor",
+          label: competitorFeeCovered ? `对手费比（已返回${coverage.coverageDays}/${coverage.expectedDays}日）` : "对手费比",
+          value: competitorFee,
+          source: competitorFeeExact ? "'周期汇总'!K6" : ""
+        },
+        { role: "subject", label: "主体ROI", value: modelCell(subject.roi), source: "" },
+        { role: "competitor", label: "对手ROI", value: modelCell(competitor.roi), source: "" },
+        { role: "subject", label: "主体PPC", value: modelCell(subject.ppc), source: "" },
+        { role: "competitor", label: "对手PPC", value: modelCell(competitor.ppc), source: "" }
       ]
     });
   }
@@ -994,14 +1026,18 @@
       buildStageTableFromModel(model), buildBaseMetricTableFromModel(model), buildKeywordTableFromModel(model)
     ];
     const dateRange = range || periodLabel;
+    const sceneAllocation = model.sceneRows?.allocationScope || {};
+    const sceneScope = sceneAllocation.competitor === "coverage-period"
+      ? `${dateRange}｜主体严格周期；对手分配基数仅覆盖 ${sceneAllocation.competitorStart} 至 ${sceneAllocation.competitorEnd}（${sceneAllocation.competitorDays}/${model.period.days}日）`
+      : `${dateRange}｜主体与对手同周期`;
     const subtitles = {
       "对标总表": `${dateRange}｜主体 ${item.id} vs 对手 ${item.competitorId}`,
       "商品与成功品": "本次分析目标与成功品候选",
       "周期汇总": `${period.days}日对象与周期严格对齐`,
       "日GMV与费比": `主体 ${item.id} vs 对手 ${item.competitorId}｜${model.period.startDate} ~ ${model.period.endDate}（${model.period.days}天）`,
       "渠道花费": `${dateRange}｜五渠道消耗与占比`,
-      "一级场景": `${dateRange}｜主体与对手一级投放场景数据`,
-      "二级场景": `${dateRange}｜主体与对手二级投放场景数据`,
+      "一级场景": `${sceneScope}｜一级投放场景数据`,
+      "二级场景": `${sceneScope}｜二级投放场景数据`,
       "成长阶段数据": `${dateRange}｜主体与目标对手同阶段金额数据`,
       "基础指标对比": `${dateRange}｜主体与目标成功品数值对比`,
       "关键词样本": `${dateRange}｜按关键词与词类型对齐主体和对手`
@@ -1010,10 +1046,17 @@
 
     const requiredValues = [
       ["主体成交笔数", model.metrics.subject.orders], ["主体笔单价", model.metrics.subject.aov], ["主体总GMV", model.metrics.subject.totalGmv],
-      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend], ["主体费比", model.metrics.subject.feeRatio], ["主体全域ROAS", model.metrics.subject.roas, model.metrics.subject.spend === 0],
+      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend],
+      ["主体付费成交额", model.metrics.subject.paidGmv],
+      ["主体ROI", model.metrics.subject.roi, model.metrics.subject.spend === 0],
+      ["主体PPC", model.metrics.subject.ppc, model.metrics.subject.spend === 0 && model.metrics.subject.marketingClicks === 0],
+      ["主体费比", model.metrics.subject.feeRatio], ["主体全域ROAS", model.metrics.subject.roas, model.metrics.subject.spend === 0],
       ["对手成交笔数", model.metrics.competitor.orders], ["对手笔单价", model.metrics.competitor.aov], ["对手总GMV", model.metrics.competitor.totalGmv],
       ["对手访客数", model.metrics.competitor.visitors],
       ["对手推广消耗", model.metrics.competitor.spend, model.daily.spendPartial],
+      ["对手付费成交额", model.metrics.competitor.paidGmv],
+      ["对手ROI", model.metrics.competitor.roi, model.daily.spendPartial || model.metrics.competitor.spend === 0],
+      ["对手PPC", model.metrics.competitor.ppc, model.daily.spendPartial || (model.metrics.competitor.spend === 0 && model.metrics.competitor.marketingClicks === 0)],
       ["对手费比", model.metrics.competitor.feeRatio, model.daily.spendPartial],
       ["对手全域ROAS", model.metrics.competitor.roas, model.metrics.competitor.spend === 0 || model.daily.spendPartial]
     ];
@@ -1067,7 +1110,11 @@
       if (index) lines.push([]);
       lines.push([current.name], current.columns);
       current.rows.forEach(row => lines.push(row.map((value, cellIndex) => {
-        const semantic = current.name === "对标总表" ? `${current.columns[cellIndex]} ${row[1]}` : current.name === "基础指标对比" ? `${current.columns[cellIndex]} ${row[0]}` : current.columns[cellIndex];
+        const semantic = current.name === "对标总表"
+          ? `${current.columns[cellIndex]} ${row[1]}`
+          : current.name === "基础指标对比" || current.name === "报告总览"
+            ? `${current.columns[cellIndex]} ${row[0]}`
+            : current.columns[cellIndex];
         return typeof value === "number" ? formatMetricValue(semantic, value) : value;
       })));
     });
@@ -1157,7 +1204,11 @@
         columns: (current.columns || []).map(String),
         rows: (current.rows || []).map(row => ({
           cells: row.map((value, cellIndex) => {
-            const semantic = current.name === "对标总表" ? `${current.columns[cellIndex]} ${row[1]}` : current.name === "基础指标对比" ? `${current.columns[cellIndex]} ${row[0]}` : current.columns[cellIndex];
+            const semantic = current.name === "对标总表"
+              ? `${current.columns[cellIndex]} ${row[1]}`
+              : current.name === "基础指标对比" || current.name === "报告总览"
+                ? `${current.columns[cellIndex]} ${row[0]}`
+                : current.columns[cellIndex];
             return canonicalCell(value, semantic);
           })
         }))
@@ -1195,6 +1246,38 @@
   // 原始响应里把本地 pick() 没匹配上的数值找出来。冲突时以本地为准并记录下来，
   // 这样"API 填了什么"永远是可审计的，不会悄悄改变已核对过的数字。
   const FILLABLE_TABLES = new Set(REQUIRED_TABLES);
+
+  function refreshOverviewKpis(report) {
+    const overview = (report?.tables || []).find(current => current.name === "报告总览");
+    if (!overview) return;
+    const byMetric = new Map((overview.rows || []).map(row => [String(row?.[0] || ""), row]));
+    const gmv = byMetric.get("总GMV");
+    const fee = byMetric.get("费比");
+    const roi = byMetric.get("ROI");
+    const ppc = byMetric.get("PPC");
+    if (!gmv || !fee) return;
+    const days = Number(report?.period?.days) || 30;
+    const coverageMatch = String(fee[3] || "").match(/已返回(\d+\/\d+)日/);
+    overview.kpis = [
+      { role: "subject", label: `主体${days}日GMV`, value: gmv[1], source: "'周期汇总'!H5" },
+      { role: "competitor", label: `对手${days}日GMV`, value: gmv[2], source: "'周期汇总'!H6" },
+      { role: "subject", label: "主体费比", value: fee[1], source: "'周期汇总'!K5" },
+      {
+        role: "competitor",
+        label: coverageMatch ? `对手费比（已返回${coverageMatch[1]}日）` : "对手费比",
+        value: fee[2],
+        source: coverageMatch ? "" : "'周期汇总'!K6"
+      },
+      ...(roi ? [
+        { role: "subject", label: "主体ROI", value: roi[1], source: "" },
+        { role: "competitor", label: "对手ROI", value: roi[2], source: "" }
+      ] : []),
+      ...(ppc ? [
+        { role: "subject", label: "主体PPC", value: ppc[1], source: "" },
+        { role: "competitor", label: "对手PPC", value: ppc[2], source: "" }
+      ] : [])
+    ];
+  }
 
   function applyAnalysis(report, analysis) {
     const applied = [];
@@ -1234,6 +1317,7 @@
       target.rows[rowIndex][columnIndex] = Number.isFinite(numeric) && !/^0\d/.test(text) ? numeric : text;
       applied.push({ table: tableName, row: rowIndex, column: target.columns[columnIndex], value: target.rows[rowIndex][columnIndex], source_module: sourceModule, source_field: sourceField });
     }
+    if (applied.length) refreshOverviewKpis(report);
     return { report, applied, rejected };
   }
 

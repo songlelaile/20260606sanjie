@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.3.4"
-DMP_ZIP_SHA256="b2e2d613920e32155a2b4c454b81627880dd4897cb54a71cdc53b06b980cc6a6"
+DMP_VERSION="2.3.5"
+DMP_ZIP_SHA256="b805eaeca37105f373b8b1373576fc83c25a848507242b36d9741fec78dfcf22"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -74,6 +74,8 @@ for file in \
   src/app/api/dmp-runtime/[action]/route.ts \
   src/app/api/tools/dmp/download/route.ts \
   src/components/tools/DmpBrandWatermark.tsx \
+  src/components/tools/DmpGrowthReportViewModel.ts \
+  src/components/tools/DmpGrowthReportViewer.tsx \
   src/components/tools/DmpGrowthReportViewer.module.css \
   src/components/tools/DmpMarketReportViewer.tsx \
   src/components/tools/DmpMarketReportViewer.module.css \
@@ -240,10 +242,19 @@ require_fixed "subject_daily_gmv" public/tools/dmp-report-engine/report-engine.j
 require_fixed "buildSubjectDaily" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少主体逐日 GMV 构建"
 require_fixed "METRIC_ALIAS_GROUPS" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少同义指标归一"
 require_fixed "buildAlignedMetrics" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少全量同维指标"
+require_fixed "sameComparedPeriod" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未校验目标对手周期"
+require_fixed "promotionDetailIssues" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未审计推广明细"
 require_fixed "coreRowsWithAlignedFallback" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少核心指标同维回填"
+require_fixed '["ROI", modelCell(subject.roi), modelCell(competitor.roi)' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告总览缺少主体与对手 ROI"
+require_fixed '["PPC", modelCell(subject.ppc), modelCell(competitor.ppc)' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告总览缺少主体与对手 PPC"
 require_fixed '"主体日GMV", "对手日GMV"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手分日 GMV"
 require_fixed '"主体展现", "对手展现"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手关键词同维列"
 require_fixed '"主体起始GMV", "对手起始GMV"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手成长阶段同维列"
+require_fixed "GROWTH_OVERVIEW_METRICS" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少统一指标映射"
+require_fixed '{ label: "ROI"' src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少 ROI"
+require_fixed '{ label: "PPC"' src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少 PPC"
+require_fixed "firstDisclosed" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少逐侧安全回退"
+require_fixed "data-overview-metric" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网未并排展示主体与目标对手指标"
 require_file "$DMP_ZIP_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
 unzip -p "$DMP_ZIP_PATH" '*official-share-url.mjs' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件缺少官网分享地址规范化模块"
@@ -271,6 +282,7 @@ unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_PREPA
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_GET_REPORT_FOR_FRAME' >/dev/null || fail "达摩盘插件缺少隔离报告读取门禁"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'tools/dmp-report?source=dmp-extension#launch=' >/dev/null || fail "达摩盘插件未从官网地址打开本机报告"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'scheduleStoredReportArchive("worker-wake")' >/dev/null || fail "达摩盘插件缺少后台唤醒自动补归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'runDirectSupplementPass' >/dev/null || fail "达摩盘插件缺少付费指标与推广明细自动补抓"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onInstalled?.addListener' >/dev/null || fail "达摩盘插件升级后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onStartup?.addListener' >/dev/null || fail "达摩盘插件启动后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.cookies.onChanged?.addListener' >/dev/null || fail "达摩盘插件登录恢复后不会自动补归档"
@@ -294,6 +306,7 @@ unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'costPerClick(alloc
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'returnOnSpend(directDealAmount, allocated)' >/dev/null || fail "达摩盘场景 ROI 未按成交额区间与分配花费计算"
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'const closureGroups = new Map()' >/dev/null || fail "达摩盘场景分配缺少比例与金额闭合校验"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
+unzip -p "$DMP_ZIP_PATH" '*direct-main.js' | grep -F 'indexCardTemplates' >/dev/null || fail "达摩盘安装包未采集同页全部核心指标卡"
 if unzip -p "$DMP_ZIP_PATH" '*direct-popup.html' | grep -Eq 'XLSX|下载 HTML|清除本地结果'; then
   fail "达摩盘打爆路径弹窗仍暴露已移除的下载或清理入口"
 fi

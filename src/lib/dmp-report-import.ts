@@ -306,17 +306,17 @@ export function reconcileDmpCrossTableMetrics(
   const itemIdIndex = itemTable?.columns.indexOf("商品ID") ?? -1;
   const itemGmvIndex = itemTable?.columns.indexOf("30日GMV") ?? -1;
   const itemAverageIndex = itemTable?.columns.findIndex((column) => /日均成交/.test(column)) ?? -1;
-  if (itemIdIndex < 0 || itemGmvIndex < 0) return tables;
-
-  itemTable?.rows.forEach((row) => {
-    const gmv = gmvByItemId.get(String(row[itemIdIndex] ?? ""));
-    if (gmv === undefined) return;
-    if (isBlankCell(row[itemGmvIndex])) row[itemGmvIndex] = gmv;
-    const numericGmv = numericCell(gmv);
-    if (itemAverageIndex >= 0 && isBlankCell(row[itemAverageIndex]) && numericGmv != null && days > 0) {
-      row[itemAverageIndex] = Math.round((numericGmv / days + Number.EPSILON) * 100) / 100;
-    }
-  });
+  if (itemIdIndex >= 0 && itemGmvIndex >= 0) {
+    itemTable?.rows.forEach((row) => {
+      const gmv = gmvByItemId.get(String(row[itemIdIndex] ?? ""));
+      if (gmv === undefined) return;
+      if (isBlankCell(row[itemGmvIndex])) row[itemGmvIndex] = gmv;
+      const numericGmv = numericCell(gmv);
+      if (itemAverageIndex >= 0 && isBlankCell(row[itemAverageIndex]) && numericGmv != null && days > 0) {
+        row[itemAverageIndex] = Math.round((numericGmv / days + Number.EPSILON) * 100) / 100;
+      }
+    });
+  }
 
   if (periodTable) {
     const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
