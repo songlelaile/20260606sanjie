@@ -7,15 +7,24 @@ const DATE_FIELD = /^(?:日期|截止日|请求截止日|周期)$/;
 const REFERENCE_ONLY = /^(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const REFERENCE_SUFFIX = /(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const GENERIC_CATEGORY_NAME = /^(?:类目|类目大盘|叶子类目)$/;
-const PERIOD_CONTEXT_TABLE = /^(?:类目周期环比|类目历史周期|细分赛道周期对比(?:-|$))/;
+const PERIOD_CONTEXT_TABLE = /^(?:类目周期环比|类目历史周期|细分赛道矩阵$|细分赛道周期对比(?:-|$)|货品增长机会概览$|货品增长机会(?:-|$)|赛道整体与本店(?:-|$)|赛道人群(?:-|$)|赛道投放结构(?:-|$))/;
+const GROWTH_OPPORTUNITY_TABLE = /^货品增长机会(?:-|$)/;
 const TRACK_COMPARISON_TABLE = /^细分赛道周期对比-(.+)$/;
 const TRACK_COMPARISON_COLUMNS = ["属性维度", "属性值", "价格带", "指标"] as const;
+const LONG_OPPORTUNITY_TABLES = new Set([
+  "细分赛道矩阵",
+  "货品增长机会概览",
+  "货品增长机会",
+  "赛道整体与本店",
+  "赛道人群",
+  "赛道投放结构"
+]);
 
 const KNOWN_CATEGORY_PATHS: Record<string, string[]> = {
   "50015382": ["大家电", "厨房大电", "油烟机"]
 };
 
-export type DmpMarketPeriodMode = "day" | "week" | "month";
+export type DmpMarketPeriodMode = "all" | "day" | "week" | "month";
 
 export interface DmpMarketPeriodOption {
   key: string;
@@ -38,6 +47,12 @@ export interface DmpMarketReportViewModel {
   period: string;
   tables: DmpMarketViewerTable[];
   periods: Record<DmpMarketPeriodMode, DmpMarketPeriodOption[]>;
+  allCollected: {
+    table: DmpMarketViewerTable | null;
+    periodCount: number;
+    start: string;
+    end: string;
+  } | null;
 }
 
 export interface DmpMarketKpiMetric {
@@ -72,6 +87,90 @@ export interface DmpMarketTrackMatrix {
   propertyValues: string[];
   priceBands: string[];
   metrics: DmpMarketTrackMatrixMetric[];
+}
+
+export interface DmpMarketGrowthOpportunityTrack {
+  trackName: string;
+  propertyName: string;
+  propertyValue: string;
+  priceBand: string;
+  score: string;
+  shopRank: string;
+  collected: string;
+}
+
+export interface DmpMarketGrowthOpportunityGroup {
+  title: string;
+  tag: string;
+  description: string;
+  tracks: DmpMarketGrowthOpportunityTrack[];
+}
+
+export interface DmpMarketOpportunityPeriod {
+  key: string;
+  label: string;
+  start: string;
+  end: string;
+}
+
+export interface DmpMarketOpportunityOverallRow {
+  metric: string;
+  trackValue: string;
+  shopValue: string;
+}
+
+export interface DmpMarketOpportunityCrowdRow {
+  dimension: string;
+  feature: string;
+  value: string;
+}
+
+export interface DmpMarketOpportunityPromotionRow {
+  scope: string;
+  scene: string;
+  spendShare: string;
+  clicks: string;
+  clicksChange: string;
+  clickRate: string;
+  clickRateChange: string;
+  conversionRate: string;
+  conversionRateChange: string;
+  roi: string;
+  roiChange: string;
+}
+
+export interface DmpMarketOpportunityWorkspaceTrack extends DmpMarketGrowthOpportunityTrack {
+  overall: DmpMarketOpportunityOverallRow[];
+  crowds: DmpMarketOpportunityCrowdRow[];
+  promotions: DmpMarketOpportunityPromotionRow[];
+}
+
+export interface DmpMarketOpportunityWorkspaceGroup {
+  periodKey: string;
+  propertyName: string;
+  title: string;
+  tag: string;
+  description: string;
+  declaredTrackCount: number | null;
+  tracks: DmpMarketOpportunityWorkspaceTrack[];
+}
+
+export interface DmpMarketOpportunityMatrixRecord {
+  periodKey: string;
+  propertyName: string;
+  propertyValue: string;
+  priceBand: string;
+  metric: string;
+  value: number | null;
+}
+
+export interface DmpMarketOpportunityWorkspace {
+  sourceTableNames: string[];
+  periods: DmpMarketOpportunityPeriod[];
+  propertyNames: string[];
+  metricLabels: string[];
+  matrixRecords: DmpMarketOpportunityMatrixRecord[];
+  groups: DmpMarketOpportunityWorkspaceGroup[];
 }
 
 export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMarketReportViewModel {
@@ -148,15 +247,26 @@ export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMark
     }];
   });
   const dates = [...new Set(tables.flatMap((table) => table.dates).filter((date) => ISO_DATE.test(date)))].sort();
+  const allCollected = mergeCollectedCoverage(
+    buildAllCollectedPeriodTable(tables),
+    buildCollectedCoverageOnly(tables)
+  );
   return {
     scope,
     period: record.period,
     tables,
     periods: {
+      all: allCollected ? [{
+        key: "actual-collected",
+        label: allCollected.start === allCollected.end ? allCollected.start : `${allCollected.start} 至 ${allCollected.end}`,
+        start: allCollected.start,
+        end: allCollected.end
+      }] : [],
       day: buildDayPeriods([...availableDays]),
       week: buildDirectPeriods(tables, "week") || buildWeekPeriods(dates),
       month: buildDirectPeriods(tables, "month") || buildMonthPeriods(dates)
-    }
+    },
+    allCollected
   };
 }
 
@@ -196,6 +306,16 @@ export function selectDmpMarketPeriod(
   const options = model.periods[mode];
   const selected = options.find((option) => option.key === key) ?? options.at(-1) ?? null;
   if (!selected) return { selected: null, tables: model.tables };
+  if (mode === "all") {
+    const contextTables = model.tables.filter((table) => (
+      isDmpMarketOpportunityWorkspaceSource(table)
+      || (!table.rowPeriods.some(Boolean) && PERIOD_CONTEXT_TABLE.test(table.name))
+    ));
+    return {
+      selected,
+      tables: model.allCollected?.table ? [model.allCollected.table, ...contextTables] : contextTables
+    };
+  }
   const hasPeriodSpecificTable = model.tables.some((table) => table.periodMode === mode && table.rowPeriods.some(Boolean));
   const tables = model.tables.flatMap((table) => {
     if (table.periodMode && table.periodMode !== mode) return [];
@@ -210,7 +330,7 @@ export function selectDmpMarketPeriod(
     table.rows.forEach((row, index) => {
       const rowPeriod = table.rowPeriods[index];
       if (!rowPeriod) return;
-      const matches = table.periodMode === mode
+      const matches = table.periodMode === mode || isDmpMarketOpportunityWorkspaceSource(table)
         ? rowPeriod.start === selected.start && rowPeriod.end === selected.end
         : rowPeriod.end >= selected.start && rowPeriod.start <= selected.end;
       if (!matches) return;
@@ -225,6 +345,131 @@ export function selectDmpMarketPeriod(
   return { selected, tables };
 }
 
+/**
+ * 将实际成功落表的最细周期转置为“指标为行、周期为列”。这里不会根据 report.period
+ * 或请求窗口补日期；整行均缺失的周期也不会进入覆盖范围，显式 0 则作为有效值保留。
+ */
+export function buildAllCollectedPeriodTable(tables: DmpMarketViewerTable[]) {
+  const eligibleTables = tables.filter((table) => (
+    !isDmpMarketOpportunityWorkspaceSource(table) && !PERIOD_CONTEXT_TABLE.test(table.name)
+  ));
+  const preferredMode = (["day", "week", "month"] as const).find((mode) => (
+    eligibleTables.some((table) => table.periodMode === mode && table.rowPeriods.some(Boolean))
+  ));
+  const sources = eligibleTables.filter((table) => (
+    preferredMode ? table.periodMode === preferredMode : table.rowPeriods.some(Boolean)
+  ));
+  if (!sources.length) return null;
+
+  const periodOrder: string[] = [];
+  const periodMeta = new Map<string, { start: string; end: string; label: string }>();
+  const valuesByPeriod = new Map<string, Map<string, string>>();
+  const metrics: string[] = [];
+
+  for (const table of sources) {
+    const dateIndex = table.columns.findIndex((column) => DATE_FIELD.test(column));
+    if (dateIndex < 0) continue;
+    table.rows.forEach((row, rowIndex) => {
+      const period = table.rowPeriods[rowIndex];
+      if (!period) return;
+      const cells = table.columns
+        .map((column, columnIndex) => ({ column, columnIndex, value: String(row[columnIndex] ?? "").trim() }))
+        .filter(({ columnIndex }) => columnIndex !== dateIndex);
+      if (!cells.some(({ value }) => hasBusinessValue(value))) return;
+      const periodKey = `${period.start}\u001f${period.end}`;
+      if (!periodMeta.has(periodKey)) {
+        periodOrder.push(periodKey);
+        periodMeta.set(periodKey, {
+          ...period,
+          label: period.start === period.end ? period.start : `${period.start} 至 ${period.end}`
+        });
+        valuesByPeriod.set(periodKey, new Map());
+      }
+      const values = valuesByPeriod.get(periodKey)!;
+      for (const { column, value } of cells) {
+        if (!metrics.includes(column)) metrics.push(column);
+        const previous = values.get(column) ?? "";
+        if (!hasBusinessValue(previous) && hasBusinessValue(value)) values.set(column, value);
+      }
+    });
+  }
+
+  periodOrder.sort((left, right) => {
+    const leftPeriod = periodMeta.get(left)!;
+    const rightPeriod = periodMeta.get(right)!;
+    return leftPeriod.start.localeCompare(rightPeriod.start) || leftPeriod.end.localeCompare(rightPeriod.end);
+  });
+  if (!periodOrder.length || !metrics.length) return null;
+  const periods = periodOrder.map((key) => periodMeta.get(key)!);
+  const rows = metrics.map((metric) => [
+    metric,
+    ...periodOrder.map((periodKey) => valuesByPeriod.get(periodKey)?.get(metric) ?? "—")
+  ]);
+  return {
+    table: {
+      name: "全部已采周期",
+      columns: ["指标", ...periods.map((period) => period.label)],
+      rows,
+      dates: [],
+      rowPeriods: rows.map(() => null)
+    },
+    periodCount: periods.length,
+    start: periods[0].start,
+    end: periods.reduce((latest, period) => period.end > latest ? period.end : latest, periods[0].end),
+    coveragePeriods: periods.map(({ start, end }) => ({ start, end }))
+  };
+}
+
+function buildCollectedCoverageOnly(tables: DmpMarketViewerTable[]) {
+  const periods = new Map<string, { start: string; end: string }>();
+  for (const table of tables) {
+    if (!isDmpMarketOpportunityWorkspaceSource(table)) continue;
+    const dateIndex = table.columns.findIndex((column) => DATE_FIELD.test(column));
+    table.rows.forEach((row, rowIndex) => {
+      const period = table.rowPeriods[rowIndex];
+      if (!period) return;
+      const hasValue = row.some((value, columnIndex) => columnIndex !== dateIndex && hasBusinessValue(value));
+      if (!hasValue) return;
+      periods.set(`${period.start}\u001f${period.end}`, period);
+    });
+  }
+  const ordered = [...periods.values()].sort((left, right) => (
+    left.start.localeCompare(right.start) || left.end.localeCompare(right.end)
+  ));
+  if (!ordered.length) return null;
+  return {
+    table: null,
+    periodCount: ordered.length,
+    start: ordered[0].start,
+    end: ordered.reduce((latest, period) => period.end > latest ? period.end : latest, ordered[0].end),
+    coveragePeriods: ordered
+  };
+}
+
+function mergeCollectedCoverage(
+  primary: ReturnType<typeof buildAllCollectedPeriodTable>,
+  secondary: ReturnType<typeof buildCollectedCoverageOnly>
+) {
+  if (!primary && !secondary) return null;
+  const periodMap = new Map<string, { start: string; end: string }>();
+  for (const period of [...(primary?.coveragePeriods ?? []), ...(secondary?.coveragePeriods ?? [])]) {
+    periodMap.set(`${period.start}\u001f${period.end}`, period);
+  }
+  const periods = [...periodMap.values()].sort((left, right) => (
+    left.start.localeCompare(right.start) || left.end.localeCompare(right.end)
+  ));
+  return {
+    table: primary?.table ?? secondary?.table ?? null,
+    periodCount: periods.length,
+    start: periods[0].start,
+    end: periods.reduce((latest, period) => period.end > latest ? period.end : latest, periods[0].end)
+  };
+}
+
+export function isDmpMarketOpportunityWorkspaceSource(table: Pick<DmpMarketViewerTable, "name">) {
+  return LONG_OPPORTUNITY_TABLES.has(String(table.name).trim());
+}
+
 export function marketKpiMetrics(tables: DmpMarketViewerTable[]): DmpMarketKpiMetric[] {
   const candidates: Array<DmpMarketKpiMetric & { priority: number; sourceRank: number }> = [];
   for (const table of tables) {
@@ -236,7 +481,9 @@ export function marketKpiMetrics(tables: DmpMarketViewerTable[]): DmpMarketKpiMe
       const valueColumns = table.columns
         .map((column, index) => ({ column, index }))
         .filter(({ column, index }) => index !== labelIndex && column !== "日期")
-        .sort((left, right) => directValueColumnPriority(right.column) - directValueColumnPriority(left.column));
+        .sort((left, right) => table.name === "全部已采周期"
+          ? right.index - left.index
+          : directValueColumnPriority(right.column) - directValueColumnPriority(left.column));
       for (const row of table.rows) {
         const label = row[labelIndex]?.trim();
         if (!label || ENGINEERING_FIELD.test(label) || REFERENCE_ONLY.test(label)) continue;
@@ -299,6 +546,319 @@ export function marketMedianMetrics(tables: DmpMarketViewerTable[]) {
  */
 export function isDmpMarketTrackComparisonTable(table: DmpMarketViewerTable) {
   return matchesDmpMarketTrackContract(table.name, table.columns);
+}
+
+/**
+ * 消费 v2.3.9 起的六张固定长表。周期、属性和机会类型全部来自数据行；函数只做
+ * 结构合并，不跨周期回填，也不会因为概览声明 0 条赛道而删除该机会组。
+ */
+export function buildDmpMarketOpportunityWorkspace(tables: DmpMarketViewerTable[]): DmpMarketOpportunityWorkspace | null {
+  const sources = tables.filter(isDmpMarketOpportunityWorkspaceSource);
+  if (!sources.length) return null;
+  const periods = new Map<string, DmpMarketOpportunityPeriod>();
+  const propertyNames: string[] = [];
+  const rawMetricLabels: string[] = [];
+  const matrixByKey = new Map<string, DmpMarketOpportunityMatrixRecord>();
+  const groupsByKey = new Map<string, DmpMarketOpportunityWorkspaceGroup>();
+
+  const rememberProperty = (value: string) => {
+    if (hasBusinessValue(value) && !propertyNames.includes(value)) propertyNames.push(value);
+  };
+  const periodForRow = (table: DmpMarketViewerTable, row: string[], rowIndex: number) => {
+    const direct = table.rowPeriods[rowIndex];
+    const periodIndex = table.columns.indexOf("周期");
+    const parsed = direct ?? (periodIndex >= 0 ? parseBusinessPeriod(row[periodIndex]) : null);
+    if (!parsed) return null;
+    const key = `${parsed.start}\u001f${parsed.end}`;
+    if (!periods.has(key)) {
+      const suppliedLabel = periodIndex >= 0 ? String(row[periodIndex] ?? "").trim() : "";
+      periods.set(key, {
+        key,
+        label: hasBusinessValue(suppliedLabel)
+          ? suppliedLabel
+          : parsed.start === parsed.end ? parsed.start : `${parsed.start} 至 ${parsed.end}`,
+        start: parsed.start,
+        end: parsed.end
+      });
+    }
+    return periods.get(key)!;
+  };
+  const valueAt = (table: DmpMarketViewerTable, row: string[], column: string) => {
+    const index = table.columns.indexOf(column);
+    return index >= 0 ? String(row[index] ?? "").trim() : "";
+  };
+  const ensureGroup = (
+    period: DmpMarketOpportunityPeriod,
+    propertyName: string,
+    title: string,
+    seed: Partial<Pick<DmpMarketOpportunityWorkspaceGroup, "tag" | "description" | "declaredTrackCount">> = {}
+  ) => {
+    if (!hasBusinessValue(propertyName) || !hasBusinessValue(title)) return null;
+    rememberProperty(propertyName);
+    const key = [period.key, propertyName, title].join("\u001f");
+    let group = groupsByKey.get(key);
+    if (!group) {
+      group = {
+        periodKey: period.key,
+        propertyName,
+        title,
+        tag: seed.tag ?? "",
+        description: seed.description ?? "",
+        declaredTrackCount: seed.declaredTrackCount ?? null,
+        tracks: []
+      };
+      groupsByKey.set(key, group);
+    } else {
+      if (!group.tag && seed.tag) group.tag = seed.tag;
+      if (!group.description && seed.description) group.description = seed.description;
+      if (group.declaredTrackCount === null && seed.declaredTrackCount !== undefined) {
+        group.declaredTrackCount = seed.declaredTrackCount;
+      }
+    }
+    return group;
+  };
+  const ensureTrack = (
+    group: DmpMarketOpportunityWorkspaceGroup,
+    seed: Pick<DmpMarketGrowthOpportunityTrack, "trackName" | "propertyName" | "propertyValue" | "priceBand">
+      & Partial<Pick<DmpMarketGrowthOpportunityTrack, "score" | "shopRank" | "collected">>
+  ) => {
+    if (!hasBusinessValue(seed.trackName)) return null;
+    const priceBand = normalizeDmpMarketPriceBand(seed.priceBand);
+    let track = group.tracks.find((candidate) => (
+      candidate.trackName === seed.trackName
+      && candidate.propertyValue === seed.propertyValue
+      && candidate.priceBand === priceBand
+    ));
+    if (!track) {
+      track = {
+        trackName: seed.trackName,
+        propertyName: seed.propertyName,
+        propertyValue: seed.propertyValue,
+        priceBand,
+        score: seed.score ?? "",
+        shopRank: seed.shopRank ?? "",
+        collected: seed.collected ?? "",
+        overall: [],
+        crowds: [],
+        promotions: []
+      };
+      group.tracks.push(track);
+    } else {
+      if (!track.score && seed.score) track.score = seed.score;
+      if (!track.shopRank && seed.shopRank) track.shopRank = seed.shopRank;
+      if (!track.collected && seed.collected) track.collected = seed.collected;
+    }
+    return track;
+  };
+  const groupAndTrack = (table: DmpMarketViewerTable, row: string[], rowIndex: number) => {
+    const period = periodForRow(table, row, rowIndex);
+    if (!period) return null;
+    const propertyName = valueAt(table, row, "属性维度");
+    const title = valueAt(table, row, "机会类型");
+    const group = ensureGroup(period, propertyName, title, {
+      tag: valueAt(table, row, "机会标签"),
+      description: valueAt(table, row, "机会说明")
+    });
+    if (!group) return null;
+    const track = ensureTrack(group, {
+      trackName: valueAt(table, row, "赛道名称"),
+      propertyName,
+      propertyValue: valueAt(table, row, "属性值"),
+      priceBand: valueAt(table, row, "价格带"),
+      score: valueAt(table, row, "综合潜力指数"),
+      shopRank: valueAt(table, row, "本店成交排名"),
+      collected: valueAt(table, row, "关注状态")
+    });
+    return track ? { period, group, track } : null;
+  };
+
+  for (const table of sources) {
+    if (table.name === "细分赛道矩阵") {
+      table.rows.forEach((row, rowIndex) => {
+        const period = periodForRow(table, row, rowIndex);
+        if (!period) return;
+        const propertyName = valueAt(table, row, "属性维度");
+        const propertyValue = valueAt(table, row, "属性值");
+        const priceBand = normalizeDmpMarketPriceBand(valueAt(table, row, "价格带"));
+        const metric = valueAt(table, row, "指标");
+        if (![propertyName, propertyValue, priceBand, metric].every(hasBusinessValue)) return;
+        rememberProperty(propertyName);
+        if (!rawMetricLabels.includes(metric)) rawMetricLabels.push(metric);
+        const record = {
+          periodKey: period.key,
+          propertyName,
+          propertyValue,
+          priceBand,
+          metric,
+          value: parseDmpMarketTrackScore(valueAt(table, row, "数值"))
+        };
+        const key = [period.key, propertyName, propertyValue, priceBand, metric].join("\u001f");
+        const previous = matrixByKey.get(key);
+        if (!previous || (previous.value === null && record.value !== null)) matrixByKey.set(key, record);
+      });
+      continue;
+    }
+
+    if (table.name === "货品增长机会概览") {
+      table.rows.forEach((row, rowIndex) => {
+        const period = periodForRow(table, row, rowIndex);
+        if (!period) return;
+        const rawCount = valueAt(table, row, "赛道数量");
+        const parsedCount = parseBusinessNumber(rawCount, "赛道数量");
+        ensureGroup(period, valueAt(table, row, "属性维度"), valueAt(table, row, "机会类型"), {
+          tag: valueAt(table, row, "机会标签"),
+          description: valueAt(table, row, "机会说明"),
+          declaredTrackCount: parsedCount === null ? null : Math.max(0, Math.trunc(parsedCount))
+        });
+      });
+      continue;
+    }
+
+    if (table.name === "货品增长机会") {
+      table.rows.forEach((row, rowIndex) => { groupAndTrack(table, row, rowIndex); });
+      continue;
+    }
+
+    table.rows.forEach((row, rowIndex) => {
+      const result = groupAndTrack(table, row, rowIndex);
+      if (!result) return;
+      if (table.name === "赛道整体与本店") {
+        result.track.overall.push({
+          metric: valueAt(table, row, "指标"),
+          trackValue: valueAt(table, row, "赛道整体"),
+          shopValue: valueAt(table, row, "本店表现")
+        });
+      } else if (table.name === "赛道人群") {
+        result.track.crowds.push({
+          dimension: valueAt(table, row, "人群维度"),
+          feature: valueAt(table, row, "特征"),
+          value: valueAt(table, row, "数值")
+        });
+      } else if (table.name === "赛道投放结构") {
+        result.track.promotions.push({
+          scope: valueAt(table, row, "口径"),
+          scene: valueAt(table, row, "推广场景"),
+          spendShare: valueAt(table, row, "消耗占比"),
+          clicks: valueAt(table, row, "点击量"),
+          clicksChange: valueAt(table, row, "点击量环比"),
+          clickRate: valueAt(table, row, "点击率"),
+          clickRateChange: valueAt(table, row, "点击率环比"),
+          conversionRate: valueAt(table, row, "支付转化率"),
+          conversionRateChange: valueAt(table, row, "支付转化率环比"),
+          roi: valueAt(table, row, "ROI"),
+          roiChange: valueAt(table, row, "ROI环比")
+        });
+      }
+    });
+  }
+
+  const orderedPeriods = [...periods.values()].sort((left, right) => (
+    left.start.localeCompare(right.start) || left.end.localeCompare(right.end)
+  ));
+  const officialMetrics = rawMetricLabels.filter((label) => /aScore|搜索潜力|bScore|成交潜力|cScore|拉新潜力|eScore|蓝海/i.test(label));
+  const metricLabels = [...(officialMetrics.length ? officialMetrics : rawMetricLabels)]
+    .sort((left, right) => trackMetricPriority(left) - trackMetricPriority(right))
+    .slice(0, 4);
+  const groups = [...groupsByKey.values()].sort((left, right) => (
+    orderedPeriods.findIndex((period) => period.key === left.periodKey)
+      - orderedPeriods.findIndex((period) => period.key === right.periodKey)
+    || propertyNames.indexOf(left.propertyName) - propertyNames.indexOf(right.propertyName)
+  ));
+  if (!orderedPeriods.length || (!matrixByKey.size && !groups.length)) return null;
+  return {
+    sourceTableNames: [...new Set(sources.map((table) => table.name))],
+    periods: orderedPeriods,
+    propertyNames,
+    metricLabels,
+    matrixRecords: [...matrixByKey.values()].filter((record) => metricLabels.includes(record.metric)),
+    groups
+  };
+}
+
+export function buildDmpMarketOpportunityMatrix(
+  workspace: DmpMarketOpportunityWorkspace,
+  periodKey: string,
+  propertyName: string,
+  metric: string
+) {
+  const records = workspace.matrixRecords.filter((record) => (
+    record.periodKey === periodKey && record.propertyName === propertyName && record.metric === metric
+  ));
+  if (!records.length) return null;
+  const propertyValues = [...new Set(records.map((record) => record.propertyValue))];
+  const priceBands = [...new Set(records.map((record) => record.priceBand))];
+  const byCoordinate = new Map(records.map((record) => [
+    `${record.priceBand}\u001f${record.propertyValue}`,
+    record.value
+  ]));
+  const numericValues = records.map((record) => record.value).filter((value): value is number => value !== null);
+  const scale = Math.max(0, ...numericValues.map((value) => Math.abs(value)));
+  return {
+    propertyValues,
+    priceBands,
+    scale,
+    rows: priceBands.map((priceBand) => ({
+      priceBand,
+      cells: propertyValues.map((propertyValue) => ({
+        propertyValue,
+        value: byCoordinate.get(`${priceBand}\u001f${propertyValue}`) ?? null
+      }))
+    }))
+  };
+}
+
+/**
+ * 把归档的货品增长机会纯数据表投影为动态机会分组。机会名称、标签和说明均来自
+ * 同一份接口响应；这里不猜测 code，也不硬编码机会类型文案。
+ */
+export function buildDmpMarketGrowthOpportunityGroups(table: DmpMarketViewerTable): DmpMarketGrowthOpportunityGroup[] | null {
+  if (!GROWTH_OPPORTUNITY_TABLE.test(table.name)) return null;
+  const columnIndex = (name: string) => table.columns.indexOf(name);
+  const typeIndex = columnIndex("机会类型");
+  const trackIndex = columnIndex("赛道名称");
+  if (typeIndex < 0 || trackIndex < 0) return null;
+
+  const tagIndex = columnIndex("机会标签");
+  const descriptionIndex = columnIndex("机会说明");
+  const propertyNameIndex = columnIndex("属性维度");
+  const propertyValueIndex = columnIndex("属性值");
+  const priceBandIndex = columnIndex("价格带");
+  const scoreIndex = columnIndex("综合潜力指数");
+  const shopRankIndex = columnIndex("本店成交排名");
+  const collectedIndex = columnIndex("关注状态");
+  const cell = (row: string[], index: number) => index >= 0 ? String(row[index] ?? "").trim() : "";
+  const groups = new Map<string, DmpMarketGrowthOpportunityGroup>();
+
+  for (const row of table.rows) {
+    const title = cell(row, typeIndex);
+    const trackName = cell(row, trackIndex);
+    if (!hasBusinessValue(title) || !hasBusinessValue(trackName)) continue;
+    let group = groups.get(title);
+    if (!group) {
+      group = {
+        title,
+        tag: cell(row, tagIndex),
+        description: cell(row, descriptionIndex),
+        tracks: []
+      };
+      groups.set(title, group);
+    } else {
+      if (!group.tag) group.tag = cell(row, tagIndex);
+      if (!group.description) group.description = cell(row, descriptionIndex);
+    }
+    group.tracks.push({
+      trackName,
+      propertyName: cell(row, propertyNameIndex),
+      propertyValue: cell(row, propertyValueIndex),
+      priceBand: normalizeDmpMarketPriceBand(cell(row, priceBandIndex)),
+      score: cell(row, scoreIndex),
+      shopRank: cell(row, shopRankIndex),
+      collected: cell(row, collectedIndex)
+    });
+  }
+
+  const result = [...groups.values()];
+  return result.length ? result : null;
 }
 
 export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarketTrackMatrix | null {
@@ -577,11 +1137,11 @@ function normalizedTrackScore(value: number) {
 }
 
 function trackMetricPriority(label: string) {
-  if (/dScore|增长潜力/i.test(label)) return 0;
-  if (/eScore|蓝海/i.test(label)) return 1;
-  if (/aScore/i.test(label)) return 2;
-  if (/bScore/i.test(label)) return 3;
-  if (/cScore/i.test(label)) return 4;
+  if (/aScore|搜索潜力/i.test(label)) return 0;
+  if (/bScore|成交潜力/i.test(label)) return 1;
+  if (/cScore|拉新潜力/i.test(label)) return 2;
+  if (/eScore|蓝海/i.test(label)) return 3;
+  if (/dScore|增长潜力/i.test(label)) return 4;
   return 10;
 }
 

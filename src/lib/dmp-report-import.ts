@@ -1,5 +1,8 @@
 import {
+  auditDmpGrowthSubjectMetrics,
+  DMP_GROWTH_METRIC_ALIASES,
   DMP_GROWTH_REPORT_TABLES,
+  DMP_GROWTH_REQUIRED_SUBJECT_METRICS,
   sanitizeDmpReportRenderData,
   type DmpReportRenderData,
   type DmpReportTableSnapshot
@@ -267,17 +270,7 @@ type ReconcileOptions = {
   periodEndDate?: string;
 };
 
-const CROSS_TABLE_METRICS = {
-  spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
-  paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
-  roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比"],
-  ppc: ["PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
-  feeRatio: ["费比", "推广费比", "广告费比"],
-  roas: ["全域ROAS", "ROAS"],
-  keywordShare: ["关键词消耗占比", "关键词花费占比", "关键词推广消耗占比"],
-  marketingClicks: ["营销推广点击量", "营销推广点击数", "营销推广点击", "广告点击量", "广告点击数", "推广点击量", "推广点击数", "付费点击量"],
-  totalGmv: ["总GMV", "全渠道总GMV"]
-} as const;
+const CROSS_TABLE_METRICS = DMP_GROWTH_METRIC_ALIASES;
 
 function normalizedMetricLabel(value: unknown) {
   return String(value ?? "")
@@ -372,7 +365,91 @@ function disclosedMetricCell(
   return undefined;
 }
 
+type MetricMatrixSpec = {
+  name: "报告总览" | "对标总表" | "基础指标对比";
+  columns: Array<{ name: string; aliases: readonly string[] }>;
+  metricColumn: readonly string[];
+  moduleColumn?: readonly string[];
+};
+
+const REQUIRED_METRIC_MATRICES: MetricMatrixSpec[] = [
+  {
+    name: "报告总览",
+    columns: [
+      { name: "项目", aliases: ["项目", "指标", "对标指标"] },
+      { name: "主体", aliases: ["主体", "主体值", "主体周期值", "本品", "本品值"] },
+      { name: "对手", aliases: ["对手", "对手值", "对手周期值", "目标对手", "目标对手值", "竞品", "竞品值"] },
+      { name: "范围", aliases: ["范围", "数据范围", "周期"] }
+    ],
+    metricColumn: ["项目", "指标", "对标指标"]
+  },
+  {
+    name: "对标总表",
+    columns: [
+      { name: "页面模块", aliases: ["页面模块", "模块"] },
+      { name: "对标指标", aliases: ["对标指标", "指标"] },
+      { name: "主体周期值", aliases: ["主体周期值", "主体值", "主体"] },
+      { name: "对手周期值", aliases: ["对手周期值", "目标对手周期值", "竞品周期值", "对手值", "对手"] },
+      { name: "主体相对对手", aliases: ["主体相对对手", "相对对手", "变化率"] }
+    ],
+    metricColumn: ["对标指标", "指标"],
+    moduleColumn: ["页面模块", "模块"]
+  },
+  {
+    name: "基础指标对比",
+    columns: [
+      { name: "指标", aliases: ["指标", "对标指标"] },
+      { name: "主体值", aliases: ["主体值", "主体周期值", "主体"] },
+      { name: "对手值", aliases: ["对手值", "目标对手值", "竞品值", "对手周期值", "对手"] },
+      { name: "主体相对对手", aliases: ["主体相对对手", "相对对手", "变化率"] }
+    ],
+    metricColumn: ["指标", "对标指标"]
+  }
+];
+
+/**
+ * 旧归档可能只有计算原料而没有四项标准行。这里仅补表结构和空行；业务值仍由后续
+ * 同对象、同周期的确定性补算填写，任何已披露单元格都不会被覆盖。
+ */
+function ensureRequiredMetricRows(tables: DmpReportTable[], createMissingTables: boolean) {
+  for (const spec of REQUIRED_METRIC_MATRICES) {
+    let table = tables.find((candidate) => candidate.name === spec.name);
+    if (!table && createMissingTables) {
+      table = { name: spec.name, columns: spec.columns.map((column) => column.name), rows: [] };
+      const expectedIndex = DMP_GROWTH_REPORT_TABLES.indexOf(spec.name);
+      const insertAt = tables.findIndex((candidate) => {
+        const candidateIndex = DMP_GROWTH_REPORT_TABLES.indexOf(candidate.name as typeof DMP_GROWTH_REPORT_TABLES[number]);
+        return candidateIndex >= 0 && candidateIndex > expectedIndex;
+      });
+      tables.splice(insertAt < 0 ? tables.length : insertAt, 0, table);
+    }
+    if (!table) continue;
+
+    for (const required of spec.columns) {
+      if (columnIndexByAliases(table, required.aliases) >= 0) continue;
+      table.columns.push(required.name);
+      table.rows.forEach((row) => row.push(""));
+      if (table.widths) table.widths.push(16);
+    }
+    table.rows.forEach((row) => {
+      while (row.length < table!.columns.length) row.push("");
+    });
+
+    const metricIndex = columnIndexByAliases(table, spec.metricColumn);
+    const moduleIndex = spec.moduleColumn ? columnIndexByAliases(table, spec.moduleColumn) : -1;
+    if (metricIndex < 0) continue;
+    for (const metric of DMP_GROWTH_REQUIRED_SUBJECT_METRICS) {
+      if (metricRow(table, metric.aliases)) continue;
+      const row = table.columns.map(() => "" as DmpCell);
+      row[metricIndex] = metric.label;
+      if (moduleIndex >= 0) row[moduleIndex] = "投放";
+      table.rows.push(row);
+    }
+  }
+}
+
 function appendCoverageScope(table: DmpReportTable, row: DmpCell[], side: ReportSide, coverage: string) {
+  if (!coverage) return;
   const scopeIndex = columnIndexByAliases(table, ["范围", "数据范围", "周期"]);
   if (scopeIndex < 0) return;
   const role = side === "subject" ? "主体" : "对手";
@@ -564,6 +641,40 @@ function reconcilePartialDailySpend(
   ensurePartialSpendCoverageRow(tables, coverages);
 }
 
+function reconcileRequiredDerivedMetrics(
+  tables: DmpReportTable[],
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  for (const side of ["subject", "competitor"] as const) {
+    const spendCell = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.spend, subjectItemId, competitorItemId);
+    const spend = numericCell(spendCell);
+    if (spend == null || spend < 0) continue;
+    fillMetricAcrossTables(
+      tables,
+      side,
+      CROSS_TABLE_METRICS.spend,
+      spendCell as DmpCell,
+      "",
+      subjectItemId,
+      competitorItemId
+    );
+    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
+    const totalGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
+    const marketingClicks = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
+    const derived = [
+      [CROSS_TABLE_METRICS.roi, rangeDividedByScalar(paidGmv, spend, 6)],
+      [CROSS_TABLE_METRICS.ppc, scalarDividedByRange(spend, marketingClicks, 6)],
+      [CROSS_TABLE_METRICS.feeRatio, scalarDividedByRange(spend, totalGmv, 6)]
+    ] as const;
+    for (const [aliases, calculated] of derived) {
+      const disclosed = disclosedMetricCell(tables, side, aliases, subjectItemId, competitorItemId);
+      const value = isBlankCell(disclosed) ? calculated : disclosed as DmpCell;
+      fillMetricAcrossTables(tables, side, aliases, value ?? null, "", subjectItemId, competitorItemId);
+    }
+  }
+}
+
 function populationVolatility(values: number[]) {
   if (!values.length) return null;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -584,6 +695,7 @@ export function reconcileDmpCrossTableMetrics(
   days: number,
   options: ReconcileOptions = {}
 ) {
+  ensureRequiredMetricRows(tables, false);
   const gmvByItemId = new Map<string, DmpCell>();
   const remember = (itemId: string, value: DmpCell | undefined) => {
     if (itemId && !isBlankCell(value) && !gmvByItemId.has(itemId)) gmvByItemId.set(itemId, value as DmpCell);
@@ -633,6 +745,7 @@ export function reconcileDmpCrossTableMetrics(
   }
 
   reconcilePartialDailySpend(tables, subjectItemId, competitorItemId, days, options);
+  reconcileRequiredDerivedMetrics(tables, subjectItemId, competitorItemId);
 
   if (periodTable) {
     const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
@@ -726,6 +839,7 @@ export function reconcileDmpCrossTableMetrics(
 
 export function canonicalToDmpReport(input: unknown): DmpReport | null {
   if (!isObject(input) || input.schema_version !== "3.0" || !Array.isArray(input.tables)) return null;
+  const growthReport = input.report_type !== "competition" && input.report_type !== "market";
   const snapshots: DmpReportTableSnapshot[] = input.tables.filter(isObject).map((table) => ({
     name: String(table.name ?? ""),
     columns: Array.isArray(table.columns) ? table.columns.map(String) : [],
@@ -773,13 +887,25 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   const startDate = dateMatches[0] ?? "";
   const endDate = dateMatches[1] ?? "";
   const days = daysInclusive(startDate, endDate) || 30;
-  mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
-  alignComparisonRoleRows(tables);
-  reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
-    preserveDisclosedRanges: Boolean(renderData),
-    periodStartDate: startDate,
-    periodEndDate: endDate
-  });
+  let subjectMetricAudit: ReturnType<typeof auditDmpGrowthSubjectMetrics> | null = null;
+  if (growthReport) {
+    mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
+    alignComparisonRoleRows(tables);
+    ensureRequiredMetricRows(tables, true);
+    reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
+      preserveDisclosedRanges: Boolean(renderData),
+      periodStartDate: startDate,
+      periodEndDate: endDate
+    });
+    subjectMetricAudit = auditDmpGrowthSubjectMetrics({
+      item_id: itemId,
+      tables: tables.map((table) => ({
+        name: table.name,
+        columns: [...table.columns],
+        rows: table.rows.map((row) => ({ cells: row.map((cell) => String(cell ?? "")) }))
+      }))
+    });
+  }
   const subjectRender = renderData?.products?.subject;
   const competitorRender = renderData?.products?.competitor;
   return {
@@ -815,7 +941,16 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
     periodLabel,
     ...(renderData?.generated_at ? { generatedAt: renderData.generated_at } : {}),
     tables,
-    quality: { status: "canonical", complete: true, expected: tables.length, observed: tables.length }
+    quality: subjectMetricAudit ? {
+      status: subjectMetricAudit.missing.length ? "partial" : "canonical",
+      complete: subjectMetricAudit.missing.length === 0,
+      expected: DMP_GROWTH_REQUIRED_SUBJECT_METRICS.length,
+      observed: DMP_GROWTH_REQUIRED_SUBJECT_METRICS.length - subjectMetricAudit.missing.length,
+      ...(subjectMetricAudit.missing.length ? {
+        blockingIssues: [`主体最低指标缺失：${subjectMetricAudit.missing.map((metric) => metric.label).join("、")}`],
+        missing: subjectMetricAudit.missing.map((metric) => metric.label)
+      } : {})
+    } : { status: "canonical", complete: true, expected: tables.length, observed: tables.length }
   };
 }
 

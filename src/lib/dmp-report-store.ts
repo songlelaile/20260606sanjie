@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { parseSession, type Session } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
+  auditDmpGrowthSubjectMetrics,
   dmpExpectedTableNames,
   dmpReportKind,
   sanitizeDmpReportRenderData,
@@ -203,6 +204,12 @@ export function validateDmpCanonicalReport(
     tables,
     ...(renderData ? { render_data: renderData } : {})
   };
+  if (kind === "growth") {
+    const subjectMetricAudit = auditDmpGrowthSubjectMetrics(normalizedReport);
+    if (subjectMetricAudit.missing.length) {
+      pushArchiveIssue(issues, `主体最低指标缺失：${subjectMetricAudit.missing.map((metric) => metric.label).join("、")}`);
+    }
+  }
   // 仅检查最终会落库并通过公开分享展示的规范化合同。这样能覆盖标题、周期、业务表及
   // render_data（含副标题），又不会因随后会被丢弃的调试/传输字段误阻断归档。
   if (containsSensitiveArchiveAuthData(normalizedReport)) {

@@ -1,5 +1,6 @@
 import { canonicalToDmpReport, type DmpCell, type DmpReportTable } from "@/lib/dmp-report-import";
 import {
+  DMP_GROWTH_METRIC_ALIASES,
   sanitizeDmpRenderHttpsUrl,
   sanitizeDmpRenderImageUrl,
   type DmpBusinessReportRecord
@@ -429,12 +430,12 @@ function productFromTable(
 }
 
 const GROWTH_OVERVIEW_METRICS = [
-  { label: "总GMV", aliases: ["总GMV"] },
-  { label: "推广消耗", aliases: ["推广消耗", "广告消耗", "广告/推广消耗"] },
-  { label: "费比", aliases: ["费比", "推广费比", "广告费比"] },
-  { label: "ROI", aliases: ["ROI", "直接ROI"] },
-  { label: "PPC", aliases: ["PPC", "CPC", "点击成本", "平均点击成本"] },
-  { label: "全域ROAS", aliases: ["全域ROAS", "ROAS"] }
+  { label: "总GMV", aliases: DMP_GROWTH_METRIC_ALIASES.totalGmv },
+  { label: "推广消耗", aliases: DMP_GROWTH_METRIC_ALIASES.spend },
+  { label: "费比", aliases: DMP_GROWTH_METRIC_ALIASES.feeRatio },
+  { label: "ROI", aliases: DMP_GROWTH_METRIC_ALIASES.roi },
+  { label: "PPC", aliases: DMP_GROWTH_METRIC_ALIASES.ppc },
+  { label: "全域ROAS", aliases: DMP_GROWTH_METRIC_ALIASES.roas }
 ] as const;
 
 function growthKpis(

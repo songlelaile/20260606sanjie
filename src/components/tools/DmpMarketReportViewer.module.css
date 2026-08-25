@@ -3,9 +3,13 @@
   --market-green-dark: #07524f;
   --market-ink: #18343d;
   --market-line: #d3e2e0;
+  --ink: var(--market-ink);
+  --muted: #607981;
+  --line: var(--market-line);
   position: relative;
   isolation: isolate;
   color: var(--market-ink);
+  color-scheme: light !important;
   background: #eef6f5;
   overflow: hidden;
 }
@@ -52,9 +56,11 @@
 .periodIdentity { text-align: right; }
 .periodPanel span, .summary header span { color: #607981; font-size: 13px; }
 .periodPanel strong { font-size: 20px; }
+.periodIdentity small { color: #607981; font-size: 11px; }
 .periodControls { display: flex; gap: 12px; flex-wrap: wrap; }
 .periodControls label { display: grid; gap: 5px; }
 .periodControls select { min-width: 150px; height: 40px; padding: 0 34px 0 12px; border: 1px solid #b9d0cd; border-radius: 8px; color: var(--market-ink); background: #fff; }
+.periodControls select:disabled { color: #49666d; background: #f3f8f7; opacity: 1; cursor: default; }
 
 .summary { padding: 18px; border-top: 4px solid var(--market-green); }
 .summary > header, .reportSection > header { display: flex; align-items: center; gap: 10px; }
@@ -68,14 +74,109 @@
 .reportSection > header { margin-bottom: 12px; }
 .reportSection > header > span { display: grid; place-items: center; width: 32px; height: 28px; border-radius: 8px; color: #fff; background: var(--market-green); font-size: 12px; font-weight: 800; }
 .reportSection > header small { margin-left: auto; color: #607981; }
-.tableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 10px; }
-.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.tableShell th, .tableShell td { min-width: 104px; height: 40px; padding: 8px 10px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
+.tableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 10px; color-scheme: light; background: #fff; }
+.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; color: var(--market-ink); background: #fff; font-size: 12px; }
+.tableShell th, .tableShell td { min-width: 104px; height: 40px; padding: 8px 10px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; vertical-align: middle; }
 .tableShell thead th { position: sticky; top: 0; z-index: 2; color: #fff !important; background: var(--market-green) !important; text-align: left; font-weight: 800; white-space: nowrap; }
-.tableShell tbody tr:nth-child(even) td { background: #f5f9f8; }
+.tableShell tbody > tr > td { color: var(--market-ink) !important; background: #fff !important; }
+.tableShell tbody tr:nth-child(even) > td { background: #f5f9f8 !important; }
+.tableShell tbody tr:hover > td { background: #edf7f5 !important; }
 .tableShell tr > :last-child { border-right: 0; }
 .tableShell tbody tr:last-child td { border-bottom: 0; }
 .numeric { text-align: right !important; font-variant-numeric: tabular-nums; }
+.allPeriodTable { width: max-content !important; min-width: 100% !important; }
+.allPeriodTable thead th:first-child, .allPeriodTable tbody th { position: sticky; left: 0; min-width: 150px; }
+.allPeriodTable thead th:first-child { z-index: 4; }
+.allPeriodTable tbody th { z-index: 1; color: var(--market-ink) !important; background: #edf5f3 !important; font-weight: 800; white-space: nowrap; }
+
+.opportunitySection { border-top: 4px solid var(--market-green); }
+.opportunityLead { margin: -2px 0 14px; color: #607981; font-size: 12px; }
+.opportunityGroups { display: grid; gap: 14px; }
+.opportunityGroup { overflow: hidden; border: 1px solid var(--market-line); border-radius: 12px; background: #fff; }
+.opportunityGroupHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 15px 16px; border-bottom: 1px solid var(--market-line); background: linear-gradient(110deg, #edf7f5, #f7fbfa); }
+.opportunityGroupHeader > div { min-width: 0; }
+.opportunityGroupHeader > strong { flex: 0 0 auto; padding: 6px 10px; border-radius: 999px; color: var(--market-green-dark); background: #dff2ed; font-size: 11px; white-space: nowrap; }
+.opportunityGroupHeader p { max-width: 1000px; margin: 7px 0 0; color: #526a73; font-size: 12px; line-height: 1.65; }
+.opportunityTitleLine { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.opportunityTitleLine h3 { margin: 0; color: var(--market-green-dark); font-size: 17px; }
+.opportunityTitleLine span { padding: 4px 8px; border: 1px solid #b9d9d3; border-radius: 999px; color: var(--market-green); background: #fff; font-size: 10px; font-weight: 800; }
+.opportunityTableShell { overflow: auto; color-scheme: light; background: #fff; }
+.opportunityTableShell table { width: 100%; min-width: 940px; border-collapse: separate; border-spacing: 0; color: var(--market-ink); background: #fff; font-size: 12px; }
+.opportunityTableShell th, .opportunityTableShell td { min-width: 112px; height: 42px; padding: 8px 10px; border-top: 0 !important; border-right: 1px solid #e0e9e7; border-bottom: 1px solid #e0e9e7; color: var(--market-ink) !important; vertical-align: middle; }
+.opportunityTableShell thead th { color: #fff !important; background: var(--market-green) !important; text-align: left; font-weight: 800; white-space: nowrap; }
+.opportunityTableShell tbody th { color: #244b58 !important; background: #f5f9fb !important; text-align: left; font-weight: 800; }
+.opportunityTableShell tbody > tr > td { color: var(--market-ink) !important; background: #fff !important; }
+.opportunityTableShell tbody tr:nth-child(even) > td, .opportunityTableShell tbody tr:nth-child(even) > th { background: #f8fbfa !important; }
+.opportunityTableShell tbody tr:hover > td, .opportunityTableShell tbody tr:hover > th { background: #edf7f5 !important; }
+.opportunityTableShell tr > :last-child { border-right: 0; }
+.opportunityTableShell tbody tr:last-child > * { border-bottom: 0; }
+.opportunityCollected, .opportunityUncollected { display: inline-flex; align-items: center; min-height: 24px; padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.opportunityCollected { color: #08715a; background: #e5f6f0; }
+.opportunityUncollected { color: #607981; background: #edf2f1; }
+
+.opportunityWorkspace { border-top: 4px solid var(--market-green); }
+.opportunityWorkspaceControls { display: grid; grid-template-columns: minmax(220px, .45fr) minmax(460px, 1.55fr); gap: 12px; padding: 13px 14px; border: 1px solid var(--market-line); border-radius: 10px; background: #f3f8f7; }
+.opportunityWorkspaceControls label, .opportunityMetricTabs { display: grid; align-content: start; gap: 6px; }
+.opportunityWorkspaceControls label > span, .opportunityMetricTabs > span { color: #607981; font-size: 11px; font-weight: 700; }
+.opportunityWorkspaceControls select { width: 100%; height: 40px; padding: 0 34px 0 11px; border: 1px solid #b9d0cd; border-radius: 8px; color: var(--market-ink); background: #fff; font-weight: 700; }
+.opportunityMetricTabs > div { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.opportunityMetricTabs button { min-height: 40px; padding: 6px 9px; border: 1px solid #c8dcda; border-radius: 8px; color: #49666d; background: #fff; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.opportunityMetricTabs button:hover { border-color: #83b9af; color: var(--market-green); }
+.opportunityMetricTabs .opportunityMetricActive { border-color: var(--market-green); color: #fff; background: var(--market-green); }
+.opportunityPeriods { display: grid; gap: 16px; margin-top: 14px; }
+.opportunityPeriod { overflow: hidden; border: 1px solid var(--market-line); border-radius: 12px; color: var(--market-ink); background: #fff; }
+.opportunityPeriodHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--market-line); background: #edf7f5; }
+.opportunityPeriodHeader > div { display: grid; gap: 2px; }
+.opportunityPeriodHeader span { color: #607981; font-size: 10px; font-weight: 700; }
+.opportunityPeriodHeader strong { color: var(--market-green-dark); font-size: 15px; }
+.opportunityPeriodHeader small { padding: 5px 9px; border: 1px solid #bfdbd6; border-radius: 999px; color: var(--market-green); background: #fff; font-size: 10px; font-weight: 800; }
+.opportunityMatrixBlock { padding: 12px 14px 0; }
+.opportunityMatrixLegend { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--market-line); border-bottom: 0; border-radius: 8px 8px 0 0; color: #607981; background: #f7faf9; font-size: 11px; }
+.opportunityMatrixLegend strong { color: var(--market-green); font-size: 12px; }
+.opportunityMatrixShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 0 0 8px 8px; color-scheme: light; background: #fff; }
+.opportunityMatrixShell table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; color: var(--market-ink); background: #fff; font-size: 12px; }
+.opportunityMatrixShell th, .opportunityMatrixShell td { min-width: 128px; padding: 10px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; text-align: center; vertical-align: middle; }
+.opportunityMatrixShell thead th { position: sticky; top: 0; z-index: 3; color: #fff !important; background: var(--market-green) !important; font-weight: 800; white-space: nowrap; }
+.opportunityMatrixShell thead th:first-child, .opportunityMatrixShell tbody th { position: sticky; left: 0; z-index: 4; min-width: 104px; }
+.opportunityMatrixShell tbody th { color: var(--market-ink) !important; background: #edf5f3 !important; text-align: left; font-weight: 800; white-space: nowrap; }
+.opportunityMatrixShell tr > :last-child { border-right: 0; }
+.opportunityMatrixShell tbody tr:last-child > * { border-bottom: 0; }
+.opportunityMatrixShell tbody > tr > td.opportunityMatrixCell { color: var(--market-ink) !important; background: rgba(13, 113, 107, var(--market-track-heat, 0)) !important; font-weight: 800; font-variant-numeric: tabular-nums; }
+.opportunityMatrixShell tbody > tr > td.opportunityMatrixCell[data-track-state="missing"] { color: #87999e !important; background: #fff !important; }
+.opportunityMatrixShell tbody > tr > td.opportunityMatrixCell[data-track-state="zero"] { color: var(--market-ink) !important; background: #f1f5f4 !important; }
+.opportunityWorkspaceGroups { display: grid; gap: 12px; padding: 14px; }
+.opportunityWorkspaceGroup { overflow: hidden; border: 1px solid var(--market-line); border-radius: 10px; color: var(--market-ink); background: #fff; }
+.opportunityWorkspaceGroup > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 12px 14px; border-bottom: 1px solid var(--market-line); background: #f5f9f8; }
+.opportunityWorkspaceGroup > header > div { min-width: 0; }
+.opportunityWorkspaceGroup > header > strong { flex: 0 0 auto; padding: 5px 8px; border-radius: 999px; color: var(--market-green-dark); background: #dff2ed; font-size: 10px; white-space: nowrap; }
+.opportunityWorkspaceGroup > header p { margin: 6px 0 0; color: #526a73; font-size: 11px; line-height: 1.55; }
+.opportunityWorkspaceGroupTitle { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.opportunityWorkspaceGroupTitle h3 { margin: 0; color: var(--market-green-dark); font-size: 16px; }
+.opportunityWorkspaceGroupTitle span { padding: 3px 7px; border: 1px solid #bedbd5; border-radius: 999px; color: var(--market-green); background: #fff; font-size: 9px; font-weight: 800; }
+.opportunityTrackCards { display: grid; gap: 8px; padding: 10px; background: #fbfdfc; }
+.opportunityTrackCard { overflow: hidden; border: 1px solid #dbe8e6; border-radius: 8px; color: var(--market-ink); background: #fff; }
+.opportunityTrackCard > summary { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 12px; color: var(--market-ink); background: #fff; cursor: pointer; list-style-position: inside; }
+.opportunityTrackCard[open] > summary { border-bottom: 1px solid #dbe8e6; background: #f4f9f8; }
+.opportunityTrackCard > summary > div:first-of-type { display: inline-grid; gap: 3px; margin-right: auto; }
+.opportunityTrackCard > summary strong { color: #244b58; font-size: 13px; }
+.opportunityTrackCard > summary span { color: #607981; font-size: 10px; }
+.opportunityTrackFacts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.opportunityTrackFacts > span { padding: 4px 7px; border-radius: 999px; color: #49666d; background: #edf3f2; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.opportunityTrackDetails { display: grid; gap: 10px; padding: 10px; background: #fff; }
+.opportunityDetailSection { min-width: 0; }
+.opportunityDetailSection h4 { margin: 0 0 6px; color: var(--market-green-dark); font-size: 12px; }
+.opportunityDetailTableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 7px; color-scheme: light; background: #fff; }
+.opportunityDetailTableShell table { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; color: var(--market-ink); background: #fff; font-size: 10px; }
+.opportunityDetailTableShell th, .opportunityDetailTableShell td { min-width: 100px; padding: 7px 8px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; vertical-align: middle; }
+.opportunityDetailTableShell thead th { color: #fff !important; background: var(--market-green) !important; font-weight: 800; white-space: nowrap; }
+.opportunityDetailTableShell tbody > tr > td { color: var(--market-ink) !important; background: #fff !important; }
+.opportunityDetailTableShell tbody tr:nth-child(even) > td { background: #f6faf9 !important; }
+.opportunityDetailTableShell tbody tr:hover > td { background: #edf7f5 !important; }
+.opportunityDetailTableShell tr > :last-child { border-right: 0; }
+.opportunityDetailTableShell tbody tr:last-child td { border-bottom: 0; }
+.opportunityDetailEmpty, .opportunityZeroGroup { display: grid; place-items: center; min-height: 48px; border: 1px dashed #c4d8d4; border-radius: 7px; color: #87999e; background: #f8fbfa; font-size: 11px; }
+.opportunityZeroGroup { margin: 10px; min-height: 64px; color: var(--market-green); font-weight: 800; }
+.opportunityTrackPeriod { justify-self: end; color: #71888d; font-size: 9px; }
 
 .trackSection { --market-track-blue: 61, 114, 219; }
 .trackToolbar { display: grid; grid-template-columns: minmax(240px, .65fr) minmax(420px, 1.35fr); align-items: end; gap: 14px; padding: 12px 14px; border: 1px solid var(--market-line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f8f7; }
@@ -87,17 +188,17 @@
 .trackPeriodPair b { color: var(--market-green-dark); font-size: 11px; }
 .trackLegend { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 14px; border: 1px solid var(--market-line); border-bottom: 0; color: #607981; background: #fff; font-size: 11px; }
 .trackLegend strong { color: var(--market-green); font-size: 12px; }
-.trackHeatmapShell { overflow: auto; border: 1px solid var(--market-line); border-top: 4px solid #3d72db; border-radius: 0 0 10px 10px; background: #fff; }
-.trackHeatmapTable { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.trackHeatmapTable th, .trackHeatmapTable td { min-width: 148px; padding: 9px 10px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
+.trackHeatmapShell { overflow: auto; border: 1px solid var(--market-line); border-top: 4px solid #3d72db; border-radius: 0 0 10px 10px; color-scheme: light; background: #fff; }
+.trackHeatmapTable { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; color: var(--market-ink); background: #fff; font-size: 12px; }
+.trackHeatmapTable th, .trackHeatmapTable td { min-width: 148px; padding: 9px 10px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; vertical-align: middle; }
 .trackHeatmapTable thead th { position: sticky; top: 0; z-index: 3; color: #fff !important; background: var(--market-green) !important; text-align: center; font-weight: 800; white-space: nowrap; }
 .trackHeatmapTable thead th:first-child, .trackHeatmapTable tbody th { position: sticky; left: 0; z-index: 4; min-width: 112px; }
-.trackHeatmapTable tbody th { color: var(--market-ink); background: #edf5f3; text-align: left; font-weight: 800; white-space: nowrap; }
+.trackHeatmapTable tbody th { color: var(--market-ink) !important; background: #edf5f3 !important; text-align: left; font-weight: 800; white-space: nowrap; }
 .trackHeatmapTable tr > :last-child { border-right: 0; }
 .trackHeatmapTable tbody tr:last-child > * { border-bottom: 0; }
-.trackHeatCell { background: rgba(var(--market-track-blue), var(--market-track-heat, 0)); text-align: center; font-variant-numeric: tabular-nums; }
-.trackHeatMissing { color: #87999e; background: #fff; }
-.trackHeatZero { background: #f1f5f4; }
+.trackHeatmapTable tbody > tr > td.trackHeatCell { color: var(--market-ink) !important; background: rgba(var(--market-track-blue), var(--market-track-heat, 0)) !important; text-align: center; font-variant-numeric: tabular-nums; }
+.trackHeatmapTable tbody > tr > td.trackHeatMissing { color: #87999e !important; background: #fff !important; }
+.trackHeatmapTable tbody > tr > td.trackHeatZero { color: var(--market-ink) !important; background: #f1f5f4 !important; }
 .trackCurrentValue { display: flex; align-items: baseline; justify-content: center; gap: 7px; }
 .trackCurrentValue span { color: #607981; font-size: 10px; font-weight: 700; }
 .trackCurrentValue strong { color: #173c46; font-size: 17px; line-height: 1; }
@@ -123,6 +224,13 @@
   .periodControls, .periodControls label, .periodControls select { width: 100%; }
   .summary > div { grid-template-columns: 1fr 1fr; }
   .reportSection { padding: 14px; }
+  .opportunityGroupHeader { align-items: stretch; flex-direction: column; gap: 9px; }
+  .opportunityGroupHeader > strong { align-self: flex-start; }
+  .opportunityWorkspaceControls { grid-template-columns: 1fr; }
+  .opportunityMetricTabs > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opportunityWorkspaceGroup > header, .opportunityTrackCard > summary { align-items: stretch; flex-direction: column; }
+  .opportunityWorkspaceGroup > header > strong { align-self: flex-start; }
+  .opportunityTrackFacts { justify-content: flex-start; }
   .trackToolbar { grid-template-columns: 1fr; align-items: stretch; }
   .trackPeriodPair { grid-template-columns: 1fr; }
   .trackLegend { align-items: flex-start; flex-direction: column; gap: 4px; }
@@ -135,6 +243,20 @@
   .root { background: #fff; }
   .main { width: 100%; margin: 16px 0; }
   .reportSection, .summary, .periodPanel { break-inside: avoid; box-shadow: none; }
+  .opportunitySection, .opportunityGroup { break-inside: auto; }
+  .opportunityGroupHeader { break-after: avoid; }
+  .opportunityTableShell { overflow: visible; }
+  .opportunityTableShell table { min-width: 0; table-layout: fixed; font-size: 7.5pt; }
+  .opportunityTableShell th, .opportunityTableShell td { min-width: 0; padding: 5px 4px; }
+  .opportunityWorkspace, .opportunityPeriod, .opportunityWorkspaceGroup { break-inside: auto; }
+  .opportunityWorkspaceControls { display: none; }
+  .opportunityPeriodHeader, .opportunityWorkspaceGroup > header, .opportunityTrackCard > summary { break-after: avoid; }
+  .opportunityMatrixShell, .opportunityDetailTableShell { overflow: visible; }
+  .opportunityMatrixShell table, .opportunityDetailTableShell table { width: 100%; min-width: 0; table-layout: fixed; font-size: 7pt; }
+  .opportunityMatrixShell th, .opportunityMatrixShell td, .opportunityDetailTableShell th, .opportunityDetailTableShell td { position: static !important; min-width: 0 !important; padding: 4px 3px; }
+  .opportunityTrackCard { break-inside: auto; }
+  .opportunityTrackCard > summary { display: flex; }
+  .opportunityTrackCard:not([open]) > .opportunityTrackDetails { display: grid; }
   .trackSection { break-inside: auto; }
   .trackMetricControl { display: none; }
   .trackToolbar { grid-template-columns: 1fr; padding: 7px; }

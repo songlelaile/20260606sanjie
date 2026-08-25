@@ -134,6 +134,95 @@ describe("DMP JSON 工程文件识别", () => {
     expect(level2Competitor?.[7]).toBe(27.23);
     expect(level2Competitor?.[11]).toBe("0.68~0.91");
     expect(level2Competitor?.[13]).toBe("3.67~7.34");
+    expect(report?.quality).toMatchObject({ complete: false, missing: ["PPC"] });
+  });
+
+  it("backfills the four standard rows from aligned period ingredients and marks the canonical report complete", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "旧版达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-03",
+      tables: [
+        {
+          name: "报告总览",
+          columns: ["项目", "主体", "对手", "范围"],
+          rows: [{ cells: ["商品ID", "593063365092", "623803508105", ""] }]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告消耗", "营销推广点击量"],
+          rows: [
+            { cells: ["593063365092", "主体", "1000", "300", "100", "50"] },
+            { cells: ["623803508105", "目标对手", "2000", "500", "200", "80"] }
+          ]
+        }
+      ]
+    });
+
+    expect(report?.quality).toMatchObject({ complete: true, observed: 4 });
+    expect(report?.quality.missing).toBeUndefined();
+    for (const name of ["报告总览", "对标总表", "基础指标对比"]) {
+      const table = report?.tables.find((candidate) => candidate.name === name);
+      const metricIndex = table?.columns.findIndex((column) => /^(?:项目|对标指标|指标)$/.test(column)) ?? -1;
+      const subjectIndex = table?.columns.findIndex((column) => /^(?:主体|主体周期值|主体值)$/.test(column)) ?? -1;
+      const values = new Map(table?.rows.map((row) => [String(row[metricIndex]), row[subjectIndex]]));
+      expect(values.get("推广消耗")).toBe("100");
+      expect(values.get("费比")).toBe(0.1);
+      expect(values.get("ROI")).toBe(3);
+      expect(values.get("PPC")).toBe(2);
+    }
+  });
+
+  it("propagates a disclosed derived metric instead of replacing it with a recalculation", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "保留披露值",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-03",
+      tables: [
+        {
+          name: "报告总览",
+          columns: ["项目", "主体", "对手", "范围"],
+          rows: [
+            { cells: ["商品ID", "593063365092", "623803508105", ""] },
+            { cells: ["投入产出比", "2.99", "", "30日"] }
+          ]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告消耗", "营销推广点击量"],
+          rows: [{ cells: ["593063365092", "主体", "1000", "300", "100", "50"] }]
+        }
+      ]
+    });
+    const benchmark = report?.tables.find((table) => table.name === "对标总表");
+    const roi = benchmark?.rows.find((row) => row[1] === "ROI");
+
+    expect(roi?.[2]).toBe("2.99");
+    expect(report?.quality.complete).toBe(true);
+  });
+
+  it.each(["competition", "market"] as const)("does not inject growth metric rows into a %s report", (reportType) => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      report_type: reportType,
+      title: "非打爆路径报告",
+      item_id: "593063365092",
+      period: "2026-08-01 至 2026-08-03",
+      tables: [{
+        name: "报告总览",
+        columns: ["指标", "当前值"],
+        rows: [{ cells: ["成交笔数", "10"] }]
+      }]
+    });
+
+    expect(report?.tables).toEqual([{
+      name: "报告总览",
+      columns: ["指标", "当前值"],
+      rows: [["成交笔数", "10"]]
+    }]);
+    expect(report?.quality.complete).toBe(true);
   });
 
   it("restores render_data product links, subject daily values, generated time and table presentation", () => {

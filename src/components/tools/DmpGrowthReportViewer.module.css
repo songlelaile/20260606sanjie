@@ -547,6 +547,53 @@
   font: 11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
 }
 
+.chartPoint {
+  cursor: crosshair;
+  outline: none;
+}
+
+.chartPointHit {
+  fill: transparent;
+  pointer-events: all;
+  stroke: transparent;
+}
+
+.chartPointVisible {
+  pointer-events: none;
+}
+
+.chartPoint:focus .chartPointVisible,
+.chartPoint:focus .subjectBaseline {
+  stroke: #103d46;
+  stroke-width: 2.5;
+}
+
+.chartLineHit {
+  pointer-events: stroke;
+  stroke: transparent !important;
+  stroke-width: 14;
+}
+
+.svgTooltip {
+  pointer-events: none;
+}
+
+.svgTooltip rect {
+  fill: #103d46;
+  stroke: rgba(255, 255, 255, .36);
+  stroke-width: 1;
+}
+
+.visualCard svg .svgTooltipText {
+  fill: #fff !important;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.svgTooltipValue {
+  font-weight: 800;
+}
+
 .competitorPath,
 .subjectPath {
   fill: none;
@@ -979,7 +1026,8 @@
 
   .actions,
   .navWrap,
-  .tableTools {
+  .tableTools,
+  .svgTooltip {
     display: none !important;
   }
 

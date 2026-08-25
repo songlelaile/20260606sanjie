@@ -111,6 +111,35 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).not.toContain("isExactNumber(value)");
   });
 
+  it("shows accessible immediate values for every finite growth-report curve point", () => {
+    expect(viewerSource).toContain("interface ChartTooltipPayload");
+    expect(viewerSource).toContain("function chartTooltipText(payload: ChartTooltipPayload)");
+    expect(viewerSource).toContain("function SvgChartTooltip(");
+    expect(viewerSource).toContain('data-chart-tooltip="svg"');
+    expect(viewerSource).toContain("if (value == null) return null;");
+    expect(viewerSource).toContain("data-chart-point={series}");
+    expect(viewerSource).toContain('data-chart-point="subject-average"');
+    expect(viewerSource).toContain("data-tooltip={tooltip}");
+    expect(viewerSource).toContain("data-period={payload.period}");
+    expect(viewerSource).toContain("data-metric={payload.metric}");
+    expect(viewerSource).toContain("data-role={payload.role}");
+    expect(viewerSource).toContain("tabIndex={0}");
+    expect(viewerSource).toContain('focusable="true"');
+    expect(viewerSource).toContain("aria-label={tooltip}");
+    expect(viewerSource).toContain('r="10"');
+    expect(viewerSource).toContain("<title>{tooltip}</title>");
+    expect(viewerSource).toContain('metric: "平均日GMV"');
+    expect(viewerSource).toContain("onPointerEnter");
+    expect(viewerSource).toContain("onPointerMove");
+    expect(viewerSource).toContain("onPointerLeave");
+    expect(viewerSource).toContain("onFocus");
+    expect(viewerSource).toContain("onBlur");
+    expect(viewerCss).toContain(".chartPointHit");
+    expect(viewerCss).toContain(".chartLineHit");
+    expect(viewerCss).toContain(".svgTooltip");
+    expect(viewerCss).toMatch(/@media print[\s\S]*?\.svgTooltip\s*\{[\s\S]*?display:\s*none\s*!important;/);
+  });
+
   it("keeps exact, percentage and interval metrics right aligned with difference trends", () => {
     expect(viewerSource).toMatch(/data-(?:numeric|cell-kind)=/);
     expect(viewerSource).toContain('role === "difference" ? differenceTrend(value) : ""');
@@ -276,6 +305,25 @@ describe("DMP growth report viewer projection", () => {
     expect(metrics.get("PPC")).toEqual({
       label: "PPC", subject: "1.23", competitor: "1.75", scope: "30日严格同周期"
     });
+  });
+
+  it("maps the shared spend, ROI and PPC aliases when those values were already uploaded", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("报告总览", ["项目", "主体", "对手", "范围"], [
+      ["商品ID", "768239824008", "563697874317", ""],
+      ["总GMV", "1000", "2000", "30日"],
+      ["推广花费", "100", "200", "30日"],
+      ["广告费比", "10%", "20%", "30日"],
+      ["投入产出比", "3", "4", "30日"],
+      ["点击单价", "2", "2.5", "30日"]
+    ]));
+
+    const metrics = new Map(projectDmpReportForViewer(record).kpis.map((metric) => [metric.label, metric]));
+
+    expect(metrics.get("推广消耗")?.subject).toBe("100");
+    expect(metrics.get("费比")?.subject).toBe("10%");
+    expect(metrics.get("ROI")?.subject).toBe("3");
+    expect(metrics.get("PPC")?.subject).toBe("2");
   });
 
   it("shows a non-empty optional price-band module and treats score columns as numeric", () => {

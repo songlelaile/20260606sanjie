@@ -38,6 +38,16 @@
   // 缺失当天的数值一律留空，绝不补 0。超出容忍度仍然阻断。
   const PLATFORM_DAY_GAP_TOLERANCE = 2;
 
+  // 报告与归档上传共用同一份主体投放最低合同。数组和每个条目都冻结，
+  // 避免不同输出链路各自维护一套字段后再次发生“报告有、上传丢”的漂移。
+  const SUBJECT_MINIMUM_PROMOTION_CONTRACT = Object.freeze([
+    Object.freeze({ key: "spend", label: "推广消耗" }),
+    Object.freeze({ key: "feeRatio", label: "费比" }),
+    Object.freeze({ key: "roi", label: "ROI" }),
+    Object.freeze({ key: "ppc", label: "PPC" })
+  ]);
+  const SUBJECT_MINIMUM_PROMOTION_METRICS = SUBJECT_MINIMUM_PROMOTION_CONTRACT;
+
   // INDEX_CARD 的同一业务指标会因页面版本或接口模板不同而出现不同名称。
   // 统一身份只用于同义去重，不改变接口披露的数值；列表顺序同时定义核心指标优先级。
   const METRIC_ALIAS_GROUPS = [
@@ -49,7 +59,7 @@
     { key: "cartRate", name: "加购率", aliases: ["加购率", "收藏加购率", "cartrate"] },
     { key: "visitors", name: "访客数", aliases: ["访客数", "访问人数", "访客", "uv"] },
     { key: "totalGmv", name: "总GMV", aliases: ["总gmv", "成交金额", "支付成交金额", "alipayamt", "gmv30d"] },
-    { key: "paidGmv", name: "付费成交额", aliases: ["付费成交额", "付费成交金额", "营销推广成交额", "营销推广成交金额", "推广成交额", "推广成交金额", "广告归因gmv", "广告成交额", "广告成交金额", "直接成交额", "直接成交金额", "直接支付金额", "directalipayamt", "directalipayamount", "gmv1d", "alipayamt1d"] },
+    { key: "paidGmv", name: "付费成交额", aliases: ["付费成交额", "付费成交金额", "付费GMV", "营销推广成交额", "营销推广成交金额", "营销推广GMV", "推广成交额", "推广成交金额", "推广GMV", "广告归因gmv", "广告成交额", "广告成交金额", "直接成交额", "直接成交金额", "直接支付金额", "directalipayamt", "directalipayamount", "gmv1d", "alipayamt1d"] },
     { key: "paidOrders", name: "付费成交笔数", aliases: ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数"] },
     { key: "spend", name: "推广消耗", aliases: ["推广消耗", "推广花费", "广告消耗", "广告花费", "广告/推广消耗", "营销推广消耗", "营销推广花费", "总消耗", "总花费", "charge", "adspend", "promotioncost"] },
     { key: "roi", name: "ROI", aliases: ["roi", "直接roi", "roi1d", "directroi", "推广roi", "营销推广roi", "投入产出比", "直接投入产出比", "直接投产比", "投产比"] },
@@ -791,7 +801,7 @@
 
   function buildMetrics(card) {
     const read = (name, side) => calculableMetricValue(metricByAliases(card, [name])[side]);
-    const paidGmv = metricByAliases(card, ["付费成交额", "付费成交金额", "营销推广成交额", "营销推广成交金额", "广告归因GMV", "广告成交额", "广告成交金额"]);
+    const paidGmv = metricByAliases(card, ["付费成交额", "付费成交金额", "付费GMV", "营销推广成交额", "营销推广成交金额", "营销推广GMV", "推广GMV", "广告归因GMV", "广告成交额", "广告成交金额"]);
     const paidOrders = metricByAliases(card, ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数", "alipayCnt1d"]);
     const subject = {
       marketingClicks: read("营销推广点击量", "subject"), naturalClicks: read("自然点击量", "subject"),
@@ -1156,6 +1166,19 @@
     return true;
   }
 
+  function missingSubjectMinimumPromotionMetrics(metrics = {}) {
+    const spend = numberOrNull(metrics.spend);
+    const paidClicks = numberOrNull(metrics.marketingClicks);
+    return SUBJECT_MINIMUM_PROMOTION_CONTRACT.filter(metric => {
+      if (isDisclosedMetric(metrics[metric.key])) return false;
+      // 零花费时 ROI 没有合法分母；零花费且付费点击也明确为 0 时 PPC 同理。
+      // 只有“明确为 0”才适用豁免，null/空串绝不能伪装成 0。
+      if (metric.key === "roi" && spend === 0) return false;
+      if (metric.key === "ppc" && spend === 0 && paidClicks === 0) return false;
+      return true;
+    });
+  }
+
   function allocationTolerance(base) {
     return Math.max(0.05, Math.abs(base) * 0.000001);
   }
@@ -1379,6 +1402,23 @@
       issues.push(`${location}缺少可披露或可严格计算的${missing.join("、")}`);
     }
     return [...new Set(issues)];
+  }
+
+  function subjectPromotionSceneIssues(sceneRows, subjectMetrics = {}) {
+    const spend = numberOrNull(subjectMetrics.spend);
+    if (!(spend > 0)) return [];
+    const rows = (sceneRows?.level1 || []).filter(row => row.role === "主体");
+    const hasData = row => [
+      row.charge, row.ratio, row.allocated, row.impression, row.click,
+      row.ctr, row.cpc, row.directDealAmount, row.directRoi
+    ].some(isDisclosedMetric);
+    if (!rows.length || !rows.some(hasData)) {
+      return ["主体推广消耗大于0，但主体一级推广场景数据为空"];
+    }
+    const missingAllocation = rows.filter(row => !Number.isFinite(numberOrNull(row.allocated)));
+    if (!missingAllocation.length) return [];
+    const names = missingAllocation.map(row => row.primary || `场景${row.sceneId || "未知"}`);
+    return [`主体推广消耗大于0，但主体一级推广场景有 ${missingAllocation.length} 项花费/占比未能分配：${names.join("、")}`];
   }
 
   // 补抓清理必须与完整性审计使用同一套失败定义。过去 overlay 只识别截断、
@@ -1629,7 +1669,10 @@
     };
     if (sceneRows.validationIssues.length) blockingIssues.push(...sceneRows.validationIssues);
     enrichMetrics(metrics, sceneRows, daily, subjectDaily);
-    const promotionIssues = promotionDetailIssues(sceneRows);
+    const promotionIssues = [
+      ...subjectPromotionSceneIssues(sceneRows, metrics.subject),
+      ...promotionDetailIssues(sceneRows)
+    ];
     sceneRows.missingDetails = promotionIssues;
     if (promotionIssues.length) blockingIssues.push(...promotionIssues);
     if (sceneRows.level1.some(row => row.role === "对手" && ratioOrNull(row.ratio) != null) && !daily.spendUsable) {
@@ -1666,7 +1709,9 @@
   }
 
   return {
-    CHANNELS, SCENE_CODES, STANDARD_PATHS, PLATFORM_DAY_GAP_TOLERANCE, METRIC_ALIAS_GROUPS, metricIdentity, canonicalPath, recordPath, parseBody, parseVagueRange,
+    CHANNELS, SCENE_CODES, STANDARD_PATHS, PLATFORM_DAY_GAP_TOLERANCE, METRIC_ALIAS_GROUPS,
+    SUBJECT_MINIMUM_PROMOTION_CONTRACT, SUBJECT_MINIMUM_PROMOTION_METRICS, missingSubjectMinimumPromotionMetrics,
+    metricIdentity, canonicalPath, recordPath, parseBody, parseVagueRange,
     numberOrNull, calculableMetricValue, normalizeDate, enumerateDates, lineGmvIndex, fitDailyGmv, costPerClick, sumMetricRanges, returnOnSpend, contributionRatio,
     datasetRequestType, transportOnlyReason, isTransportOnlyRecord, classifyGrowthRecord, deriveGrowth
   };

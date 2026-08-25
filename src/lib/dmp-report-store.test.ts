@@ -238,6 +238,57 @@ describe("DMP growth render_data storage contract", () => {
     }));
   });
 
+  it("uses the normalized tables as the subject minimum-metric contract", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广花费", "100", "200", "30日"] },
+      { cells: ["广告费比", "10%", "20%", "30日"] },
+      { cells: ["投入产出比", "3", "4", "30日"] },
+      { cells: ["点击单价", "2", "2.5", "30日"] }
+    ];
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toBeUndefined();
+    expect(checked.report?.tables.find((table) => table.name === "报告总览")?.rows.map((row) => row.cells[0]))
+      .toEqual(["推广花费", "广告费比", "投入产出比", "点击单价"]);
+  });
+
+  it("downgrades a positive-spend archive when a required subject value is missing without rejecting it", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广消耗", "100", "", "30日"] },
+      { cells: ["费比", "10%", "", "30日"] },
+      { cells: ["ROI", "—", "", "30日"] },
+      { cells: ["PPC", "0", "", "30日"] }
+    ];
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toContain("主体最低指标缺失：ROI");
+    expect(checked.report?.tables.find((table) => table.name === "报告总览")?.rows[3]?.cells[1]).toBe("0");
+  });
+
+  it("accepts explicit zero spend and fee ratio without fabricating undefined ROI or PPC", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广消耗", "0", "", "30日"] },
+      { cells: ["费比", "0%", "", "30日"] },
+      { cells: ["ROI", "", "", "30日"] },
+      { cells: ["PPC", "", "", "30日"] }
+    ];
+
+    expect(validateDmpCanonicalReport(report).issues).toBeUndefined();
+  });
+
   it("preserves only closed, ordered and HTTPS-safe optional render data", () => {
     const checked = validateDmpCanonicalReport(growthReport());
     expect(checked.error).toBeUndefined();
