@@ -3,9 +3,13 @@
   --market-green-dark: #07524f;
   --market-ink: #18343d;
   --market-line: #d3e2e0;
+  --ink: var(--market-ink);
+  --muted: #607981;
+  --line: var(--market-line);
   position: relative;
   isolation: isolate;
   color: var(--market-ink);
+  color-scheme: light !important;
   background: #eef6f5;
   overflow: hidden;
 }
@@ -68,11 +72,13 @@
 .reportSection > header { margin-bottom: 12px; }
 .reportSection > header > span { display: grid; place-items: center; width: 32px; height: 28px; border-radius: 8px; color: #fff; background: var(--market-green); font-size: 12px; font-weight: 800; }
 .reportSection > header small { margin-left: auto; color: #607981; }
-.tableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 10px; }
-.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.tableShell th, .tableShell td { min-width: 104px; height: 40px; padding: 8px 10px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
+.tableShell { overflow: auto; border: 1px solid var(--market-line); border-radius: 10px; background: #edf5f3; color-scheme: light !important; }
+.tableShell table { width: 100%; min-width: 760px; border-collapse: separate; border-spacing: 0; background: #edf5f3; font-size: 12px; }
+.tableShell th, .tableShell td { min-width: 104px; height: 40px; padding: 8px 10px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; vertical-align: middle; }
 .tableShell thead th { position: sticky; top: 0; z-index: 2; color: #fff !important; background: var(--market-green) !important; text-align: left; font-weight: 800; white-space: nowrap; }
-.tableShell tbody tr:nth-child(even) td { background: #f5f9f8; }
+.tableShell tbody > tr > td { background: #edf5f3 !important; }
+.tableShell tbody tr:nth-child(even) > td { background: #f5f9f8 !important; }
+.tableShell tbody tr:hover > td { background: #e5f3ef !important; }
 .tableShell tr > :last-child { border-right: 0; }
 .tableShell tbody tr:last-child td { border-bottom: 0; }
 .numeric { text-align: right !important; font-variant-numeric: tabular-nums; }
@@ -89,15 +95,15 @@
 .trackLegend strong { color: var(--market-green); font-size: 12px; }
 .trackHeatmapShell { overflow: auto; border: 1px solid var(--market-line); border-top: 4px solid #3d72db; border-radius: 0 0 10px 10px; background: #fff; }
 .trackHeatmapTable { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; }
-.trackHeatmapTable th, .trackHeatmapTable td { min-width: 148px; padding: 9px 10px; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); vertical-align: middle; }
+.trackHeatmapTable th, .trackHeatmapTable td { min-width: 148px; padding: 9px 10px; border-top: 0 !important; border-right: 1px solid var(--market-line); border-bottom: 1px solid var(--market-line); color: var(--market-ink) !important; vertical-align: middle; }
 .trackHeatmapTable thead th { position: sticky; top: 0; z-index: 3; color: #fff !important; background: var(--market-green) !important; text-align: center; font-weight: 800; white-space: nowrap; }
 .trackHeatmapTable thead th:first-child, .trackHeatmapTable tbody th { position: sticky; left: 0; z-index: 4; min-width: 112px; }
-.trackHeatmapTable tbody th { color: var(--market-ink); background: #edf5f3; text-align: left; font-weight: 800; white-space: nowrap; }
+.trackHeatmapTable tbody th { color: var(--market-ink) !important; background: #edf5f3 !important; text-align: left; font-weight: 800; white-space: nowrap; }
 .trackHeatmapTable tr > :last-child { border-right: 0; }
 .trackHeatmapTable tbody tr:last-child > * { border-bottom: 0; }
-.trackHeatCell { background: rgba(var(--market-track-blue), var(--market-track-heat, 0)); text-align: center; font-variant-numeric: tabular-nums; }
-.trackHeatMissing { color: #87999e; background: #fff; }
-.trackHeatZero { background: #f1f5f4; }
+.trackHeatmapTable tbody > tr > td.trackHeatCell { background: rgba(var(--market-track-blue), var(--market-track-heat, 0)) !important; text-align: center; font-variant-numeric: tabular-nums; }
+.trackHeatmapTable tbody > tr > td.trackHeatCell.trackHeatMissing { color: #87999e !important; background: #edf5f3 !important; }
+.trackHeatmapTable tbody > tr > td.trackHeatCell.trackHeatZero { background: #f1f5f4 !important; }
 .trackCurrentValue { display: flex; align-items: baseline; justify-content: center; gap: 7px; }
 .trackCurrentValue span { color: #607981; font-size: 10px; font-weight: 700; }
 .trackCurrentValue strong { color: #173c46; font-size: 17px; line-height: 1; }

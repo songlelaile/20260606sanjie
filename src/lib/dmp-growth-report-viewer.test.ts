@@ -111,6 +111,35 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).not.toContain("isExactNumber(value)");
   });
 
+  it("shows accessible immediate values for every finite growth-report curve point", () => {
+    expect(viewerSource).toContain("interface ChartTooltipPayload");
+    expect(viewerSource).toContain("function chartTooltipText(payload: ChartTooltipPayload)");
+    expect(viewerSource).toContain("function SvgChartTooltip(");
+    expect(viewerSource).toContain('data-chart-tooltip="svg"');
+    expect(viewerSource).toContain("if (value == null) return null;");
+    expect(viewerSource).toContain("data-chart-point={series}");
+    expect(viewerSource).toContain('data-chart-point="subject-average"');
+    expect(viewerSource).toContain("data-tooltip={tooltip}");
+    expect(viewerSource).toContain("data-period={payload.period}");
+    expect(viewerSource).toContain("data-metric={payload.metric}");
+    expect(viewerSource).toContain("data-role={payload.role}");
+    expect(viewerSource).toContain("tabIndex={0}");
+    expect(viewerSource).toContain('focusable="true"');
+    expect(viewerSource).toContain("aria-label={tooltip}");
+    expect(viewerSource).toContain('r="10"');
+    expect(viewerSource).toContain("<title>{tooltip}</title>");
+    expect(viewerSource).toContain('metric: "平均日GMV"');
+    expect(viewerSource).toContain("onPointerEnter");
+    expect(viewerSource).toContain("onPointerMove");
+    expect(viewerSource).toContain("onPointerLeave");
+    expect(viewerSource).toContain("onFocus");
+    expect(viewerSource).toContain("onBlur");
+    expect(viewerCss).toContain(".chartPointHit");
+    expect(viewerCss).toContain(".chartLineHit");
+    expect(viewerCss).toContain(".svgTooltip");
+    expect(viewerCss).toMatch(/@media print[\s\S]*?\.svgTooltip\s*\{[\s\S]*?display:\s*none\s*!important;/);
+  });
+
   it("keeps exact, percentage and interval metrics right aligned with difference trends", () => {
     expect(viewerSource).toMatch(/data-(?:numeric|cell-kind)=/);
     expect(viewerSource).toContain('role === "difference" ? differenceTrend(value) : ""');
@@ -124,15 +153,19 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*print-color-adjust:\s*exact;/s);
     expect(viewerCss).toMatch(/\.tableShell thead \.stickyColumn\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
     expect(viewerCss).toMatch(/\.tableShell thead th\.subject,[\s\S]*\.tableShell thead th\.competitor,[\s\S]*\.tableShell thead th\.difference[\s\S]*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
-    expect(viewerCss).toMatch(/\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
-    expect(viewerCss).toMatch(/\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\.subject\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;[^}]*color:\s*var\(--dmp-subject-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\.competitor\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;[^}]*color:\s*var\(--dmp-competitor-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
   });
 
   it("isolates every data cell from the dark AppShell table palette", () => {
-    expect(viewerCss).toMatch(/\.tableShell\s*\{[^}]*background:\s*#fff;[^}]*color-scheme:\s*light;/s);
-    expect(viewerCss).toMatch(/\.tableShell table\s*\{[^}]*background:\s*#fff;/s);
-    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\s*\{[^}]*background-color:\s*#fff;/s);
-    expect(viewerCss).toMatch(/\.tableShell tbody tr:nth-child\(even\)\s*>\s*td\s*\{[^}]*background-color:\s*#f9fbfb;/s);
+    expect(viewerCss).toMatch(/\.root\s*\{[^}]*color-scheme:\s*light\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell\s*\{[^}]*background:\s*#edf5f3;[^}]*color-scheme:\s*light\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell table\s*\{[^}]*background:\s*#edf5f3;/s);
+    expect(viewerCss).toMatch(/\.tableShell th,\s*\.tableShell td\s*\{[^}]*border-top:\s*0\s*!important;[^}]*color:\s*var\(--dmp-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\s*\{[^}]*background-color:\s*#edf5f3\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody tr:nth-child\(even\)\s*>\s*td\s*\{[^}]*background-color:\s*#f9fbfb\s*!important;/s);
   });
 
   it("does not right-align numeric-string identifiers while keeping business metrics right-aligned", () => {

@@ -3,7 +3,7 @@
 /* 商品主图来自达摩盘返回的动态 HTTPS 地址，不能使用需要预配置远端域名的 next/image。 */
 /* eslint-disable @next/next/no-img-element */
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
 import type { DmpCell } from "@/lib/dmp-report-import";
@@ -35,6 +35,19 @@ type CellStyle = CSSProperties & {
   "--dmp-column-width"?: string;
   "--dmp-sticky-left"?: string;
 };
+
+interface ChartTooltipPayload {
+  x: number;
+  y: number;
+  period: string;
+  metric: string;
+  role: "主体" | "目标对手";
+  formatted: string;
+}
+
+interface ChartTooltipState extends ChartTooltipPayload {
+  text: string;
+}
 
 export function DmpGrowthReportViewer({
   record,
@@ -384,6 +397,7 @@ function DailyGmvChart({
   table: DmpViewerTable;
   periodTable?: DmpViewerTable;
 }) {
+  const [tooltip, setTooltip] = useState<ChartTooltipState | null>(null);
   const {
     competitorIndex,
     subjectIndex,
@@ -415,6 +429,28 @@ function DailyGmvChart({
   const xIndexes: number[] = [];
   for (let index = 0; index < table.rows.length; index += step) xIndexes.push(index);
   if (xIndexes.at(-1) !== table.rows.length - 1) xIndexes.push(table.rows.length - 1);
+  const showTooltip = (payload: ChartTooltipPayload, event?: ReactPointerEvent<SVGGElement>) => {
+    let x = payload.x;
+    let y = payload.y;
+    const svg = event?.currentTarget.ownerSVGElement;
+    if (event && svg) {
+      const bounds = svg.getBoundingClientRect();
+      if (bounds.width > 0 && bounds.height > 0) {
+        x = (event.clientX - bounds.left) * width / bounds.width;
+        y = (event.clientY - bounds.top) * height / bounds.height;
+      }
+    }
+    setTooltip({ ...payload, x, y, text: chartTooltipText(payload) });
+  };
+  const hideTooltip = () => setTooltip(null);
+  const subjectAveragePayload: ChartTooltipPayload | null = showsSubjectAverage ? {
+    x: (left + width - right) / 2,
+    y: yFor(subjectAverage),
+    period: `${String(table.rows[0]?.[0] ?? "")} 至 ${String(table.rows.at(-1)?.[0] ?? "")}`,
+    metric: "平均日GMV",
+    role: "主体",
+    formatted: formatViewerCell(subjectAverage, "GMV")
+  } : null;
 
   return (
     <article className={`${styles.visualCard} ${styles.dailyVisual}`} data-chart="daily-gmv">
@@ -433,9 +469,35 @@ function DailyGmvChart({
           return <g data-x-tick data-date={date} key={`${date}-${index}`}><line x1={x} y1={height - bottom} x2={x} y2={height - bottom + 5} /><text x={x} y={height - 12} textAnchor={anchor}>{date.slice(5)}</text></g>;
         })}
         <path data-series="competitor" d={competitorPath} className={styles.competitorPath} />
-        {seriesPoints(table, competitorValues, "competitor", competitorIndex, xFor, yFor)}
-        {subjectPath ? <><path data-series="subject" d={subjectPath} className={styles.subjectPath} />{seriesPoints(table, subjectValues, "subject", subjectIndex, xFor, yFor)}</> : null}
-        {showsSubjectAverage ? <line data-series="subject-average" className={styles.subjectBaseline} x1={left} y1={yFor(subjectAverage)} x2={width - right} y2={yFor(subjectAverage)} /> : null}
+        {seriesPoints(table, competitorValues, "competitor", competitorIndex, xFor, yFor, showTooltip, hideTooltip)}
+        {subjectPath ? <><path data-series="subject" d={subjectPath} className={styles.subjectPath} />{seriesPoints(table, subjectValues, "subject", subjectIndex, xFor, yFor, showTooltip, hideTooltip)}</> : null}
+        {subjectAveragePayload ? (
+          <g
+            className={styles.chartPoint}
+            data-chart-point="subject-average"
+            data-tooltip={chartTooltipText(subjectAveragePayload)}
+            data-period={subjectAveragePayload.period}
+            data-metric={subjectAveragePayload.metric}
+            data-role={subjectAveragePayload.role}
+            data-value={subjectAverage}
+            tabIndex={0}
+            focusable="true"
+            role="img"
+            aria-label={chartTooltipText(subjectAveragePayload)}
+            onPointerEnter={(event) => showTooltip(subjectAveragePayload, event)}
+            onPointerMove={(event) => showTooltip(subjectAveragePayload, event)}
+            onPointerLeave={(event) => {
+              if (document.activeElement !== event.currentTarget) hideTooltip();
+            }}
+            onFocus={() => showTooltip(subjectAveragePayload)}
+            onBlur={hideTooltip}
+          >
+            <line className={styles.chartLineHit} x1={left} y1={subjectAveragePayload.y} x2={width - right} y2={subjectAveragePayload.y} />
+            <line data-series="subject-average" className={styles.subjectBaseline} x1={left} y1={subjectAveragePayload.y} x2={width - right} y2={subjectAveragePayload.y} />
+            <title>{chartTooltipText(subjectAveragePayload)}</title>
+          </g>
+        ) : null}
+        <SvgChartTooltip tooltip={tooltip} width={width} height={height} left={left} right={right} top={top} bottom={bottom} />
       </svg>
     </article>
   );
@@ -477,20 +539,104 @@ function seriesPoints(
   series: "subject" | "competitor",
   valueIndex: number,
   xFor: (index: number) => number,
-  yFor: (value: number) => number
+  yFor: (value: number) => number,
+  showTooltip: (payload: ChartTooltipPayload, event?: ReactPointerEvent<SVGGElement>) => void,
+  hideTooltip: () => void
 ) {
-  return values.map((value, index) => value == null ? null : (
-    <circle
-      data-series-point={series}
-      data-date={String(table.rows[index]?.[0] ?? "")}
-      data-value={value}
-      className={series === "subject" ? styles.subjectPoint : styles.competitorPoint}
-      cx={xFor(index)}
-      cy={yFor(value)}
-      r="3"
-      key={`${series}-${index}`}
-    ><title>{`${String(table.rows[index]?.[0] ?? "")} ${series === "subject" ? "主体" : "目标对手"}日GMV ${formatViewerCell(table.rows[index]?.[valueIndex], "GMV")}`}</title></circle>
-  ));
+  return values.map((value, index) => {
+    if (value == null) return null;
+    const payload: ChartTooltipPayload = {
+      x: xFor(index),
+      y: yFor(value),
+      period: String(table.rows[index]?.[0] ?? ""),
+      metric: "日GMV",
+      role: series === "subject" ? "主体" : "目标对手",
+      formatted: formatViewerCell(table.rows[index]?.[valueIndex], "GMV")
+    };
+    const tooltip = chartTooltipText(payload);
+    return (
+      <g
+        className={styles.chartPoint}
+        data-chart-point={series}
+        data-tooltip={tooltip}
+        data-period={payload.period}
+        data-metric={payload.metric}
+        data-role={payload.role}
+        data-value={value}
+        tabIndex={0}
+        focusable="true"
+        role="img"
+        aria-label={tooltip}
+        onPointerEnter={(event) => showTooltip(payload, event)}
+        onPointerMove={(event) => showTooltip(payload, event)}
+        onPointerLeave={(event) => {
+          if (document.activeElement !== event.currentTarget) hideTooltip();
+        }}
+        onFocus={() => showTooltip(payload)}
+        onBlur={hideTooltip}
+        key={`${series}-${index}`}
+      >
+        <circle className={styles.chartPointHit} cx={payload.x} cy={payload.y} r="10" />
+        <circle
+          data-series-point={series}
+          data-date={payload.period}
+          data-value={value}
+          className={`${styles.chartPointVisible} ${series === "subject" ? styles.subjectPoint : styles.competitorPoint}`}
+          cx={payload.x}
+          cy={payload.y}
+          r="3"
+        />
+        <title>{tooltip}</title>
+      </g>
+    );
+  });
+}
+
+function chartTooltipText(payload: ChartTooltipPayload) {
+  return `${payload.period}｜${payload.metric}｜${payload.role}：${payload.formatted}`;
+}
+
+function SvgChartTooltip({
+  tooltip,
+  width,
+  height,
+  left,
+  right,
+  top,
+  bottom
+}: {
+  tooltip: ChartTooltipState | null;
+  width: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}) {
+  if (!tooltip) return null;
+  const heading = `${tooltip.period}｜${tooltip.metric}｜${tooltip.role}`;
+  const tooltipWidth = Math.min(360, Math.max(180, Math.max(Array.from(heading).length * 7.2, Array.from(tooltip.formatted).length * 8) + 24));
+  const tooltipHeight = 48;
+  const preferredX = tooltip.x + 12 + tooltipWidth <= width - right ? tooltip.x + 12 : tooltip.x - tooltipWidth - 12;
+  const preferredY = tooltip.y - tooltipHeight - 10 >= top ? tooltip.y - tooltipHeight - 10 : tooltip.y + 10;
+  const x = Math.max(left, Math.min(preferredX, width - right - tooltipWidth));
+  const y = Math.max(top, Math.min(preferredY, height - bottom - tooltipHeight));
+  return (
+    <g
+      className={styles.svgTooltip}
+      data-chart-tooltip="svg"
+      role="status"
+      aria-live="polite"
+      transform={`translate(${x} ${y})`}
+      pointerEvents="none"
+    >
+      <rect width={tooltipWidth} height={tooltipHeight} rx="7" />
+      <text className={styles.svgTooltipText} x="12" y="18">
+        <tspan>{heading}</tspan>
+        <tspan className={styles.svgTooltipValue} x="12" dy="18">{tooltip.formatted}</tspan>
+      </text>
+    </g>
+  );
 }
 
 function cellClasses({

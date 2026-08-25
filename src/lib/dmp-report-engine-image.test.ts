@@ -8,6 +8,10 @@ const engineSource = readFileSync(
   new URL("../../public/tools/dmp-report-engine/report-engine.js", import.meta.url),
   "utf8"
 );
+const completenessSource = readFileSync(
+  new URL("../../public/tools/dmp-report-engine/completeness-engine.js", import.meta.url),
+  "utf8"
+);
 
 const CHANNELS = [
   ["content", "内容运营"],
@@ -16,6 +20,37 @@ const CHANNELS = [
   ["lead", "线索推广"],
   ["keyword", "关键词推广"]
 ] as const;
+
+describe("DMP subject promotion minimum contract", () => {
+  it("freezes spend, fee ratio, ROI and PPC for both archive and report generation", () => {
+    const context: Record<string, unknown> = { URL };
+    runInNewContext(completenessSource, context, { filename: "completeness-engine.js" });
+    runInNewContext(engineSource, context, { filename: "report-engine.js" });
+    const completeness = context.DmpCompletenessEngine as {
+      SUBJECT_MINIMUM_PROMOTION_CONTRACT: ReadonlyArray<{ key: string; label: string }>;
+      missingSubjectMinimumPromotionMetrics: (metrics: Record<string, unknown>) => Array<{ key: string }>;
+    };
+    const report = context.DmpReportEngine as {
+      SUBJECT_MINIMUM_PROMOTION_CONTRACT: ReadonlyArray<{ key: string; label: string }>;
+    };
+
+    expect(Object.isFrozen(completeness.SUBJECT_MINIMUM_PROMOTION_CONTRACT)).toBe(true);
+    expect(completeness.SUBJECT_MINIMUM_PROMOTION_CONTRACT.map(({ key, label }) => [key, label])).toEqual([
+      ["spend", "推广消耗"],
+      ["feeRatio", "费比"],
+      ["roi", "ROI"],
+      ["ppc", "PPC"]
+    ]);
+    expect(report.SUBJECT_MINIMUM_PROMOTION_CONTRACT).toBe(completeness.SUBJECT_MINIMUM_PROMOTION_CONTRACT);
+    expect(completeness.missingSubjectMinimumPromotionMetrics({
+      spend: 100,
+      feeRatio: 0.1,
+      roi: null,
+      ppc: 2,
+      marketingClicks: 50
+    }).map(({ key }) => key)).toEqual(["roi"]);
+  });
+});
 
 describe("DMP report product-image upload contract", () => {
   it("keeps the captured subject and competitor pictures from report generation through viewer projection", () => {
