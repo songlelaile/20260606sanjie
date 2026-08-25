@@ -944,6 +944,53 @@
     };
   }
 
+  function summarizeSpendCoverage(rows, expectedDates, hasSource = true) {
+    const expected = Array.isArray(expectedDates) ? expectedDates : [];
+    const byDate = new Map((rows || [])
+      .filter(row => expected.includes(row?.date) && Number.isFinite(row?.totalSpend))
+      .map(row => [row.date, row]));
+    const spendRows = expected.map(date => byDate.get(date)).filter(Boolean);
+    const dates = spendRows.map(row => row.date);
+    const missingDates = expected.filter(date => !byDate.has(date));
+    const coverageDays = spendRows.length;
+    const expectedDays = expected.length;
+    const complete = Boolean(hasSource && expectedDays > 0 && missingDates.length === 0);
+    const partial = Boolean(hasSource && missingDates.length > 0
+      && missingDates.length <= PLATFORM_DAY_GAP_TOLERANCE && coverageDays > 0);
+    const singleDayPartial = Boolean(partial && missingDates.length === 1 && coverageDays === expectedDays - 1);
+    const usable = complete || partial;
+    const spend = usable ? round(spendRows.reduce((sum, row) => sum + row.totalSpend, 0)) : null;
+    const channelSpend = Object.fromEntries(CHANNELS.map(([, label]) => {
+      const values = spendRows.map(row => row?.channelSpend?.[label]);
+      return [label, usable && values.length === coverageDays && values.every(Number.isFinite)
+        ? round(values.reduce((sum, value) => sum + value, 0))
+        : null];
+    }));
+    return {
+      spendRows,
+      status: complete ? "complete" : partial ? "partial" : "missing",
+      scope: complete ? "strict-period-daily" : partial ? "coverage-period" : "missing",
+      expectedDays,
+      coverageDays,
+      dates,
+      startDate: dates[0] || "",
+      endDate: dates.at(-1) || "",
+      missingDates,
+      spend,
+      channelSpend,
+      complete,
+      partial,
+      singleDayPartial,
+      usable
+    };
+  }
+
+  function publicSpendCoverage(summary) {
+    if (!summary || typeof summary !== "object") return null;
+    const { spendRows: _spendRows, usable: _usable, ...coverage } = summary;
+    return coverage;
+  }
+
   function buildDaily(line, period, periodGmv) {
     const expected = enumerateDates(period.startDate, period.endDate);
     const dailyByDate = new Map();
@@ -989,23 +1036,19 @@
         stage: line?.stages.find(stage => (!stage.start || row.date >= stage.start) && (!stage.end || row.date <= stage.end))?.name || ""
       };
     });
-    const spendRows = rows.filter(row => Number.isFinite(row.totalSpend));
-    const spendDates = new Set(spendRows.map(row => row.date));
-    const spendMissingDates = expected.filter(date => !spendDates.has(date));
-    const spendCoverageDays = spendRows.length;
-    const spendComplete = Boolean(line && spendMissingDates.length === 0);
-    // 平台还没产出最后一天消耗时，趋势里这一天仍在，只是五渠道字段缺失。
-    // 这属于平台侧少数据，不是抓取失败，容忍范围内按覆盖天数如实汇总。
-    const spendPartial = Boolean(line && spendMissingDates.length > 0
-      && spendMissingDates.length <= PLATFORM_DAY_GAP_TOLERANCE && spendCoverageDays > 0);
-    const spendUsable = spendComplete || spendPartial;
-    const totalSpend = spendUsable ? round(spendRows.reduce((sum, row) => sum + row.totalSpend, 0)) : null;
-    const channelSpend = Object.fromEntries(CHANNELS.map(([, label]) => {
-      const values = spendRows.map(row => row.channelSpend[label]);
-      return [label, spendUsable && values.length === spendCoverageDays && values.every(Number.isFinite)
-        ? round(values.reduce((sum, value) => sum + value, 0))
-        : null];
-    }));
+    // 缺失日仍留空，不补 0。只对真实返回且五渠道齐全的日求和，
+    // 并把覆盖日期完整留在中间模型中，供下游区分严格周期与局部覆盖。
+    const spendCoverageModel = summarizeSpendCoverage(rows, expected, Boolean(line));
+    const spendRows = spendCoverageModel.spendRows;
+    const spendMissingDates = spendCoverageModel.missingDates;
+    const spendCoverageDays = spendCoverageModel.coverageDays;
+    const spendComplete = spendCoverageModel.complete;
+    const spendPartial = spendCoverageModel.partial;
+    const spendSingleDayPartial = spendCoverageModel.singleDayPartial;
+    const spendUsable = spendCoverageModel.usable;
+    const totalSpend = spendCoverageModel.spend;
+    const channelSpend = spendCoverageModel.channelSpend;
+    const spendCoverage = publicSpendCoverage(spendCoverageModel);
     // 覆盖汇总只使用“同一天同时有日 GMV 与五渠道总消耗”的交集。它用于把
     // 平台已经返回的业务值如实展示出来，但绝不回填成完整请求周期的指标。
     // 费比必须按汇总消耗 / 汇总 GMV 计算，不能平均逐日费比。
@@ -1036,7 +1079,8 @@
     return {
       rows, expectedDates: expected, missingDates, duplicateDates, missingChannelDates, missingIndexDates, invalidIndexDates, complete, indexSum: gmvFit.indexSum, gmvFit,
       platformGapDates, platformGapDays, platformGapTolerated, coverageDays: rows.length,
-      totalSpend, channelSpend, spendCoverageDays, spendExpectedDays: expected.length, spendMissingDates, spendComplete, spendPartial, spendUsable,
+      totalSpend, channelSpend, spendCoverageDays, spendExpectedDays: expected.length, spendMissingDates, spendComplete, spendPartial, spendSingleDayPartial, spendUsable,
+      spendCoverage,
       coverageSummary
     };
   }
@@ -1061,6 +1105,20 @@
       if (!isDisclosedMetric(dailyMetrics.roi)) dailyMetrics.roi = returnOnSpend(dailyMetrics.paidGmv, numberOrNull(row.totalSpend));
       row.metrics = dailyMetrics;
     }
+    const expectedDates = Array.isArray(subjectDaily?.expectedDates) && subjectDaily.expectedDates.length
+      ? subjectDaily.expectedDates
+      : (daily?.expectedDates || []);
+    const coverageModel = summarizeSpendCoverage(subjectDaily?.rows || [], expectedDates, Boolean(subjectDaily?.rows?.length));
+    subjectDaily.totalSpend = coverageModel.spend;
+    subjectDaily.channelSpend = coverageModel.channelSpend;
+    subjectDaily.spendCoverageDays = coverageModel.coverageDays;
+    subjectDaily.spendExpectedDays = coverageModel.expectedDays;
+    subjectDaily.spendMissingDates = coverageModel.missingDates;
+    subjectDaily.spendComplete = coverageModel.complete;
+    subjectDaily.spendPartial = coverageModel.partial;
+    subjectDaily.spendSingleDayPartial = coverageModel.singleDayPartial;
+    subjectDaily.spendUsable = coverageModel.usable;
+    subjectDaily.spendCoverage = publicSpendCoverage(coverageModel);
     return subjectDaily;
   }
 
@@ -1219,29 +1277,73 @@
     return values.length && values.every(Number.isFinite) ? round(values.reduce((sum, value) => sum + value, 0)) : null;
   }
 
-  function enrichMetrics(metrics, sceneRows, daily) {
+  function enrichMetrics(metrics, sceneRows, daily, subjectDaily) {
     const subjectLevel1 = sceneRows.level1.filter(row => row.role === "主体");
     const competitorLevel1 = sceneRows.level1.filter(row => row.role === "对手");
-    // 完全对齐周期的 INDEX_CARD 披露值优先。28/29 天覆盖汇总只用于带覆盖
-    // 标记的分日、渠道和场景计算，不能冒充完整 30 日周期值。
-    if (!isDisclosedMetric(metrics.subject.spend)) {
-      metrics.subject.spend = sumFinite(subjectLevel1.map(row => numberOrNull(row.charge)));
-    }
-    if (!isDisclosedMetric(metrics.competitor.spend)) {
-      metrics.competitor.spend = sumFinite(competitorLevel1.map(row => numberOrNull(row.charge)));
-      if (!isDisclosedMetric(metrics.competitor.spend) && daily.spendComplete) metrics.competitor.spend = daily.totalSpend;
+    const spendCoverageBySide = {
+      subject: subjectDaily?.spendCoverage || null,
+      competitor: daily?.spendCoverage || null
+    };
+    const level1BySide = { subject: subjectLevel1, competitor: competitorLevel1 };
+
+    // INDEX_CARD 严格周期值优先，其次是一级场景精确花费。两者都没有时，
+    // 完整日序列可作为严格周期；若仅缺 1 天，使用真实返回日的直接求和，
+    // 但显式标记 coverage-period，不把缺失日当成 0。缺 2 天仍仅用于场景覆盖分配。
+    for (const side of ["subject", "competitor"]) {
+      const coverage = spendCoverageBySide[side];
+      let spendScope = isDisclosedMetric(metrics[side].spend) ? "strict-period" : "missing";
+      if (!isDisclosedMetric(metrics[side].spend)) {
+        const sceneSpend = sumFinite(level1BySide[side].map(row => numberOrNull(row.charge)));
+        if (Number.isFinite(sceneSpend)) {
+          metrics[side].spend = sceneSpend;
+          spendScope = "scene-exact";
+        } else if ((coverage?.complete || coverage?.singleDayPartial) && Number.isFinite(coverage?.spend)) {
+          metrics[side].spend = coverage.spend;
+          spendScope = coverage.complete ? "strict-period-daily" : "coverage-period";
+        }
+      }
+      metrics[side].spendScope = spendScope;
+      metrics[side].spendCoverage = coverage;
     }
     metrics.subject.paidGmv = metrics.subject.paidGmv ?? sumMetricRanges(subjectLevel1.map(row => row.directDealAmount));
     metrics.competitor.paidGmv = metrics.competitor.paidGmv ?? sumMetricRanges(competitorLevel1.map(row => row.directDealAmount));
     metrics.subject.attributedGmv = metrics.subject.paidGmv;
     metrics.competitor.attributedGmv = metrics.competitor.paidGmv;
     for (const side of ["subject", "competitor"]) {
-      const values = side === "subject" ? subjectLevel1 : competitorLevel1;
+      const values = level1BySide[side];
+      const coverage = spendCoverageBySide[side];
       if (!isDisclosedMetric(metrics[side].marketingClicks)) {
         metrics[side].marketingClicks = sumMetricRanges(values.map(row => row.click));
       }
-      const keyword = values.find(row => row.primary === "关键词推广");
-      metrics[side].keywordShare = numberOrNull(keyword?.ratio);
+      const keywordRows = values.filter(row => row.primary === "关键词推广");
+      const spend = numberOrNull(metrics[side].spend);
+      const dailyKeywordSpend = numberOrNull(coverage?.channelSpend?.["关键词推广"]);
+      const dailySpend = numberOrNull(coverage?.spend);
+      const dailyMatchesDenominator = Number.isFinite(spend) && Number.isFinite(dailySpend)
+        && Math.abs(spend - dailySpend) <= allocationTolerance(spend);
+      const sceneKeywordSpend = sumFinite(keywordRows.map(row => numberOrNull(row.allocated)));
+      const existingKeywordShare = metrics[side].keywordShare;
+      const apiKeywordRatios = keywordRows.map(row => ratioOrNull(row.ratio));
+      const apiKeywordShare = apiKeywordRatios.length && apiKeywordRatios.every(Number.isFinite)
+        ? round(apiKeywordRatios.reduce((sum, value) => sum + value, 0), 6)
+        : null;
+      if (Number.isFinite(spend) && spend > 0 && Number.isFinite(dailyKeywordSpend) && dailyMatchesDenominator) {
+        metrics[side].keywordSpend = dailyKeywordSpend;
+        metrics[side].keywordShare = round(dailyKeywordSpend / spend, 6);
+        metrics[side].keywordShareSource = "daily-channel-spend";
+      } else if (Number.isFinite(spend) && spend > 0 && Number.isFinite(sceneKeywordSpend)) {
+        metrics[side].keywordSpend = sceneKeywordSpend;
+        metrics[side].keywordShare = round(sceneKeywordSpend / spend, 6);
+        metrics[side].keywordShareSource = "level1-scene-spend";
+      } else if (isDisclosedMetric(existingKeywordShare)) {
+        metrics[side].keywordSpend = null;
+        metrics[side].keywordShare = existingKeywordShare;
+        metrics[side].keywordShareSource = "index-card";
+      } else {
+        metrics[side].keywordSpend = null;
+        metrics[side].keywordShare = apiKeywordShare;
+        metrics[side].keywordShareSource = Number.isFinite(apiKeywordShare) ? "api-ratio" : "missing";
+      }
       const ratios = values.map(row => numberOrNull(row.ratio));
       const sum = ratios.reduce((total, value) => total + value, 0);
       metrics[side].channelHhi = ratios.length && ratios.every(Number.isFinite) && Math.abs(sum - 1) <= 0.01 ? round(ratios.reduce((total, value) => total + value ** 2, 0), 6) : null;
@@ -1491,25 +1593,42 @@
     if (missingParents.length) blockingIssues.push(`缺少 ${missingParents.length} 个一级场景的二级明细响应：${missingParents.join("、")}`);
     const exactSubjectSpend = numberOrNull(metrics.subject.spend);
     const exactCompetitorSpend = numberOrNull(metrics.competitor.spend);
+    const sceneSubjectSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "subject"))));
+    const sceneCompetitorSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "competitor"))));
+    const subjectCoverageSpend = subjectDaily.spendUsable ? numberOrNull(subjectDaily.totalSpend) : null;
+    const competitorCoverageSpend = daily.spendUsable ? numberOrNull(daily.totalSpend) : null;
     const sceneRows = buildSceneRows(dedupScenes, {
-      subject: exactSubjectSpend,
-      competitor: exactCompetitorSpend ?? (daily.spendUsable ? daily.totalSpend : null)
+      subject: exactSubjectSpend ?? sceneSubjectSpend ?? subjectCoverageSpend,
+      competitor: exactCompetitorSpend ?? sceneCompetitorSpend ?? competitorCoverageSpend
     });
     sceneRows.allocationScope = {
-      subject: Number.isFinite(exactSubjectSpend) ? "strict-period" : "scene-exact",
+      subject: Number.isFinite(exactSubjectSpend)
+        ? "strict-period"
+        : Number.isFinite(sceneSubjectSpend)
+          ? "scene-exact"
+          : subjectDaily.spendComplete
+            ? "strict-period-daily"
+            : subjectDaily.spendPartial
+              ? "coverage-period"
+              : "missing",
       competitor: Number.isFinite(exactCompetitorSpend)
         ? "strict-period"
-        : daily.spendComplete
-          ? "strict-period-daily"
-          : daily.spendPartial
-            ? "coverage-period"
-            : "missing",
-      competitorStart: daily.spendPartial ? daily.coverageSummary.startDate : period.startDate,
-      competitorEnd: daily.spendPartial ? daily.coverageSummary.endDate : period.endDate,
+        : Number.isFinite(sceneCompetitorSpend)
+          ? "scene-exact"
+          : daily.spendComplete
+            ? "strict-period-daily"
+            : daily.spendPartial
+              ? "coverage-period"
+              : "missing",
+      subjectStart: subjectDaily.spendPartial ? subjectDaily.spendCoverage.startDate : period.startDate,
+      subjectEnd: subjectDaily.spendPartial ? subjectDaily.spendCoverage.endDate : period.endDate,
+      subjectDays: subjectDaily.spendPartial ? subjectDaily.spendCoverageDays : period.days,
+      competitorStart: daily.spendPartial ? daily.spendCoverage.startDate : period.startDate,
+      competitorEnd: daily.spendPartial ? daily.spendCoverage.endDate : period.endDate,
       competitorDays: daily.spendPartial ? daily.spendCoverageDays : period.days
     };
     if (sceneRows.validationIssues.length) blockingIssues.push(...sceneRows.validationIssues);
-    enrichMetrics(metrics, sceneRows, daily);
+    enrichMetrics(metrics, sceneRows, daily, subjectDaily);
     const promotionIssues = promotionDetailIssues(sceneRows);
     sceneRows.missingDetails = promotionIssues;
     if (promotionIssues.length) blockingIssues.push(...promotionIssues);

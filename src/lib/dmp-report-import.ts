@@ -234,20 +234,334 @@ function rangeDividedByScalar(value: DmpCell | undefined, divisor: number, digit
   return null;
 }
 
-function scalarDividedByRange(value: number, divisor: DmpCell | undefined): DmpCell | null {
+function scalarDividedByRange(value: number, divisor: DmpCell | undefined, digits = 2): DmpCell | null {
   if (!Number.isFinite(value) || value < 0) return null;
   const range = metricRange(divisor);
   if (!range) return null;
   const minDivisor = range.min != null && range.min > 0 ? range.min : null;
   const maxDivisor = range.max != null && range.max > 0 ? range.max : null;
   if (minDivisor != null && maxDivisor != null) {
-    const lower = roundMetric(value / maxDivisor);
-    const upper = roundMetric(value / minDivisor);
+    const lower = roundMetric(value / maxDivisor, digits);
+    const upper = roundMetric(value / minDivisor, digits);
     return lower === upper ? lower : `${lower}~${upper}`;
   }
-  if (maxDivisor != null) return `>${roundMetric(value / maxDivisor)}`;
-  if (minDivisor != null) return `<${roundMetric(value / minDivisor)}`;
+  if (maxDivisor != null) return `>${roundMetric(value / maxDivisor, digits)}`;
+  if (minDivisor != null) return `<${roundMetric(value / minDivisor, digits)}`;
   return null;
+}
+
+type ReportSide = "subject" | "competitor";
+
+type PartialSpendCoverage = {
+  side: ReportSide;
+  spend: number;
+  keywordShare: number | null;
+  returnedDays: number;
+  expectedDays: number;
+  label: string;
+};
+
+type ReconcileOptions = {
+  preserveDisclosedRanges?: boolean;
+  periodStartDate?: string;
+  periodEndDate?: string;
+};
+
+const CROSS_TABLE_METRICS = {
+  spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
+  paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
+  roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比"],
+  ppc: ["PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
+  feeRatio: ["费比", "推广费比", "广告费比"],
+  roas: ["全域ROAS", "ROAS"],
+  keywordShare: ["关键词消耗占比", "关键词花费占比", "关键词推广消耗占比"],
+  marketingClicks: ["营销推广点击量", "营销推广点击数", "营销推广点击", "广告点击量", "广告点击数", "推广点击量", "推广点击数", "付费点击量"],
+  totalGmv: ["总GMV", "全渠道总GMV"]
+} as const;
+
+function normalizedMetricLabel(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s_\-/（）()【】\[\]：:]+/g, "");
+}
+
+function columnIndexByAliases(table: DmpReportTable | undefined, aliases: readonly string[]) {
+  if (!table) return -1;
+  const accepted = new Set(aliases.map(normalizedMetricLabel));
+  return table.columns.findIndex((column) => accepted.has(normalizedMetricLabel(column)));
+}
+
+function metricRow(table: DmpReportTable | undefined, aliases: readonly string[]) {
+  if (!table) return undefined;
+  const metricIndex = columnIndexByAliases(table, ["项目", "对标指标", "指标"]);
+  if (metricIndex < 0) return undefined;
+  const accepted = new Set(aliases.map(normalizedMetricLabel));
+  return table.rows.find((row) => accepted.has(normalizedMetricLabel(row[metricIndex])));
+}
+
+function sideColumnIndex(table: DmpReportTable | undefined, side: ReportSide) {
+  if (!table) return -1;
+  const aliases = side === "subject"
+    ? ["主体", "主体值", "主体周期值", "本品", "本品值"]
+    : ["对手", "对手值", "对手周期值", "目标对手", "目标对手值", "目标对手周期值", "竞品", "竞品值", "竞品周期值"];
+  const index = columnIndexByAliases(table, aliases);
+  if (index >= 0) return index;
+  if (table.name === "报告总览" && table.columns.length >= 3) return side === "subject" ? 1 : 2;
+  return -1;
+}
+
+function periodRoleRow(
+  table: DmpReportTable | undefined,
+  side: ReportSide,
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  if (!table) return undefined;
+  const itemId = side === "subject" ? subjectItemId : competitorItemId;
+  const idIndex = columnIndexByAliases(table, ["商品ID", "商品编号"]);
+  if (idIndex >= 0 && itemId) {
+    const exact = table.rows.find((row) => String(row[idIndex] ?? "").trim() === itemId);
+    if (exact) return exact;
+  }
+  const roleIndex = columnIndexByAliases(table, ["对象", "角色"]);
+  if (roleIndex >= 0) {
+    const pattern = side === "subject" ? /主体/ : /目标对手|对手|竞品/;
+    const matched = table.rows.find((row) => pattern.test(String(row[roleIndex] ?? "")));
+    if (matched) return matched;
+  }
+  if (table.rows.length === 2) return table.rows[side === "subject" ? 0 : 1];
+  return undefined;
+}
+
+function tableMetricCell(
+  table: DmpReportTable | undefined,
+  side: ReportSide,
+  aliases: readonly string[],
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  if (!table) return undefined;
+  if (table.name === "周期汇总") {
+    const columnIndex = columnIndexByAliases(table, aliases);
+    const row = periodRoleRow(table, side, subjectItemId, competitorItemId);
+    return columnIndex >= 0 ? row?.[columnIndex] : undefined;
+  }
+  const row = metricRow(table, aliases);
+  const columnIndex = sideColumnIndex(table, side);
+  return row && columnIndex >= 0 ? row[columnIndex] : undefined;
+}
+
+function disclosedMetricCell(
+  tables: DmpReportTable[],
+  side: ReportSide,
+  aliases: readonly string[],
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  for (const name of ["周期汇总", "报告总览", "对标总表", "基础指标对比"]) {
+    const value = tableMetricCell(
+      tables.find((table) => table.name === name),
+      side,
+      aliases,
+      subjectItemId,
+      competitorItemId
+    );
+    if (!isBlankCell(value)) return value;
+  }
+  return undefined;
+}
+
+function appendCoverageScope(table: DmpReportTable, row: DmpCell[], side: ReportSide, coverage: string) {
+  const scopeIndex = columnIndexByAliases(table, ["范围", "数据范围", "周期"]);
+  if (scopeIndex < 0) return;
+  const role = side === "subject" ? "主体" : "对手";
+  const note = `${role}${coverage}`;
+  const current = String(row[scopeIndex] ?? "").trim();
+  if (!current) row[scopeIndex] = note;
+  else if (!current.includes(note)) row[scopeIndex] = `${current}；补算范围：${note}`;
+}
+
+function fillMetricAcrossTables(
+  tables: DmpReportTable[],
+  side: ReportSide,
+  aliases: readonly string[],
+  value: DmpCell | null,
+  coverage: string,
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  if (value == null) return;
+  for (const name of ["周期汇总", "报告总览", "对标总表", "基础指标对比"]) {
+    const table = tables.find((candidate) => candidate.name === name);
+    if (!table) continue;
+    if (name === "周期汇总") {
+      const columnIndex = columnIndexByAliases(table, aliases);
+      const row = periodRoleRow(table, side, subjectItemId, competitorItemId);
+      if (row && columnIndex >= 0 && isBlankCell(row[columnIndex])) row[columnIndex] = value;
+      continue;
+    }
+    const row = metricRow(table, aliases);
+    const columnIndex = sideColumnIndex(table, side);
+    if (!row || columnIndex < 0 || !isBlankCell(row[columnIndex])) continue;
+    row[columnIndex] = value;
+    if (name === "报告总览") appendCoverageScope(table, row, side, coverage);
+  }
+}
+
+function dateSequence(startDate: string, endDate: string) {
+  const days = daysInclusive(startDate, endDate);
+  if (!days) return [];
+  const start = Date.parse(`${startDate}T00:00:00Z`);
+  return Array.from({ length: days }, (_, index) => new Date(start + index * 86_400_000).toISOString().slice(0, 10));
+}
+
+function dailyRoleColumn(table: DmpReportTable, side: ReportSide, metric: "totalSpend" | "keywordSpend") {
+  const sideTokens = side === "subject" ? ["主体"] : ["对手", "目标对手", "竞品"];
+  const matchesSide = (label: string) => sideTokens.some((token) => label.includes(token));
+  const matchesMetric = (label: string) => metric === "totalSpend"
+    ? /日总(?:消耗|花费)|总日(?:消耗|花费)/.test(label)
+    : /关键词推广.*(?:消耗|花费)|(?:消耗|花费).*关键词推广/.test(label);
+  const specific = table.columns.findIndex((column) => {
+    const label = normalizedMetricLabel(column).replace(/api原值/g, "");
+    return matchesSide(label) && matchesMetric(label);
+  });
+  if (specific >= 0) return specific;
+  if (side === "subject") return -1;
+  return table.columns.findIndex((column) => {
+    const label = normalizedMetricLabel(column).replace(/api原值/g, "");
+    if (sideTokens.some((token) => label.includes(token))) return false;
+    return metric === "totalSpend"
+      ? /^(?:日总消耗|日总花费)$/.test(label)
+      : /^(?:关键词推广|关键词推广日消耗|关键词推广消耗|关键词推广日花费|关键词推广花费)$/.test(label);
+  });
+}
+
+function partialSpendCoverage(
+  tables: DmpReportTable[],
+  side: ReportSide,
+  subjectItemId: string,
+  competitorItemId: string,
+  expectedDays: number,
+  options: ReconcileOptions
+): PartialSpendCoverage | null {
+  if (expectedDays <= 1) return null;
+  const daily = tables.find((table) => table.name === "日GMV与费比");
+  const dateIndex = columnIndexByAliases(daily, ["日期", "自然日"]);
+  if (!daily || dateIndex < 0) return null;
+  const totalIndex = dailyRoleColumn(daily, side, "totalSpend");
+  if (totalIndex < 0) return null;
+  const keywordIndex = dailyRoleColumn(daily, side, "keywordSpend");
+
+  const period = tables.find((table) => table.name === "周期汇总");
+  const periodRow = periodRoleRow(period, side, subjectItemId, competitorItemId);
+  const startIndex = columnIndexByAliases(period, ["周期开始", "开始日期", "开始"]);
+  const endIndex = columnIndexByAliases(period, ["周期结束", "结束日期", "结束"]);
+  const startDate = normalizeDate(options.periodStartDate || (startIndex >= 0 ? periodRow?.[startIndex] : ""));
+  const endDate = normalizeDate(options.periodEndDate || (endIndex >= 0 ? periodRow?.[endIndex] : ""));
+  const expectedDates = dateSequence(startDate, endDate);
+  if (expectedDates.length !== expectedDays) return null;
+  const expectedSet = new Set(expectedDates);
+  const totalByDate = new Map<string, number>();
+  const keywordByDate = new Map<string, number>();
+  let totalConflict = false;
+  let keywordConflict = false;
+
+  const remember = (target: Map<string, number>, date: string, value: number, onConflict: () => void) => {
+    const current = target.get(date);
+    if (current != null && Math.abs(current - value) > 1e-9) onConflict();
+    else target.set(date, value);
+  };
+  for (const row of daily.rows) {
+    const date = normalizeDate(row[dateIndex]);
+    if (!date || (expectedSet && !expectedSet.has(date))) continue;
+    const total = numericCell(row[totalIndex]);
+    if (total != null && total >= 0) remember(totalByDate, date, total, () => { totalConflict = true; });
+    const keyword = keywordIndex >= 0 ? numericCell(row[keywordIndex]) : null;
+    if (keyword != null && keyword >= 0) remember(keywordByDate, date, keyword, () => { keywordConflict = true; });
+  }
+  if (totalConflict || totalByDate.size !== expectedDays - 1) return null;
+
+  const returnedDates = [...totalByDate.keys()].sort();
+  const missingDates = expectedSet ? expectedDates.filter((date) => !totalByDate.has(date)) : [];
+  const spend = roundMetric([...totalByDate.values()].reduce((sum, value) => sum + value, 0), 6);
+  const keywordComplete = keywordIndex >= 0
+    && !keywordConflict
+    && returnedDates.every((date) => keywordByDate.has(date));
+  const keywordSpend = keywordComplete
+    ? returnedDates.reduce((sum, date) => sum + (keywordByDate.get(date) ?? 0), 0)
+    : null;
+  const actualRange = returnedDates.length ? `${returnedDates[0]} 至 ${returnedDates.at(-1)}` : "";
+  const details = [actualRange ? `实际${actualRange}` : "", missingDates.length ? `缺少${missingDates.join("、")}` : "", "缺失日未按0计入"]
+    .filter(Boolean)
+    .join("；");
+  return {
+    side,
+    spend,
+    keywordShare: keywordSpend != null && spend > 0 ? roundMetric(keywordSpend / spend, 6) : null,
+    returnedDays: totalByDate.size,
+    expectedDays,
+    label: `已返回${totalByDate.size}/${expectedDays}日${details ? `（${details}）` : ""}`
+  };
+}
+
+function ensurePartialSpendCoverageRow(tables: DmpReportTable[], coverages: PartialSpendCoverage[]) {
+  if (!coverages.length) return;
+  const overview = tables.find((table) => table.name === "报告总览");
+  if (!overview) return;
+  const metricIndex = columnIndexByAliases(overview, ["项目", "指标", "对标指标"]);
+  if (metricIndex < 0) return;
+  let row = metricRow(overview, ["花费覆盖"]);
+  if (!row) {
+    row = overview.columns.map(() => "" as DmpCell);
+    row[metricIndex] = "花费覆盖";
+    overview.rows.push(row);
+  }
+  for (const coverage of coverages) {
+    const index = sideColumnIndex(overview, coverage.side);
+    if (index >= 0 && isBlankCell(row[index])) row[index] = coverage.label;
+  }
+  const scopeIndex = columnIndexByAliases(overview, ["范围", "数据范围", "周期"]);
+  if (scopeIndex >= 0 && isBlankCell(row[scopeIndex])) row[scopeIndex] = "缺失日留空，未按0计入";
+}
+
+function reconcilePartialDailySpend(
+  tables: DmpReportTable[],
+  subjectItemId: string,
+  competitorItemId: string,
+  days: number,
+  options: ReconcileOptions
+) {
+  const coverages = (["subject", "competitor"] as const)
+    .map((side) => {
+      const periodSpend = tableMetricCell(
+        tables.find((table) => table.name === "周期汇总"),
+        side,
+        CROSS_TABLE_METRICS.spend,
+        subjectItemId,
+        competitorItemId
+      );
+      if (!isBlankCell(periodSpend)) return null;
+      return partialSpendCoverage(tables, side, subjectItemId, competitorItemId, days, options);
+    })
+    .filter((coverage): coverage is PartialSpendCoverage => coverage != null);
+
+  for (const coverage of coverages) {
+    const paidGmv = disclosedMetricCell(tables, coverage.side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
+    const totalGmv = disclosedMetricCell(tables, coverage.side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
+    const marketingClicks = disclosedMetricCell(tables, coverage.side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
+    const roi = rangeDividedByScalar(paidGmv, coverage.spend, 6);
+    const ppc = scalarDividedByRange(coverage.spend, marketingClicks, 6);
+    const feeRatio = scalarDividedByRange(coverage.spend, totalGmv, 6);
+    const roas = rangeDividedByScalar(totalGmv, coverage.spend, 6);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.spend, coverage.spend, coverage.label, subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.roi, roi, coverage.label, subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.ppc, ppc, coverage.label, subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.feeRatio, feeRatio, coverage.label, subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.roas, roas, coverage.label, subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, coverage.side, CROSS_TABLE_METRICS.keywordShare, coverage.keywordShare, coverage.label, subjectItemId, competitorItemId);
+  }
+  ensurePartialSpendCoverageRow(tables, coverages);
 }
 
 function populationVolatility(values: number[]) {
@@ -268,7 +582,7 @@ export function reconcileDmpCrossTableMetrics(
   subjectItemId: string,
   competitorItemId: string,
   days: number,
-  options: { preserveDisclosedRanges?: boolean } = {}
+  options: ReconcileOptions = {}
 ) {
   const gmvByItemId = new Map<string, DmpCell>();
   const remember = (itemId: string, value: DmpCell | undefined) => {
@@ -317,6 +631,8 @@ export function reconcileDmpCrossTableMetrics(
       }
     });
   }
+
+  reconcilePartialDailySpend(tables, subjectItemId, competitorItemId, days, options);
 
   if (periodTable) {
     const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
@@ -460,7 +776,9 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
   mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
   alignComparisonRoleRows(tables);
   reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
-    preserveDisclosedRanges: Boolean(renderData)
+    preserveDisclosedRanges: Boolean(renderData),
+    periodStartDate: startDate,
+    periodEndDate: endDate
   });
   const subjectRender = renderData?.products?.subject;
   const competitorRender = renderData?.products?.competitor;

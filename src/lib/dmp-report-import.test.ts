@@ -367,4 +367,196 @@ describe("DMP JSON 工程文件识别", () => {
     expect(tables[3].rows[0].slice(7, 14)).toEqual([50, "", "10", "", 5, "100", 2]);
     expect(tables[3].rows[1].slice(7, 14)).toEqual([25, "", "5", "", 5, "75", 3]);
   });
+
+  it("backfills both sides from 1-day-short daily spend and writes the disclosed coverage across existing metric cells", () => {
+    const metricRows = (metrics: string[]) => metrics.map((metric) => ["投放", metric, "", "", ""]);
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["总GMV", "300", "700", "3日严格同周期"],
+          ["付费成交额", "90", "140", "3日严格同周期"],
+          ...["推广消耗", "费比", "ROI", "PPC", "关键词消耗占比", "全域ROAS"].map((metric) => [metric, "", "", "3日严格同周期"])
+        ]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "周期开始", "周期结束", "天数", "总GMV", "付费成交额", "推广消耗", "费比", "ROI", "PPC", "关键词消耗占比", "全域ROAS"],
+        rows: [
+          ["593063365092", "主体", "2026-08-01", "2026-08-03", "3", "300", "90", "", "", "", "", "", ""],
+          ["623803508105", "目标对手", "2026-08-01", "2026-08-03", "3", "700", "140", "", "", "", "", "", ""]
+        ]
+      },
+      {
+        name: "日GMV与费比",
+        columns: ["日期", "主体日GMV", "对手日GMV", "主体关键词推广日消耗", "对手关键词推广日消耗", "主体日总消耗", "对手日总消耗"],
+        rows: [
+          ["2026-08-01", "100", "200", "2", "6", "10", "30"],
+          ["2026-08-02", "100", "200", "8", "999", "20", ""],
+          ["2026-08-03", "100", "300", "999", "14", "", "40"]
+        ]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: metricRows(["推广消耗", "费比", "ROI", "PPC", "关键词消耗占比", "全域ROAS"])
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [
+          ["营销推广点击量", "15", "35", ""],
+          ...["广告/推广消耗", "费比", "ROI", "PPC", "关键词消耗占比", "全域ROAS"].map((metric) => [metric, "", "", ""])
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 3, {
+      preserveDisclosedRanges: true,
+      periodStartDate: "2026-08-01",
+      periodEndDate: "2026-08-03"
+    });
+
+    expect(tables[1].rows[0].slice(7, 12)).toEqual([30, 0.1, 3, 2, 0.333333]);
+    expect(tables[1].rows[1].slice(7, 12)).toEqual([70, 0.1, 2, 2, 0.285714]);
+    expect(tables[1].rows.map((row) => row[12])).toEqual([10, 10]);
+    const overviewMetric = (metric: string) => tables[0].rows.find((row) => row[0] === metric);
+    expect(overviewMetric("推广消耗")?.slice(1, 3)).toEqual([30, 70]);
+    expect(overviewMetric("费比")?.slice(1, 3)).toEqual([0.1, 0.1]);
+    expect(overviewMetric("ROI")?.slice(1, 3)).toEqual([3, 2]);
+    expect(overviewMetric("PPC")?.slice(1, 3)).toEqual([2, 2]);
+    expect(overviewMetric("关键词消耗占比")?.slice(1, 3)).toEqual([0.333333, 0.285714]);
+    expect(overviewMetric("全域ROAS")?.slice(1, 3)).toEqual([10, 10]);
+    expect(String(overviewMetric("推广消耗")?.[3])).toContain("主体已返回2/3日");
+    expect(String(overviewMetric("推广消耗")?.[3])).toContain("对手已返回2/3日");
+    const coverage = overviewMetric("花费覆盖");
+    expect(String(coverage?.[1])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-02；缺少2026-08-03；缺失日未按0计入）");
+    expect(String(coverage?.[2])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-03；缺少2026-08-02；缺失日未按0计入）");
+    expect(tables[3].rows.map((row) => row.slice(2, 4))).toEqual([
+      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
+    ]);
+    expect(tables[4].rows.slice(1).map((row) => row.slice(1, 3))).toEqual([
+      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
+    ]);
+  });
+
+  it("preserves explicit zero and disclosed intervals while carrying interval formulas into blank cells", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["推广消耗", 0, "", "已披露范围"],
+          ["费比", "", "", ""],
+          ["ROI", "2~5", "", "已披露范围"],
+          ["PPC", "", "", ""],
+          ["关键词消耗占比", "", "", ""],
+          ["全域ROAS", "", "", ""]
+        ]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "周期开始", "周期结束", "天数", "总GMV", "付费成交额", "推广消耗", "费比", "ROI", "PPC", "关键词消耗占比", "全域ROAS"],
+        rows: [
+          ["593063365092", "主体", "2026-08-01", "2026-08-03", "3", "240~300", "90~120", "", "", "", "", "", ""],
+          ["623803508105", "目标对手", "2026-08-01", "2026-08-03", "3", "500", "100", 0, "", "", "", "", ""]
+        ]
+      },
+      {
+        name: "日GMV与费比",
+        columns: ["日期", "主体关键词推广日消耗", "对手关键词推广日消耗", "主体日总消耗", "对手日总消耗"],
+        rows: [
+          ["2026-08-01", "3", "5", "10", "10"],
+          ["2026-08-02", "6", "5", "20", "10"],
+          ["2026-08-03", "999", "5", "", ""]
+        ]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: [
+          ["投放", "推广消耗", "", 0, ""],
+          ["投放", "费比", "", "", ""],
+          ["投放", "ROI", 0, "", ""],
+          ["投放", "PPC", "", "", ""],
+          ["结构", "关键词消耗占比", 0, "", ""],
+          ["投放", "全域ROAS", "", "", ""]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [
+          ["营销推广点击量", "10~15", "20", ""],
+          ["广告/推广消耗", "", "", ""],
+          ["费比", "0.08~0.2", "", ""],
+          ["ROI", "", "", ""],
+          ["PPC", "", "", ""],
+          ["关键词消耗占比", "", "", ""],
+          ["全域ROAS", "", "", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 3, {
+      preserveDisclosedRanges: true,
+      periodStartDate: "2026-08-01",
+      periodEndDate: "2026-08-03"
+    });
+
+    expect(tables[1].rows[0].slice(7, 12)).toEqual([30, "0.1~0.125", "3~4", "2~3", 0.3]);
+    expect(tables[1].rows[0][12]).toBe("8~10");
+    expect(tables[1].rows[1][7]).toBe(0);
+    expect(tables[0].rows.find((row) => row[0] === "推广消耗")?.[1]).toBe(0);
+    expect(tables[0].rows.find((row) => row[0] === "ROI")?.[1]).toBe("2~5");
+    expect(tables[3].rows.find((row) => row[1] === "推广消耗")?.[3]).toBe(0);
+    expect(tables[3].rows.find((row) => row[1] === "ROI")?.[2]).toBe(0);
+    expect(tables[3].rows.find((row) => row[1] === "关键词消耗占比")?.[2]).toBe(0);
+    expect(tables[4].rows.find((row) => row[0] === "费比")?.[1]).toBe("0.08~0.2");
+    expect(tables[4].rows.find((row) => row[0] === "ROI")?.[1]).toBe("3~4");
+    expect(tables[4].rows.find((row) => row[0] === "PPC")?.[1]).toBe("2~3");
+    expect(tables[4].rows.find((row) => row[0] === "关键词消耗占比")?.[1]).toBe(0.3);
+    expect(tables[4].rows.find((row) => row[0] === "全域ROAS")?.[1]).toBe("8~10");
+    const coverage = tables[0].rows.find((row) => row[0] === "花费覆盖");
+    expect(String(coverage?.[1])).toContain("已返回2/3日");
+    expect(coverage?.[2]).toBe("");
+  });
+
+  it("does not backfill a requested period when daily total spend is missing more than one day", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "593063365092", "623803508105", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "周期开始", "周期结束", "天数", "总GMV", "推广消耗"],
+        rows: [
+          ["593063365092", "主体", "2026-08-01", "2026-08-03", "3", "300", ""],
+          ["623803508105", "目标对手", "2026-08-01", "2026-08-03", "3", "300", "100"]
+        ]
+      },
+      {
+        name: "日GMV与费比",
+        columns: ["日期", "主体日总消耗", "对手日总消耗"],
+        rows: [
+          ["2026-08-01", "10", "30"],
+          ["2026-08-02", "", "30"],
+          ["2026-08-03", "", "40"]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 3, {
+      periodStartDate: "2026-08-01",
+      periodEndDate: "2026-08-03"
+    });
+
+    expect(tables[1].rows[0][6]).toBe("");
+    expect(tables[0].rows.some((row) => row[0] === "花费覆盖")).toBe(false);
+  });
 });

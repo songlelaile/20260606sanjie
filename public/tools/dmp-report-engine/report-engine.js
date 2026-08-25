@@ -622,6 +622,67 @@
     return !(typeof value === "string" && /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim()));
   }
 
+  function reportSpendCoverage(model, side) {
+    const metrics = model.metrics?.[side] || {};
+    if (metrics.spendCoverage) return metrics.spendCoverage;
+    return side === "subject"
+      ? model.subjectDaily?.spendCoverage || null
+      : model.daily?.spendCoverage || model.daily?.coverageSummary || null;
+  }
+
+  function reportMetricValue(model, side, key) {
+    const metrics = model.metrics?.[side] || {};
+    if (disclosedModelValue(metrics[key])) return metrics[key];
+    const coverage = reportSpendCoverage(model, side);
+    const coverageKey = {
+      spend: "spend",
+      feeRatio: "feeRatio",
+      roi: "roi",
+      ppc: "ppc",
+      roas: "roas",
+      keywordShare: "keywordShare"
+    }[key];
+    const legacySingleDayPartial = coverage?.singleDayPartial === undefined
+      && coverage?.partial !== false
+      && Array.isArray(coverage?.missingDates)
+      && coverage.missingDates.length === 1;
+    const coverageValueAllowed = coverage?.complete === true || coverage?.singleDayPartial === true || legacySingleDayPartial;
+    return coverageKey && coverageValueAllowed && disclosedModelValue(coverage?.[coverageKey]) ? coverage[coverageKey] : null;
+  }
+
+  function reportSideSpendScope(model, side) {
+    const metrics = model.metrics?.[side] || {};
+    const coverage = reportSpendCoverage(model, side) || {};
+    const role = side === "subject" ? "主体" : "对手";
+    const declaredScope = metrics.spendScope;
+    const scope = declaredScope || coverage.scope || "missing";
+    // 完整周期卡片/场景精确值优先于旁路日趋势的 partial 状态。只有模型明确
+    // 把当前展示值标成 coverage-period（或老模型没有 scope）时才使用覆盖范围。
+    const partial = declaredScope
+      ? declaredScope === "coverage-period"
+      : scope === "coverage-period" || coverage.partial === true;
+    const expectedDays = Number(coverage.expectedDays) || Number(model.period?.days) || 0;
+    const coverageDays = Number(coverage.coverageDays) || 0;
+    const range = coverage.startDate && coverage.endDate ? `（${coverage.startDate} 至 ${coverage.endDate}）` : "";
+    const hasSpend = disclosedModelValue(reportMetricValue(model, side, "spend"));
+    const label = partial
+      ? `${role}已返回${coverageDays}/${expectedDays}日${range}`
+      : scope === "missing" || !hasSpend
+        ? ""
+        : `${role}${Number(model.period?.days) || expectedDays}日严格同周期`;
+    return { side, role, scope, coverage, partial, hasSpend, label };
+  }
+
+  function reportSpendScope(model) {
+    const sides = [reportSideSpendScope(model, "subject"), reportSideSpendScope(model, "competitor")];
+    const partial = sides.some(side => side.partial && side.hasSpend);
+    const strict = `${Number(model.period?.days) || 30}日严格同周期`;
+    const metric = partial
+      ? sides.filter(side => side.hasSpend && side.label).map(side => side.label).join("；")
+      : strict;
+    return { sides, partial, metric: metric || strict };
+  }
+
   function alignedMetricRows(model, fixedNames) {
     const identity = name => typeof completenessEngine?.metricIdentity === "function"
       ? completenessEngine.metricIdentity(name)
@@ -730,7 +791,7 @@
   function buildChannelTableFromModel(model) {
     const subjectRows = model.sceneRows.level1.filter(row => row.role === "主体");
     const subjectByChannel = new Map(subjectRows.map(row => [row.primary, Number.isFinite(toNumber(row.charge)) ? toNumber(row.charge) : toNumber(row.allocated)]));
-    const subjectTotal = toNumber(model.metrics.subject.spend);
+    const subjectTotal = toNumber(reportMetricValue(model, "subject", "spend"));
     const competitorTotal = toNumber(model.daily.totalSpend);
     const rows = completenessEngine.CHANNELS.map(([apiName, label]) => {
       const subjectSpend = subjectByChannel.get(label);
@@ -739,7 +800,10 @@
         modelCell(subjectSpend), Number.isFinite(subjectSpend) && Number.isFinite(subjectTotal) && subjectTotal !== 0 ? round(subjectSpend / subjectTotal, 6) : EMPTY];
     });
     rows.push(["合计", "", modelCell(model.daily.totalSpend), Number.isFinite(competitorTotal) ? 1 : EMPTY, modelCell(model.metrics.subject.spend), Number.isFinite(subjectTotal) ? 1 : EMPTY]);
-    const subjectDays = model.period.days || model.daily.rows.length || 30;
+    const subjectAllocation = model.sceneRows?.allocationScope || {};
+    const subjectDays = subjectAllocation.subject === "coverage-period"
+      ? Number(subjectAllocation.subjectDays) || model.period.days || 30
+      : model.period.days || model.daily.rows.length || 30;
     const competitorDays = Number.isFinite(model.daily.totalSpend) ? (model.daily.spendCoverageDays || subjectDays) : subjectDays;
     return table("渠道花费", ["渠道", "页面指标", `对手${competitorDays}日消耗`, `对手${competitorDays}日占比`, `主体${subjectDays}日消耗`, `主体${subjectDays}日占比`], rows, {
       widths: [16, 28, 18, 18, 18, 18], chartTitle: `主体${subjectDays}日/对手${competitorDays}日渠道消耗对比`
@@ -761,22 +825,34 @@
     const subjectDailyGmv = subjectRows.map(row => row.gmv);
     const subjectPeakRow = subjectRows.slice().sort((left, right) => right.gmv - left.gmv)[0];
     const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
-    const make = (id, label, source, peakDate = "", volatility = null, spendDays = model.period.days) => [
-      id, label, model.period.startDate, model.period.endDate, model.period.days,
-      modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(source.spend), modelCell(source.feeRatio), modelCell(source.roas),
-      modelCell(source.paidGmvContribution), modelCell(source.paidOrderContribution),
-      Number.isFinite(source.totalGmv) ? round(source.totalGmv / model.period.days) : EMPTY,
-      Number.isFinite(source.spend) && spendDays > 0 ? round(source.spend / spendDays) : EMPTY,
-      peakDate, modelCell(volatility == null ? null : round(volatility, 6))
-    ];
+    const make = (id, label, source, side, peakDate = "", volatility = null) => {
+      const spendScope = reportSideSpendScope(model, side);
+      const spendDays = spendScope.partial
+        ? Number(spendScope.coverage.coverageDays) || 0
+        : Number(model.period.days) || 0;
+      const scopedLabel = spendScope.partial
+        ? `${label}（花费已返回${spendScope.coverage.coverageDays}/${spendScope.coverage.expectedDays}日）`
+        : label;
+      const spend = reportMetricValue(model, side, "spend");
+      return [
+        id, scopedLabel, model.period.startDate, model.period.endDate, model.period.days,
+        modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(spend),
+        modelCell(reportMetricValue(model, side, "feeRatio")), modelCell(reportMetricValue(model, side, "roas")),
+        modelCell(source.paidGmvContribution), modelCell(source.paidOrderContribution),
+        Number.isFinite(source.totalGmv) ? round(source.totalGmv / model.period.days) : EMPTY,
+        Number.isFinite(spend) && spendDays > 0 ? round(spend / spendDays) : EMPTY,
+        peakDate, modelCell(volatility == null ? null : round(volatility, 6))
+      ];
+    };
     const rows = [
-      make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject, subjectPeakRow?.date || "", populationVolatility(subjectDailyGmv)),
-      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, competitorPeakRow?.date || "", populationVolatility(competitorDailyGmv))
+      make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject, "subject", subjectPeakRow?.date || "", populationVolatility(subjectDailyGmv)),
+      make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, "competitor", competitorPeakRow?.date || "", populationVolatility(competitorDailyGmv))
     ];
     return table("周期汇总", columns, rows, { widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14] });
   }
 
   function buildBenchmarkFromModel(model) {
+    const metric = (side, key) => reportMetricValue(model, side, key);
     const metrics = model.metrics;
     const core = [
       ["成交", "总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
@@ -784,13 +860,13 @@
       ["成交", "笔单价", metrics.subject.aov, metrics.competitor.aov],
       ["转化", "支付转化率", metrics.subject.conversion, metrics.competitor.conversion],
       ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors],
-      ["投放", "推广消耗", metrics.subject.spend, metrics.competitor.spend],
+      ["投放", "推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["投放", "付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
-      ["投放", "ROI", metrics.subject.roi, metrics.competitor.roi],
-      ["投放", "PPC", metrics.subject.ppc, metrics.competitor.ppc],
-      ["投放", "费比", metrics.subject.feeRatio, metrics.competitor.feeRatio],
-      ["投放", "全域ROAS", metrics.subject.roas, metrics.competitor.roas],
-      ["结构", "关键词消耗占比", metrics.subject.keywordShare, metrics.competitor.keywordShare],
+      ["投放", "ROI", metric("subject", "roi"), metric("competitor", "roi")],
+      ["投放", "PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
+      ["投放", "费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
+      ["投放", "全域ROAS", metric("subject", "roas"), metric("competitor", "roas")],
+      ["结构", "关键词消耗占比", metric("subject", "keywordShare"), metric("competitor", "keywordShare")],
       ["结构", "渠道集中度HHI", metrics.subject.channelHhi, metrics.competitor.channelHhi]
     ];
     const resolvedCore = coreRowsWithAlignedFallback(model, core, 1, 2, 3);
@@ -863,6 +939,7 @@
   }
 
   function buildBaseMetricTableFromModel(model) {
+    const metric = (side, key) => reportMetricValue(model, side, key);
     const metrics = model.metrics;
     const core = [
       ["营销推广点击量", metrics.subject.marketingClicks, metrics.competitor.marketingClicks],
@@ -873,12 +950,12 @@
       ["加购率", metrics.subject.cartRate, metrics.competitor.cartRate],
       ["访客数", metrics.subject.visitors, metrics.competitor.visitors],
       ["总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
-      ["广告/推广消耗", metrics.subject.spend, metrics.competitor.spend],
+      ["广告/推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
-      ["ROI", metrics.subject.roi, metrics.competitor.roi],
-      ["PPC", metrics.subject.ppc, metrics.competitor.ppc],
-      ["费比", metrics.subject.feeRatio, metrics.competitor.feeRatio],
-      ["全域ROAS", metrics.subject.roas, metrics.competitor.roas]
+      ["ROI", metric("subject", "roi"), metric("competitor", "roi")],
+      ["PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
+      ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
+      ["全域ROAS", metric("subject", "roas"), metric("competitor", "roas")]
     ];
     const resolvedCore = coreRowsWithAlignedFallback(model, core, 0, 1, 2);
     const appended = alignedMetricRows(model, resolvedCore.map(row => row[0]))
@@ -941,29 +1018,22 @@
   function buildOverviewFromModel(model, item, periodLabel, periodSheet, spendTiming = null) {
     const subject = model.metrics?.subject || {};
     const competitor = model.metrics?.competitor || {};
-    const coverage = model.daily?.coverageSummary || {};
-    const coverageScope = coverage.coverageDays > 0
-      ? `对手已返回${coverage.coverageDays}/${coverage.expectedDays}日（${coverage.startDate} 至 ${coverage.endDate}）`
-      : "";
     const strictScope = `${model.period.days}日严格同周期`;
-    const competitorSpendExact = disclosedModelValue(competitor.spend);
-    const competitorFeeExact = disclosedModelValue(competitor.feeRatio);
-    const competitorRoasExact = disclosedModelValue(competitor.roas);
-    const competitorFeeCovered = !competitorFeeExact && coverage.coverageDays > 0 && Number.isFinite(coverage.feeRatio);
-    const competitorSpend = competitorSpendExact ? modelCell(competitor.spend) : modelCell(coverage.spend);
-    const competitorFee = competitorFeeExact ? modelCell(competitor.feeRatio) : modelCell(coverage.feeRatio);
-    const competitorRoas = competitorRoasExact ? modelCell(competitor.roas) : modelCell(coverage.roas);
+    const spendScope = reportSpendScope(model);
+    const subjectSpendScope = spendScope.sides.find(side => side.side === "subject");
+    const competitorSpendScope = spendScope.sides.find(side => side.side === "competitor");
+    const metric = (side, key) => modelCell(reportMetricValue(model, side, key));
     const rows = [
       ["商品ID", item.id, item.competitorId, ""],
       ["商品标题", item.title, item.competitorTitle, ""],
       [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`],
       ["总GMV", modelCell(subject.totalGmv), modelCell(competitor.totalGmv), strictScope],
       ["付费成交额", modelCell(subject.paidGmv), modelCell(competitor.paidGmv), strictScope],
-      ["推广消耗", modelCell(subject.spend), competitorSpend, competitorSpendExact ? strictScope : coverageScope],
-      ["费比", modelCell(subject.feeRatio), competitorFee, competitorFeeExact ? strictScope : coverageScope],
-      ["ROI", modelCell(subject.roi), modelCell(competitor.roi), strictScope],
-      ["PPC", modelCell(subject.ppc), modelCell(competitor.ppc), strictScope],
-      ["全域ROAS", modelCell(subject.roas), competitorRoas, competitorRoasExact ? strictScope : coverageScope]
+      ["推广消耗", metric("subject", "spend"), metric("competitor", "spend"), spendScope.metric],
+      ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio"), spendScope.metric],
+      ["ROI", metric("subject", "roi"), metric("competitor", "roi"), spendScope.metric],
+      ["PPC", metric("subject", "ppc"), metric("competitor", "ppc"), spendScope.metric],
+      ["全域ROAS", metric("subject", "roas"), metric("competitor", "roas"), spendScope.metric]
     ];
     if (spendTiming) rows.push(["取数时段提示", `0:00–10:00 ${spendTiming.affectedDate}消耗可能未产出`, "已按当前可见数据生成", "建议10:00–24:00重新获取"]);
     // 平台还没产出的天数必须写进报告本身，读报告的人不看面板也能知道少了哪天。
@@ -978,22 +1048,27 @@
       `缺少${model.daily.spendMissingDates.length}天：${model.daily.spendMissingDates.join("、")}`
     ]);
     return table("报告总览", ["项目", "主体", "对手", "范围"], rows, {
-      subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}`,
+      subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}${spendScope.partial ? `｜花费口径：${spendScope.metric}` : ""}`,
       widths: [18, 46, 46, 18, 16, 16, 16, 16, 16, 16, 16, 16],
       kpis: [
         { role: "subject", label: `主体${model.period.days}日GMV`, value: modelCell(subject.totalGmv), source: "'周期汇总'!H5" },
         { role: "competitor", label: `对手${model.period.days}日GMV`, value: modelCell(competitor.totalGmv), source: "'周期汇总'!H6" },
-        { role: "subject", label: "主体费比", value: modelCell(subject.feeRatio), source: "'周期汇总'!K5" },
+        {
+          role: "subject",
+          label: subjectSpendScope?.partial ? `主体费比（已返回${subjectSpendScope.coverage.coverageDays}/${subjectSpendScope.coverage.expectedDays}日）` : "主体费比",
+          value: metric("subject", "feeRatio"),
+          source: subjectSpendScope?.partial ? "" : "'周期汇总'!K5"
+        },
         {
           role: "competitor",
-          label: competitorFeeCovered ? `对手费比（已返回${coverage.coverageDays}/${coverage.expectedDays}日）` : "对手费比",
-          value: competitorFee,
-          source: competitorFeeExact ? "'周期汇总'!K6" : ""
+          label: competitorSpendScope?.partial ? `对手费比（已返回${competitorSpendScope.coverage.coverageDays}/${competitorSpendScope.coverage.expectedDays}日）` : "对手费比",
+          value: metric("competitor", "feeRatio"),
+          source: competitorSpendScope?.partial ? "" : "'周期汇总'!K6"
         },
-        { role: "subject", label: "主体ROI", value: modelCell(subject.roi), source: "" },
-        { role: "competitor", label: "对手ROI", value: modelCell(competitor.roi), source: "" },
-        { role: "subject", label: "主体PPC", value: modelCell(subject.ppc), source: "" },
-        { role: "competitor", label: "对手PPC", value: modelCell(competitor.ppc), source: "" }
+        { role: "subject", label: "主体ROI", value: metric("subject", "roi"), source: "" },
+        { role: "competitor", label: "对手ROI", value: metric("competitor", "roi"), source: "" },
+        { role: "subject", label: "主体PPC", value: metric("subject", "ppc"), source: "" },
+        { role: "competitor", label: "对手PPC", value: metric("competitor", "ppc"), source: "" }
       ]
     });
   }
@@ -1026,39 +1101,67 @@
       buildStageTableFromModel(model), buildBaseMetricTableFromModel(model), buildKeywordTableFromModel(model)
     ];
     const dateRange = range || periodLabel;
+    const spendScope = reportSpendScope(model);
+    const spendScopeSuffix = spendScope.partial ? `｜花费口径：${spendScope.metric}` : "";
+    const periodSpendScopeSuffix = spendScope.partial ? `${spendScopeSuffix}；缺失日未按0` : "";
     const sceneAllocation = model.sceneRows?.allocationScope || {};
-    const sceneScope = sceneAllocation.competitor === "coverage-period"
-      ? `${dateRange}｜主体严格周期；对手分配基数仅覆盖 ${sceneAllocation.competitorStart} 至 ${sceneAllocation.competitorEnd}（${sceneAllocation.competitorDays}/${model.period.days}日）`
-      : `${dateRange}｜主体与对手同周期`;
+    const sceneSideScope = (side, role) => {
+      const scope = sceneAllocation[side];
+      const start = sceneAllocation[`${side}Start`];
+      const end = sceneAllocation[`${side}End`];
+      const days = Number(sceneAllocation[`${side}Days`]) || 0;
+      if (scope === "coverage-period") {
+        const rangeLabel = start && end ? `（${start} 至 ${end}）` : "";
+        return `${role}分配基数已返回${days}/${model.period.days}日${rangeLabel}`;
+      }
+      if (scope === "missing") return `${role}分配基数缺失`;
+      return `${role}${model.period.days}日严格同周期`;
+    };
+    const sceneScopeParts = [
+      sceneSideScope("subject", "主体"),
+      sceneSideScope("competitor", "对手")
+    ];
+    const sceneHasPartial = sceneAllocation.subject === "coverage-period" || sceneAllocation.competitor === "coverage-period";
+    const sceneScope = `${dateRange}｜${sceneScopeParts.join("；")}${sceneHasPartial ? "；缺失日未按0" : ""}`;
     const subtitles = {
-      "对标总表": `${dateRange}｜主体 ${item.id} vs 对手 ${item.competitorId}`,
+      "对标总表": `${dateRange}｜主体 ${item.id} vs 对手 ${item.competitorId}${spendScopeSuffix}`,
       "商品与成功品": "本次分析目标与成功品候选",
-      "周期汇总": `${period.days}日对象与周期严格对齐`,
+      "周期汇总": `${period.days}日成交周期对齐${periodSpendScopeSuffix}`,
       "日GMV与费比": `主体 ${item.id} vs 对手 ${item.competitorId}｜${model.period.startDate} ~ ${model.period.endDate}（${model.period.days}天）`,
-      "渠道花费": `${dateRange}｜五渠道消耗与占比`,
+      "渠道花费": `${dateRange}｜五渠道消耗与占比${spendScopeSuffix}`,
       "一级场景": `${sceneScope}｜一级投放场景数据`,
       "二级场景": `${sceneScope}｜二级投放场景数据`,
       "成长阶段数据": `${dateRange}｜主体与目标对手同阶段金额数据`,
-      "基础指标对比": `${dateRange}｜主体与目标成功品数值对比`,
+      "基础指标对比": `${dateRange}｜主体与目标成功品数值对比${spendScopeSuffix}`,
       "关键词样本": `${dateRange}｜按关键词与词类型对齐主体和对手`
     };
     tables.forEach(current => { if (!current.subtitle) current.subtitle = subtitles[current.name] || dateRange; });
 
+    const coverageMayRemainEmpty = side => {
+      const coverage = reportSpendCoverage(model, side);
+      const legacySingleDayPartial = coverage?.singleDayPartial === undefined
+        && Array.isArray(coverage?.missingDates)
+        && coverage.missingDates.length === 1;
+      return coverage?.partial === true && coverage?.singleDayPartial !== true && !legacySingleDayPartial;
+    };
+    const subjectCoverageMayRemainEmpty = coverageMayRemainEmpty("subject");
+    const competitorCoverageMayRemainEmpty = coverageMayRemainEmpty("competitor");
     const requiredValues = [
       ["主体成交笔数", model.metrics.subject.orders], ["主体笔单价", model.metrics.subject.aov], ["主体总GMV", model.metrics.subject.totalGmv],
-      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend],
+      ["主体访客数", model.metrics.subject.visitors], ["主体推广消耗", model.metrics.subject.spend, subjectCoverageMayRemainEmpty],
       ["主体付费成交额", model.metrics.subject.paidGmv],
-      ["主体ROI", model.metrics.subject.roi, model.metrics.subject.spend === 0],
-      ["主体PPC", model.metrics.subject.ppc, model.metrics.subject.spend === 0 && model.metrics.subject.marketingClicks === 0],
-      ["主体费比", model.metrics.subject.feeRatio], ["主体全域ROAS", model.metrics.subject.roas, model.metrics.subject.spend === 0],
+      ["主体ROI", model.metrics.subject.roi, subjectCoverageMayRemainEmpty || model.metrics.subject.spend === 0],
+      ["主体PPC", model.metrics.subject.ppc, subjectCoverageMayRemainEmpty || (model.metrics.subject.spend === 0 && model.metrics.subject.marketingClicks === 0)],
+      ["主体费比", model.metrics.subject.feeRatio, subjectCoverageMayRemainEmpty],
+      ["主体全域ROAS", model.metrics.subject.roas, subjectCoverageMayRemainEmpty || model.metrics.subject.spend === 0],
       ["对手成交笔数", model.metrics.competitor.orders], ["对手笔单价", model.metrics.competitor.aov], ["对手总GMV", model.metrics.competitor.totalGmv],
       ["对手访客数", model.metrics.competitor.visitors],
-      ["对手推广消耗", model.metrics.competitor.spend, model.daily.spendPartial],
+      ["对手推广消耗", model.metrics.competitor.spend, competitorCoverageMayRemainEmpty],
       ["对手付费成交额", model.metrics.competitor.paidGmv],
-      ["对手ROI", model.metrics.competitor.roi, model.daily.spendPartial || model.metrics.competitor.spend === 0],
-      ["对手PPC", model.metrics.competitor.ppc, model.daily.spendPartial || (model.metrics.competitor.spend === 0 && model.metrics.competitor.marketingClicks === 0)],
-      ["对手费比", model.metrics.competitor.feeRatio, model.daily.spendPartial],
-      ["对手全域ROAS", model.metrics.competitor.roas, model.metrics.competitor.spend === 0 || model.daily.spendPartial]
+      ["对手ROI", model.metrics.competitor.roi, competitorCoverageMayRemainEmpty || model.metrics.competitor.spend === 0],
+      ["对手PPC", model.metrics.competitor.ppc, competitorCoverageMayRemainEmpty || (model.metrics.competitor.spend === 0 && model.metrics.competitor.marketingClicks === 0)],
+      ["对手费比", model.metrics.competitor.feeRatio, competitorCoverageMayRemainEmpty],
+      ["对手全域ROAS", model.metrics.competitor.roas, competitorCoverageMayRemainEmpty || model.metrics.competitor.spend === 0]
     ];
     const deterministicMissing = requiredValues.filter(([, value, validEmpty]) => !validEmpty && (value === null || value === undefined || value === "")).map(([label]) => label);
     const moduleRules = [
