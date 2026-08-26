@@ -189,13 +189,13 @@ function magnitudeCell(value: string, inheritedMultiplier = 1) {
 }
 
 function metricRange(value: DmpCell | undefined): MetricRange | null {
-  if (typeof value === "number" && Number.isFinite(value)) return { min: value, max: value, exact: true };
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return { min: value, max: value, exact: true };
   if (typeof value !== "string") return null;
   const text = value.trim().replace(/[,，￥¥]/g, "");
   if (!text || text === "-" || text === "—") return null;
   if (/^[<>]/.test(text)) {
     const boundary = magnitudeCell(text.slice(1));
-    if (boundary == null) return null;
+    if (boundary == null || boundary < 0) return null;
     return text.startsWith("<")
       ? { min: 0, max: boundary, exact: false, upperOpen: true }
       : { min: boundary, max: null, exact: false, lowerOpen: true };
@@ -203,35 +203,55 @@ function metricRange(value: DmpCell | undefined): MetricRange | null {
   const wordBound = text.match(/^(.+?)(及以上|以上|及以下|以下|以内)$/);
   if (wordBound) {
     const boundary = magnitudeCell(wordBound[1]);
-    if (boundary == null) return null;
+    if (boundary == null || boundary < 0) return null;
     return /以下|以内/.test(wordBound[2])
       ? { min: 0, max: boundary, exact: false, upperOpen: true }
       : { min: boundary, max: null, exact: false, lowerOpen: true };
   }
-  const parts = text.split(/[~～]/);
+  const parts = text.split(/[~～至]/);
   if (parts.length === 2) {
     const leftUnit = parts[0].match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] ?? "";
     const rightUnit = parts[1].match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] ?? "";
     const sharedMultiplier = magnitudeCell(`1${leftUnit || rightUnit}`) ?? 1;
     const min = magnitudeCell(parts[0], sharedMultiplier);
     const max = magnitudeCell(parts[1], sharedMultiplier);
-    return min == null || max == null ? null : { min, max, exact: false };
+    return min == null || max == null || min < 0 || max < 0 || min > max
+      ? null
+      : { min, max, exact: false };
   }
   const exact = magnitudeCell(text);
-  return exact == null ? null : { min: exact, max: exact, exact: true };
+  return exact == null || exact < 0 ? null : { min: exact, max: exact, exact: true };
 }
 
 function rangeDividedByScalar(value: DmpCell | undefined, divisor: number, digits = 2): DmpCell | null {
-  if (!Number.isFinite(divisor) || divisor <= 0) return null;
-  const range = metricRange(value);
-  if (!range) return null;
-  const min = range.min == null ? null : roundMetric(range.min / divisor, digits);
-  const max = range.max == null ? null : roundMetric(range.max / divisor, digits);
-  if (range.upperOpen && max != null) return `<${max}`;
-  if (range.lowerOpen && min != null) return `>${min}`;
-  if (min != null && max != null) return min === max ? min : `${min}~${max}`;
-  if (max != null) return `<${max}`;
-  if (min != null) return `>${min}`;
+  return rangeDividedByRange(value, divisor, digits);
+}
+
+function rangeDividedByRange(value: DmpCell | undefined, divisor: DmpCell | undefined, digits = 2): DmpCell | null {
+  const numerator = metricRange(value);
+  const denominator = metricRange(divisor);
+  if (!numerator || !denominator) return null;
+  const numeratorMin = numerator.min != null && Number.isFinite(numerator.min) ? numerator.min : null;
+  const numeratorMax = numerator.max != null && Number.isFinite(numerator.max) ? numerator.max : null;
+  const denominatorMin = denominator.min != null && denominator.min > 0 ? denominator.min : null;
+  const denominatorMax = denominator.max != null && denominator.max > 0 ? denominator.max : null;
+  if (denominatorMin == null && denominatorMax == null) return null;
+  if (numerator.exact && numeratorMin === 0) return 0;
+  const lower = numeratorMin != null
+    ? denominatorMax != null ? roundMetric(numeratorMin / denominatorMax, digits) : 0
+    : null;
+  const upper = numeratorMax != null && denominatorMin != null
+    ? roundMetric(numeratorMax / denominatorMin, digits)
+    : null;
+  if (lower != null && upper != null) {
+    if (lower === upper && numerator.exact && denominator.exact) return lower;
+    if (lower === 0 && (numerator.upperOpen || denominator.lowerOpen)) return `<${upper}`;
+    return `${lower}~${upper}`;
+  }
+  if (upper != null) return `<${upper}`;
+  // 只有非负下界、但上界无法由脱敏区间证明时，不输出数学上不成立的 “>0”。
+  if (lower === 0) return null;
+  if (lower != null) return `>${lower}`;
   return null;
 }
 
@@ -271,6 +291,7 @@ type ReconcileOptions = {
 const CROSS_TABLE_METRICS = {
   spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
   paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
+  paidAmountShare: ["付费金额占比", "付费成交额占比", "付费GMV贡献率", "广告GMV贡献率", "广告归因GMV贡献率"],
   roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比"],
   ppc: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
   feeRatio: ["费比", "推广费比", "广告费比"],
@@ -640,6 +661,41 @@ function suppressIntervalMetricDifferences(tables: DmpReportTable[]) {
   }
 }
 
+function ensurePaidAmountShareRows(
+  tables: DmpReportTable[],
+  subjectValue: DmpCell | undefined,
+  competitorValue: DmpCell | undefined,
+  days: number
+) {
+  if (isBlankCell(subjectValue) && isBlankCell(competitorValue)) return;
+  for (const tableName of ["报告总览", "对标总表", "基础指标对比"]) {
+    const table = tables.find((candidate) => candidate.name === tableName);
+    if (!table) continue;
+    const metricIndex = columnIndexByAliases(table, ["项目", "对标指标", "指标"]);
+    const subjectIndex = sideColumnIndex(table, "subject");
+    const competitorIndex = sideColumnIndex(table, "competitor");
+    if ([metricIndex, subjectIndex, competitorIndex].some((index) => index < 0)) continue;
+    let row = metricRow(table, CROSS_TABLE_METRICS.paidAmountShare);
+    if (!row) {
+      row = table.columns.map(() => "" as DmpCell);
+      table.rows.push(row);
+    }
+    row[metricIndex] = "付费金额占比";
+    if (isBlankCell(row[subjectIndex]) && !isBlankCell(subjectValue)) row[subjectIndex] = subjectValue as DmpCell;
+    if (isBlankCell(row[competitorIndex]) && !isBlankCell(competitorValue)) row[competitorIndex] = competitorValue as DmpCell;
+    const moduleIndex = columnIndexByAliases(table, ["页面模块", "模块"]);
+    if (moduleIndex >= 0 && isBlankCell(row[moduleIndex])) row[moduleIndex] = "投放";
+    const scopeIndex = columnIndexByAliases(table, ["范围", "数据范围", "周期"]);
+    if (scopeIndex >= 0 && isBlankCell(row[scopeIndex])) row[scopeIndex] = days > 0 ? `${days}日严格同周期` : "严格同周期";
+    const differenceIndex = columnIndexByAliases(table, ["主体相对对手", "主体差异", "相对差", "差异", "变化率"]);
+    if (differenceIndex >= 0 && isBlankCell(row[differenceIndex])) {
+      const subjectExact = exactMetricValue(row[subjectIndex]);
+      const competitorExact = exactMetricValue(row[competitorIndex]);
+      if (subjectExact != null && competitorExact != null) row[differenceIndex] = roundMetric(subjectExact - competitorExact, 6);
+    }
+  }
+}
+
 export function reconcileDmpCrossTableMetrics(
   tables: DmpReportTable[],
   subjectItemId: string,
@@ -653,8 +709,8 @@ export function reconcileDmpCrossTableMetrics(
   };
 
   const periodTable = tables.find((table) => table.name === "周期汇总");
-  const periodIdIndex = periodTable?.columns.indexOf("商品ID") ?? -1;
-  const periodGmvIndex = periodTable?.columns.indexOf("总GMV") ?? -1;
+  const periodIdIndex = columnIndexByAliases(periodTable, ["商品ID", "商品编号"]);
+  const periodGmvIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.totalGmv);
   if (periodIdIndex >= 0 && periodGmvIndex >= 0) {
     periodTable?.rows.forEach((row) => remember(String(row[periodIdIndex] ?? ""), row[periodGmvIndex]));
   }
@@ -663,7 +719,7 @@ export function reconcileDmpCrossTableMetrics(
   const benchmarkMetricIndex = benchmark?.columns.indexOf("对标指标") ?? -1;
   const benchmarkSubjectIndex = benchmark?.columns.indexOf("主体周期值") ?? -1;
   const benchmarkCompetitorIndex = benchmark?.columns.indexOf("对手周期值") ?? -1;
-  const benchmarkGmv = benchmarkMetricIndex >= 0 ? benchmark?.rows.find((row) => String(row[benchmarkMetricIndex]) === "总GMV") : null;
+  const benchmarkGmv = benchmarkMetricIndex >= 0 ? metricRow(benchmark, CROSS_TABLE_METRICS.totalGmv) : null;
   if (benchmarkGmv) {
     remember(subjectItemId, benchmarkGmv[benchmarkSubjectIndex]);
     remember(competitorItemId, benchmarkGmv[benchmarkCompetitorIndex]);
@@ -673,7 +729,7 @@ export function reconcileDmpCrossTableMetrics(
   const baseMetricIndex = base?.columns.indexOf("指标") ?? -1;
   const baseSubjectIndex = base?.columns.indexOf("主体值") ?? -1;
   const baseCompetitorIndex = base?.columns.indexOf("对手值") ?? -1;
-  const baseGmv = baseMetricIndex >= 0 ? base?.rows.find((row) => String(row[baseMetricIndex]) === "总GMV") : null;
+  const baseGmv = baseMetricIndex >= 0 ? metricRow(base, CROSS_TABLE_METRICS.totalGmv) : null;
   if (baseGmv) {
     remember(subjectItemId, baseGmv[baseSubjectIndex]);
     remember(competitorItemId, baseGmv[baseCompetitorIndex]);
@@ -699,16 +755,29 @@ export function reconcileDmpCrossTableMetrics(
   reconcilePaidMetricRanges(tables, subjectItemId, competitorItemId, days);
 
   if (periodTable) {
-    const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
-    const contributionIndex = periodTable.columns.findIndex((column) => /^(付费|广告)GMV贡献率$/.test(column));
+    const paidGmvIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidGmv);
+    let contributionIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidAmountShare);
+    if (contributionIndex < 0 && paidGmvIndex >= 0 && periodGmvIndex >= 0) {
+      contributionIndex = periodTable.columns.length;
+      periodTable.columns.push("付费金额占比");
+      periodTable.rows.forEach((row) => row.push(""));
+    } else if (contributionIndex >= 0) {
+      periodTable.columns[contributionIndex] = "付费金额占比";
+    }
     const peakIndex = periodTable.columns.indexOf("GMV峰值日");
     const volatilityIndex = periodTable.columns.indexOf("GMV波动率");
     periodTable.rows.forEach((row) => {
-      const totalGmv = numericCell(row[periodGmvIndex]);
-      if (paidGmvIndex >= 0 && contributionIndex >= 0 && totalGmv != null && isBlankCell(row[contributionIndex])) {
-        row[contributionIndex] = rangeDividedByScalar(row[paidGmvIndex], totalGmv, 6);
+      if (paidGmvIndex >= 0 && contributionIndex >= 0 && periodGmvIndex >= 0 && isBlankCell(row[contributionIndex])) {
+        row[contributionIndex] = rangeDividedByRange(row[paidGmvIndex], row[periodGmvIndex], 6);
       }
     });
+
+    ensurePaidAmountShareRows(
+      tables,
+      tableMetricCell(periodTable, "subject", CROSS_TABLE_METRICS.paidAmountShare, subjectItemId, competitorItemId),
+      tableMetricCell(periodTable, "competitor", CROSS_TABLE_METRICS.paidAmountShare, subjectItemId, competitorItemId),
+      days
+    );
 
     const daily = tables.find((table) => table.name === "日GMV与费比");
     const dailyDateIndex = daily?.columns.indexOf("日期") ?? -1;

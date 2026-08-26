@@ -9,7 +9,7 @@ vi.mock("@/app/api/dmp-reports/route", () => ({
   POST: mocks.archiveDmpReport
 }));
 vi.mock("@/lib/dmp-report-store", () => ({
-  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 2 * 1024 * 1024
+  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 8 * 1024 * 1024 + 64 * 1024
 }));
 
 import { OPTIONS, POST } from "./route";

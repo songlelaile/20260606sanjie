@@ -113,6 +113,7 @@ describe("DMP JSON 工程文件识别", () => {
     expect(itemRows?.[1][3]).toBe(31500);
     expect(itemRows?.[2][2]).toBe("");
     const periodRows = report?.tables.find((table) => table.name === "周期汇总")?.rows;
+    expect(report?.tables.find((table) => table.name === "周期汇总")?.columns[8]).toBe("付费金额占比");
     expect(periodRows?.[1][8]).toBe("0.31746~0.433862");
     expect(periodRows?.[1][9]).toBe("2026-08-13");
     expect(Number(periodRows?.[1][10])).toBeGreaterThan(0);
@@ -134,6 +135,119 @@ describe("DMP JSON 工程文件识别", () => {
     expect(level2Competitor?.[7]).toBe(27.23);
     expect(level2Competitor?.[11]).toBe("0.68~0.91");
     expect(level2Competitor?.[13]).toBe("3.67~7.34");
+  });
+
+  it("统一付费金额占比字段，并按付费成交额除以总成交额计算双区间", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: [["成交", "总GMV", "50万~60万", "50万~60万", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告GMV贡献率"],
+        rows: [
+          ["subject", "主体", "50万~60万", "20万", ""],
+          ["competitor", "目标对手", "50万~60万", "20万~30万", ""]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [["总GMV", "50万~60万", "50万~60万", ""]]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.columns.at(-1)).toBe("付费金额占比");
+    expect(period?.rows[0].at(-1)).toBe("0.333333~0.4");
+    expect(period?.rows[1].at(-1)).toBe("0.333333~0.6");
+    for (const [tableName, metricIndex] of [["报告总览", 0], ["对标总表", 1], ["基础指标对比", 0]] as const) {
+      const table = tables.find((candidate) => candidate.name === tableName);
+      const row = table?.rows.find((candidate) => candidate[metricIndex] === "付费金额占比");
+      expect(row, `${tableName} 应补齐付费金额占比`).toBeDefined();
+      if (tableName === "报告总览") expect(row?.[3]).toBe("30日严格同周期");
+      else expect(row?.[tableName === "对标总表" ? 4 : 3]).toBe("");
+    }
+  });
+
+  it("兼容旧周期汇总的全渠道总GMV与付费GMV列并补齐总览占比", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "全渠道总GMV", "付费GMV"],
+        rows: [
+          ["subject", "主体", "50万", "20万"],
+          ["competitor", "目标对手", "80万", "20万~30万"]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.columns.at(-1)).toBe("付费金额占比");
+    expect(period?.rows[0].at(-1)).toBe(0.4);
+    expect(period?.rows[1].at(-1)).toBe("0.25~0.375");
+    expect(tables[0].rows.find((row) => row[0] === "付费金额占比"))
+      .toEqual(["付费金额占比", 0.4, "0.25~0.375", "30日严格同周期"]);
+  });
+
+  it("付费成交额与总成交额都可能从0起时不伪造大于0的占比", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "付费金额占比"],
+        rows: [
+          ["subject", "主体", "<50万", "<20万", ""],
+          ["competitor", "目标对手", "0~50万", "0~20万", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.rows[0].at(-1)).toBeNull();
+    expect(period?.rows[1].at(-1)).toBeNull();
+  });
+
+  it("兼容中文至区间并拒绝负数或倒置的付费金额区间", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "付费金额占比"],
+        rows: [
+          ["subject", "主体", "50万至60万", "20万至30万", ""],
+          ["competitor", "目标对手", "50万~20万", "-10万", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.rows[0].at(-1)).toBe("0.333333~0.6");
+    expect(period?.rows[1].at(-1)).toBeNull();
   });
 
   it("restores render_data product links, subject daily values, generated time and table presentation", () => {
@@ -484,10 +598,10 @@ describe("DMP JSON 工程文件识别", () => {
     expect(String(coverage?.[1])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-02；缺少2026-08-03；缺失日未按0计入）");
     expect(String(coverage?.[2])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-03；缺少2026-08-02；缺失日未按0计入）");
     expect(tables[3].rows.map((row) => row.slice(2, 4))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
+      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10], [0.3, 0.2]
     ]);
     expect(tables[4].rows.slice(1).map((row) => row.slice(1, 3))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
+      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10], [0.3, 0.2]
     ]);
   });
 

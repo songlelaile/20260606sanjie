@@ -6,8 +6,8 @@ CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
 EXPECTED_VERSION="1.9.23"
 EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.3.11"
-DMP_ZIP_SHA256="6fd0c749ab47746aba9a2dd710abef6f3add750d76cfb53ad0e8303ea20b68f2"
+DMP_VERSION="2.3.12"
+DMP_ZIP_SHA256="d7e2eed95a2e970088323408b590555102c89328a9f35552ac632e3dd65d1440"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
 
 fail() {
@@ -77,6 +77,7 @@ for file in \
   src/components/tools/DmpGrowthReportViewModel.ts \
   src/components/tools/DmpGrowthReportViewer.tsx \
   src/components/tools/DmpGrowthReportViewer.module.css \
+  src/components/tools/DmpMarketReportViewModel.ts \
   src/components/tools/DmpMarketReportViewer.tsx \
   src/components/tools/DmpMarketReportViewer.module.css \
   src/components/tools/DmpReportViewer.tsx \
@@ -85,6 +86,7 @@ for file in \
   src/components/management/ManagementConsole.tsx \
   src/components/management/DmpShareAnalyticsPanel.tsx \
   src/lib/dmp-product.ts \
+  src/lib/dmp-report-import.ts \
   src/lib/dmp-report-export-authorization.ts \
   src/lib/dmp-report-export-contract.ts \
   src/lib/dmp-report-format.ts \
@@ -238,7 +240,10 @@ require_fixed 'DMP_AUTOMATION_TOOL_CODE = "dmp-automation"' src/lib/dmp-product.
 require_fixed "returnOnSpend" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 ROI 区间计算"
 require_fixed "preferredMetricValue(previous.subject, parsed.subject)" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件仍会丢失同义指标中的付费区间"
 require_fixed "subjectRange?.exact === false || competitorRange?.exact === false" public/tools/dmp-report-engine/report-engine.js "达摩盘插件仍会为区间指标伪造精确相对差"
-require_fixed "contributionRatio" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 GMV 贡献率区间计算"
+require_fixed "contributionRatio" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费金额占比区间计算"
+require_fixed 'paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"]' public/tools/dmp-report-engine/completeness-engine.js "达摩盘付费金额占比缺少新名称及历史名称兼容"
+require_fixed "metrics[side].paidGmvContribution = contributionRatio(metrics[side].paidGmv, metrics[side].totalGmv);" public/tools/dmp-report-engine/completeness-engine.js "达摩盘付费金额占比未按付费成交额除以总成交额计算"
+require_fixed '["投放", "付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution]' public/tools/dmp-report-engine/report-engine.js "达摩盘主体与对手总览缺少付费金额占比"
 require_fixed "calculatedDirectRoi" public/tools/dmp-report-engine/completeness-engine.js "达摩盘场景未按分配后消耗计算直接 ROI"
 require_fixed "calculableMetricValue" public/tools/dmp-report-engine/completeness-engine.js "达摩盘量级区间未先转换为可计算数值"
 require_fixed "transportOnlyReason" public/tools/dmp-report-engine/completeness-engine.js "达摩盘完整性引擎未忽略 OPTIONS/HEAD/redirect 传输记录"
@@ -249,6 +254,10 @@ require_fixed 'isDmpMultipleMetric' src/lib/dmp-report-format.ts "达摩盘官�
 require_fixed 'dmpDisplayCellText' src/lib/dmp-report-format.ts "达摩盘官网报告未解析区间对象"
 require_fixed 'reconcilePaidMetricRanges' src/lib/dmp-report-import.ts "达摩盘官网报告未贯通付费成交额、ROI 与 PPC 区间"
 require_fixed 'suppressIntervalMetricDifferences' src/lib/dmp-report-import.ts "达摩盘官网导出仍可能保留区间伪精确差值"
+require_fixed 'rangeDividedByRange' src/lib/dmp-report-import.ts "达摩盘官网未按区间安全计算付费金额占比"
+require_fixed 'ensurePaidAmountShareRows' src/lib/dmp-report-import.ts "达摩盘官网总览未补齐付费金额占比"
+require_fixed 'columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.totalGmv)' src/lib/dmp-report-import.ts "达摩盘官网未兼容全渠道总GMV周期列"
+require_fixed 'columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidGmv)' src/lib/dmp-report-import.ts "达摩盘官网未兼容付费GMV周期列"
 require_fixed 'isDmpIntervalCell' src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网报告仍可能展示区间伪精确差值"
 require_fixed "periodMetricsForItem" public/tools/dmp-report-engine/report-engine.js "达摩盘商品表未按商品 ID 匹配周期指标"
 require_fixed "canonicalRenderData" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少官网预览渲染合同"
@@ -276,6 +285,16 @@ require_fixed '{ label: "ROI"' src/components/tools/DmpGrowthReportViewModel.ts 
 require_fixed '{ label: "PPC"' src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少 PPC"
 require_fixed "firstDisclosed" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少逐侧安全回退"
 require_fixed "data-overview-metric" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网未并排展示主体与目标对手指标"
+require_fixed 'const TRACK_COMPACT_COLUMNS = [' src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网缺少细分赛道十列紧凑表解析"
+require_fixed 'TRACK_OPPORTUNITY_ARCHIVE' src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网未合并货品增长机会分片"
+require_fixed 'dmpMarketTrackPeriodOptions' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网缺少全部已采赛道周期选择"
+require_fixed 'data-track-period-selector' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网细分赛道周期选择器缺少稳定标识"
+require_fixed 'data-report-quality="partial"' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网未向用户提示本轮采集缺失"
+require_fixed '缺失项不会按 0 处理' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网缺失提示未明确禁止按零解读"
+require_fixed 'const MAX_REPORT_BYTES = 8 * 1024 * 1024' src/lib/dmp-report-store.ts "达摩盘官网类目报告容量未覆盖全周期归档"
+require_fixed 'const MAX_REPORT_CELLS = 1_000_000' src/lib/dmp-report-store.ts "达摩盘官网细分赛道单元格容量不足"
+require_fixed '类目大盘单表超过 ${MAX_TABLE_ROWS} 行，请按周期或属性分片后重试' src/lib/dmp-report-store.ts "达摩盘官网仍可能静默截断细分赛道行"
+require_fixed 'update: input.quality === "complete"' src/lib/dmp-report-store.ts "达摩盘重试报告质量不能从 partial 单向升级为 complete"
 require_file "$DMP_ZIP_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
 unzip -p "$DMP_ZIP_PATH" '*official-share-url.mjs' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件缺少官网分享地址规范化模块"
@@ -309,6 +328,12 @@ unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.o
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.cookies.onChanged?.addListener' >/dev/null || fail "达摩盘插件登录恢复后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'async function synchronizeArchiveOutboxEntry(state, entry)' >/dev/null || fail "达摩盘后台补归档缺少静默队列同步"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'autoOpened: false' >/dev/null || fail "达摩盘后台补归档仍会自动弹出报告"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackMatrixContractComplete(value)' >/dev/null || fail "达摩盘类目归档缺少细分赛道矩阵完整性检查"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F '!rolling7TrackMatrixContractComplete(track)' >/dev/null || fail "达摩盘细分赛道矩阵不完整时仍可能标记完整归档"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const ROLLING7_TRACK_CONTRACT_VERSION = 3' >/dev/null || fail "达摩盘细分赛道完整性合同不是最新版本"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackLatestContract(value)' >/dev/null || fail "达摩盘细分赛道缺少本轮精确合同"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const carriedFailure = {' >/dev/null || fail "达摩盘本轮赛道失败时不会保留历史并显式降级"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_MARKET_NORMALIZED_REPORT_MAX_BYTES = 8 * 1024 * 1024' >/dev/null || fail "达摩盘类目报告上传容量不足"
 if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_IMPORT_ENABLED' >/dev/null; then
   fail "达摩盘插件仍保留已淘汰的导入占位开关"
 fi
@@ -320,6 +345,11 @@ unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F '.table-shell tbody td{back
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘本机商品曲线缺少逐点悬停"
 unzip -p "$DMP_ZIP_PATH" '*html-writer.js' | grep -F 'data-chart-tooltip' >/dev/null || fail "达摩盘本机商品曲线缺少数值提示层"
 unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘本机类目曲线缺少逐点悬停"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const TRACK_ARCHIVE_TABLE_PREFIX = "细分赛道矩阵-"' >/dev/null || fail "达摩盘类目报告缺少按属性稳定命名的细分赛道归档表"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const TRACK_ARCHIVE_MAX_ROWS = 5000' >/dev/null || fail "达摩盘细分赛道归档缺少安全分片上限"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F '"搜索潜力", "成交潜力", "拉新潜力", "蓝海指数"' >/dev/null || fail "达摩盘细分赛道矩阵不是固定十列紧凑合同"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'archiveTablesFromAtomicGroups' >/dev/null || fail "达摩盘货品增长机会归档缺少原子分片"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F -- '-分片${String' >/dev/null || fail "达摩盘细分赛道归档缺少稳定分片命名"
 unzip -p "$DMP_ZIP_PATH" '*rolling7-report.js' | grep -F 'bindChartTooltips' >/dev/null || fail "达摩盘本机类目曲线未绑定悬停交互"
 unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell thead th,.extra-table thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘竞争态势报告表头不是统一绿色白字"
 unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell tbody td,.extra-table tbody td{background-color:#fff}' >/dev/null || fail "达摩盘竞争态势报告正文未使用浅色背景"
@@ -332,6 +362,10 @@ unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'returnOnSpend(dire
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'const closureGroups = new Map()' >/dev/null || fail "达摩盘场景分配缺少比例与金额闭合校验"
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'SUBJECT_MINIMUM_PROMOTION_CONTRACT' >/dev/null || fail "达摩盘安装包缺少主体推广消耗、费比、ROI、PPC 最低合同"
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'missingSubjectMinimumPromotionMetrics' >/dev/null || fail "达摩盘安装包不会阻断主体最低投放指标缺失"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"]' >/dev/null || fail "达摩盘安装包未兼容付费金额占比历史名称"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'metrics[side].paidGmvContribution = contributionRatio(metrics[side].paidGmv, metrics[side].totalGmv);' >/dev/null || fail "达摩盘安装包付费金额占比公式不正确"
+cmp -s <(unzip -p "$DMP_ZIP_PATH" 'completeness-engine.js') public/tools/dmp-report-engine/completeness-engine.js || fail "达摩盘 ZIP 与官网完整性引擎不一致"
+cmp -s <(unzip -p "$DMP_ZIP_PATH" 'report-engine.js') public/tools/dmp-report-engine/report-engine.js || fail "达摩盘 ZIP 与官网报告引擎不一致"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'subjectContractValues' >/dev/null || fail "达摩盘安装包未把主体最低投放指标写入报告门禁"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
 unzip -p "$DMP_ZIP_PATH" '*direct-main.js' | grep -F 'indexCardTemplates' >/dev/null || fail "达摩盘安装包未采集同页全部核心指标卡"

@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/dmp-report-store", () => ({
-  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 2 * 1024 * 1024 + 64 * 1024,
+  DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 8 * 1024 * 1024 + 64 * 1024,
   assignDmpBusinessReportsShop: mocks.assignDmpBusinessReportsShop,
   deleteDmpBusinessReport: vi.fn(),
   getDmpBusinessReport: mocks.getDmpBusinessReport,
@@ -341,7 +341,7 @@ describe("POST /api/dmp-reports archive contract", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Content-Length": String(2 * 1024 * 1024 + 64 * 1024 + 1),
+        "Content-Length": String(8 * 1024 * 1024 + 64 * 1024 + 1),
         "x-sanjie-session": "extension-token"
       },
       body: "{}"

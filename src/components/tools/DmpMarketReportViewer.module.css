@@ -56,9 +56,13 @@
 .periodIdentity { text-align: right; }
 .periodPanel span, .summary header span { color: #607981; font-size: 13px; }
 .periodPanel strong { font-size: 20px; }
+.capturedPeriod { color: #3f6f6a; font-size: 12px; line-height: 1.45; }
 .periodControls { display: flex; gap: 12px; flex-wrap: wrap; }
 .periodControls label { display: grid; gap: 5px; }
 .periodControls select { min-width: 150px; height: 40px; padding: 0 34px 0 12px; border: 1px solid #b9d0cd; border-radius: 8px; color: var(--market-ink); background: #fff; }
+.qualityWarning { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border: 1px solid #e7c88b; border-left: 5px solid #d99420; border-radius: 12px; color: #674b1d; background: #fff8e8; box-shadow: 0 8px 22px rgba(103,75,29,.07); }
+.qualityWarning strong { flex: 0 0 auto; color: #7a4b00; }
+.qualityWarning span { line-height: 1.5; }
 
 .summary { padding: 18px; border-top: 4px solid var(--market-green); }
 .summary > header, .reportSection > header { display: flex; align-items: center; gap: 10px; }
@@ -84,7 +88,7 @@
 .numeric { text-align: right !important; font-variant-numeric: tabular-nums; }
 
 .trackSection { --market-track-blue: 61, 114, 219; }
-.trackToolbar { display: grid; grid-template-columns: minmax(240px, .65fr) minmax(420px, 1.35fr); align-items: end; gap: 14px; padding: 12px 14px; border: 1px solid var(--market-line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f8f7; }
+.trackToolbar { display: grid; grid-template-columns: minmax(180px, .5fr) minmax(250px, .7fr) minmax(420px, 1.35fr); align-items: end; gap: 14px; padding: 12px 14px; border: 1px solid var(--market-line); border-bottom: 0; border-radius: 10px 10px 0 0; background: #f3f8f7; }
 .trackMetricControl { display: grid; gap: 5px; }
 .trackMetricControl > span { color: #607981; font-size: 12px; }
 .trackMetricControl select { width: 100%; height: 38px; padding: 0 34px 0 11px; border: 1px solid #b9d0cd; border-radius: 7px; color: var(--market-ink); background: #fff; font-weight: 700; }
@@ -127,6 +131,7 @@
   .periodPanel { grid-template-columns: 1fr; align-items: stretch; }
   .periodIdentity { text-align: left; }
   .periodControls, .periodControls label, .periodControls select { width: 100%; }
+  .qualityWarning { align-items: flex-start; flex-direction: column; gap: 4px; }
   .summary > div { grid-template-columns: 1fr 1fr; }
   .reportSection { padding: 14px; }
   .trackToolbar { grid-template-columns: 1fr; align-items: stretch; }

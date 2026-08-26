@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import {
   buildDmpMarketTrackMatrix,
+  dmpMarketTrackPeriodOptions,
   dmpMarketTrackHeatOpacity,
   dmpMarketCategoryLabel,
   formatDmpMarketTrackScore,
@@ -13,6 +14,7 @@ import {
   parseBusinessNumber,
   projectDmpMarketReport,
   selectDmpMarketPeriod,
+  selectDmpMarketTrackPeriod,
   type DmpMarketTrackMatrix,
   type DmpMarketViewerTable,
   type DmpMarketPeriodMode
@@ -104,8 +106,20 @@ export function DmpMarketReportViewer({
           <div className={styles.periodIdentity}>
             <span>{mode === "day" ? "当前日期" : "当前周期"}</span>
             <strong>{periodLabel || "全部可用日期"}</strong>
+            {model.capturedPeriod ? (
+              <small className={styles.capturedPeriod} data-captured-period>
+                细分赛道已采全周期：{model.capturedPeriod.start} 至 {model.capturedPeriod.end} · {model.capturedPeriod.count} 个周期
+              </small>
+            ) : null}
           </div>
         </section>
+
+        {record.quality === "partial" ? (
+          <section className={styles.qualityWarning} role="alert" data-report-quality="partial">
+            <strong>本次采集存在缺失，正在等待补采</strong>
+            <span>当前仅展示已成功获取并归档的数据；缺失项不会按 0 处理，保持达摩盘页面与插件运行后可继续补采。</span>
+          </section>
+        ) : null}
 
         {kpis.length ? (
           <section className={styles.summary} data-track-section="market-summary">
@@ -152,6 +166,20 @@ function DmpMarketTableSection({
   periodLabel: string;
 }) {
   const trackMatrix = useMemo(() => buildDmpMarketTrackMatrix(table), [table]);
+  const trackPeriodOptions = dmpMarketTrackPeriodOptions(table);
+  if (trackPeriodOptions.length) {
+    const defaultKey = trackPeriodOptions.find((option) => (
+      option.start === table.selectedTrackPeriod?.start && option.end === table.selectedTrackPeriod?.end
+    ))?.key ?? trackPeriodOptions[0].key;
+    return (
+      <DmpMarketLongTrackMatrixSection
+        table={table}
+        tableIndex={tableIndex}
+        defaultPeriodKey={defaultKey}
+        key={`${table.name}-${defaultKey}`}
+      />
+    );
+  }
   if (trackMatrix) return <DmpMarketTrackMatrixSection matrix={trackMatrix} tableIndex={tableIndex} />;
   return (
     <section className={styles.reportSection} data-report-section={table.name} data-track-section={`table:${table.name}`}>
@@ -176,12 +204,46 @@ function DmpMarketTableSection({
   );
 }
 
+function DmpMarketLongTrackMatrixSection({
+  table,
+  tableIndex,
+  defaultPeriodKey
+}: {
+  table: DmpMarketViewerTable;
+  tableIndex: number;
+  defaultPeriodKey: string;
+}) {
+  const periodOptions = useMemo(() => dmpMarketTrackPeriodOptions(table), [table]);
+  const [periodKey, setPeriodKey] = useState(defaultPeriodKey);
+  const selectedTable = useMemo(
+    () => selectDmpMarketTrackPeriod(table, periodKey),
+    [periodKey, table]
+  );
+  const matrix = useMemo(() => buildDmpMarketTrackMatrix(selectedTable), [selectedTable]);
+  if (!matrix) return null;
+  return (
+    <DmpMarketTrackMatrixSection
+      matrix={matrix}
+      tableIndex={tableIndex}
+      periodOptions={periodOptions}
+      periodKey={periodKey}
+      onPeriodKeyChange={setPeriodKey}
+    />
+  );
+}
+
 function DmpMarketTrackMatrixSection({
   matrix,
-  tableIndex
+  tableIndex,
+  periodOptions = [],
+  periodKey = "",
+  onPeriodKeyChange
 }: {
   matrix: DmpMarketTrackMatrix;
   tableIndex: number;
+  periodOptions?: ReturnType<typeof dmpMarketTrackPeriodOptions>;
+  periodKey?: string;
+  onPeriodKeyChange?: (key: string) => void;
 }) {
   const [metricLabel, setMetricLabel] = useState(matrix.metrics[0]?.label ?? "");
   const metric = matrix.metrics.find((candidate) => candidate.label === metricLabel) ?? matrix.metrics[0];
@@ -207,6 +269,20 @@ function DmpMarketTrackMatrixSection({
             ))}
           </select>
         </label>
+        {periodOptions.length && onPeriodKeyChange ? (
+          <label className={styles.trackMetricControl}>
+            <span>赛道周期（全部已采周期可选）</span>
+            <select
+              value={periodKey}
+              data-track-period-selector
+              onChange={(event) => onPeriodKeyChange(event.target.value)}
+            >
+              {periodOptions.map((option) => (
+                <option value={option.key} key={option.key}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <div className={styles.trackPeriodPair} aria-label="赛道对比周期">
           <span><b>本期</b>{matrix.currentLabel}</span>
           <span><b>上一周期</b>{matrix.previousLabel}</span>

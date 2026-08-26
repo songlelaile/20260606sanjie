@@ -16,14 +16,14 @@ import { getCurrentSession } from "@/lib/server-session";
 import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
 import { withDmpAutomationBrand } from "@/lib/dmp-product";
 
-const MAX_REPORT_BYTES = 2 * 1024 * 1024;
+const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 export const DMP_REPORT_ARCHIVE_MAX_BODY_BYTES = MAX_REPORT_BYTES + 64 * 1024;
-const MAX_TABLES = 100;
+const MAX_TABLES = 200;
 const MAX_TABLE_ROWS = 5_000;
 const MAX_CELL_LENGTH = 10_000;
 const MAX_TABLE_NAME_LENGTH = 200;
 const MAX_TABLE_COLUMNS = 100;
-const MAX_REPORT_CELLS = 250_000;
+const MAX_REPORT_CELLS = 1_000_000;
 const SENSITIVE_ARCHIVE_AUTH_WORD = /token|cookie|authorization|password|secret|session|signature/i;
 const STANDALONE_ARCHIVE_SIGN = /(?:^|[^a-z0-9])sign(?:ature|data)?(?:$|[^a-z0-9])/i;
 
@@ -168,7 +168,17 @@ export function validateDmpCanonicalReport(
 
   const rawTables = Array.isArray(report.tables) ? report.tables : [];
   if (!Array.isArray(report.tables)) pushArchiveIssue(issues, "业务表集合缺失，已创建空表归档");
-  if (rawTables.length > MAX_TABLES) pushArchiveIssue(issues, `业务表超过 ${MAX_TABLES} 个，已截断归档`);
+  if (rawTables.length > MAX_TABLES) {
+    if (kind === "market") return { error: `类目大盘业务表超过 ${MAX_TABLES} 个保存上限` };
+    pushArchiveIssue(issues, `业务表超过 ${MAX_TABLES} 个，已截断归档`);
+  }
+  if (kind === "market" && rawTables.some((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+    return Array.isArray((candidate as { rows?: unknown }).rows)
+      && ((candidate as { rows: unknown[] }).rows.length > MAX_TABLE_ROWS);
+  })) {
+    return { error: `类目大盘单表超过 ${MAX_TABLE_ROWS} 行，请按周期或属性分片后重试` };
+  }
   if (estimatedArchivedCellCount(rawTables) > MAX_REPORT_CELLS) return { error: "报告单元格总量超过保存上限" };
   const normalizedTables = rawTables
     .slice(0, MAX_TABLES)
@@ -513,7 +523,10 @@ export async function saveDmpBusinessReport(input: {
         fingerprint,
         report: input.report as unknown as Prisma.InputJsonValue
       },
-      update: {},
+      // Fingerprint 去重后只允许质量单向升级；失败重试不得把已有完整报告降回 partial。
+      update: input.quality === "complete"
+        ? { quality: "complete", sourceVersion: input.sourceVersion }
+        : {},
       select: {
         id: true,
         shop: { select: { id: true, name: true } },

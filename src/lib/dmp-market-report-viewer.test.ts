@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DMP_MARKET_TIME_ZONE,
   buildDmpMarketTrackMatrix,
+  dmpMarketTrackPeriodOptions,
   dmpMarketTrackHeatOpacity,
   dmpMarketCategoryLabel,
   formatDmpMarketTrackScore,
@@ -12,7 +13,8 @@ import {
   parseBusinessNumber,
   projectDmpMarketReport,
   shanghaiDateKey,
-  selectDmpMarketPeriod
+  selectDmpMarketPeriod,
+  selectDmpMarketTrackPeriod
 } from "@/components/tools/DmpMarketReportViewModel";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 
@@ -301,6 +303,238 @@ describe("DMP category-market viewer", () => {
     ]);
   });
 
+  it("renders the all-period long-form track archive and pairs the selected period with its predecessor", () => {
+    const record = marketRecord();
+    record.period = "2026-07-01 至 2026-07-31";
+    record.report.period = record.period;
+    const longColumns = ["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"];
+    const trackRow = (
+      start: string,
+      end: string,
+      propertyName: string,
+      propertyValue: string,
+      priceBand: string,
+      metric: string,
+      value: string
+    ) => ({ cells: [`${start} 至 ${end}`, start, end, propertyName, propertyValue, priceBand, metric, value] });
+    record.report.tables = [
+      {
+        name: "细分赛道矩阵",
+        columns: longColumns,
+        rows: [
+          trackRow("2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "搜索潜力", "131"),
+          trackRow("2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "成交潜力", "64"),
+          trackRow("2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "拉新潜力", "26"),
+          trackRow("2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "346"),
+          trackRow("2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300", "搜索潜力", "120"),
+          trackRow("2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300", "成交潜力", "60"),
+          trackRow("2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300", "拉新潜力", "20"),
+          trackRow("2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300", "蓝海指数", "300"),
+          trackRow("2026-05-01", "2026-05-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "280"),
+          trackRow("2026-07-01", "2026-07-31", "智能类型", "非智能", "2300~3900", "蓝海指数", "143"),
+          trackRow("2026-06-01", "2026-06-30", "智能类型", "非智能", "2300~3900", "蓝海指数", "100")
+        ]
+      },
+      {
+        name: "自然月汇总",
+        columns: ["周期", "成交金额"],
+        rows: [
+          { cells: ["2026-05-01 至 2026-05-31", "8000万"] },
+          { cells: ["2026-06-01 至 2026-06-30", "9000万"] },
+          { cells: ["2026-07-01 至 2026-07-31", "1.2亿"] }
+        ]
+      }
+    ];
+
+    const model = projectDmpMarketReport(record);
+    expect(model.tables.map((table) => table.name)).toEqual([
+      "细分赛道矩阵-机身材质",
+      "细分赛道矩阵-智能类型",
+      "自然月汇总"
+    ]);
+    expect(model.tables[0].rows).toHaveLength(9);
+
+    const july = selectDmpMarketPeriod(model, "month", "2026-07");
+    expect(july.tables.map((table) => table.name)).toEqual([
+      "细分赛道矩阵-机身材质",
+      "细分赛道矩阵-智能类型",
+      "自然月汇总"
+    ]);
+    expect(july.tables[0].selectedTrackPeriod).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+    const allTrackPeriods = dmpMarketTrackPeriodOptions(july.tables[0]);
+    expect(allTrackPeriods.map((option) => option.label)).toEqual([
+      "2026-07-01 至 2026-07-31",
+      "2026-06-01 至 2026-06-30",
+      "2026-05-01 至 2026-05-31"
+    ]);
+    const matrix = buildDmpMarketTrackMatrix(july.tables[0]);
+    expect(matrix).toMatchObject({
+      propertyName: "机身材质",
+      currentLabel: "2026-07-01 至 2026-07-31",
+      previousLabel: "2026-06-01 至 2026-06-30",
+      propertyValues: ["不锈钢"],
+      priceBands: ["0~2300"]
+    });
+    expect(matrix?.metrics.map((metric) => metric.label)).toEqual([
+      "搜索潜力",
+      "成交潜力",
+      "拉新潜力",
+      "蓝海指数"
+    ]);
+    expect(matrix?.metrics[0].rows[0].cells[0]).toMatchObject({ current: 131, previous: 120, change: 11 });
+    expect(matrix?.metrics[3].rows[0].cells[0]).toMatchObject({ current: 346, previous: 300, change: 46 });
+    const mayTable = selectDmpMarketTrackPeriod(july.tables[0], allTrackPeriods[2].key);
+    expect(buildDmpMarketTrackMatrix(mayTable)).toMatchObject({
+      currentLabel: "2026-05-01 至 2026-05-31",
+      previousLabel: "—"
+    });
+
+    const june = selectDmpMarketPeriod(model, "month", "2026-06");
+    const juneMatrix = buildDmpMarketTrackMatrix(june.tables[0]);
+    expect(juneMatrix).toMatchObject({
+      currentLabel: "2026-06-01 至 2026-06-30",
+      previousLabel: "2026-05-01 至 2026-05-31"
+    });
+    expect(juneMatrix?.metrics.find((metric) => metric.label === "蓝海指数")?.rows[0].cells[0])
+      .toMatchObject({ current: 300, previous: 280, change: 20 });
+    expect(marketKpiMetrics(july.tables).some((metric) => /潜力|蓝海/.test(metric.label))).toBe(false);
+  });
+
+  it("does not fall back to an unrelated track period when the selected period has no overlap", () => {
+    const record = marketRecord();
+    record.report.tables = [
+      {
+        name: "细分赛道矩阵",
+        columns: ["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"],
+        rows: [
+          { cells: ["2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "346"] }
+        ]
+      },
+      {
+        name: "自然月汇总",
+        columns: ["周期", "成交金额"],
+        rows: [
+          { cells: ["2026-01-01 至 2026-01-31", "8000万"] },
+          { cells: ["2026-07-01 至 2026-07-31", "1.2亿"] }
+        ]
+      }
+    ];
+
+    const january = selectDmpMarketPeriod(projectDmpMarketReport(record), "month", "2026-01");
+    expect(january.tables.map((table) => table.name)).toEqual(["自然月汇总"]);
+  });
+
+  it("merges compact track fragments before pairing the current and previous periods", () => {
+    const record = marketRecord();
+    const columns = [
+      "周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带",
+      "搜索潜力", "成交潜力", "拉新潜力", "蓝海指数"
+    ];
+    record.report.tables = [
+      {
+        name: "细分赛道矩阵-机身材质-0abc123-分片01",
+        columns,
+        rows: [{ cells: [
+          "2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300",
+          "131", "64", "26", "346"
+        ] }]
+      },
+      {
+        name: "细分赛道矩阵-机身材质-0abc123-分片02",
+        columns,
+        rows: [{ cells: [
+          "2026-06-01 至 2026-06-30", "2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300",
+          "120", "60", "20", "300"
+        ] }]
+      },
+      {
+        name: "自然月汇总",
+        columns: ["周期", "成交金额"],
+        rows: [{ cells: ["2026-07-01 至 2026-07-31", "1.2亿"] }]
+      }
+    ];
+
+    const model = projectDmpMarketReport(record);
+    expect(model.tables.filter((table) => table.name.startsWith("细分赛道矩阵-"))).toHaveLength(1);
+    expect(model.capturedPeriod).toEqual({ start: "2026-06-01", end: "2026-07-31", count: 2 });
+    const july = selectDmpMarketPeriod(model, "month", "2026-07");
+    const trackTable = july.tables.find((table) => table.name.startsWith("细分赛道矩阵-"));
+    const matrix = buildDmpMarketTrackMatrix(trackTable!);
+    expect(matrix).toMatchObject({
+      propertyName: "机身材质",
+      currentLabel: "2026-07-01 至 2026-07-31",
+      previousLabel: "2026-06-01 至 2026-06-30"
+    });
+    expect(matrix?.metrics.find((metric) => metric.label === "蓝海指数")?.rows[0].cells[0])
+      .toMatchObject({ current: 346, previous: 300, change: 46 });
+  });
+
+  it("merges growth-opportunity archive fragments before filtering the selected period", () => {
+    const record = marketRecord();
+    const columns = ["周期", "周期开始", "周期结束", "机会类型", "赛道名称", "属性维度", "属性值", "价格带"];
+    record.report.tables = [
+      {
+        name: "货品增长机会-分片01",
+        columns,
+        rows: [{ cells: [
+          "2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "本店优势赛道", "赛道A", "机身材质", "不锈钢", "0~2300"
+        ] }]
+      },
+      {
+        name: "货品增长机会-分片02",
+        columns,
+        rows: [
+          { cells: [
+            "2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "本店优势赛道", "赛道A", "机身材质", "不锈钢", "0~2300"
+          ] },
+          { cells: [
+            "2026-06-01 至 2026-06-30", "2026-06-01", "2026-06-30", "类目高潜机会", "赛道B", "机身材质", "钢化玻璃", "2300~3900"
+          ] }
+        ]
+      },
+      {
+        name: "自然月汇总",
+        columns: ["周期", "成交金额"],
+        rows: [{ cells: ["2026-07-01 至 2026-07-31", "1.2亿"] }]
+      }
+    ];
+
+    const model = projectDmpMarketReport(record);
+    expect(model.tables.filter((table) => table.name === "货品增长机会")).toHaveLength(1);
+    expect(model.tables.find((table) => table.name === "货品增长机会")?.rows).toHaveLength(3);
+    const july = selectDmpMarketPeriod(model, "month", "2026-07");
+    expect(july.tables.find((table) => table.name === "货品增长机会")?.rows).toHaveLength(2);
+    expect(july.tables.find((table) => table.name === "货品增长机会")?.rows[0]).toContain("赛道A");
+  });
+
+  it("does not pair a non-adjacent older track period as the previous period", () => {
+    const record = marketRecord();
+    record.report.tables = [
+      {
+        name: "细分赛道矩阵",
+        columns: ["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"],
+        rows: [
+          { cells: ["2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "346"] },
+          { cells: ["2026-05-01 至 2026-05-31", "2026-05-01", "2026-05-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "280"] }
+        ]
+      },
+      {
+        name: "自然月汇总",
+        columns: ["周期", "成交金额"],
+        rows: [{ cells: ["2026-07-01 至 2026-07-31", "1.2亿"] }]
+      }
+    ];
+
+    const july = selectDmpMarketPeriod(projectDmpMarketReport(record), "month", "2026-07");
+    const trackTable = july.tables.find((table) => table.name === "细分赛道矩阵-机身材质");
+    expect(trackTable?.rows).toHaveLength(2);
+    expect(trackTable?.selectedTrackPeriod).toEqual({ start: "2026-07-01", end: "2026-07-31" });
+    expect(buildDmpMarketTrackMatrix(trackTable!)).toMatchObject({
+      currentLabel: "2026-07-01 至 2026-07-31",
+      previousLabel: "—"
+    });
+  });
+
   it("falls back to the Chinese category path and drops empty or engineering-only fields", () => {
     const record = marketRecord();
     record.subjectItemId = "50015382";
@@ -337,6 +571,12 @@ describe("DMP category-market viewer", () => {
     expect(viewer).toContain("自然周");
     expect(viewer).toContain("自然月");
     expect(viewer).toContain("自然日");
+    expect(viewer).toContain("细分赛道已采全周期");
+    expect(viewer).toContain("data-captured-period");
+    expect(viewer).toContain('record.quality === "partial"');
+    expect(viewer).toContain('data-report-quality="partial"');
+    expect(viewer).toContain("缺失项不会按 0 处理");
+    expect(viewer).toContain("data-track-period-selector");
     expect(viewer).toContain("dmp-market-empty-state");
     expect(viewer).toContain("data-track-matrix");
     expect(viewer).toContain('data-track-visualization="heatmap"');

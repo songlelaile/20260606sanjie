@@ -60,6 +60,7 @@
     { key: "visitors", name: "访客数", aliases: ["访客数", "访问人数", "访客", "uv"] },
     { key: "totalGmv", name: "总GMV", aliases: ["总gmv", "成交金额", "支付成交金额", "alipayamt", "gmv30d"] },
     { key: "paidGmv", name: "付费成交额", aliases: ["付费成交额", "付费成交金额", "付费GMV", "营销推广成交额", "营销推广成交金额", "营销推广GMV", "推广成交额", "推广成交金额", "推广GMV", "广告归因gmv", "广告成交额", "广告成交金额", "直接成交额", "直接成交金额", "直接支付金额", "directalipayamt", "directalipayamount", "gmv1d", "alipayamt1d"] },
+    { key: "paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"] },
     { key: "paidOrders", name: "付费成交笔数", aliases: ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数"] },
     { key: "spend", name: "推广消耗", aliases: ["推广消耗", "推广花费", "广告消耗", "广告花费", "广告/推广消耗", "营销推广消耗", "营销推广花费", "总消耗", "总花费", "charge", "adspend", "promotioncost"] },
     { key: "roi", name: "ROI", aliases: ["roi", "直接roi", "roi1d", "directroi", "推广roi", "营销推广roi", "投入产出比", "直接投入产出比", "直接投产比", "投产比"] },
@@ -303,17 +304,33 @@
   }
 
   function contributionRatio(value, total) {
-    if (!Number.isFinite(total) || total <= 0) return null;
-    const exact = numberOrNull(value);
-    if (exact != null) return exact >= 0 ? round(exact / total, 6) : null;
-    const range = parseVagueRange(value);
-    if (!range) return null;
-    const minimum = Number.isFinite(range.min) ? round(range.min / total, 6) : null;
-    const maximum = Number.isFinite(range.max) ? round(range.max / total, 6) : null;
-    if (range.upperOpen && maximum != null) return `<${maximum}`;
-    if (range.lowerOpen && minimum != null) return `>${minimum}`;
-    if (minimum != null && maximum != null) return minimum === maximum ? minimum : `${minimum}~${maximum}`;
+    const numerator = parseVagueRange(value);
+    const denominator = parseVagueRange(total);
+    if (!numerator || !denominator) return null;
+    const numeratorMinimum = Number.isFinite(numerator.min) ? numerator.min : null;
+    const numeratorMaximum = Number.isFinite(numerator.max) ? numerator.max : null;
+    const denominatorMinimum = Number.isFinite(denominator.min) && denominator.min > 0 ? denominator.min : null;
+    const denominatorMaximum = Number.isFinite(denominator.max) && denominator.max > 0 ? denominator.max : null;
+    if (denominatorMaximum == null && denominatorMinimum == null) return null;
+    if (numerator.exact && numeratorMinimum === 0) return 0;
+
+    // 正数区间相除使用保守边界：P低/G高 ~ P高/G低。开放区间只保留
+    // 可证明的一侧，不取中点，也不把脱敏区间伪装成精确百分比。
+    const minimum = numeratorMinimum != null
+      ? denominatorMaximum != null ? round(numeratorMinimum / denominatorMaximum, 6) : 0
+      : null;
+    const maximum = numeratorMaximum != null && denominatorMinimum != null
+      ? round(numeratorMaximum / denominatorMinimum, 6)
+      : null;
+    if (minimum != null && maximum != null) {
+      if (minimum === maximum && numerator.exact && denominator.exact) return minimum;
+      if (minimum === 0 && (numerator.upperOpen || denominator.lowerOpen)) return `<${maximum}`;
+      return `${minimum}~${maximum}`;
+    }
     if (maximum != null) return `<${maximum}`;
+    // 仅能证明占比不小于 0、却无法证明上界时，不得伪装成严格的 “>0”。
+    // 分子和分母都可能从 0 起的脱敏区间没有可报告的有效边界。
+    if (minimum === 0) return null;
     if (minimum != null) return `>${minimum}`;
     return null;
   }

@@ -137,6 +137,46 @@ describe("DMP category market report storage contract", () => {
     expect(checked.report?.tables.map((table) => table.name)).toEqual(["滚动7天市场数据"]);
   });
 
+  it("archives every collected period in the long-form market track table", () => {
+    const report = marketReport();
+    report.tables.push({
+      name: "细分赛道矩阵",
+      columns: ["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"],
+      rows: [
+        { cells: ["2026-07-01 至 2026-07-31", "2026-07-01", "2026-07-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "346"] },
+        { cells: ["2026-06-01 至 2026-06-30", "2026-06-01", "2026-06-30", "机身材质", "不锈钢", "0~2300", "蓝海指数", "300"] },
+        { cells: ["2026-05-01 至 2026-05-31", "2026-05-01", "2026-05-31", "机身材质", "不锈钢", "0~2300", "蓝海指数", "280"] }
+      ]
+    });
+
+    const checked = validateDmpCanonicalReport(report);
+    const tracks = checked.report?.tables.find((table) => table.name === "细分赛道矩阵");
+    expect(checked.error).toBeUndefined();
+    expect(tracks?.columns).toEqual(["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"]);
+    expect(tracks?.rows).toHaveLength(3);
+    expect(tracks?.rows.map((row) => row.cells[0])).toEqual([
+      "2026-07-01 至 2026-07-31",
+      "2026-06-01 至 2026-06-30",
+      "2026-05-01 至 2026-05-31"
+    ]);
+  });
+
+  it("rejects oversized market tables instead of silently truncating collected periods", () => {
+    const tooManyRows = marketReport();
+    tooManyRows.tables[0].rows = Array.from({ length: 5_001 }, (_, index) => ({
+      cells: [`2026-01-${String(index % 28 + 1).padStart(2, "0")}`, "3000万", "1500"]
+    }));
+    expect(validateDmpCanonicalReport(tooManyRows).error).toContain("单表超过 5000 行");
+
+    const tooManyTables = marketReport();
+    tooManyTables.tables = Array.from({ length: 201 }, (_, index) => ({
+      name: `细分赛道矩阵-属性${index}`,
+      columns: ["周期", "数值"],
+      rows: [{ cells: ["2026-07-01 至 2026-07-31", "0"] }]
+    }));
+    expect(validateDmpCanonicalReport(tooManyTables).error).toContain("业务表超过 200 个");
+  });
+
   it("accepts the plugin category-ID contract without relaxing product item IDs", () => {
     const shortCategory = marketReport();
     shortCategory.item_id = "16";
@@ -366,20 +406,21 @@ describe("DMP growth render_data storage contract", () => {
 
   it("rejects normalization amplification beyond the global cell-count limit", () => {
     const report = growthReport();
-    const channel = report.tables.find((table) => table.name === "渠道花费")!;
-    channel.columns = Array.from({ length: 100 }, (_, index) => `列${index + 1}`);
-    channel.rows = Array.from({ length: 3_000 }, () => ({ cells: [""] }));
+    for (const table of report.tables.slice(0, 3)) {
+      table.columns = Array.from({ length: 100 }, (_, index) => `列${index + 1}`);
+      table.rows = Array.from({ length: 4_000 }, () => ({ cells: [""] }));
+    }
 
     expect(validateDmpCanonicalReport(report)).toEqual({ error: "报告单元格总量超过保存上限" });
   });
 
-  it("rechecks the two-megabyte limit after row-width normalization", () => {
+  it("rechecks the eight-megabyte limit after row-width normalization", () => {
     const report = growthReport();
     const channel = report.tables.find((table) => table.name === "渠道花费")!;
     channel.columns = Array.from({ length: 100 }, (_, index) => `列${index + 1}`);
-    channel.rows = Array.from({ length: 1_800 }, () => ({ cells: ["x".repeat(900)] }));
+    channel.rows = Array.from({ length: 5_000 }, () => ({ cells: ["x".repeat(1_550)] }));
 
-    expect(Buffer.byteLength(JSON.stringify(report), "utf8")).toBeLessThan(2 * 1024 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(report), "utf8")).toBeLessThan(8 * 1024 * 1024);
     expect(validateDmpCanonicalReport(report)).toEqual({ error: "规范化后的报告内容超过保存上限" });
   });
 
@@ -526,9 +567,39 @@ describe("DMP growth render_data storage contract", () => {
           }
         },
         create: { fingerprint },
-        update: {}
+        update: { quality: "complete", sourceVersion: "2.1.6" }
       });
     }
+  });
+
+  it("only upgrades retry quality from partial to complete and never downgrades complete data", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const row = {
+      id: "quality-monotonic-report",
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      quality: "complete",
+      createdAt: new Date("2026-08-22T04:00:00.000Z"),
+      report: canonical
+    };
+    mocks.upsert.mockResolvedValue(row);
+    const base = {
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: row.subjectItemId,
+      competitorItemId: row.competitorItemId
+    };
+
+    await saveDmpBusinessReport({ ...base, quality: "complete", sourceVersion: "2.3.12" });
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toEqual({
+      quality: "complete",
+      sourceVersion: "2.3.12"
+    });
+
+    await saveDmpBusinessReport({ ...base, quality: "partial", sourceVersion: "2.3.12" });
+    expect(mocks.upsert.mock.calls[1]?.[0]?.update).toEqual({});
   });
 
   it("inherits the latest shop for the same user and canonical subject/competitor pair", async () => {

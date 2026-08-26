@@ -448,7 +448,7 @@
       return [String(id || ""), objectLabel, rangeStart, rangeEnd, rangeDays, source.orders, source.aov, gmv, attributed, actualSpend,
         Number.isFinite(toNumber(actualSpend)) && Number.isFinite(toNumber(gmv)) && toNumber(gmv) !== 0 ? round(toNumber(actualSpend) / toNumber(gmv), 6) : EMPTY,
         Number.isFinite(toNumber(actualSpend)) && toNumber(actualSpend) !== 0 && Number.isFinite(toNumber(gmv)) ? round(toNumber(gmv) / toNumber(actualSpend), 4) : EMPTY,
-        Number.isFinite(toNumber(attributed)) && Number.isFinite(toNumber(gmv)) && toNumber(gmv) !== 0 ? round(toNumber(attributed) / toNumber(gmv), 6) : EMPTY,
+        modelCell(completenessEngine.contributionRatio(attributed, gmv)),
         EMPTY, Number.isFinite(toNumber(gmv)) ? round(toNumber(gmv) / rangeDays) : EMPTY, Number.isFinite(toNumber(actualSpend)) ? round(toNumber(actualSpend) / rangeDays) : EMPTY,
         peakDate || EMPTY, Number.isFinite(toNumber(vol)) ? round(toNumber(vol), 6) : EMPTY];
     };
@@ -459,7 +459,7 @@
       make(competitorId, `目标对手・${days}日`, metrics.competitor, dailySpend || metrics.competitor.spend, metrics.competitor.totalGmv || dailyGmv, start, end, days, peak?.date, volatility),
       make(competitorId, "目标对手・30日趋势", metrics.competitor, dailySpend || metrics.competitor.spend, dailyGmv || metrics.competitor.totalGmv, dailyRows[0]?.date || start, dailyRows[dailyRows.length - 1]?.date || end, dailyRows.length || 30, peak?.date, volatility)
     ];
-    return table("周期汇总", ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "广告归因GMV", "广告消耗", "费比", "全域ROAS", "广告GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"], rows, {
+    return table("周期汇总", ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "广告归因GMV", "广告消耗", "费比", "全域ROAS", "付费金额占比", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"], rows, {
       widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14]
     });
   }
@@ -472,6 +472,7 @@
       ["转化", "支付转化率", metrics.subject.conversion, metrics.competitor.conversion, relative(metrics.subject.conversion, metrics.competitor.conversion, true)],
       ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors, relative(metrics.subject.visitors, metrics.competitor.visitors)],
       ["投放", "推广消耗", metrics.subject.spend, metrics.competitor.spend, relative(metrics.subject.spend, metrics.competitor.spend)],
+      ["投放", "付费金额占比", completenessEngine.contributionRatio(metrics.subject.attributedGmv, metrics.subject.totalGmv), completenessEngine.contributionRatio(metrics.competitor.attributedGmv, metrics.competitor.totalGmv), relative(completenessEngine.contributionRatio(metrics.subject.attributedGmv, metrics.subject.totalGmv), completenessEngine.contributionRatio(metrics.competitor.attributedGmv, metrics.competitor.totalGmv), true)],
       ["投放", "费比", metrics.subject.feeRatio, metrics.competitor.feeRatio, relative(metrics.subject.feeRatio, metrics.competitor.feeRatio, true)],
       ["投放", "全域ROAS", metrics.subject.roas, metrics.competitor.roas, relative(metrics.subject.roas, metrics.competitor.roas)],
       ["结构", "关键词消耗占比", metrics.subject.keywordShare, metrics.competitor.keywordShare, relative(metrics.subject.keywordShare, metrics.competitor.keywordShare, true)],
@@ -836,7 +837,7 @@
     const subjectRows = (model.subjectDaily?.rows || []).filter(row => Number.isFinite(row.gmv));
     const subjectDailyGmv = subjectRows.map(row => row.gmv);
     const subjectPeakRow = subjectRows.slice().sort((left, right) => right.gmv - left.gmv)[0];
-    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费GMV贡献率", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
+    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费金额占比", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
     const make = (id, label, source, side, peakDate = "", volatility = null) => {
       const spendScope = reportSideSpendScope(model, side);
       const spendDays = spendScope.partial
@@ -874,6 +875,7 @@
       ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors],
       ["投放", "推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["投放", "付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["投放", "付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
       ["投放", "ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["投放", "PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
       ["投放", "费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
@@ -964,6 +966,7 @@
       ["总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
       ["广告/推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
       ["ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
       ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
@@ -1041,6 +1044,7 @@
       [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`],
       ["总GMV", modelCell(subject.totalGmv), modelCell(competitor.totalGmv), strictScope],
       ["付费成交额", modelCell(subject.paidGmv), modelCell(competitor.paidGmv), strictScope],
+      ["付费金额占比", modelCell(subject.paidGmvContribution), modelCell(competitor.paidGmvContribution), strictScope],
       ["推广消耗", metric("subject", "spend"), metric("competitor", "spend"), spendScope.metric],
       ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio"), spendScope.metric],
       ["ROI", metric("subject", "roi"), metric("competitor", "roi"), spendScope.metric],
@@ -1227,7 +1231,7 @@
           : current.name === "基础指标对比" || current.name === "报告总览"
             ? `${current.columns[cellIndex]} ${row[0]}`
             : current.columns[cellIndex];
-        return typeof value === "number" ? formatMetricValue(semantic, value) : value;
+        return formatMetricValue(semantic, value);
       })));
     });
     return "\ufeff" + lines.map(line => line.map(csvEscape).join(",")).join("\r\n");

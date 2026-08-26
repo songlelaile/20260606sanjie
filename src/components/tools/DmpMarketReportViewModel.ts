@@ -7,9 +7,16 @@ const DATE_FIELD = /^(?:日期|截止日|请求截止日|周期)$/;
 const REFERENCE_ONLY = /^(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const REFERENCE_SUFFIX = /(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const GENERIC_CATEGORY_NAME = /^(?:类目|类目大盘|叶子类目)$/;
-const PERIOD_CONTEXT_TABLE = /^(?:类目周期环比|类目历史周期|细分赛道周期对比(?:-|$))/;
+const PERIOD_CONTEXT_TABLE = /^(?:类目周期环比|类目历史周期|细分赛道周期对比(?:-|$)|细分赛道矩阵(?:-|$))/;
 const TRACK_COMPARISON_TABLE = /^细分赛道周期对比-(.+)$/;
 const TRACK_COMPARISON_COLUMNS = ["属性维度", "属性值", "价格带", "指标"] as const;
+const TRACK_LONG_TABLE = /^细分赛道矩阵(?:-(.+))?$/;
+const TRACK_LONG_COLUMNS = ["周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带", "指标", "数值"] as const;
+const TRACK_COMPACT_COLUMNS = [
+  "周期", "周期开始", "周期结束", "属性维度", "属性值", "价格带",
+  "搜索潜力", "成交潜力", "拉新潜力", "蓝海指数"
+] as const;
+const TRACK_OPPORTUNITY_ARCHIVE = /^(货品增长机会概览|货品增长机会|赛道整体与本店|赛道人群|赛道投放结构)(?:-分片\d+)?$/;
 
 const KNOWN_CATEGORY_PATHS: Record<string, string[]> = {
   "50015382": ["大家电", "厨房大电", "油烟机"]
@@ -31,6 +38,7 @@ export interface DmpMarketViewerTable {
   dates: string[];
   rowPeriods: Array<{ start: string; end: string } | null>;
   periodMode?: DmpMarketPeriodMode;
+  selectedTrackPeriod?: { start: string; end: string };
 }
 
 export interface DmpMarketReportViewModel {
@@ -38,6 +46,7 @@ export interface DmpMarketReportViewModel {
   period: string;
   tables: DmpMarketViewerTable[];
   periods: Record<DmpMarketPeriodMode, DmpMarketPeriodOption[]>;
+  capturedPeriod: { start: string; end: string; count: number } | null;
 }
 
 export interface DmpMarketKpiMetric {
@@ -77,9 +86,19 @@ export interface DmpMarketTrackMatrix {
 export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMarketReportViewModel {
   const scope = resolveDmpMarketScope(record.report.market_scope, record.subjectItemId);
   const availableDays = new Set<string>();
-  const tables = record.report.tables.flatMap((table) => {
+  const sourceTables = mergeDmpMarketOpportunityArchiveFragments(record.report.tables);
+  // 新版按属性、按容量分片归档赛道；必须先跨源表合并，再按属性投影。
+  // 否则本期与上一周期落在不同分片时，会被误渲染成两个同名模块且上一周期全为“—”。
+  const archivedTrackTables = projectDmpMarketTrackArchiveTables(sourceTables);
+  archivedTrackTables.forEach((trackTable) => trackTable.rowPeriods.forEach((period) => {
+    if (period && period.start === period.end) availableDays.add(period.start);
+  }));
+  const tables = [
+    ...archivedTrackTables,
+    ...sourceTables.flatMap((table) => {
     const tableName = businessTableName(table.name);
     if (!tableName || ENGINEERING_FIELD.test(tableName)) return [];
+    if (matchesDmpMarketArchivedTrackContract(tableName, table.columns)) return [];
     const trackComparison = matchesDmpMarketTrackContract(tableName, table.columns);
     const dateIndex = table.columns.findIndex((column) => DATE_FIELD.test(String(column).trim()));
     const dateColumn = dateIndex >= 0 && String(table.columns[dateIndex]).trim() === "周期" ? "周期" : "日期";
@@ -146,17 +165,35 @@ export function projectDmpMarketReport(record: DmpBusinessReportRecord): DmpMark
       rowPeriods,
       ...(periodMode ? { periodMode } : {})
     }];
-  });
+  })];
   const dates = [...new Set(tables.flatMap((table) => table.dates).filter((date) => ISO_DATE.test(date)))].sort();
   return {
     scope,
     period: record.period,
     tables,
+    capturedPeriod: summarizeDmpMarketCapturedPeriods(archivedTrackTables.length ? archivedTrackTables : tables),
     periods: {
       day: buildDayPeriods([...availableDays]),
       week: buildDirectPeriods(tables, "week") || buildWeekPeriods(dates),
       month: buildDirectPeriods(tables, "month") || buildMonthPeriods(dates)
     }
+  };
+}
+
+function summarizeDmpMarketCapturedPeriods(tables: readonly DmpMarketViewerTable[]) {
+  const periods = new Map<string, { start: string; end: string }>();
+  for (const table of tables) {
+    for (const period of table.rowPeriods) {
+      if (!period || !ISO_DATE.test(period.start) || !ISO_DATE.test(period.end)) continue;
+      periods.set(trackPeriodIdentity(period), period);
+    }
+  }
+  if (!periods.size) return null;
+  const values = [...periods.values()];
+  return {
+    start: values.reduce((minimum, period) => period.start < minimum ? period.start : minimum, values[0].start),
+    end: values.reduce((maximum, period) => period.end > maximum ? period.end : maximum, values[0].end),
+    count: values.length
   };
 }
 
@@ -198,6 +235,10 @@ export function selectDmpMarketPeriod(
   if (!selected) return { selected: null, tables: model.tables };
   const hasPeriodSpecificTable = model.tables.some((table) => table.periodMode === mode && table.rowPeriods.some(Boolean));
   const tables = model.tables.flatMap((table) => {
+    if (isDmpMarketLongTrackTable(table)) {
+      const paired = selectDmpMarketLongTrackPeriods(table, selected);
+      return paired ? [paired] : [];
+    }
     if (table.periodMode && table.periodMode !== mode) return [];
     // v2.3.4 的周期汇总表负责随自然日/周/月切换；赛道矩阵与周期对比则是该份报告的
     // 独立业务上下文，没有逐行日期。不能因为存在周期汇总就把这些模块一并过滤掉。
@@ -294,27 +335,33 @@ export function marketMedianMetrics(tables: DmpMarketViewerTable[]) {
 }
 
 /**
- * 仅识别 v2.3.4 输出的“细分赛道周期对比-*”七列纯数据合同。
+ * 同时识别历史七列周期对比宽表，以及新版保留全部采集周期的八列长表。
  * 其它类目表即使碰巧含“价格带”字样，也继续走普通业务表渲染。
  */
 export function isDmpMarketTrackComparisonTable(table: DmpMarketViewerTable) {
-  return matchesDmpMarketTrackContract(table.name, table.columns);
+  return matchesDmpMarketTrackContract(table.name, table.columns) || isDmpMarketLongTrackTable(table);
+}
+
+export function dmpMarketTrackPeriodOptions(table: DmpMarketViewerTable): DmpMarketPeriodOption[] {
+  if (!isDmpMarketLongTrackTable(table)) return [];
+  return uniqueTrackPeriods(table).map((period) => ({
+    key: dmpMarketTrackPeriodKey(period),
+    label: trackPeriodLabel(period),
+    start: period.start,
+    end: period.end
+  }));
+}
+
+export function selectDmpMarketTrackPeriod(table: DmpMarketViewerTable, key: string): DmpMarketViewerTable {
+  const selected = uniqueTrackPeriods(table).find((period) => dmpMarketTrackPeriodKey(period) === key);
+  return selected ? { ...table, selectedTrackPeriod: selected } : table;
 }
 
 export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarketTrackMatrix | null {
-  if (!isDmpMarketTrackComparisonTable(table)) return null;
+  if (isDmpMarketLongTrackTable(table)) return buildDmpMarketLongTrackMatrix(table);
+  if (!matchesDmpMarketTrackContract(table.name, table.columns)) return null;
   const tableMatch = table.name.match(TRACK_COMPARISON_TABLE);
-  const records: Array<{
-    propertyName: string;
-    propertyValue: string;
-    priceBand: string;
-    metric: string;
-    current: number | null;
-    previous: number | null;
-  }> = [];
-  const propertyValues: string[] = [];
-  const priceBands: string[] = [];
-  const metricLabels: string[] = [];
+  const records: DmpMarketTrackRecord[] = [];
   const seenCoordinates = new Set<string>();
   let propertyName = "";
 
@@ -330,9 +377,6 @@ export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarke
     const coordinate = [metric, priceBand, propertyValue].join("\u001f");
     if (seenCoordinates.has(coordinate)) return null;
     seenCoordinates.add(coordinate);
-    if (!propertyValues.includes(propertyValue)) propertyValues.push(propertyValue);
-    if (!priceBands.includes(priceBand)) priceBands.push(priceBand);
-    if (!metricLabels.includes(metric)) metricLabels.push(metric);
     records.push({
       propertyName: rowPropertyName,
       propertyValue,
@@ -342,7 +386,100 @@ export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarke
       previous: parseDmpMarketTrackScore(row[5])
     });
   }
-  if (!records.length || !propertyValues.length || !priceBands.length || !metricLabels.length) return null;
+  return assembleDmpMarketTrackMatrix(records, {
+    tableName: table.name,
+    propertyName: propertyName || String(tableMatch?.[1] ?? "").trim(),
+    currentLabel: table.columns[4],
+    previousLabel: table.columns[5]
+  });
+}
+
+interface DmpMarketTrackRecord {
+  propertyName: string;
+  propertyValue: string;
+  priceBand: string;
+  metric: string;
+  current: number | null;
+  previous: number | null;
+}
+
+function buildDmpMarketLongTrackMatrix(table: DmpMarketViewerTable): DmpMarketTrackMatrix | null {
+  const periodIndex = table.columns.indexOf("周期");
+  const propertyNameIndex = table.columns.indexOf("属性维度");
+  const propertyValueIndex = table.columns.indexOf("属性值");
+  const priceBandIndex = table.columns.indexOf("价格带");
+  const metricIndex = table.columns.indexOf("指标");
+  const valueIndex = table.columns.indexOf("数值");
+  if ([periodIndex, propertyNameIndex, propertyValueIndex, priceBandIndex, metricIndex, valueIndex].some((index) => index < 0)) {
+    return null;
+  }
+
+  const periods = uniqueTrackPeriods(table);
+  const currentPeriod = table.selectedTrackPeriod
+    ? periods.find((period) => trackPeriodIdentity(period) === trackPeriodIdentity(table.selectedTrackPeriod!)) ?? null
+    : periods[0] ?? null;
+  const previousPeriod = currentPeriod ? previousDmpMarketTrackPeriod(periods, currentPeriod) : null;
+  if (!currentPeriod) return null;
+  const currentKey = trackPeriodIdentity(currentPeriod);
+  const previousKey = previousPeriod ? trackPeriodIdentity(previousPeriod) : "";
+  const byCoordinate = new Map<string, DmpMarketTrackRecord>();
+  let propertyName = "";
+  let currentLabel = trackPeriodLabel(currentPeriod);
+  let previousLabel = previousPeriod ? trackPeriodLabel(previousPeriod) : "—";
+
+  table.rows.forEach((row, rowIndex) => {
+    const period = table.rowPeriods[rowIndex] ?? parseBusinessPeriod(row[periodIndex]);
+    if (!period) return;
+    const periodKey = trackPeriodIdentity(period);
+    if (periodKey !== currentKey && periodKey !== previousKey) return;
+    const rowPropertyName = String(row[propertyNameIndex] ?? "").trim();
+    const propertyValue = String(row[propertyValueIndex] ?? "").trim();
+    const priceBand = normalizeDmpMarketPriceBand(row[priceBandIndex]);
+    const metric = String(row[metricIndex] ?? "").trim();
+    if (!rowPropertyName || !propertyValue || !priceBand || !metric) return;
+    if (propertyName && propertyName !== rowPropertyName) return;
+    propertyName = rowPropertyName;
+    const coordinate = [metric, priceBand, propertyValue].join("\u001f");
+    const record = byCoordinate.get(coordinate) ?? {
+      propertyName: rowPropertyName,
+      propertyValue,
+      priceBand,
+      metric,
+      current: null,
+      previous: null
+    };
+    const value = parseDmpMarketTrackScore(row[valueIndex]);
+    if (periodKey === currentKey) {
+      record.current = value;
+      currentLabel = String(row[periodIndex] ?? "").trim() || currentLabel;
+    } else {
+      record.previous = value;
+      previousLabel = String(row[periodIndex] ?? "").trim() || previousLabel;
+    }
+    byCoordinate.set(coordinate, record);
+  });
+
+  return assembleDmpMarketTrackMatrix([...byCoordinate.values()], {
+    tableName: table.name,
+    propertyName: propertyName || String(table.name.match(TRACK_LONG_TABLE)?.[1] ?? "").trim(),
+    currentLabel,
+    previousLabel
+  });
+}
+
+function assembleDmpMarketTrackMatrix(
+  records: DmpMarketTrackRecord[],
+  context: Pick<DmpMarketTrackMatrix, "tableName" | "propertyName" | "currentLabel" | "previousLabel">
+): DmpMarketTrackMatrix | null {
+  const propertyValues: string[] = [];
+  const priceBands: string[] = [];
+  const metricLabels: string[] = [];
+  for (const record of records) {
+    if (!propertyValues.includes(record.propertyValue)) propertyValues.push(record.propertyValue);
+    if (!priceBands.includes(record.priceBand)) priceBands.push(record.priceBand);
+    if (!metricLabels.includes(record.metric)) metricLabels.push(record.metric);
+  }
+  if (!records.length || !context.propertyName || !propertyValues.length || !priceBands.length || !metricLabels.length) return null;
 
   const metrics = [...metricLabels]
     .sort((left, right) => trackMetricPriority(left) - trackMetricPriority(right))
@@ -375,15 +512,7 @@ export function buildDmpMarketTrackMatrix(table: DmpMarketViewerTable): DmpMarke
       };
     });
 
-  return {
-    tableName: table.name,
-    propertyName: propertyName || String(tableMatch?.[1] ?? "").trim(),
-    currentLabel: table.columns[4],
-    previousLabel: table.columns[5],
-    propertyValues,
-    priceBands,
-    metrics
-  };
+  return { ...context, propertyValues, priceBands, metrics };
 }
 
 export function formatDmpMarketTrackScore(value: number | null, signed = false) {
@@ -548,6 +677,232 @@ function pruneEmptySelectedColumns(table: DmpMarketViewerTable): DmpMarketViewer
   };
 }
 
+function mergeDmpMarketOpportunityArchiveFragments(
+  tables: readonly {
+    name: string;
+    columns: readonly unknown[];
+    rows: readonly { cells: readonly unknown[] }[];
+  }[]
+) {
+  const merged = new Map<string, {
+    table: { name: string; columns: unknown[]; rows: Array<{ cells: readonly unknown[] }> };
+    signature: string;
+  }>();
+  const output: Array<{
+    name: string;
+    columns: readonly unknown[];
+    rows: readonly { cells: readonly unknown[] }[];
+  }> = [];
+
+  for (const table of tables) {
+    const name = businessTableName(table.name);
+    const baseName = name.match(TRACK_OPPORTUNITY_ARCHIVE)?.[1] ?? "";
+    if (!baseName) {
+      output.push(table);
+      continue;
+    }
+    const signature = JSON.stringify(table.columns.map((column) => String(column ?? "").trim()));
+    const existing = merged.get(baseName);
+    if (existing && existing.signature !== signature) {
+      // 未知旧合同不强行拼接，避免列错位；仍按原表进入通用渲染。
+      output.push(table);
+      continue;
+    }
+    const group = existing ?? {
+      table: { name: baseName, columns: [...table.columns], rows: [] },
+      signature
+    };
+    if (!existing) {
+      merged.set(baseName, group);
+      output.push(group.table);
+    }
+    for (const row of table.rows) {
+      // 分片以“周期×赛道”为原子且互斥；展示字段不含 trackId，两个不同赛道可能
+      // 恰好拥有相同 cells。必须按分片顺序守恒拼接，不能按可见文本去重。
+      group.table.rows.push(row);
+    }
+  }
+  return output;
+}
+
+function projectDmpMarketTrackArchiveTables(
+  tables: readonly {
+    name: unknown;
+    columns: readonly unknown[];
+    rows: readonly { cells: readonly unknown[] }[];
+  }[]
+): DmpMarketViewerTable[] {
+  type TrackRowRecord = { row: string[]; period: { start: string; end: string }; conflict: boolean };
+  type TrackPropertyGroup = { stem: string; propertyName: string; records: Map<string, TrackRowRecord> };
+  const groups = new Map<string, TrackPropertyGroup>();
+
+  for (const table of tables) {
+    const tableName = businessTableName(String(table.name ?? ""));
+    const contract = dmpMarketArchivedTrackContract(tableName, table.columns);
+    if (!contract) continue;
+    const stem = dmpMarketArchivedTrackStem(tableName);
+    for (const sourceRow of table.rows) {
+      const source = table.columns.map((_, index) => String(sourceRow.cells[index] ?? "").trim());
+      const period = parseBusinessPeriod(source[0]) ?? parseBusinessPeriod(`${source[1]} 至 ${source[2]}`);
+      const propertyName = source[3];
+      const propertyValue = source[4];
+      const priceBand = normalizeDmpMarketPriceBand(source[5]);
+      if (!period || !propertyName || !propertyValue || !priceBand) continue;
+      const groupIdentity = `${stem || "旧版统一表"}\u001f${propertyName}`;
+      const group = groups.get(groupIdentity) ?? { stem, propertyName, records: new Map() };
+      const metricValues = contract === "compact"
+        ? TRACK_COMPACT_COLUMNS.slice(6).map((metric, offset) => [metric, source[offset + 6]] as const)
+        : [[source[6], source[7]] as const];
+      for (const [metric, value] of metricValues) {
+        if (!metric) continue;
+        const coordinate = [period.start, period.end, propertyValue, priceBand, metric].join("\u001f");
+        const row = [
+          source[0] || trackPeriodLabel(period),
+          source[1] || period.start,
+          source[2] || period.end,
+          propertyName,
+          propertyValue,
+          priceBand,
+          metric,
+          value
+        ];
+        const existing = group.records.get(coordinate);
+        if (!existing) {
+          group.records.set(coordinate, { row, period, conflict: false });
+          continue;
+        }
+        const existingValue = parseDmpMarketTrackScore(existing.row[7]);
+        const nextValue = parseDmpMarketTrackScore(value);
+        if (existing.conflict || (existingValue !== null && nextValue !== null && existingValue !== nextValue)) {
+          existing.row[7] = "";
+          existing.conflict = true;
+        } else if (existingValue === null && nextValue !== null) {
+          existing.row = row;
+        }
+      }
+      groups.set(groupIdentity, group);
+    }
+  }
+
+  return [...groups.values()].flatMap((group) => {
+    const records = [...group.records.values()];
+    if (!records.length) return [];
+    const namePart = (group.stem || group.propertyName).slice(0, 120);
+    return [{
+      name: `细分赛道矩阵-${namePart}`,
+      columns: [...TRACK_LONG_COLUMNS],
+      rows: records.map((record) => record.row),
+      dates: records.map((record) => record.period.end),
+      rowPeriods: records.map((record) => record.period)
+    }];
+  });
+}
+
+function dmpMarketArchivedTrackContract(name: string, columns: readonly unknown[]): "long" | "compact" | null {
+  if (!TRACK_LONG_TABLE.test(String(name).trim())) return null;
+  const normalized = columns.map((column) => String(column ?? "").trim());
+  if (normalized.length === TRACK_LONG_COLUMNS.length
+    && TRACK_LONG_COLUMNS.every((column, index) => normalized[index] === column)) return "long";
+  if (normalized.length === TRACK_COMPACT_COLUMNS.length
+    && TRACK_COMPACT_COLUMNS.every((column, index) => normalized[index] === column)) return "compact";
+  return null;
+}
+
+function matchesDmpMarketArchivedTrackContract(name: string, columns: readonly unknown[]) {
+  return dmpMarketArchivedTrackContract(name, columns) !== null;
+}
+
+function dmpMarketArchivedTrackStem(name: string) {
+  const suffix = String(name).trim().match(TRACK_LONG_TABLE)?.[1]?.trim() ?? "";
+  return suffix.replace(/-分片\d+$/i, "").trim();
+}
+
+function isDmpMarketLongTrackTable(table: DmpMarketViewerTable) {
+  return matchesDmpMarketLongTrackContract(table.name, table.columns);
+}
+
+function matchesDmpMarketLongTrackContract(name: string, columns: readonly unknown[]) {
+  if (!TRACK_LONG_TABLE.test(String(name).trim()) || columns.length !== TRACK_LONG_COLUMNS.length) return false;
+  return TRACK_LONG_COLUMNS.every((column, index) => String(columns[index] ?? "").trim() === column);
+}
+
+function selectDmpMarketLongTrackPeriods(
+  table: DmpMarketViewerTable,
+  selected: DmpMarketPeriodOption
+): DmpMarketViewerTable | null {
+  const periods = uniqueTrackPeriods(table);
+  if (!periods.length) return null;
+  const exact = periods.find((period) => period.start === selected.start && period.end === selected.end);
+  const containsSelectedEnd = periods.find((period) => period.start <= selected.end && period.end >= selected.end);
+  const endingInSelection = periods.find((period) => period.end >= selected.start && period.end <= selected.end);
+  const overlapping = periods.find((period) => period.end >= selected.start && period.start <= selected.end);
+  // 赛道周期可以是采集到的固定窗口（例如 30 天），不一定与自然月边界完全一致；
+  // 但必须与用户选择的周期真实相交。没有交集时宁可不展示，也不能回退到最新周期造成串月。
+  const current = exact ?? containsSelectedEnd ?? endingInSelection ?? overlapping ?? null;
+  if (!current) return null;
+  // 保留该属性的全部已采周期，供报告内“赛道周期”下拉自选；这里只设置全局
+  // 自然周期对应的默认值。矩阵构建时再严格配对其紧邻上一周期。
+  return { ...table, selectedTrackPeriod: current };
+}
+
+function uniqueTrackPeriods(table: DmpMarketViewerTable) {
+  const byPeriod = new Map<string, { start: string; end: string }>();
+  table.rows.forEach((row, index) => {
+    const period = table.rowPeriods[index] ?? parseBusinessPeriod(row[0]);
+    if (period) byPeriod.set(trackPeriodIdentity(period), period);
+  });
+  return [...byPeriod.values()].sort((left, right) => (
+    right.end.localeCompare(left.end) || right.start.localeCompare(left.start)
+  ));
+}
+
+function trackPeriodIdentity(period: { start: string; end: string }) {
+  return `${period.start}\u001f${period.end}`;
+}
+
+function dmpMarketTrackPeriodKey(period: { start: string; end: string }) {
+  return `${period.start}__${period.end}`;
+}
+
+function trackPeriodLabel(period: { start: string; end: string }) {
+  return period.start === period.end ? period.start : `${period.start} 至 ${period.end}`;
+}
+
+function trackPeriodDuration(period: { start: string; end: string }) {
+  const start = Date.parse(`${period.start}T00:00:00Z`);
+  const end = Date.parse(`${period.end}T00:00:00Z`);
+  return Number.isFinite(start) && Number.isFinite(end) ? Math.round((end - start) / 86_400_000) + 1 : 0;
+}
+
+function previousDmpMarketTrackPeriod(
+  periods: readonly { start: string; end: string }[],
+  current: { start: string; end: string }
+) {
+  const currentDuration = trackPeriodDuration(current);
+  const adjacentEnd = shiftIsoDate(current.start, -1);
+  return periods.find((period) => (
+    period.end === adjacentEnd
+    && (
+      trackPeriodDuration(period) === currentDuration
+      || (isFullCalendarMonth(period) && isFullCalendarMonth(current))
+    )
+  )) ?? null;
+}
+
+function isFullCalendarMonth(period: { start: string; end: string }) {
+  if (!ISO_DATE.test(period.start) || !ISO_DATE.test(period.end) || !period.start.endsWith("-01")) return false;
+  const nextMonthStart = new Date(`${period.start}T00:00:00Z`);
+  if (!Number.isFinite(nextMonthStart.getTime())) return false;
+  nextMonthStart.setUTCMonth(nextMonthStart.getUTCMonth() + 1);
+  const expectedEnd = new Date(nextMonthStart.getTime() - 86_400_000).toISOString().slice(0, 10);
+  return period.end === expectedEnd;
+}
+
+function shiftIsoDate(date: string, days: number) {
+  const timestamp = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(timestamp) ? new Date(timestamp + days * 86_400_000).toISOString().slice(0, 10) : "";
+}
+
 function businessTableName(name: string) {
   if (/滚动\s*7\s*天市场数据/.test(name)) return "市场核心指标";
   if (/滚动\s*7\s*日明细/.test(name)) return "市场趋势明细";
@@ -578,10 +933,10 @@ function normalizedTrackScore(value: number) {
 
 function trackMetricPriority(label: string) {
   if (/dScore|增长潜力/i.test(label)) return 0;
-  if (/eScore|蓝海/i.test(label)) return 1;
-  if (/aScore/i.test(label)) return 2;
-  if (/bScore/i.test(label)) return 3;
-  if (/cScore/i.test(label)) return 4;
+  if (/aScore|搜索潜力/i.test(label)) return 1;
+  if (/bScore|成交潜力/i.test(label)) return 2;
+  if (/cScore|拉新潜力/i.test(label)) return 3;
+  if (/eScore|蓝海/i.test(label)) return 4;
   return 10;
 }
 
