@@ -1,10 +1,13 @@
-import { canonicalToDmpReport, type DmpCell, type DmpReportTable } from "@/lib/dmp-report-import";
+import { normalizeDmpCanonicalReportForUse, type DmpCell, type DmpReportTable } from "@/lib/dmp-report-import";
 import { isDmpIntervalCell } from "@/lib/dmp-report-format";
 import {
+  DMP_GROWTH_OVERVIEW_METRICS,
+  dmpMetricCellIsDisclosed,
   sanitizeDmpRenderHttpsUrl,
   sanitizeDmpRenderImageUrl,
   type DmpBusinessReportRecord
 } from "@/lib/dmp-report-types";
+import { assessDmpEffectiveReportQuality, type DmpEffectiveReportQuality } from "@/lib/dmp-report-quality";
 
 const CORE_TABLES = new Set(["报告总览", "商品与成功品", "对标总表", "周期汇总", "基础指标对比"]);
 const FORBIDDEN_VISIBLE = /接口清单|页面字段映射|系统诊断|方法与证据|结构解读|业务解读|复盘结论|判断|建议动作|证据等级|校验状态|反推口径|备注|(?:^|\s)请求(?:$|\s)|GMV指数|指数变化|平均GMV指数/i;
@@ -82,6 +85,7 @@ export interface DmpGrowthReportViewModel {
   subject: DmpViewerProduct;
   competitor: DmpViewerProduct;
   kpis: DmpViewerKpi[];
+  quality: DmpEffectiveReportQuality;
   tables: DmpViewerTable[];
 }
 
@@ -89,7 +93,7 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
   const competition = record.reportType === "competition" || record.report.report_type === "competition";
   if (competition) return projectGenericReport(record);
 
-  const report = canonicalToDmpReport(record.report);
+  const report = normalizeDmpCanonicalReportForUse(record.report);
   const rawTables: DmpViewerTable[] = report?.tables ?? record.report.tables.map((table) => ({
     name: table.name,
     columns: [...table.columns],
@@ -129,6 +133,7 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
     subject,
     competitor,
     kpis: growthKpis(byName, startDate, endDate, days),
+    quality: assessDmpEffectiveReportQuality(record.report, record.quality, report),
     tables: withBusinessData.map((table) => ({
       ...table,
       subtitle: table.subtitle || growthSubtitle(table.name, startDate, endDate, subjectId, competitorId, days)
@@ -221,6 +226,7 @@ function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportV
     subject: emptyProduct(record.subjectItemId),
     competitor: emptyProduct(competitors.join("、")),
     kpis: [],
+    quality: assessDmpEffectiveReportQuality(record.report, record.quality),
     tables
   };
 }
@@ -449,15 +455,6 @@ function productFromTable(
   };
 }
 
-const GROWTH_OVERVIEW_METRICS = [
-  { label: "总GMV", aliases: ["总GMV"] },
-  { label: "推广消耗", aliases: ["推广消耗", "广告消耗", "广告/推广消耗"] },
-  { label: "费比", aliases: ["费比", "推广费比", "广告费比"] },
-  { label: "ROI", aliases: ["ROI", "直接ROI"] },
-  { label: "PPC", aliases: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本"] },
-  { label: "全域ROAS", aliases: ["全域ROAS", "ROAS"] }
-] as const;
-
 function growthKpis(
   tables: Map<string, DmpViewerTable>,
   startDate: string,
@@ -470,7 +467,7 @@ function growthKpis(
   const base = tables.get("基础指标对比");
   const defaultScope = startDate && endDate ? `${startDate} 至 ${endDate}（${days}天）` : `近${days}天`;
 
-  return GROWTH_OVERVIEW_METRICS.map((metric) => {
+  return DMP_GROWTH_OVERVIEW_METRICS.map((metric) => {
     const primary = overviewMetricPair(overview, metric.aliases);
     const fallbacks = [
       periodMetricPair(period, metric.aliases),
@@ -645,9 +642,7 @@ function inclusiveDays(startDate: string, endDate: string) {
 }
 
 function isMissing(value: DmpCell) {
-  if (value == null) return true;
-  if (typeof value !== "string") return false;
-  return /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim());
+  return !dmpMetricCellIsDisclosed(value);
 }
 
 function emptyProduct(id: string): DmpViewerProduct {

@@ -38,6 +38,49 @@ export const DMP_REPORT_TABLES = DMP_GROWTH_REPORT_TABLES;
 
 export type DmpReportKind = "growth" | "competition" | "market";
 
+/**
+ * 打爆路径报告的统一指标别名合同。业务值仍只存在 tables 中；这里仅统一解析、完整性
+ * 审计和官网展示使用的名称，避免同一个已上传指标在不同层被当成缺失。
+ */
+export const DMP_GROWTH_METRIC_ALIASES = {
+  spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
+  paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
+  roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比", "直接ROI"],
+  ppc: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
+  feeRatio: ["费比", "推广费比", "广告费比"],
+  roas: ["全域ROAS", "ROAS"],
+  paidShare: ["付费金额占比", "付费成交额占比", "付费GMV贡献率", "广告GMV贡献率", "广告归因GMV贡献率"],
+  keywordShare: ["关键词消耗占比", "关键词花费占比", "关键词推广消耗占比"],
+  marketingClicks: ["营销推广点击量", "营销推广点击数", "营销推广点击", "广告点击量", "广告点击数", "推广点击量", "推广点击数", "付费点击量"],
+  totalGmv: ["总GMV", "全渠道总GMV", "30日GMV"]
+} as const;
+
+/**
+ * 商品成长报告总览的固定八项业务指标。这份合同同时供规范化、完整性
+ * 复核、官网展示与导出使用，不因单个值缺失而删掉卡位。
+ */
+export const DMP_GROWTH_OVERVIEW_METRICS = [
+  { key: "totalGmv", label: "总GMV", aliases: DMP_GROWTH_METRIC_ALIASES.totalGmv },
+  { key: "paidGmv", label: "付费成交额", aliases: DMP_GROWTH_METRIC_ALIASES.paidGmv },
+  { key: "spend", label: "推广消耗", aliases: DMP_GROWTH_METRIC_ALIASES.spend },
+  { key: "feeRatio", label: "费比", aliases: DMP_GROWTH_METRIC_ALIASES.feeRatio },
+  { key: "roi", label: "ROI", aliases: DMP_GROWTH_METRIC_ALIASES.roi },
+  { key: "ppc", label: "PPC", aliases: DMP_GROWTH_METRIC_ALIASES.ppc },
+  { key: "paidShare", label: "付费金额占比", aliases: DMP_GROWTH_METRIC_ALIASES.paidShare },
+  { key: "roas", label: "全域ROAS", aliases: DMP_GROWTH_METRIC_ALIASES.roas }
+] as const;
+
+export type DmpGrowthOverviewMetricKey = typeof DMP_GROWTH_OVERVIEW_METRICS[number]["key"];
+
+export const DMP_GROWTH_REQUIRED_SUBJECT_METRICS = [
+  { key: "spend", label: "推广消耗", aliases: DMP_GROWTH_METRIC_ALIASES.spend },
+  { key: "feeRatio", label: "费比", aliases: DMP_GROWTH_METRIC_ALIASES.feeRatio },
+  { key: "roi", label: "ROI", aliases: DMP_GROWTH_METRIC_ALIASES.roi },
+  { key: "ppc", label: "PPC", aliases: DMP_GROWTH_METRIC_ALIASES.ppc }
+] as const;
+
+export type DmpGrowthRequiredSubjectMetricKey = typeof DMP_GROWTH_REQUIRED_SUBJECT_METRICS[number]["key"];
+
 export interface DmpMarketScope {
   category_id: string;
   category_name: string;
@@ -82,6 +125,97 @@ export interface DmpCanonicalReport {
    * 旧报告没有该字段时继续按表格内容回退。
    */
   render_data?: DmpReportRenderData;
+}
+
+export interface DmpGrowthSubjectMetricAudit {
+  values: Partial<Record<DmpGrowthRequiredSubjectMetricKey, string>>;
+  missing: Array<{ key: DmpGrowthRequiredSubjectMetricKey; label: string }>;
+}
+
+/**
+ * 在最终会归档的规范化业务表上审计主体最低指标。显式 0 是已披露值；当推广消耗
+ * 明确为 0 时，ROI/PPC 允许为空（除数为 0），正花费或花费不明时二者必须有值。
+ */
+export function auditDmpGrowthSubjectMetrics(
+  report: Pick<DmpCanonicalReport, "item_id" | "tables">
+): DmpGrowthSubjectMetricAudit {
+  const values: DmpGrowthSubjectMetricAudit["values"] = {};
+  for (const metric of DMP_GROWTH_REQUIRED_SUBJECT_METRICS) {
+    const value = dmpGrowthSubjectMetricValue(report.tables, report.item_id, metric.aliases);
+    if (dmpMetricCellIsDisclosed(value)) values[metric.key] = String(value).trim();
+  }
+
+  const spend = exactDmpMetricNumber(values.spend);
+  const missing = DMP_GROWTH_REQUIRED_SUBJECT_METRICS.filter((metric) => {
+    if (values[metric.key] !== undefined) return false;
+    if ((metric.key === "roi" || metric.key === "ppc") && spend === 0) return false;
+    return true;
+  }).map(({ key, label }) => ({ key, label }));
+  return { values, missing };
+}
+
+export function dmpMetricCellIsDisclosed(value: unknown) {
+  if (value == null) return false;
+  const text = String(value).trim();
+  return !/^(?:|[-–—]+|n\/?a|不适用|暂无|无数据|未返回|缺失|null|undefined)$/i.test(text);
+}
+
+function dmpGrowthSubjectMetricValue(
+  tables: DmpReportTableSnapshot[],
+  itemId: string,
+  aliases: readonly string[]
+) {
+  for (const name of ["周期汇总", "报告总览", "对标总表", "基础指标对比"]) {
+    const table = tables.find((candidate) => candidate.name === name);
+    if (!table) continue;
+    if (name === "周期汇总") {
+      const valueIndex = dmpColumnIndex(table.columns, aliases);
+      const row = dmpSubjectPeriodRow(table, itemId);
+      if (valueIndex >= 0 && row && dmpMetricCellIsDisclosed(row.cells[valueIndex])) return row.cells[valueIndex];
+      continue;
+    }
+    const metricIndex = dmpColumnIndex(table.columns, ["项目", "对标指标", "指标"]);
+    const subjectIndex = dmpColumnIndex(table.columns, ["主体", "主体值", "主体周期值", "本品", "本品值"]);
+    if (metricIndex < 0 || subjectIndex < 0) continue;
+    const accepted = new Set(aliases.map(normalizeDmpMetricLabel));
+    const row = table.rows.find((candidate) => accepted.has(normalizeDmpMetricLabel(candidate.cells[metricIndex])));
+    if (row && dmpMetricCellIsDisclosed(row.cells[subjectIndex])) return row.cells[subjectIndex];
+  }
+  return undefined;
+}
+
+function dmpSubjectPeriodRow(table: DmpReportTableSnapshot, itemId: string) {
+  const idIndex = dmpColumnIndex(table.columns, ["商品ID", "商品编号"]);
+  if (idIndex >= 0 && itemId) {
+    const exact = table.rows.find((row) => String(row.cells[idIndex] ?? "").trim() === itemId);
+    if (exact) return exact;
+  }
+  const roleIndex = dmpColumnIndex(table.columns, ["对象", "角色"]);
+  if (roleIndex >= 0) {
+    const subject = table.rows.find((row) => /主体|本店/.test(String(row.cells[roleIndex] ?? "")));
+    if (subject) return subject;
+  }
+  return table.rows.length === 2 ? table.rows[0] : undefined;
+}
+
+function dmpColumnIndex(columns: string[], aliases: readonly string[]) {
+  const accepted = new Set(aliases.map(normalizeDmpMetricLabel));
+  return columns.findIndex((column) => accepted.has(normalizeDmpMetricLabel(column)));
+}
+
+function normalizeDmpMetricLabel(value: unknown) {
+  return String(value ?? "").trim().toLocaleLowerCase("zh-CN").replace(/[\s_\-/（）()【】\[\]：:]+/g, "");
+}
+
+function exactDmpMetricNumber(value: unknown) {
+  if (!dmpMetricCellIsDisclosed(value)) return null;
+  let text = String(value).trim().replace(/[,，￥¥\s]/g, "");
+  if (text.endsWith("%")) text = text.slice(0, -1);
+  text = text.replace(/[元个次笔人件]$/, "");
+  const unit = text.match(/(亿|万|千|[wWkK])$/)?.[1] ?? "";
+  const multiplier = unit === "亿" ? 100_000_000 : /^(万|[wW])$/.test(unit) ? 10_000 : /^(千|[kK])$/.test(unit) ? 1_000 : 1;
+  const numeric = Number(unit ? text.slice(0, -unit.length) : text);
+  return Number.isFinite(numeric) ? numeric * multiplier : null;
 }
 
 export type DmpReportQuality = "complete" | "partial";

@@ -51,6 +51,16 @@
     Object.freeze({ key: "ppc", label: "PPC" })
   ]);
   const SUBJECT_MINIMUM_PROMOTION_METRICS = SUBJECT_MINIMUM_PROMOTION_CONTRACT;
+  const CORE_METRIC_CONTRACT = completenessEngine?.CORE_METRIC_CONTRACT || Object.freeze([
+    Object.freeze({ key: "totalGmv", label: "总GMV", sourceKeys: Object.freeze(["totalGmv"]) }),
+    Object.freeze({ key: "paidGmv", label: "付费成交额", sourceKeys: Object.freeze(["paidGmv"]) }),
+    Object.freeze({ key: "spend", label: "推广消耗", sourceKeys: Object.freeze(["spend"]) }),
+    Object.freeze({ key: "feeRatio", label: "费比", sourceKeys: Object.freeze(["feeRatio"]) }),
+    Object.freeze({ key: "roi", label: "ROI", sourceKeys: Object.freeze(["roi"]) }),
+    Object.freeze({ key: "ppc", label: "PPC", sourceKeys: Object.freeze(["ppc"]) }),
+    Object.freeze({ key: "paidGmvContribution", label: "付费金额占比", sourceKeys: Object.freeze(["paidGmvContribution", "paidAmountShare"]) }),
+    Object.freeze({ key: "globalROAS", label: "全域ROAS", sourceKeys: Object.freeze(["globalROAS", "roas"]) })
+  ]);
 
   function recordPath(record) {
     if (record && record.pathname) return String(record.pathname);
@@ -645,7 +655,13 @@
 
   function reportMetricValue(model, side, key) {
     const metrics = model.metrics?.[side] || {};
-    if (disclosedModelValue(metrics[key])) return metrics[key];
+    const aliases = {
+      paidGmvContribution: ["paidGmvContribution", "paidAmountShare"],
+      paidAmountShare: ["paidAmountShare", "paidGmvContribution"],
+      globalROAS: ["globalROAS", "roas"],
+      roas: ["roas", "globalROAS"]
+    }[key] || [key];
+    for (const alias of aliases) if (disclosedModelValue(metrics[alias])) return metrics[alias];
     const coverage = reportSpendCoverage(model, side);
     const coverageKey = {
       spend: "spend",
@@ -1038,18 +1054,19 @@
     const subjectSpendScope = spendScope.sides.find(side => side.side === "subject");
     const competitorSpendScope = spendScope.sides.find(side => side.side === "competitor");
     const metric = (side, key) => modelCell(reportMetricValue(model, side, key));
+    const spendMetricKeys = new Set(["spend", "feeRatio", "roi", "ppc", "globalROAS"]);
+    const overviewMetrics = CORE_METRIC_CONTRACT.map(definition => ({
+      key: definition.key,
+      label: definition.label,
+      subject: metric("subject", definition.key),
+      competitor: metric("competitor", definition.key),
+      scope: spendMetricKeys.has(definition.key) ? spendScope.metric : strictScope
+    }));
     const rows = [
       ["商品ID", item.id, item.competitorId, ""],
       ["商品标题", item.title, item.competitorTitle, ""],
       [`${model.period.days}日对齐周期`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.startDate} 至 ${model.period.endDate}`, `${model.period.days}天`],
-      ["总GMV", modelCell(subject.totalGmv), modelCell(competitor.totalGmv), strictScope],
-      ["付费成交额", modelCell(subject.paidGmv), modelCell(competitor.paidGmv), strictScope],
-      ["付费金额占比", modelCell(subject.paidGmvContribution), modelCell(competitor.paidGmvContribution), strictScope],
-      ["推广消耗", metric("subject", "spend"), metric("competitor", "spend"), spendScope.metric],
-      ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio"), spendScope.metric],
-      ["ROI", metric("subject", "roi"), metric("competitor", "roi"), spendScope.metric],
-      ["PPC", metric("subject", "ppc"), metric("competitor", "ppc"), spendScope.metric],
-      ["全域ROAS", metric("subject", "roas"), metric("competitor", "roas"), spendScope.metric]
+      ...overviewMetrics.map(current => [current.label, current.subject, current.competitor, current.scope])
     ];
     if (spendTiming) rows.push(["取数时段提示", `0:00–10:00 ${spendTiming.affectedDate}消耗可能未产出`, "已按当前可见数据生成", "建议10:00–24:00重新获取"]);
     // 平台还没产出的天数必须写进报告本身，读报告的人不看面板也能知道少了哪天。
@@ -1066,6 +1083,7 @@
     return table("报告总览", ["项目", "主体", "对手", "范围"], rows, {
       subtitle: `主体 ${item.id}｜对手 ${item.competitorId}｜${model.period.startDate} 至 ${model.period.endDate}${spendScope.partial ? `｜花费口径：${spendScope.metric}` : ""}`,
       widths: [18, 46, 46, 18, 16, 16, 16, 16, 16, 16, 16, 16],
+      overviewMetrics,
       kpis: [
         { role: "subject", label: `主体${model.period.days}日GMV`, value: modelCell(subject.totalGmv), source: "'周期汇总'!H5" },
         { role: "competitor", label: `对手${model.period.days}日GMV`, value: modelCell(competitor.totalGmv), source: "'周期汇总'!H6" },
@@ -1153,30 +1171,22 @@
     };
     tables.forEach(current => { if (!current.subtitle) current.subtitle = subtitles[current.name] || dateRange; });
 
-    const subjectContractGaps = new Set((typeof completenessEngine.missingSubjectMinimumPromotionMetrics === "function"
-      ? completenessEngine.missingSubjectMinimumPromotionMetrics(model.metrics.subject)
-      : SUBJECT_MINIMUM_PROMOTION_CONTRACT.filter(metric => model.metrics.subject[metric.key] === null || model.metrics.subject[metric.key] === undefined || model.metrics.subject[metric.key] === ""))
-      .map(metric => metric.key));
-    const subjectContractValues = SUBJECT_MINIMUM_PROMOTION_CONTRACT.map(metric => [
-      `主体${metric.label}`,
-      model.metrics.subject[metric.key],
-      !subjectContractGaps.has(metric.key)
-    ]);
-    const requiredValues = [
-      ["主体成交笔数", model.metrics.subject.orders], ["主体笔单价", model.metrics.subject.aov], ["主体总GMV", model.metrics.subject.totalGmv],
-      ["主体访客数", model.metrics.subject.visitors], ...subjectContractValues,
-      ["主体付费成交额", model.metrics.subject.paidGmv],
-      ["主体全域ROAS", model.metrics.subject.roas, model.metrics.subject.spend === 0],
-      ["对手成交笔数", model.metrics.competitor.orders], ["对手笔单价", model.metrics.competitor.aov], ["对手总GMV", model.metrics.competitor.totalGmv],
-      ["对手访客数", model.metrics.competitor.visitors],
-      ["对手推广消耗", model.metrics.competitor.spend],
-      ["对手付费成交额", model.metrics.competitor.paidGmv],
-      ["对手ROI", model.metrics.competitor.roi, model.metrics.competitor.spend === 0],
-      ["对手PPC", model.metrics.competitor.ppc, model.metrics.competitor.spend === 0 && model.metrics.competitor.marketingClicks === 0],
-      ["对手费比", model.metrics.competitor.feeRatio],
-      ["对手全域ROAS", model.metrics.competitor.roas, model.metrics.competitor.spend === 0]
-    ];
-    const deterministicMissing = requiredValues.filter(([, value, validEmpty]) => !validEmpty && (value === null || value === undefined || value === "")).map(([label]) => label);
+    const metricContract = model.metricContract || (typeof completenessEngine.evaluateCoreMetricContract === "function"
+      ? completenessEngine.evaluateCoreMetricContract(model.metrics, {
+        sceneRows: model.sceneRows,
+        contexts: {
+          subject: { expected: model.metrics.subject.expectedContext, values: model.metrics.subject.valueContexts },
+          competitor: { expected: model.metrics.competitor.expectedContext, values: model.metrics.competitor.valueContexts }
+        }
+      })
+      : null);
+    const deterministicMissing = metricContract
+      ? metricContract.missing.map(entry => entry.label)
+      : CORE_METRIC_CONTRACT.flatMap(definition => ["subject", "competitor"].map(side => ({ definition, side })))
+        .filter(({ definition, side }) => !definition.sourceKeys.some(key => disclosedModelValue(model.metrics?.[side]?.[key])))
+        .map(({ definition, side }) => `${side === "subject" ? "主体" : "对手"}${definition.label}`);
+    const requiredValueCount = metricContract?.requiredValues || CORE_METRIC_CONTRACT.length * 2;
+    const resolvedValueCount = metricContract?.resolvedValues ?? Math.max(0, requiredValueCount - deterministicMissing.length);
     const moduleRules = [
       ["商品概况", path => path === "/api/goods/item/info"],
       ["成功品", path => path === "/api/goods/grow/define/success/load" || path === "/api/goods/grow/define/success/item/list"],
@@ -1191,7 +1201,7 @@
     });
     const observed = endpointStatus.filter(status => status.usable > 0).length;
     const missing = [...endpointStatus.filter(status => !status.usable).map(status => status.module), ...model.completeness.blockingIssues, ...deterministicMissing.map(label => `${label}未填`)];
-    const complete = model.completeness.status === "ready" && deterministicMissing.length === 0;
+    const complete = model.completeness.status === "ready" && metricContract?.complete !== false && deterministicMissing.length === 0;
     return {
       version: 3, title: "达摩盘商品成长竞品对标报告｜少壮AI自动化", item, period, periodLabel, startedAt,
       finishedAt: meta.finishedAt || new Date().toISOString(), visitedPaths: meta.visitedPaths || [], recordCount: model.completeness.businessRecords, tables,
@@ -1199,10 +1209,12 @@
         status: model.completeness.status, expected: moduleRules.length, observed, missing: [...new Set(missing)],
         truncated: model.completeness.endpointCoverage.filter(entry => entry.reasons.some(reason => /truncated/.test(reason))).reduce((sum, entry) => sum + entry.failed, 0),
         complete, exportAllowed: complete, partialAfterRecapture: false,
-        requiredValues: requiredValues.length, resolvedValues: requiredValues.length - deterministicMissing.length,
+        requiredValues: requiredValueCount, resolvedValues: resolvedValueCount,
         endpointStatus, endpointCoverage: model.completeness.endpointCoverage,
         parsedRecords: model.completeness.parsedRecords, failedRecords: model.completeness.failedRecords,
         blockingIssues: model.completeness.blockingIssues, warnings: model.completeness.warnings, notes: model.completeness.notes || [], deterministicMissing,
+        metricContract,
+        missingReasons: metricContract?.missingReasons || {},
         spendTiming, platformGap: model.completeness.platformGap,
         spendCoverage: {
           returnedDays: model.daily.spendCoverageDays,
@@ -1367,6 +1379,10 @@
     const overview = (report?.tables || []).find(current => current.name === "报告总览");
     if (!overview) return;
     const byMetric = new Map((overview.rows || []).map(row => [String(row?.[0] || ""), row]));
+    overview.overviewMetrics = CORE_METRIC_CONTRACT.map(definition => {
+      const row = byMetric.get(definition.label) || [definition.label, EMPTY, EMPTY, ""];
+      return { key: definition.key, label: definition.label, subject: row[1] ?? EMPTY, competitor: row[2] ?? EMPTY, scope: row[3] ?? "" };
+    });
     const gmv = byMetric.get("总GMV");
     const fee = byMetric.get("费比");
     const roi = byMetric.get("ROI");
@@ -1439,7 +1455,7 @@
 
   return {
     EXPECTED_ENDPOINTS, REQUIRED_TABLES, FORBIDDEN_COLUMN, CHANNELS,
-    SUBJECT_MINIMUM_PROMOTION_CONTRACT, SUBJECT_MINIMUM_PROMOTION_METRICS,
+    SUBJECT_MINIMUM_PROMOTION_CONTRACT, SUBJECT_MINIMUM_PROMOTION_METRICS, CORE_METRIC_CONTRACT,
     parseBody, buildReport, buildAnalysisPayload, applyAnalysis, buildCsv, formatMetricValue, toCanonicalReport, validateCanonicalReport, safeFilename
   };
 });

@@ -96,6 +96,23 @@ function growthReport() {
   };
 }
 
+function completeGrowthReport() {
+  const report = growthReport();
+  const overview = report.tables.find((table) => table.name === "报告总览")!;
+  overview.columns = ["项目", "主体", "对手", "范围"];
+  overview.rows = [
+    ["总GMV", "3060", "5000", "30日"],
+    ["付费成交额", "1200", "2000", "30日"],
+    ["推广消耗", "300", "500", "30日"],
+    ["费比", "9.8039%", "10%", "30日"],
+    ["ROI", "4", "4", "30日"],
+    ["PPC", "2", "2", "30日"],
+    ["付费金额占比", "39.2157%", "40%", "30日"],
+    ["全域ROAS", "10.2", "10", "30日"]
+  ].map((cells) => ({ cells }));
+  return report;
+}
+
 function marketReport() {
   return {
     schema_version: "3.0",
@@ -276,6 +293,96 @@ describe("DMP growth render_data storage contract", () => {
         updateMany: mocks.reportUpdateMany
       }
     }));
+  });
+
+  it("uses the normalized tables as the subject minimum-metric contract", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广花费", "100", "200", "30日"] },
+      { cells: ["广告费比", "10%", "20%", "30日"] },
+      { cells: ["投入产出比", "3", "4", "30日"] },
+      { cells: ["点击单价", "0", "2", "30日"] }
+    ];
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toBeUndefined();
+    expect(checked.report?.tables.find((table) => table.name === "报告总览")?.rows.map((row) => row.cells[0]))
+      .toEqual(["推广花费", "广告费比", "投入产出比", "点击单价"]);
+  });
+
+  it("downgrades a positive-spend archive when a required subject value is missing without rejecting it", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广消耗", "100", "", "30日"] },
+      { cells: ["费比", "10%", "", "30日"] },
+      { cells: ["ROI", "—", "", "30日"] },
+      { cells: ["PPC", "0", "", "30日"] }
+    ];
+
+    const checked = validateDmpCanonicalReport(report);
+
+    expect(checked.error).toBeUndefined();
+    expect(checked.issues).toContain("主体最低指标缺失：ROI");
+    expect(checked.report?.tables.find((table) => table.name === "报告总览")?.rows[3]?.cells[1]).toBe("0");
+  });
+
+  it("accepts explicit zero spend and fee ratio without fabricating undefined ROI or PPC", () => {
+    const report = growthReport();
+    const overview = report.tables.find((table) => table.name === "报告总览")!;
+    overview.columns = ["项目", "主体", "对手", "范围"];
+    overview.rows = [
+      { cells: ["推广消耗", "0", "", "30日"] },
+      { cells: ["费比", "0%", "", "30日"] },
+      { cells: ["ROI", "", "", "30日"] },
+      { cells: ["PPC", "", "", "30日"] }
+    ];
+
+    expect(validateDmpCanonicalReport(report).issues).toBeUndefined();
+  });
+
+  it("rechecks effective quality on save and read without rewriting the archived report JSON", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const originalText = JSON.stringify(canonical);
+    const createdAt = new Date("2026-08-22T00:00:00.000Z");
+    const stored = {
+      id: "server-quality-report",
+      shopId: null,
+      shop: null,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      // 模拟旧记录和不可信客户端曾把不完整报告写成 complete。
+      quality: "complete",
+      createdAt,
+      report: canonical
+    };
+    mocks.upsert.mockResolvedValue(stored);
+    mocks.findMany.mockResolvedValue([stored]);
+    mocks.reportGetFindFirst.mockResolvedValue(stored);
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.3.13"
+    });
+
+    expect(mocks.upsert.mock.calls[0]?.[0]?.create?.quality).toBe("partial");
+    expect(mocks.upsert.mock.calls[0]?.[0]?.update).toEqual({});
+    expect(saved.quality).toBe("partial");
+    await expect(listDmpBusinessReports({ tenantId: "tenant-a", userId: "user-a" }))
+      .resolves.toMatchObject([{ id: stored.id, quality: "partial" }]);
+    await expect(getDmpBusinessReport({ tenantId: "tenant-a", userId: "user-a" }, stored.id))
+      .resolves.toMatchObject({ id: stored.id, quality: "partial" });
+    expect(JSON.stringify(canonical)).toBe(originalText);
   });
 
   it("preserves only closed, ordered and HTTPS-safe optional render data", () => {
@@ -518,7 +625,7 @@ describe("DMP growth render_data storage contract", () => {
   });
 
   it("upserts retries by a stable SHA-256 fingerprint that ignores only generated_at", async () => {
-    const first = validateDmpCanonicalReport(growthReport()).report!;
+    const first = validateDmpCanonicalReport(completeGrowthReport()).report!;
     const retry = structuredClone(first);
     retry.render_data!.generated_at = "2026-08-22T03:04:05.000Z";
     const changed = structuredClone(retry);
@@ -573,7 +680,7 @@ describe("DMP growth render_data storage contract", () => {
   });
 
   it("only upgrades retry quality from partial to complete and never downgrades complete data", async () => {
-    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const canonical = validateDmpCanonicalReport(completeGrowthReport()).report!;
     const row = {
       id: "quality-monotonic-report",
       shop: null,

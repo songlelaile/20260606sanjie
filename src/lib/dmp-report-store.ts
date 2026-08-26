@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { parseSession, type Session } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import {
+  auditDmpGrowthSubjectMetrics,
   dmpExpectedTableNames,
   dmpReportKind,
   sanitizeDmpReportRenderData,
@@ -15,6 +16,7 @@ import {
 import { getCurrentSession } from "@/lib/server-session";
 import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
 import { withDmpAutomationBrand } from "@/lib/dmp-product";
+import { effectiveDmpReportQuality } from "@/lib/dmp-report-quality";
 
 const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 export const DMP_REPORT_ARCHIVE_MAX_BODY_BYTES = MAX_REPORT_BYTES + 64 * 1024;
@@ -213,6 +215,12 @@ export function validateDmpCanonicalReport(
     tables,
     ...(renderData ? { render_data: renderData } : {})
   };
+  if (kind === "growth") {
+    const subjectMetricAudit = auditDmpGrowthSubjectMetrics(normalizedReport);
+    if (subjectMetricAudit.missing.length) {
+      pushArchiveIssue(issues, `主体最低指标缺失：${subjectMetricAudit.missing.map((metric) => metric.label).join("、")}`);
+    }
+  }
   // 仅检查最终会落库并通过公开分享展示的规范化合同。这样能覆盖标题、周期、业务表及
   // render_data（含副标题），又不会因随后会被丢弃的调试/传输字段误阻断归档。
   if (containsSensitiveArchiveAuthData(normalizedReport)) {
@@ -431,7 +439,10 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
       subjectItemId: row.subjectItemId,
       competitorItemId: row.competitorItemId,
       period: row.period,
-      quality: row.quality === "partial" ? "partial" : "complete",
+      quality: effectiveDmpReportQuality(
+        checked.report,
+        row.quality === "partial" ? "partial" : "complete"
+      ),
       createdAt: row.createdAt.toISOString(),
       report: checked.report
     }];
@@ -448,6 +459,7 @@ export async function saveDmpBusinessReport(input: {
   sourceShop?: DmpReportSourceShopInput;
 }): Promise<DmpBusinessReportRecord> {
   const sourceShop = normalizeDmpReportSourceShop(input.sourceShop);
+  const effectiveQuality = effectiveDmpReportQuality(input.report, input.quality);
   const row = await prisma.$transaction(async (tx) => {
     let tenantShops: Array<{ id: string; name: string }> | null = null;
     let shop = sourceShop?.internalShopId
@@ -518,13 +530,13 @@ export async function saveDmpBusinessReport(input: {
         subjectItemId: input.subjectItemId,
         competitorItemId: input.competitorItemId,
         period: input.report.period,
-        quality: input.quality,
+        quality: effectiveQuality,
         sourceVersion: input.sourceVersion,
         fingerprint,
         report: input.report as unknown as Prisma.InputJsonValue
       },
       // Fingerprint 去重后只允许质量单向升级；失败重试不得把已有完整报告降回 partial。
-      update: input.quality === "complete"
+      update: effectiveQuality === "complete"
         ? { quality: "complete", sourceVersion: input.sourceVersion }
         : {},
       select: {
@@ -550,7 +562,10 @@ export async function saveDmpBusinessReport(input: {
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
-    quality: row.quality === "partial" ? "partial" : "complete",
+    quality: effectiveDmpReportQuality(
+      storedReport,
+      row.quality === "partial" ? "partial" : effectiveQuality
+    ),
     createdAt: row.createdAt.toISOString(),
     report: storedReport
   };
@@ -620,7 +635,10 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId,
     period: row.period,
-    quality: row.quality === "partial" ? "partial" : "complete",
+    quality: effectiveDmpReportQuality(
+      checked.report,
+      row.quality === "partial" ? "partial" : "complete"
+    ),
     createdAt: row.createdAt.toISOString(),
     report: checked.report
   } satisfies DmpBusinessReportRecord;

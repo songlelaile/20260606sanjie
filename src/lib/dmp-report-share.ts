@@ -10,6 +10,7 @@ import type {
   DmpReportManagementAnalytics
 } from "@/lib/dmp-report-types";
 import { dmpReportKind } from "@/lib/dmp-report-types";
+import { effectiveDmpReportQuality } from "@/lib/dmp-report-quality";
 
 const SHARE_TOKEN_PATTERN = /^[a-f0-9]{64}$/i;
 const MAX_ANALYTICS_EVENTS = 100_000;
@@ -90,7 +91,10 @@ export async function getPublicDmpSharedReport(token: string): Promise<DmpShared
     subjectItemId: row.report.subjectItemId,
     competitorItemId: row.report.competitorItemId,
     period: row.report.period,
-    quality: row.report.quality === "partial" ? "partial" : "complete",
+    quality: effectiveDmpReportQuality(
+      checked.report,
+      row.report.quality === "partial" ? "partial" : "complete"
+    ),
     createdAt: row.report.createdAt.toISOString(),
     report: checked.report
   };
@@ -144,7 +148,10 @@ async function sharedGroupReport(
       subjectItemId: candidate.subjectItemId,
       competitorItemId: candidate.competitorItemId,
       period: candidate.period,
-      quality: candidate.quality === "partial" ? "partial" as const : "complete" as const,
+      quality: effectiveDmpReportQuality(
+        checked.report,
+        candidate.quality === "partial" ? "partial" : "complete"
+      ),
       createdAt: candidate.createdAt.toISOString(),
       report: checked.report
     }];

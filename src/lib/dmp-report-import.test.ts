@@ -597,12 +597,16 @@ describe("DMP JSON 工程文件识别", () => {
     const coverage = overviewMetric("花费覆盖");
     expect(String(coverage?.[1])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-02；缺少2026-08-03；缺失日未按0计入）");
     expect(String(coverage?.[2])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-03；缺少2026-08-02；缺失日未按0计入）");
-    expect(tables[3].rows.map((row) => row.slice(2, 4))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10], [0.3, 0.2]
-    ]);
-    expect(tables[4].rows.slice(1).map((row) => row.slice(1, 3))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10], [0.3, 0.2]
-    ]);
+    const benchmarkPair = (metric: string) => tables[3].rows.find((row) => row[1] === metric)?.slice(2, 4);
+    const basePair = (metric: string) => tables[4].rows.find((row) => row[0] === metric
+      || (metric === "推广消耗" && row[0] === "广告/推广消耗"))?.slice(1, 3);
+    for (const [metric, pair] of [
+      ["推广消耗", [30, 70]], ["费比", [0.1, 0.1]], ["ROI", [3, 2]], ["PPC", [2, 2]],
+      ["关键词消耗占比", [0.333333, 0.285714]], ["全域ROAS", [10, 10]], ["付费金额占比", [0.3, 0.2]]
+    ] as const) {
+      expect(benchmarkPair(metric)).toEqual(pair);
+      expect(basePair(metric)).toEqual(pair);
+    }
   });
 
   it("preserves explicit zero and disclosed intervals while carrying interval formulas into blank cells", () => {
@@ -738,6 +742,41 @@ describe("DMP JSON 工程文件识别", () => {
     expect(benchmarkMetric("ROI")?.slice(2, 5)).toEqual([4, "10~11.25", ""]);
     expect(benchmarkMetric("付费PPC")?.slice(2, 5)).toEqual([2, "2~2.666667", ""]);
     expect(tables[1].rows[1].slice(4, 6)).toEqual(["10~11.25", "2~2.666667"]);
+  });
+
+  it("returns zero PPC only when an interval guarantees a positive paid-click denominator", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["推广消耗", 0, 0, "2日"],
+          ["PPC", "", "", "2日"]
+        ]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "推广消耗", "PPC"],
+        rows: [
+          ["593063365092", "主体", "100", "0", 0, ""],
+          ["623803508105", "目标对手", "100", "0", 0, ""]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [
+          ["营销推广点击量", "<20", ">20", ""],
+          ["PPC", "", "", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 2);
+
+    expect(tables[0].rows.find((row) => row[0] === "PPC")?.slice(1, 3)).toEqual(["", 0]);
+    expect(tables[1].rows.map((row) => row[5])).toEqual(["", 0]);
   });
 
   it("does not backfill a requested period when daily total spend is missing more than one day", () => {
