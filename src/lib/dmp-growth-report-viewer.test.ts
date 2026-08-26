@@ -311,6 +311,38 @@ describe("DMP growth report viewer projection", () => {
     });
   });
 
+  it("keeps paid-GMV, ROI and paid-PPC intervals visible without an exact relative difference", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("对标总表", [
+      "页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"
+    ], [
+      ["投放", "付费成交额", "234237.29", "800000.00~900000.00", "-70.72%"],
+      ["投放", "ROI", "4.53", "10~11.25", "-59.73%"],
+      ["投放", "付费PPC", "1.81", "1.59~2.12", "13.84%"],
+      ["投放", "费比", "9.32%", "2.62%~3.10%", "6.22%~6.70%"]
+    ]));
+    replaceTable(record, snapshot("基础指标对比", [
+      "指标", "本品值", "目标对手值", "主体相对对手"
+    ], [
+      ["付费成交额", "234237.29", "800000.00~900000.00", "-70.72%"]
+    ]));
+
+    const model = projectDmpReportForViewer(record);
+    const benchmark = model.tables.find((table) => table.name === "对标总表");
+    expect(benchmark?.rows).toEqual([
+      ["投放", "付费成交额", "234237.29", "800000.00~900000.00", ""],
+      ["投放", "ROI", "4.53", "10~11.25", ""],
+      ["投放", "付费PPC", "1.81", "1.59~2.12", ""],
+      ["投放", "费比", "9.32%", "2.62%~3.10%", "6.22%~6.70%"]
+    ]);
+    expect(model.tables.find((table) => table.name === "基础指标对比")?.rows[0]).toEqual([
+      "付费成交额", "234237.29", "800000.00~900000.00", ""
+    ]);
+    const kpis = new Map(model.kpis.map((metric) => [metric.label, metric]));
+    expect(kpis.get("ROI")?.competitor).toBe("10~11.25");
+    expect(kpis.get("PPC")?.competitor).toBe("1.59~2.12");
+  });
+
   it("shows a non-empty optional price-band module and treats score columns as numeric", () => {
     const record = growthRecord();
     record.report.tables.splice(3, 0, snapshot("赛道价格带洞察", [

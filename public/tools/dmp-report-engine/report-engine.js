@@ -238,6 +238,11 @@
   }
 
   function relative(subject, competitor, difference = false) {
+    const subjectRange = completenessEngine?.parseVagueRange?.(subject);
+    const competitorRange = completenessEngine?.parseVagueRange?.(competitor);
+    // 脱敏区间不能取中点伪装成精确值计算相对差。显式在这一层
+    // 截断，避免未来 toNumber 增加区间解析时意外产出伪精确环比。
+    if (subjectRange?.exact === false || competitorRange?.exact === false) return EMPTY;
     const left = toNumber(subject);
     const right = toNumber(competitor);
     if (!Number.isFinite(left) || !Number.isFinite(right) || (!difference && right === 0)) return EMPTY;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
+import { dmpCellSemantic, formatDmpCell, isDmpIntervalCell } from "@/lib/dmp-report-format";
 
 describe("DMP report value formatting", () => {
   it("rounds decimal values and percentages to two places", () => {
@@ -18,6 +18,19 @@ describe("DMP report value formatting", () => {
     expect(formatDmpCell("0", "费比")).toBe("0.00%");
     expect(formatDmpCell("0", "ROI")).toBe("0");
     expect(formatDmpCell("0", "PPC")).toBe("0");
+  });
+
+  it("renders disclosed strings and range objects as visible min~max values", () => {
+    expect(formatDmpCell({ min: "800000.00", max: "900000.00" }, "付费成交额"))
+      .toBe("800000.00~900000.00");
+    expect(formatDmpCell('{"minimum":1.59,"maximum":2.12}', "付费PPC")).toBe("1.59~2.12");
+    expect(formatDmpCell({ lowerBound: "250%", upperBound: "500%" }, "ROI")).toBe("2.50~5.00");
+    expect(formatDmpCell({ range: [250, 500], unit: "%" }, "ROI")).toBe("2.50~5.00");
+    expect(formatDmpCell('{"range":[250,500],"unit":"%"}', "ROI")).toBe("2.50~5.00");
+    expect(formatDmpCell("1.59–2.12", "PPC")).toBe("1.59~2.12");
+    expect(formatDmpCell({ min: 0.0262, max: 0.04 }, "费比")).toBe("2.62%~4.00%");
+    expect(isDmpIntervalCell({ range: [1.59, 2.12] })).toBe(true);
+    expect(isDmpIntervalCell({ min: 2, max: 2 })).toBe(false);
   });
 
   it("keeps identifiers and integers unchanged", () => {

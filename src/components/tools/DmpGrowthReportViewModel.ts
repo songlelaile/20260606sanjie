@@ -1,4 +1,5 @@
 import { canonicalToDmpReport, type DmpCell, type DmpReportTable } from "@/lib/dmp-report-import";
+import { isDmpIntervalCell } from "@/lib/dmp-report-format";
 import {
   sanitizeDmpRenderHttpsUrl,
   sanitizeDmpRenderImageUrl,
@@ -225,6 +226,7 @@ function projectGenericReport(record: DmpBusinessReportRecord): DmpGrowthReportV
 }
 
 function projectGrowthTable(table: DmpViewerTable): DmpViewerTable {
+  if (table.name === "对标总表" || table.name === "基础指标对比") return suppressExactIntervalDifferences(table);
   if (table.name === "渠道花费") return projectChannelTable(table);
   if (table.name === "日GMV与费比") return projectDailyTable(table);
   if (table.name === "一级场景" || table.name === "二级场景") {
@@ -232,6 +234,25 @@ function projectGrowthTable(table: DmpViewerTable): DmpViewerTable {
   }
   if (table.name === "关键词样本") return projectKeywordTable(table);
   return table;
+}
+
+function suppressExactIntervalDifferences(table: DmpViewerTable): DmpViewerTable {
+  const subjectIndex = columnByAliases(table, ["主体周期值", "主体值", "本品", "本品值"]);
+  const competitorIndex = columnByAliases(table, [
+    "对手周期值", "目标对手周期值", "竞品周期值", "对手值", "目标对手值", "竞品值"
+  ]);
+  const differenceIndex = columnByAliases(table, ["主体相对对手", "主体差异", "差异", "变化率"]);
+  if ([subjectIndex, competitorIndex, differenceIndex].some((index) => index < 0)) return table;
+  return {
+    ...table,
+    rows: table.rows.map((row) => {
+      if (!isDmpIntervalCell(row[subjectIndex]) && !isDmpIntervalCell(row[competitorIndex])) return row;
+      if (isDmpIntervalCell(row[differenceIndex])) return row;
+      const next = [...row];
+      next[differenceIndex] = "";
+      return next;
+    })
+  };
 }
 
 function projectChannelTable(table: DmpViewerTable): DmpViewerTable {
@@ -433,7 +454,7 @@ const GROWTH_OVERVIEW_METRICS = [
   { label: "推广消耗", aliases: ["推广消耗", "广告消耗", "广告/推广消耗"] },
   { label: "费比", aliases: ["费比", "推广费比", "广告费比"] },
   { label: "ROI", aliases: ["ROI", "直接ROI"] },
-  { label: "PPC", aliases: ["PPC", "CPC", "点击成本", "平均点击成本"] },
+  { label: "PPC", aliases: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本"] },
   { label: "全域ROAS", aliases: ["全域ROAS", "ROAS"] }
 ] as const;
 

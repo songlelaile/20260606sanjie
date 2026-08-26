@@ -288,6 +288,55 @@ describe("DMP JSON 工程文件识别", () => {
     expect(daily?.rows[0]).toEqual(["2026-08-01", "120", "190", "20", "成长期"]);
   });
 
+  it("canonicalizes archived range objects before paid-metric reconciliation", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-07-20 至 2026-08-18",
+      tables: [
+        {
+          name: "报告总览",
+          columns: ["项目", "主体", "对手", "范围"],
+          rows: [{ cells: ["商品ID", "593063365092", "623803508105", ""] }]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "付费成交额", "推广消耗", "ROI", "付费PPC"],
+          rows: [
+            { cells: ["593063365092", "主体", "200000", "50000", "", ""] },
+            { cells: ["623803508105", "目标对手", { min: "800000.00", max: "900000.00" }, "80000", "", ""] }
+          ]
+        },
+        {
+          name: "对标总表",
+          columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+          rows: [
+            { cells: ["投放", "付费成交额", "", "", ""] },
+            { cells: ["投放", "ROI", "", "", ""] },
+            { cells: ["投放", "付费PPC", "", "", ""] }
+          ]
+        },
+        {
+          name: "基础指标对比",
+          columns: ["指标", "主体值", "对手值", "主体相对对手"],
+          rows: [
+            { cells: ["营销推广点击量", "25000", '{"min":30000,"max":40000}', ""] },
+            { cells: ["付费成交额", "", "", ""] },
+            { cells: ["ROI", "", "", ""] },
+            { cells: ["付费PPC", "", "", ""] }
+          ]
+        }
+      ]
+    });
+
+    const benchmark = report?.tables.find((table) => table.name === "对标总表");
+    const metric = (name: string) => benchmark?.rows.find((row) => row[1] === name);
+    expect(metric("付费成交额")?.[3]).toBe("800000.00~900000.00");
+    expect(metric("ROI")?.[3]).toBe("10~11.25");
+    expect(metric("付费PPC")?.[3]).toBe("2~2.666667");
+  });
+
   it("fills blank derived scene cells for both old and concise headers but preserves disclosed values and intervals", () => {
     const tables = [
       {
@@ -523,6 +572,58 @@ describe("DMP JSON 工程文件识别", () => {
     const coverage = tables[0].rows.find((row) => row[0] === "花费覆盖");
     expect(String(coverage?.[1])).toContain("已返回2/3日");
     expect(coverage?.[2]).toBe("");
+  });
+
+  it("propagates paid-GMV ranges and derives ROI/PPC ranges from exact spend without inventing a difference", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["付费成交额", "", "", ""],
+          ["ROI", "", "", ""],
+          ["付费PPC", "", "", ""]
+        ]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "付费成交额", "推广消耗", "ROI", "付费PPC"],
+        rows: [
+          ["593063365092", "主体", "200000", "50000", "", ""],
+          ["623803508105", "目标对手", "800000.00~900000.00", "80000", "", ""]
+        ]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: [
+          ["投放", "付费成交额", "", "", "-75%"],
+          ["投放", "ROI", "", "", "-60%"],
+          ["投放", "付费PPC", "", "", "10%"]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [
+          ["营销推广点击量", "25000", "30000~40000", ""],
+          ["付费成交额", "", "", "-75%"],
+          ["ROI", "", "", "-60%"],
+          ["付费PPC", "", "", "10%"]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 30, {
+      preserveDisclosedRanges: true
+    });
+
+    const benchmarkMetric = (metric: string) => tables[2].rows.find((row) => row[1] === metric);
+    expect(benchmarkMetric("付费成交额")?.slice(2, 5)).toEqual(["200000", "800000.00~900000.00", ""]);
+    expect(benchmarkMetric("ROI")?.slice(2, 5)).toEqual([4, "10~11.25", ""]);
+    expect(benchmarkMetric("付费PPC")?.slice(2, 5)).toEqual([2, "2~2.666667", ""]);
+    expect(tables[1].rows[1].slice(4, 6)).toEqual(["10~11.25", "2~2.666667"]);
   });
 
   it("does not backfill a requested period when daily total spend is missing more than one day", () => {

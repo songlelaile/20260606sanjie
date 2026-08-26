@@ -4,6 +4,7 @@ import {
   type DmpReportRenderData,
   type DmpReportTableSnapshot
 } from "@/lib/dmp-report-types";
+import { dmpDisplayCellText, type DmpDisplayCell } from "@/lib/dmp-report-format";
 
 export type DmpCell = string | number | boolean | null;
 
@@ -271,7 +272,7 @@ const CROSS_TABLE_METRICS = {
   spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
   paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
   roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比"],
-  ppc: ["PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
+  ppc: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
   feeRatio: ["费比", "推广费比", "广告费比"],
   roas: ["全域ROAS", "ROAS"],
   keywordShare: ["关键词消耗占比", "关键词花费占比", "关键词推广消耗占比"],
@@ -577,6 +578,68 @@ function shouldReplaceRange(value: DmpCell | undefined) {
   return isBlankCell(value) || Boolean(range && !range.exact);
 }
 
+function exactMetricValue(value: DmpCell | undefined) {
+  const range = metricRange(value);
+  if (!range?.exact || range.min == null || range.max == null || range.min !== range.max) return null;
+  return range.min;
+}
+
+function reconcilePaidMetricRanges(
+  tables: DmpReportTable[],
+  subjectItemId: string,
+  competitorItemId: string,
+  days: number
+) {
+  const scope = days > 0 ? `${days}日严格同周期` : "严格同周期";
+  for (const side of ["subject", "competitor"] as const) {
+    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
+    const spend = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.spend, subjectItemId, competitorItemId);
+    const paidClicks = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
+    const exactSpend = exactMetricValue(spend);
+
+    // 达摩盘对竞品常披露区间。把已披露的付费成交额贯通至所有现有业务表，
+    // 并只在分母为精确正值时补算 ROI / PPC；不把区间压成伪精确值。
+    const paidGmvValue = isBlankCell(paidGmv) ? null : paidGmv ?? null;
+    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidGmv, paidGmvValue, scope, subjectItemId, competitorItemId);
+    if (exactSpend == null || exactSpend <= 0) continue;
+    fillMetricAcrossTables(
+      tables,
+      side,
+      CROSS_TABLE_METRICS.roi,
+      rangeDividedByScalar(paidGmv, exactSpend, 6),
+      scope,
+      subjectItemId,
+      competitorItemId
+    );
+    fillMetricAcrossTables(
+      tables,
+      side,
+      CROSS_TABLE_METRICS.ppc,
+      scalarDividedByRange(exactSpend, paidClicks, 6),
+      scope,
+      subjectItemId,
+      competitorItemId
+    );
+  }
+}
+
+function suppressIntervalMetricDifferences(tables: DmpReportTable[]) {
+  for (const table of tables.filter((candidate) => candidate.name === "对标总表" || candidate.name === "基础指标对比")) {
+    const subjectIndex = sideColumnIndex(table, "subject");
+    const competitorIndex = sideColumnIndex(table, "competitor");
+    const differenceIndex = columnIndexByAliases(table, ["主体相对对手", "主体差异", "相对差", "差异", "变化率"]);
+    if ([subjectIndex, competitorIndex, differenceIndex].some((index) => index < 0)) continue;
+    for (const row of table.rows) {
+      const subjectRange = metricRange(row[subjectIndex]);
+      const competitorRange = metricRange(row[competitorIndex]);
+      if (subjectRange?.exact !== false && competitorRange?.exact !== false) continue;
+      const disclosedDifference = metricRange(row[differenceIndex]);
+      if (disclosedDifference?.exact === false) continue;
+      row[differenceIndex] = "";
+    }
+  }
+}
+
 export function reconcileDmpCrossTableMetrics(
   tables: DmpReportTable[],
   subjectItemId: string,
@@ -633,6 +696,7 @@ export function reconcileDmpCrossTableMetrics(
   }
 
   reconcilePartialDailySpend(tables, subjectItemId, competitorItemId, days, options);
+  reconcilePaidMetricRanges(tables, subjectItemId, competitorItemId, days);
 
   if (periodTable) {
     const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
@@ -721,6 +785,7 @@ export function reconcileDmpCrossTableMetrics(
 
   const level1Spend = reconcileScenes(tables.find((table) => table.name === "一级场景"));
   reconcileScenes(tables.find((table) => table.name === "二级场景"), level1Spend);
+  suppressIntervalMetricDifferences(tables);
   return tables;
 }
 
@@ -730,7 +795,11 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
     name: String(table.name ?? ""),
     columns: Array.isArray(table.columns) ? table.columns.map(String) : [],
     rows: Array.isArray(table.rows)
-      ? table.rows.filter(isObject).map((row) => ({ cells: Array.isArray(row.cells) ? row.cells.map(String) : [] }))
+      ? table.rows.filter(isObject).map((row) => ({
+          cells: Array.isArray(row.cells)
+            ? row.cells.map((cell) => dmpDisplayCellText(cell as DmpDisplayCell))
+            : []
+        }))
       : []
   }));
   const itemId = String(input.item_id ?? "");

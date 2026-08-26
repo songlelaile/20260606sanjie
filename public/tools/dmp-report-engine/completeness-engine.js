@@ -439,7 +439,16 @@
     if (Array.isArray(card.fields) && Array.isArray(card.values)) {
       pairs = card.fields.slice(0, card.values.length).map((field, index) => ({ field, value: card.values[index] ?? {} }));
     } else if (Array.isArray(card.list)) {
-      pairs = card.list.map(row => ({ field: row.field || { name: row.name, description: row.description, id: row.id }, value: row.value && typeof row.value === "object" ? row.value : row }));
+      pairs = card.list.map(row => ({
+        field: row.field || { name: row.name, description: row.description, id: row.id },
+        // 真实 INDEX_CARD 会把主体 value 写成 { indicatorValue }，同时把
+        // 对手 c_value 作为该行的兄弟字段。旧逻辑一旦看到对象 value 就只保留
+        // row.value，会把 c_value 区间整个丢掉。合并两层后既兼容兄弟
+        // c_value，也兼容 value 内部自带 itemValue/succItemValue 的结构。
+        value: row?.value && typeof row.value === "object" && !Array.isArray(row.value)
+          ? { ...row, ...row.value }
+          : row
+      }));
     } else return null;
     const metrics = {};
     const metricRows = [];
@@ -460,8 +469,8 @@
       const previous = metrics[name];
       metrics[name] = previous ? {
         ...previous,
-        subject: isDisclosedMetric(previous.subject) ? previous.subject : parsed.subject,
-        competitor: isDisclosedMetric(previous.competitor) ? previous.competitor : parsed.competitor,
+        subject: preferredMetricValue(previous.subject, parsed.subject),
+        competitor: preferredMetricValue(previous.competitor, parsed.competitor),
         difference: isDisclosedMetric(previous.difference) ? previous.difference : parsed.difference,
         trend: isDisclosedMetric(previous.trend) ? previous.trend : parsed.trend
       } : parsed;
@@ -700,8 +709,8 @@
       const previous = metrics[name];
       metrics[name] = previous ? {
         ...previous,
-        subject: isDisclosedMetric(previous.subject) ? previous.subject : row.subject,
-        competitor: isDisclosedMetric(previous.competitor) ? previous.competitor : row.competitor,
+        subject: preferredMetricValue(previous.subject, row.subject),
+        competitor: preferredMetricValue(previous.competitor, row.competitor),
         difference: isDisclosedMetric(previous.difference) ? previous.difference : row.difference,
         trend: isDisclosedMetric(previous.trend) ? previous.trend : row.trend
       } : { ...row };
@@ -726,7 +735,11 @@
     for (const [name, value] of Object.entries(card?.metrics || {})) {
       if (!identities.has(metricIdentity(name))) continue;
       for (const side of ["subject", "competitor", "difference", "trend"]) {
-        if (!isDisclosedMetric(merged[side]) && isDisclosedMetric(value?.[side])) merged[side] = value[side];
+        if (side === "subject" || side === "competitor") {
+          merged[side] = preferredMetricValue(merged[side], value?.[side]);
+        } else if (!isDisclosedMetric(merged[side]) && isDisclosedMetric(value?.[side])) {
+          merged[side] = value[side];
+        }
       }
     }
     return merged;
@@ -759,10 +772,10 @@
     function append(identity, name, candidates, core) {
       if (!candidates.length || emitted.has(identity)) return;
       const preferred = candidates.find(entry => normalizeMetricName(entry.name) === normalizeMetricName(name)) || candidates[0];
-      const firstValue = side => {
-        const candidate = candidates.find(entry => isDisclosedMetric(entry?.[side]));
-        return candidate ? alignedMetricValue(candidate[side]) : null;
-      };
+      const firstValue = side => alignedMetricValue(candidates.reduce(
+        (selected, entry) => preferredMetricValue(selected, entry?.[side]),
+        null
+      ));
       const subject = firstValue("subject");
       const competitor = firstValue("competitor");
       if (!isDisclosedMetric(subject) && !isDisclosedMetric(competitor)) return;
@@ -1158,6 +1171,22 @@
     const exact = numberOrNull(apiValue);
     if (exact != null) return exact;
     return calculatedValue ?? apiValue;
+  }
+
+  function metricValuePrecision(value) {
+    if (!isDisclosedMetric(value)) return 0;
+    if (numberOrNull(value) != null) return 3;
+    const range = parseVagueRange(value);
+    if (range) return range.exact ? 3 : 2;
+    return 1;
+  }
+
+  // 同一指标在多个模板或同义行里同时披露时，精确值必须胜过
+  // 脱敏区间；同等精度保留已选值，以继续遵循“最新卡片优先”。
+  function preferredMetricValue(currentValue, candidateValue) {
+    return metricValuePrecision(candidateValue) > metricValuePrecision(currentValue)
+      ? candidateValue
+      : currentValue;
   }
 
   function isDisclosedMetric(value) {
