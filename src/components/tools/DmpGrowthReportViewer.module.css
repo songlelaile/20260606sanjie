@@ -181,47 +181,6 @@
   padding: 0 18px 42px;
 }
 
-.qualityBanner {
-  align-items: center;
-  background: #fff8e6;
-  border: 1px solid #edc76b;
-  border-left: 5px solid #d99a17;
-  border-radius: 12px;
-  color: #6f4f0f;
-  display: flex;
-  gap: 18px;
-  justify-content: space-between;
-  padding: 14px 16px;
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;
-}
-
-.qualityBanner strong {
-  color: #583c08;
-  display: block;
-  font-size: 15px;
-}
-
-.qualityBanner p {
-  margin: 3px 0 0;
-}
-
-.qualityAction {
-  background: #0f766e;
-  border-radius: 8px;
-  color: #fff;
-  flex: 0 0 auto;
-  font-weight: 700;
-  padding: 8px 13px;
-  text-decoration: none;
-}
-
-.qualityOwnerHint {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .reportSection {
   background: var(--dmp-paper);
   border: 1px solid var(--dmp-line);
@@ -267,15 +226,6 @@
   color: var(--dmp-teal);
   font-size: 12px;
   padding: 4px 9px;
-}
-
-.sectionNote {
-  background: #f1f8f6;
-  border-left: 3px solid #52aa96;
-  border-radius: 6px;
-  color: #49666d;
-  margin: 12px 0 18px;
-  padding: 10px 12px;
 }
 
 .productGrid {
@@ -446,14 +396,6 @@
   font-weight: 700;
 }
 
-.metricScope {
-  color: var(--dmp-muted);
-  display: block;
-  font-size: 10px;
-  line-height: 1.4;
-  margin-top: 9px;
-}
-
 .periodBand {
   align-items: center;
   background: linear-gradient(135deg, #0b5e5c, #158875);
@@ -473,31 +415,6 @@
 
 .periodBand strong {
   font-size: 16px;
-}
-
-.dataNotice {
-  display: grid;
-  gap: 8px;
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-}
-
-.dataNotice li {
-  align-items: baseline;
-  background: #fdf6e6;
-  border-left: 3px solid #e0a52a;
-  border-radius: 6px;
-  color: #7a5b18;
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 13px;
-  gap: 10px;
-  padding: 10px 12px;
-}
-
-.dataNotice strong {
-  color: #5d430c;
 }
 
 .subheading {
@@ -1005,7 +922,6 @@
 }
 
 @media (max-width: 560px) {
-  .qualityBanner { align-items: flex-start; flex-direction: column; }
   .metricGrid,
   .dailySummary { grid-template-columns: 1fr; }
   .productCard { grid-template-columns: 96px minmax(0, 1fr); }

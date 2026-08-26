@@ -98,19 +98,20 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain('record.shopName ? `${record.shopName} · ` : ""');
     expect(viewerSource).toContain("ref={hideAlreadyBrokenImage}");
     expect(viewerSource).toContain("image?.complete && image.naturalWidth === 0");
-    expect(viewerSource).toContain("styles.dataNotice");
-    expect(viewerSource).toContain("数据说明|花费覆盖|取数时段提示");
-    expect(viewerCss).toContain(".dataNotice");
+    expect(viewerSource).not.toContain("styles.dataNotice");
+    expect(viewerCss).not.toContain(".dataNotice");
     expect(viewerSource).toContain("data-overview-metric={metric.label}");
-    expect(viewerSource).toContain("data-overview-scope");
+    expect(viewerSource).not.toContain("data-overview-scope");
     expect(viewerSource).toContain("formatViewerCell(metric.subject, metric.label)");
     expect(viewerSource).toContain("formatViewerCell(metric.competitor, metric.label)");
-    expect(viewerCss).toContain(".metricScope");
-    expect(viewerSource).toContain('data-report-quality="partial"');
-    expect(viewerSource).toContain("model.quality.notice");
-    expect(viewerSource).toContain("data-report-supplement");
-    expect(viewerSource).toContain("继续补采");
-    expect(viewerCss).toContain(".qualityBanner");
+    expect(viewerCss).not.toContain(".metricScope");
+    expect(viewerSource).not.toContain("styles.sectionNote");
+    expect(viewerCss).not.toContain(".sectionNote");
+    expect(viewerSource).not.toContain('data-report-quality="partial"');
+    expect(viewerSource).not.toContain("model.quality.notice");
+    expect(viewerSource).not.toContain("data-report-supplement");
+    expect(viewerCss).not.toContain(".qualityBanner");
+    expect(viewerSource).not.toMatch(/部分数据报告|缺失字段|继续补采|数据说明|花费覆盖|取数时段提示|工程计算|计算逻辑|错误代码/);
     expect(viewerSource).not.toContain("dangerouslySetInnerHTML");
     expect(viewerSource).toContain('typeof value === "number" && Number.isFinite(value)');
     expect(viewerSource).not.toContain("isExactNumber(value)");
@@ -288,6 +289,24 @@ describe("DMP growth report viewer projection", () => {
     expect(model.kpis).toHaveLength(8);
     expect(model.quality.effectiveQuality).toBe("partial");
     expect(model.quality.notice).toContain("缺失值未按0计入");
+  });
+
+  it("removes engineering diagnostics without changing explicit zero, missing values or business status", () => {
+    const table = sanitizeViewerTable({
+      name: "经营指标",
+      columns: ["指标", "主体值", "关注状态", "工程计算逻辑", "错误代码"],
+      rows: [
+        ["总GMV", "0", "已关注", "仅供内部", ""],
+        ["缺失字段：推广消耗", "—", "未关注", "", "E100"],
+        ["客单价", "—", "未关注", "", ""]
+      ]
+    });
+
+    expect(table?.columns).toEqual(["指标", "主体值", "关注状态"]);
+    expect(table?.rows).toEqual([
+      ["总GMV", "0", "已关注"],
+      ["客单价", "—", "未关注"]
+    ]);
   });
 
   it("prefers scoped overview rows and falls back one side at a time without replacing explicit zero", () => {
@@ -531,13 +550,13 @@ describe("DMP growth report viewer projection", () => {
     expect(JSON.stringify(sanitized)).not.toMatch(/方法与证据|校验状态|GMV指数/);
   });
 
-  it("keeps the same disclosed data notices as the opened local HTML", () => {
+  it("keeps engineering coverage notices out of the business report", () => {
     const sanitized = sanitizeViewerTable({
       name: "报告总览",
       columns: ["项目", "主体", "对手"],
       rows: [["花费覆盖", "已返回29天", "平台少1天"]]
     });
-    expect(sanitized?.rows).toEqual([["花费覆盖", "已返回29天", "平台少1天"]]);
+    expect(sanitized?.rows).toEqual([]);
   });
 
   it("does not promote unsafe product media into an image or detail link", () => {

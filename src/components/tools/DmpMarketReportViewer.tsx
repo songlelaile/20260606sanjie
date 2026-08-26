@@ -66,7 +66,6 @@ export function DmpMarketReportViewer({
       </div>
 
       <header className={styles.hero} data-report-hero data-track-section="hero" data-track="header">
-        <p>达摩盘 · 类目大盘</p>
         <h1>少壮AI自动化报告</h1>
         <div className={styles.scopeLine}>
           {record.shopName ? <span data-report-shop-signature>店铺署名：{record.shopName}</span> : null}
@@ -106,20 +105,8 @@ export function DmpMarketReportViewer({
           <div className={styles.periodIdentity}>
             <span>{mode === "day" ? "当前日期" : "当前周期"}</span>
             <strong>{periodLabel || "全部可用日期"}</strong>
-            {model.capturedPeriod ? (
-              <small className={styles.capturedPeriod} data-captured-period>
-                细分赛道已采全周期：{model.capturedPeriod.start} 至 {model.capturedPeriod.end} · {model.capturedPeriod.count} 个周期
-              </small>
-            ) : null}
           </div>
         </section>
-
-        {record.quality === "partial" ? (
-          <section className={styles.qualityWarning} role="alert" data-report-quality="partial">
-            <strong>本次采集存在缺失，正在等待补采</strong>
-            <span>当前仅展示已成功获取并归档的数据；缺失项不会按 0 处理，保持达摩盘页面与插件运行后可继续补采。</span>
-          </section>
-        ) : null}
 
         {kpis.length ? (
           <section className={styles.summary} data-track-section="market-summary">

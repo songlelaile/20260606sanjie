@@ -2,7 +2,7 @@ import type { DmpBusinessReportRecord, DmpMarketScope } from "@/lib/dmp-report-t
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const DMP_MARKET_TIME_ZONE = "Asia/Shanghai" as const;
-const ENGINEERING_FIELD = /(?:^|\b)(?:periodType|requestDate|queryRange|analysisRange|purpose|conflict)(?:$|\b)|请求截止日|任务|轮次|工程(?:信息|数据|文件)?|接口(?:名称|地址|状态|数量)?|响应(?:体|状态|数量|结果)|采集(?:时间|状态|进度|数量)|窗口(?:开始|结束|总数)?|对比(?:开始|结束|窗口)|数据(?:开始|结束)|分析(?:开始|结束)|生成时间|叶子类目\s*ID|类目\s*ID|冲突|缺失/i;
+const ENGINEERING_FIELD = /(?:^|\b)(?:periodType|requestDate|queryRange|analysisRange|purpose|conflict)(?:$|\b)|请求截止日|任务|轮次|工程(?:信息|数据|文件|计算(?:逻辑)?)?|接口(?:名称|地址|状态|数量|证据)?|响应(?:体|状态|数量|结果)|采集(?:时间|状态|进度|数量|失败)|窗口(?:开始|结束|总数)?|对比(?:开始|结束|窗口)|数据(?:开始|结束|证据|说明|完整性提示)|分析(?:开始|结束)|生成时间|叶子类目\s*ID|类目\s*ID|冲突|缺失|计算(?:逻辑|公式)|推导过程|算法口径|完整性(?:门禁|状态|提示)|质量门禁|证据等级|校验状态|错误(?:码|代码)|失败原因|解析失败|待补采|部分数据(?:报告)?|取数时段提示|花费覆盖|细分赛道数据状态/i;
 const DATE_FIELD = /^(?:日期|截止日|请求截止日|周期)$/;
 const REFERENCE_ONLY = /^(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;
 const REFERENCE_SUFFIX = /(?:(?:自然周|自然月|月度|上月|7\s*日|期间)\s*)?(?:拟合值|参考值|中位(?:数)?)$/i;

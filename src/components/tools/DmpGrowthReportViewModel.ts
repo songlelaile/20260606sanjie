@@ -10,7 +10,7 @@ import {
 import { assessDmpEffectiveReportQuality, type DmpEffectiveReportQuality } from "@/lib/dmp-report-quality";
 
 const CORE_TABLES = new Set(["报告总览", "商品与成功品", "对标总表", "周期汇总", "基础指标对比"]);
-const FORBIDDEN_VISIBLE = /接口清单|页面字段映射|系统诊断|方法与证据|结构解读|业务解读|复盘结论|判断|建议动作|证据等级|校验状态|反推口径|备注|(?:^|\s)请求(?:$|\s)|GMV指数|指数变化|平均GMV指数/i;
+const FORBIDDEN_VISIBLE = /接口清单|页面字段映射|系统诊断|方法与证据|结构解读|业务解读|复盘结论|判断|建议动作|证据等级|校验状态|反推口径|备注|(?:^|\s)请求(?:$|\s)|GMV指数|指数变化|平均GMV指数|工程计算(?:逻辑)?|计算(?:逻辑|公式)|推导过程|算法口径|完整性(?:门禁|状态|提示)|质量门禁|(?:接口|数据)证据|错误(?:码|代码)|失败原因|采集失败|解析失败|待补采|部分数据(?:报告)?|缺失字段|取数时段提示|花费覆盖|数据说明|细分赛道数据状态/i;
 
 export const DMP_GROWTH_SECTION_IDS: Record<string, string> = {
   报告总览: "overview",

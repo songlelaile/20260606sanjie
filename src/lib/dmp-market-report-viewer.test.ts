@@ -544,12 +544,17 @@ describe("DMP category-market viewer", () => {
       category_name: "",
       category_path: []
     };
-    record.report.tables[0].columns.push("内容运营日消耗", "空字段", "7日参考值", "期间中位", "分析窗口");
-    record.report.tables[0].rows.forEach((row) => row.cells.push("0", "", "99", "88", "2026-04-01 至 2026-07-31"));
+    record.report.tables[0].columns.push(
+      "内容运营日消耗", "关注状态", "空字段", "7日参考值", "期间中位", "分析窗口",
+      "工程计算逻辑", "接口证据", "错误代码"
+    );
+    record.report.tables[0].rows.forEach((row) => row.cells.push(
+      "0", "已关注", "", "99", "88", "2026-04-01 至 2026-07-31", "内部", "已获取", "E100"
+    ));
     const model = projectDmpMarketReport(record);
     expect(model.scope.category_path).toEqual(["大家电", "厨房大电", "油烟机"]);
     expect(dmpMarketCategoryLabel(record.report.market_scope, record.subjectItemId)).toBe("大家电-厨房大电-油烟机");
-    expect(model.tables[0].columns).toEqual(["日期", "成交金额", "新客人数", "内容运营日消耗"]);
+    expect(model.tables[0].columns).toEqual(["日期", "成交金额", "新客人数", "内容运营日消耗", "关注状态"]);
   });
 
   it("constructs exactly 54 branded watermark nodes", () => {
@@ -571,11 +576,13 @@ describe("DMP category-market viewer", () => {
     expect(viewer).toContain("自然周");
     expect(viewer).toContain("自然月");
     expect(viewer).toContain("自然日");
-    expect(viewer).toContain("细分赛道已采全周期");
-    expect(viewer).toContain("data-captured-period");
-    expect(viewer).toContain('record.quality === "partial"');
-    expect(viewer).toContain('data-report-quality="partial"');
-    expect(viewer).toContain("缺失项不会按 0 处理");
+    expect(viewer).toContain('<span>{mode === "day" ? "当前日期" : "当前周期"}</span>');
+    expect(viewer).not.toContain("达摩盘 · 类目大盘");
+    expect(viewer).not.toContain("细分赛道已采全周期");
+    expect(viewer).not.toContain("data-captured-period");
+    expect(viewer).not.toContain('record.quality === "partial"');
+    expect(viewer).not.toContain('data-report-quality="partial"');
+    expect(viewer).not.toMatch(/部分数据|缺失字段|等待补采|工程计算|计算逻辑|错误代码/);
     expect(viewer).toContain("data-track-period-selector");
     expect(viewer).toContain("dmp-market-empty-state");
     expect(viewer).toContain("data-track-matrix");

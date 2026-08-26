@@ -1,12 +1,14 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import ExcelJS from "exceljs";
 import type { DmpCanonicalReport } from "@/lib/dmp-report-types";
 
 vi.mock("server-only", () => ({}));
 
 let buildDmpReportCsv: typeof import("@/lib/dmp-report-export").buildDmpReportCsv;
+let buildDmpReportWorkbook: typeof import("@/lib/dmp-report-export").buildDmpReportWorkbook;
 
 beforeAll(async () => {
-  ({ buildDmpReportCsv } = await import("@/lib/dmp-report-export"));
+  ({ buildDmpReportCsv, buildDmpReportWorkbook } = await import("@/lib/dmp-report-export"));
 });
 
 function report(includePpc = true): DmpCanonicalReport {
@@ -36,16 +38,22 @@ function report(includePpc = true): DmpCanonicalReport {
   };
 }
 
-describe("DMP report export quality notice", () => {
-  it("uses the same normalized eight-metric result and prints a partial warning in CSV exports", () => {
+describe("DMP report business-only exports", () => {
+  it("keeps normalized business data but omits quality diagnostics from partial CSV and workbook exports", async () => {
     const csv = buildDmpReportCsv(report(false), "complete");
-    expect(csv).toContain("数据完整性提示");
-    expect(csv).toContain("缺失值未按0计入");
-    expect(csv).toContain("可继续补采");
     expect(csv).toContain("付费金额占比");
+    expect(csv).not.toMatch(/数据完整性提示|缺失值未按0计入|可继续补采|缺失字段|工程计算|错误代码/);
+
+    const bytes = await buildDmpReportWorkbook(report(false), "complete");
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Uint8Array.from(bytes).buffer);
+    const visibleText = JSON.stringify(workbook.worksheets.map((sheet) => sheet.getSheetValues()));
+    expect(workbook.worksheets[0].getCell("A1").value).toBe("项目");
+    expect(visibleText).toContain("付费金额占比");
+    expect(visibleText).not.toMatch(/数据完整性提示|缺失值未按0计入|可继续补采|缺失字段|工程计算|错误代码/);
   });
 
-  it("does not add a partial warning to a complete normalized export", () => {
+  it("does not add a quality diagnostic to a complete normalized export", () => {
     expect(buildDmpReportCsv(report(true), "complete")).not.toContain("数据完整性提示");
   });
 });

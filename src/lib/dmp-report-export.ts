@@ -2,7 +2,6 @@ import "server-only";
 import ExcelJS from "exceljs";
 import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
 import { normalizeDmpCanonicalReportForUse } from "@/lib/dmp-report-import";
-import { assessDmpEffectiveReportQuality } from "@/lib/dmp-report-quality";
 import type { DmpCanonicalReport, DmpReportQuality } from "@/lib/dmp-report-types";
 
 export async function buildDmpReportWorkbook(
@@ -16,14 +15,7 @@ export async function buildDmpReportWorkbook(
 
   prepared.tables.forEach((table, index) => {
     const worksheet = workbook.addWorksheet(sheetName(table.name, index));
-    const showQualityNotice = index === 0 && prepared.quality.effectiveQuality === "partial";
-    if (showQualityNotice) {
-      const notice = worksheet.addRow(["数据完整性提示", prepared.quality.notice]);
-      notice.font = { bold: true, color: { argb: "FF6F4F0F" } };
-      notice.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3CD" } };
-      worksheet.addRow([]);
-    }
-    const headerRow = showQualityNotice ? 3 : 1;
+    const headerRow = 1;
     worksheet.views = [{ state: "frozen", ySplit: headerRow }];
     const header = worksheet.addRow(table.columns);
     header.font = { bold: true, color: { argb: "FFFFFFFF" } };
@@ -54,9 +46,6 @@ export function buildDmpReportCsv(
 ) {
   const lines: string[] = [];
   const prepared = normalizedReport(report, declaredQuality);
-  if (prepared.quality.effectiveQuality === "partial") {
-    lines.push(csvLine(["数据完整性提示", prepared.quality.notice]), "");
-  }
   prepared.tables.forEach((table, index) => {
     if (index) lines.push("");
     lines.push(csvLine([table.name]));
@@ -69,16 +58,14 @@ export function buildDmpReportCsv(
 }
 
 function normalizedReport(report: DmpCanonicalReport, declaredQuality: DmpReportQuality) {
+  void declaredQuality;
   const normalized = normalizeDmpCanonicalReportForUse(report);
   const tables = normalized?.tables ?? report.tables.map((table) => ({
     name: table.name,
     columns: table.columns,
     rows: table.rows.map((row) => [...row.cells])
   }));
-  return {
-    tables,
-    quality: assessDmpEffectiveReportQuality(report, declaredQuality, normalized)
-  };
+  return { tables };
 }
 
 function sheetName(value: string, index: number) {

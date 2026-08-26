@@ -96,11 +96,8 @@ export function DmpGrowthReportViewer({
       </div>
 
       <main className={styles.main}>
-        {model.quality.effectiveQuality === "partial"
-          ? <PartialQualityBanner model={model} recordId={record.id} variant={variant} />
-          : null}
         {model.tables.map((table, index) => table.name === "报告总览" && model.kind === "growth"
-          ? <GrowthOverview key={table.name} model={model} table={table} tableByName={tableByName} />
+          ? <GrowthOverview key={table.name} model={model} tableByName={tableByName} />
           : <ReportTableSection key={`${table.name}-${index}`} table={table} index={index} kind={model.kind} tableByName={tableByName} />)}
       </main>
 
@@ -109,39 +106,11 @@ export function DmpGrowthReportViewer({
   );
 }
 
-function PartialQualityBanner({
-  model,
-  recordId,
-  variant
-}: {
-  model: DmpGrowthReportViewModel;
-  recordId: string;
-  variant: "preview" | "shared";
-}) {
-  return (
-    <aside className={styles.qualityBanner} data-report-quality="partial" role="status">
-      <div>
-        <strong>部分数据报告</strong>
-        <p>{model.quality.notice}</p>
-      </div>
-      {variant === "preview" ? (
-        <a
-          className={styles.qualityAction}
-          data-report-supplement
-          href={`/tools/dmp-report?source=dmp-extension&retryReportId=${encodeURIComponent(recordId)}`}
-        >继续补采</a>
-      ) : <span className={styles.qualityOwnerHint}>可由报告创建者继续补采</span>}
-    </aside>
-  );
-}
-
 function GrowthOverview({
   model,
-  table,
   tableByName
 }: {
   model: DmpGrowthReportViewModel;
-  table: DmpViewerTable;
   tableByName: Map<string, DmpViewerTable>;
 }) {
   const daily = tableByName.get("日GMV与费比");
@@ -149,7 +118,6 @@ function GrowthOverview({
   const channels = tableByName.get("渠道花费");
   const dailyChart = daily ? <DailyGmvChart table={daily} periodTable={period} /> : null;
   const channelChart = channels ? <ChannelSpendChart table={channels} /> : null;
-  const notices = table.rows.filter((row) => /^(?:数据说明|花费覆盖|取数时段提示)$/.test(String(row[0] ?? "")));
 
   return (
     <section
@@ -159,7 +127,6 @@ function GrowthOverview({
       data-track-section="summary"
     >
       <SectionHeading number="01" name="报告总览" total={model.periodLabel || "业务周期"} />
-      {table.subtitle ? <p className={styles.sectionNote}>{table.subtitle}</p> : null}
       <div className={styles.productGrid}>
         <ProductCard product={model.subject} role="subject" />
         <ProductCard product={model.competitor} role="competitor" />
@@ -179,7 +146,6 @@ function GrowthOverview({
                   <strong>{formatViewerCell(metric.competitor, metric.label)}</strong>
                 </span>
               </div>
-              {!isMissing(metric.scope) ? <small className={styles.metricScope} data-overview-scope>{String(metric.scope)}</small> : null}
             </article>
           ))}
         </div>
@@ -188,18 +154,6 @@ function GrowthOverview({
         <span>分析周期</span>
         <strong>{model.startDate || "—"} 至 {model.endDate || "—"}</strong>
       </div>
-      {notices.length ? (
-        <ul className={styles.dataNotice}>
-          {notices.map((row, index) => (
-            <li key={`${String(row[0])}-${index}`}>
-              <strong>{String(row[0])}</strong>
-              {row.slice(1).filter((cell) => !isMissing(cell)).map((cell, cellIndex) => (
-                <span key={`${index}-${cellIndex}`}>{String(cell)}</span>
-              ))}
-            </li>
-          ))}
-        </ul>
-      ) : null}
       {dailyChart || channelChart ? (
         <>
           <h3 className={styles.subheading}>数据趋势与结构</h3>
@@ -281,7 +235,6 @@ function ReportTableSection({
       data-track-section={`table:${table.name}`}
     >
       <SectionHeading number={String(index + 1).padStart(2, "0")} name={table.name} total={`${table.rows.length} 行`} />
-      {table.subtitle ? <p className={styles.sectionNote}>{table.subtitle}</p> : null}
       {dailyPrelude}
       <div className={styles.tableTools}>
         <label>
