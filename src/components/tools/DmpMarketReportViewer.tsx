@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { DmpBusinessReportRecord } from "@/lib/dmp-report-types";
 import {
   buildDmpMarketTrackMatrix,
+  dmpMarketIndependentTrackTables,
   dmpMarketTrackPeriodOptions,
   dmpMarketTrackHeatOpacity,
   dmpMarketCategoryLabel,
@@ -51,6 +52,10 @@ export function DmpMarketReportViewer({
     [mode, model, periodKeys]
   );
   const kpis = useMemo(() => marketKpiMetrics(selected.tables), [selected.tables]);
+  const independentTrackTables = useMemo(
+    () => dmpMarketIndependentTrackTables(model, selected.tables),
+    [model, selected.tables]
+  );
   const periodLabel = selected.selected?.label || model.period;
   const scopePath = dmpMarketCategoryLabel(model.scope, record.subjectItemId);
 
@@ -131,7 +136,16 @@ export function DmpMarketReportViewer({
           />
         ))}
 
-        {!kpis.length && !selected.tables.length ? (
+        {independentTrackTables.map((table, offset) => (
+          <DmpMarketTableSection
+            table={table}
+            tableIndex={selected.tables.length + offset}
+            periodLabel="赛道独立周期"
+            key={`independent-${table.name}-${offset}`}
+          />
+        ))}
+
+        {!kpis.length && !selected.tables.length && !independentTrackTables.length ? (
           <section className={styles.emptyState} role="status" data-testid="dmp-market-empty-state">
             <strong>暂无业务数据</strong>
             <span>{periodLabel || "所选日期"} 没有可展示的达摩盘业务数据</span>

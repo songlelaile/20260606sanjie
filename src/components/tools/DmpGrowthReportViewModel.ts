@@ -2,6 +2,7 @@ import { normalizeDmpCanonicalReportForUse, type DmpCell, type DmpReportTable } 
 import { isDmpIntervalCell } from "@/lib/dmp-report-format";
 import {
   DMP_GROWTH_OVERVIEW_METRICS,
+  DMP_GROWTH_METRIC_ALIASES,
   dmpMetricCellIsDisclosed,
   sanitizeDmpRenderHttpsUrl,
   sanitizeDmpRenderImageUrl,
@@ -99,7 +100,8 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
     columns: [...table.columns],
     rows: table.rows.map((row) => [...row.cells])
   }));
-  const projected = rawTables.map((table) => projectGrowthTable(table)).map(sanitizeViewerTable).filter(Boolean) as DmpViewerTable[];
+  const promotedTables = promoteClosedSubjectSceneMetrics(rawTables);
+  const projected = promotedTables.map((table) => projectGrowthTable(table)).map(sanitizeViewerTable).filter(Boolean) as DmpViewerTable[];
   const withBusinessData = projected.filter(tableHasBusinessData);
   const byName = new Map(projected.map((table) => [table.name, table]));
   const subjectId = String(record.subjectItemId || report?.item.id || record.report.item_id || "");
@@ -139,6 +141,182 @@ export function projectDmpReportForViewer(record: DmpBusinessReportRecord): DmpG
       subtitle: table.subtitle || growthSubtitle(table.name, startDate, endDate, subjectId, competitorId, days)
     }))
   };
+}
+
+/**
+ * 兼容已归档的稀疏场景报告：只在同一份报告的主体一级场景精确闭合到
+ * 100% 时补齐展示层指标。全空场景保持空白；不读取其它报告、周期或对象。
+ */
+export function promoteClosedSubjectSceneMetrics(source: DmpViewerTable[]) {
+  const tables = source.map((table) => ({ ...table, rows: table.rows.map((row) => [...row]) }));
+  const byName = new Map(tables.map((table) => [table.name, table]));
+  const scene = byName.get("一级场景");
+  if (!scene) return tables;
+  const roleIndex = columnByAliases(scene, ["对象", "角色"]);
+  const nameIndex = columnByAliases(scene, ["一级场景", "渠道", "场景"]);
+  const chargeIndex = columnByAliases(scene, ["消耗", "花费"]);
+  const ratioIndex = columnByAliases(scene, ["消耗占比", "花费占比"]);
+  const directIndex = columnByAliases(scene, ["直接成交金额", "直接成交额"]);
+  const businessIndexes = [
+    chargeIndex, ratioIndex,
+    columnByAliases(scene, ["分配后消耗"]),
+    columnByAliases(scene, ["展现"]),
+    columnByAliases(scene, ["点击"]),
+    columnByAliases(scene, ["CTR"]),
+    columnByAliases(scene, ["CPC"]),
+    directIndex,
+    columnByAliases(scene, ["直接ROI"])
+  ].filter((index) => index >= 0);
+  if (roleIndex < 0 || chargeIndex < 0 || ratioIndex < 0 || !businessIndexes.length) return tables;
+
+  const activeRows = scene.rows.filter((row) => /^主体/.test(String(row[roleIndex] ?? ""))
+    && businessIndexes.some((index) => dmpMetricCellIsDisclosed(row[index])));
+  if (!activeRows.length) return tables;
+  const charges = activeRows.map((row) => exactViewerBusinessNumber(row[chargeIndex]));
+  const ratios = activeRows.map((row) => exactViewerRatio(row[ratioIndex]));
+  if (!charges.every((value): value is number => value !== null && value >= 0)
+    || !ratios.every((value): value is number => value !== null)) return tables;
+  const ratioSum = ratios.reduce((sum, value) => sum + value, 0);
+  if (Math.abs(ratioSum - 1) > 0.000001) return tables;
+  const spend = roundViewer(charges.reduce((sum, value) => sum + value, 0), 2);
+  if (!(spend > 0) || !charges.every((charge, index) => Math.abs(charge / spend - ratios[index]) <= 0.00005)) return tables;
+
+  const totalGmv = exactSubjectMetric(tables, DMP_GROWTH_METRIC_ALIASES.totalGmv);
+  const marketingClicks = exactSubjectMetric(tables, DMP_GROWTH_METRIC_ALIASES.marketingClicks);
+  const directValues = directIndex >= 0
+    ? activeRows.map((row) => exactViewerBusinessNumber(row[directIndex]))
+    : [];
+  const paidGmv = directValues.length === activeRows.length
+    && directValues.every((value): value is number => value !== null && value >= 0)
+    ? roundViewer(directValues.reduce((sum, value) => sum + value, 0), 2)
+    : null;
+  const values: Partial<Record<keyof typeof DMP_GROWTH_METRIC_ALIASES, number>> = {
+    spend,
+    ...(totalGmv !== null && totalGmv > 0 ? {
+      feeRatio: roundViewer(spend / totalGmv, 6),
+      roas: roundViewer(totalGmv / spend, 4)
+    } : {}),
+    ...(marketingClicks !== null && marketingClicks > 0 ? { ppc: roundViewer(spend / marketingClicks, 2) } : {}),
+    ...(paidGmv !== null ? {
+      paidGmv,
+      roi: roundViewer(paidGmv / spend, 2),
+      ...(totalGmv !== null && totalGmv > 0 ? { paidShare: roundViewer(paidGmv / totalGmv, 6) } : {})
+    } : {})
+  };
+
+  patchSubjectMetricTables(tables, values);
+  patchSubjectChannelRows(byName.get("渠道花费"), activeRows, scene, nameIndex, charges, ratios, spend);
+  return tables;
+}
+
+function exactSubjectMetric(tables: DmpViewerTable[], aliases: readonly string[]) {
+  const byName = new Map(tables.map((table) => [table.name, table]));
+  const candidates = [
+    overviewMetricPair(byName.get("报告总览"), aliases).subject,
+    periodMetricPair(byName.get("周期汇总"), aliases).subject,
+    comparisonMetricPair(byName.get("对标总表"), aliases, {
+      metric: ["对标指标", "指标"], subject: ["主体周期值", "主体值"], competitor: ["对手周期值", "对手值"]
+    }).subject,
+    comparisonMetricPair(byName.get("基础指标对比"), aliases, {
+      metric: ["指标", "对标指标"], subject: ["主体值", "主体周期值"], competitor: ["对手值", "对手周期值"]
+    }).subject
+  ];
+  for (const value of candidates) {
+    const numeric = exactViewerBusinessNumber(value);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+}
+
+function patchSubjectMetricTables(
+  tables: DmpViewerTable[],
+  values: Partial<Record<keyof typeof DMP_GROWTH_METRIC_ALIASES, number>>
+) {
+  for (const table of tables) {
+    if (["报告总览", "对标总表", "基础指标对比"].includes(table.name)) {
+      const metricIndex = columnByAliases(table, ["项目", "对标指标", "指标"]);
+      const subjectIndex = columnByAliases(table, ["主体", "主体值", "主体周期值", "本品", "本品值"]);
+      if (metricIndex < 0 || subjectIndex < 0) continue;
+      for (const [key, value] of Object.entries(values)) {
+        if (value === undefined) continue;
+        const aliases = DMP_GROWTH_METRIC_ALIASES[key as keyof typeof DMP_GROWTH_METRIC_ALIASES];
+        const accepted = new Set(aliases.map(normalizeMetricLabel));
+        const row = table.rows.find((candidate) => accepted.has(normalizeMetricLabel(candidate[metricIndex])));
+        if (row && !dmpMetricCellIsDisclosed(row[subjectIndex])) row[subjectIndex] = value;
+      }
+      continue;
+    }
+    if (table.name !== "周期汇总") continue;
+    const roleIndex = columnByAliases(table, ["对象", "角色"]);
+    const row = roleIndex >= 0 ? table.rows.find((candidate) => /主体/.test(String(candidate[roleIndex] ?? ""))) : table.rows[0];
+    if (!row) continue;
+    for (const [key, value] of Object.entries(values)) {
+      if (value === undefined) continue;
+      const index = columnByAliases(table, DMP_GROWTH_METRIC_ALIASES[key as keyof typeof DMP_GROWTH_METRIC_ALIASES]);
+      if (index >= 0 && !dmpMetricCellIsDisclosed(row[index])) row[index] = value;
+    }
+    const averageSpendIndex = columnByAliases(table, ["日均消耗", "日均花费"]);
+    const daysIndex = columnByAliases(table, ["天数"]);
+    const days = daysIndex >= 0 ? exactViewerBusinessNumber(row[daysIndex]) : null;
+    if (averageSpendIndex >= 0 && !dmpMetricCellIsDisclosed(row[averageSpendIndex]) && days && values.spend !== undefined) {
+      row[averageSpendIndex] = roundViewer(values.spend / days, 2);
+    }
+  }
+}
+
+function patchSubjectChannelRows(
+  table: DmpViewerTable | undefined,
+  activeRows: DmpCell[][],
+  scene: DmpViewerTable,
+  nameIndex: number,
+  charges: number[],
+  ratios: number[],
+  spend: number
+) {
+  if (!table || nameIndex < 0) return;
+  const channelIndex = columnByAliases(table, ["渠道", "一级场景", "场景"]);
+  const spendIndex = table.columns.findIndex((column) => /^主体.*(?:消耗|花费)$/.test(column));
+  const shareIndex = table.columns.findIndex((column) => /^主体.*(?:占比)$/.test(column));
+  if (channelIndex < 0 || spendIndex < 0) return;
+  const byChannel = new Map(activeRows.map((row, index) => [String(row[nameIndex] ?? "").trim(), {
+    spend: charges[index], share: ratios[index]
+  }]));
+  for (const row of table.rows) {
+    const channel = String(row[channelIndex] ?? "").trim();
+    const value = byChannel.get(channel);
+    if (value) {
+      if (!dmpMetricCellIsDisclosed(row[spendIndex])) row[spendIndex] = value.spend;
+      if (shareIndex >= 0 && !dmpMetricCellIsDisclosed(row[shareIndex])) row[shareIndex] = value.share;
+    } else if (/^合计$/.test(channel)) {
+      if (!dmpMetricCellIsDisclosed(row[spendIndex])) row[spendIndex] = spend;
+      if (shareIndex >= 0 && !dmpMetricCellIsDisclosed(row[shareIndex])) row[shareIndex] = 1;
+    }
+  }
+}
+
+function exactViewerBusinessNumber(value: DmpCell): number | null {
+  if (!dmpMetricCellIsDisclosed(value)) return null;
+  let text = String(value).trim().replace(/[,，￥¥\s]/g, "");
+  if (/[~～]|以上|以下|以内/.test(text)) return null;
+  text = text.replace(/[元个次笔人件]$/, "");
+  const unit = text.match(/(亿|万|千|[wWkK])$/)?.[1] ?? "";
+  const multiplier = unit === "亿" ? 100_000_000 : /^(万|[wW])$/.test(unit) ? 10_000 : /^(千|[kK])$/.test(unit) ? 1_000 : 1;
+  const numeric = Number(unit ? text.slice(0, -unit.length) : text);
+  return Number.isFinite(numeric) ? numeric * multiplier : null;
+}
+
+function exactViewerRatio(value: DmpCell) {
+  if (!dmpMetricCellIsDisclosed(value)) return null;
+  const text = String(value).trim();
+  const numeric = exactViewerBusinessNumber(text.endsWith("%") ? text.slice(0, -1) : text);
+  if (numeric === null) return null;
+  const ratio = text.endsWith("%") ? numeric / 100 : numeric;
+  return ratio >= 0 && ratio <= 1 ? ratio : null;
+}
+
+function roundViewer(value: number, digits: number) {
+  const base = 10 ** digits;
+  return Math.round((value + Number.EPSILON) * base) / base;
 }
 
 export function sanitizeViewerTable(table: DmpViewerTable): DmpViewerTable | null {

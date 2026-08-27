@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DMP_MARKET_TIME_ZONE,
   buildDmpMarketTrackMatrix,
+  dmpMarketIndependentTrackTables,
   dmpMarketTrackPeriodOptions,
   dmpMarketTrackHeatOpacity,
   dmpMarketCategoryLabel,
@@ -420,8 +421,17 @@ describe("DMP category-market viewer", () => {
       }
     ];
 
-    const january = selectDmpMarketPeriod(projectDmpMarketReport(record), "month", "2026-01");
+    const model = projectDmpMarketReport(record);
+    const january = selectDmpMarketPeriod(model, "month", "2026-01");
     expect(january.tables.map((table) => table.name)).toEqual(["自然月汇总"]);
+    const independent = dmpMarketIndependentTrackTables(model, january.tables);
+    expect(independent.map((table) => table.name)).toEqual(["细分赛道矩阵-机身材质"]);
+    const matrix = buildDmpMarketTrackMatrix(independent[0]);
+    expect(matrix).toMatchObject({
+      currentLabel: "2026-07-01 至 2026-07-31",
+      propertyName: "机身材质"
+    });
+    expect(marketKpiMetrics(january.tables).map((metric) => metric.label)).not.toContain("蓝海指数");
   });
 
   it("merges compact track fragments before pairing the current and previous periods", () => {

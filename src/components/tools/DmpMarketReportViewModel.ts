@@ -266,6 +266,19 @@ export function selectDmpMarketPeriod(
   return { selected, tables };
 }
 
+/**
+ * 赛道矩阵是独立的周/月对比业务周期。它与顶部所选类目周期无交集时，
+ * 仍按自身明确起止日期单独展示，但绝不进入所选周期的 KPI 或类目表。
+ */
+export function dmpMarketIndependentTrackTables(
+  model: DmpMarketReportViewModel,
+  selectedTables: DmpMarketViewerTable[]
+) {
+  const selectedNames = new Set(selectedTables.map((table) => table.name));
+  return model.tables.filter((table) =>
+    isDmpMarketTrackComparisonTable(table) && !selectedNames.has(table.name));
+}
+
 export function marketKpiMetrics(tables: DmpMarketViewerTable[]): DmpMarketKpiMetric[] {
   const candidates: Array<DmpMarketKpiMetric & { priority: number; sourceRank: number }> = [];
   for (const table of tables) {

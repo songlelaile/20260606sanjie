@@ -1449,20 +1449,65 @@
     return Math.max(0.05, Math.abs(base) * 0.000001);
   }
 
+  const SCENE_CLOSURE_FIELDS = Object.freeze([
+    "charge", "ratio", "impression", "click", "ctr", "cpc", "directDealAmount", "directRoi"
+  ]);
+
+  // 达摩盘会把未投放的同级场景返回为空，而不是显式 0。只有实际披露的场景
+  // 同时给出精确花费、精确占比，占比闭合到 100%，且花费份额与占比一致时，
+  // 才能把这些稀疏行合成周期总花费。空兄弟行被保留为空；任何有业务活动但
+  // 缺花费/占比的行都会进入闭合校验并使聚合失败，绝不把缺失当作 0。
+  function closedSceneAllocation(rows, valueFor = (row, key) => row?.[key], expectedTotal = null) {
+    const disclosedRows = (rows || []).filter(row => SCENE_CLOSURE_FIELDS
+      .some(key => isDisclosedMetric(valueFor(row, key))));
+    if (!disclosedRows.length) return { complete: false, spend: null, rows: [] };
+    const charges = disclosedRows.map(row => numberOrNull(valueFor(row, "charge")));
+    const ratios = disclosedRows.map(row => ratioOrNull(valueFor(row, "ratio")));
+    if (!charges.every(value => Number.isFinite(value) && value >= 0) || !ratios.every(Number.isFinite)) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const expected = numberOrNull(expectedTotal);
+    if (charges.every(value => value === 0) && ratios.every(value => value === 0)) {
+      return expected == null || expected === 0
+        ? { complete: true, spend: 0, rows: disclosedRows }
+        : { complete: false, spend: null, rows: disclosedRows };
+    }
+    const ratioSum = ratios.reduce((sum, value) => sum + value, 0);
+    if (Math.abs(ratioSum - 1) > 0.000001) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const summedSpend = round(charges.reduce((sum, value) => sum + value, 0));
+    const total = expected ?? summedSpend;
+    if (!(total > 0) || Math.abs(summedSpend - total) > allocationTolerance(total)) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const sharesAlign = charges.every((charge, index) => Math.abs(charge / total - ratios[index]) <= 0.00005);
+    return sharesAlign
+      ? { complete: true, spend: round(total), rows: disclosedRows }
+      : { complete: false, spend: null, rows: disclosedRows };
+  }
+
+  function rawSceneAllocation(rows, side) {
+    return closedSceneAllocation(rows, (row, key) => sceneMetric(row, key === "ratio" ? "chargeRatio" : key, side));
+  }
+
   function buildSceneRows(responses, totalSpends = {}) {
     const level1Response = responses.find(response => response.level === 1) || null;
     const parentNames = new Map((level1Response?.rows || []).map(row => [String(row.sceneId || ""), row.sceneName]));
-    const subjectLevel1Charges = (level1Response?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "subject")));
-    const sceneSubjectSpend = subjectLevel1Charges.length && subjectLevel1Charges.every(Number.isFinite)
-      ? round(subjectLevel1Charges.reduce((sum, value) => sum + value, 0))
-      : null;
+    const subjectSceneAllocation = rawSceneAllocation(level1Response?.rows || [], "subject");
+    const competitorSceneAllocation = rawSceneAllocation(level1Response?.rows || [], "competitor");
+    const sceneSubjectSpend = subjectSceneAllocation.spend;
     const passed = typeof totalSpends === "number" ? { competitor: totalSpends } : (totalSpends || {});
     const totals = {
       subject: numberOrNull(passed.subject) ?? sceneSubjectSpend,
       competitor: numberOrNull(passed.competitor)
     };
     const parentSpend = new Map();
-    const result = { level1: [], level2: [], validationIssues: [], allocationTotals: { ...totals } };
+    const result = {
+      level1: [], level2: [], validationIssues: [], allocationTotals: { ...totals },
+      exactSceneSpend: { subject: subjectSceneAllocation.spend, competitor: competitorSceneAllocation.spend },
+      closedSceneRows: { subject: [], competitor: [] }
+    };
 
     function buildRow(response, row, side) {
       const role = side === "subject" ? "主体" : "对手";
@@ -1531,6 +1576,16 @@
     };
     appendPairs(responses.filter(value => value.level === 1), result.level1);
     appendPairs(responses.filter(value => value.level === 2), result.level2);
+    for (const side of ["subject", "competitor"]) {
+      const role = side === "subject" ? "主体" : "对手";
+      const rows = result.level1.filter(row => row.role === role);
+      const closure = closedSceneAllocation(
+        rows,
+        (row, key) => key === "charge" ? row.allocated : row[key],
+        totals[side]
+      );
+      result.closedSceneRows[side] = closure.complete ? closure.rows : [];
+    }
     const closureGroups = new Map();
     for (const row of [...result.level1, ...result.level2]) {
       const key = row.level === 1 ? `${row.role}|1` : `${row.role}|2|${row.parentSceneId}`;
@@ -1596,7 +1651,7 @@
       const coverage = spendCoverageBySide[side];
       let spendScope = isDisclosedMetric(metrics[side].spend) ? "strict-period" : "missing";
       if (!isDisclosedMetric(metrics[side].spend)) {
-        const sceneSpend = sumFinite(level1BySide[side].map(row => numberOrNull(row.charge)));
+        const sceneSpend = numberOrNull(sceneRows.exactSceneSpend?.[side]);
         if (Number.isFinite(sceneSpend)) {
           metrics[side].spend = sceneSpend;
           spendScope = "scene-exact";
@@ -1622,8 +1677,14 @@
       }
       metrics[side].expectedContext = expectedContext;
     }
-    metrics.subject.paidGmv = metrics.subject.paidGmv ?? sumMetricRanges(subjectLevel1.map(row => row.directDealAmount));
-    metrics.competitor.paidGmv = metrics.competitor.paidGmv ?? sumMetricRanges(competitorLevel1.map(row => row.directDealAmount));
+    for (const side of ["subject", "competitor"]) {
+      const metricRows = side === "subject"
+        ? (sceneRows.closedSceneRows?.subject || [])
+        : competitorLevel1;
+      if (!isDisclosedMetric(metrics[side].paidGmv) && metricRows.length) {
+        metrics[side].paidGmv = sumMetricRanges(metricRows.map(row => row.directDealAmount));
+      }
+    }
     metrics.subject.attributedGmv = metrics.subject.paidGmv;
     metrics.competitor.attributedGmv = metrics.competitor.paidGmv;
     for (const side of ["subject", "competitor"]) {
@@ -1632,7 +1693,12 @@
       const expectedContext = expectedContextBySide[side];
       const valueContexts = metrics[side].valueContexts;
       if (!isDisclosedMetric(metrics[side].marketingClicks)) {
-        metrics[side].marketingClicks = sumMetricRanges(values.map(row => row.click));
+        const metricRows = side === "subject"
+          ? (sceneRows.closedSceneRows?.subject || [])
+          : competitorLevel1;
+        metrics[side].marketingClicks = metricRows.length
+          ? sumMetricRanges(metricRows.map(row => row.click))
+          : null;
         if (isDisclosedMetric(metrics[side].marketingClicks)) valueContexts.marketingClicks = expectedContext;
       }
       if (isDisclosedMetric(metrics[side].paidGmv) && !valueContexts.paidGmv) valueContexts.paidGmv = expectedContext;
@@ -1666,7 +1732,8 @@
         metrics[side].keywordShare = apiKeywordShare;
         metrics[side].keywordShareSource = Number.isFinite(apiKeywordShare) ? "api-ratio" : "missing";
       }
-      const ratios = values.map(row => numberOrNull(row.ratio));
+      const hhiRows = sceneRows.closedSceneRows?.[side] || [];
+      const ratios = hhiRows.map(row => numberOrNull(row.ratio));
       const sum = ratios.reduce((total, value) => total + value, 0);
       metrics[side].channelHhi = ratios.length && ratios.every(Number.isFinite) && Math.abs(sum - 1) <= 0.01 ? round(ratios.reduce((total, value) => total + value ** 2, 0), 6) : null;
       metrics[side].valueConflicts = metrics[side].valueConflicts || {};
@@ -1736,7 +1803,7 @@
     if (!rows.length || !rows.some(hasData)) {
       return ["主体推广消耗大于0，但主体一级推广场景数据为空"];
     }
-    const missingAllocation = rows.filter(row => !Number.isFinite(numberOrNull(row.allocated)));
+    const missingAllocation = rows.filter(hasData).filter(row => !Number.isFinite(numberOrNull(row.allocated)));
     if (!missingAllocation.length) return [];
     const names = missingAllocation.map(row => row.primary || `场景${row.sceneId || "未知"}`);
     return [`主体推广消耗大于0，但主体一级推广场景有 ${missingAllocation.length} 项花费/占比未能分配：${names.join("、")}`];
@@ -1954,8 +2021,8 @@
     if (missingParents.length) blockingIssues.push(`缺少 ${missingParents.length} 个一级场景的二级明细响应：${missingParents.join("、")}`);
     const exactSubjectSpend = numberOrNull(metrics.subject.spend);
     const exactCompetitorSpend = numberOrNull(metrics.competitor.spend);
-    const sceneSubjectSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "subject"))));
-    const sceneCompetitorSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "competitor"))));
+    const sceneSubjectSpend = rawSceneAllocation(level1?.rows || [], "subject").spend;
+    const sceneCompetitorSpend = rawSceneAllocation(level1?.rows || [], "competitor").spend;
     // 场景响应是请求完整周期口径；日消耗只覆盖 29/30 或 28/30 日时可以作为
     // partial 汇总展示，却不能乘完整周期场景占比。只有日覆盖完整时才可充当
     // 场景分配基数，避免跨覆盖天数混算。
