@@ -20,7 +20,7 @@ const TUTORIAL_TRACKS = [
   {
     no: "01",
     title: "安装与更新",
-    description: "浏览器插件安装、登录解锁、版本更新与常见问题。"
+    description: "浏览器插件安装、登录解锁、模型 API 配置、版本更新与常见问题。"
   },
   {
     no: "02",
@@ -45,7 +45,15 @@ const TUTORIAL_TRACKS = [
 ] as const;
 
 export default function ToolTutorialsPage() {
+  const tutorialCount = TOOL_TUTORIALS.length;
   const hasPublishedTutorial = TOOL_TUTORIALS.length > 0;
+  const tutorialCountByTrack = TOOL_TUTORIALS.reduce<Record<string, number>>(
+    (counts, tutorial) => {
+      counts[tutorial.trackNo] = (counts[tutorial.trackNo] ?? 0) + 1;
+      return counts;
+    },
+    {}
+  );
 
   return (
     <>
@@ -61,7 +69,7 @@ export default function ToolTutorialsPage() {
         <div className="tool-tutorial-hero-copy">
           <span className="tool-tutorial-status">
             <Sparkles size={15} />
-            {hasPublishedTutorial ? "首期教程已上线" : "视频地址待配置"}
+            {hasPublishedTutorial ? `${tutorialCount} 条教程已上线` : "视频地址待配置"}
           </span>
           <h2>跟着真实任务，边看边完成</h2>
           <p>
@@ -75,7 +83,7 @@ export default function ToolTutorialsPage() {
         <div className="tool-tutorial-hero-mark" aria-hidden="true">
           <span><CirclePlay size={52} /></span>
           <strong>视频教程</strong>
-          <small>{hasPublishedTutorial ? "04:04 · 2026-08-27" : "配置正式地址后展示"}</small>
+          <small>{hasPublishedTutorial ? `${tutorialCount} 条教程 · 持续更新` : "配置正式地址后展示"}</small>
         </div>
       </section>
 
@@ -89,20 +97,24 @@ export default function ToolTutorialsPage() {
         </header>
 
         <div className="tool-tutorial-track-grid">
-          {TUTORIAL_TRACKS.map((track) => (
-            <article key={track.no} className="tool-tutorial-track">
-              <span>{track.no}</span>
-              <div>
-                <strong>{track.title}</strong>
-                <p>{track.description}</p>
-              </div>
-              <small>
-                {track.no === "02" && hasPublishedTutorial
-                  ? "已上线 1 条"
-                  : "持续更新"}
-              </small>
-            </article>
-          ))}
+          {TUTORIAL_TRACKS.map((track) => {
+            const trackTutorialCount = tutorialCountByTrack[track.no] ?? 0;
+
+            return (
+              <article key={track.no} className="tool-tutorial-track">
+                <span>{track.no}</span>
+                <div>
+                  <strong>{track.title}</strong>
+                  <p>{track.description}</p>
+                </div>
+                <small>
+                  {trackTutorialCount > 0
+                    ? `已上线 ${trackTutorialCount} 条`
+                    : "持续更新"}
+                </small>
+              </article>
+            );
+          })}
         </div>
       </section>
 
@@ -113,7 +125,7 @@ export default function ToolTutorialsPage() {
               <span>VIDEO LIBRARY</span>
               <h2 id="tutorial-library-title">最新视频教程</h2>
             </div>
-            <small>{TOOL_TUTORIALS.length} 条教程</small>
+            <small>{tutorialCount} 条教程</small>
           </header>
           <div className="tool-tutorial-video-grid">
             {TOOL_TUTORIALS.map((tutorial) => (

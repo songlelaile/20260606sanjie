@@ -38,7 +38,23 @@ describe("tool tutorial route contract", () => {
     expect(tutorialsPageSource).toContain("playsInline");
     expect(tutorialConfigSource).toContain("NEXT_PUBLIC_TUTORIAL_VIDEO_URL");
     expect(tutorialConfigSource).toContain("POSTER_URL");
+    expect(tutorialConfigSource).toContain(
+      "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_VIDEO_URL"
+    );
+    expect(tutorialConfigSource).toContain(
+      "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_POSTER_URL"
+    );
     expect(tutorialConfigSource).toContain("if (!videoSrc) return [];");
+  });
+
+  it("derives navigation and learning-path counts from published tutorials", () => {
+    expect(subnavSource).toContain("TOOL_TUTORIALS.length");
+    expect(subnavSource).not.toContain('badge: "1 条教程"');
+    expect(tutorialsPageSource).toContain("tutorialCountByTrack");
+    expect(tutorialsPageSource).toContain("tutorial.trackNo");
+    expect(tutorialsPageSource).toContain("trackTutorialCount");
+    expect(tutorialsPageSource).not.toContain('"已上线 1 条"');
+    expect(tutorialsPageSource).not.toContain('"04:04 · 2026-08-27"');
   });
 
   it("keeps the player at 3:2 and contains the complete video frame", () => {

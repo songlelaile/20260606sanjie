@@ -1,5 +1,6 @@
 import { CirclePlay, LayoutGrid } from "lucide-react";
 import Link from "next/link";
+import { TOOL_TUTORIALS } from "@/lib/tool-tutorials";
 
 const ITEMS = [
   {
@@ -14,7 +15,7 @@ const ITEMS = [
     href: "/tools/tutorials",
     label: "视频教程",
     description: "按真实任务一步步上手",
-    badge: "1 条教程",
+    badge: `${TOOL_TUTORIALS.length} 条教程`,
     icon: CirclePlay
   }
 ] as const;

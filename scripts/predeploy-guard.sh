@@ -66,6 +66,7 @@ for file in \
   src/app/tools/tutorials/page.tsx \
   src/components/tools/ToolsSubnav.tsx \
   src/lib/tool-tutorials.ts \
+  .env.example \
   src/app/tools/dmp-report/page.tsx \
   src/app/api/dmp-market-reports/route.ts \
   src/app/api/dmp-reports/route.ts \
@@ -149,10 +150,25 @@ require_fixed '<ToolsSubnav active="tutorials" />' src/app/tools/tutorials/page.
 require_fixed "TOOL_TUTORIALS.length > 0" src/app/tools/tutorials/page.tsx "视频教程页缺少正式视频门禁"
 require_fixed "NEXT_PUBLIC_TUTORIAL_VIDEO_URL" src/lib/tool-tutorials.ts "视频教程缺少正式视频环境变量"
 require_fixed "POSTER_URL" src/lib/tool-tutorials.ts "视频教程缺少封面环境变量"
-require_fixed "if (!videoSrc) return [];" src/lib/tool-tutorials.ts "未配置视频地址时仍可能展示伪视频"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_VIDEO_URL" src/lib/tool-tutorials.ts "豆包 API 教程缺少正式视频环境变量"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_POSTER_URL" src/lib/tool-tutorials.ts "豆包 API 教程缺少封面环境变量"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_VIDEO_URL" .env.example "环境变量示例缺少豆包 API 教程视频地址"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_POSTER_URL" .env.example "环境变量示例缺少豆包 API 教程封面地址"
+require_fixed "flatMap<ToolTutorial>" src/lib/tool-tutorials.ts "视频教程未逐条执行独立环境校验"
+require_fixed "if (!videoSrc) return [];" src/lib/tool-tutorials.ts "未配置单条视频地址时仍可能展示伪视频"
 require_fixed 'title: "少壮AI自动化教程"' src/lib/tool-tutorials.ts "视频教程标题不一致"
+require_fixed 'trackNo: "02"' src/lib/tool-tutorials.ts "少壮 AI 自动化教程学习路径不一致"
 require_fixed 'duration: "04:04"' src/lib/tool-tutorials.ts "视频教程时长不一致"
+require_fixed 'slug: "configure-doubao-api"' src/lib/tool-tutorials.ts "豆包 API 教程路径标识不一致"
+require_fixed 'trackNo: "01"' src/lib/tool-tutorials.ts "豆包 API 教程学习路径不一致"
+require_fixed 'title: "配置豆包API"' src/lib/tool-tutorials.ts "豆包 API 教程标题不一致"
+require_fixed 'category: "模型配置"' src/lib/tool-tutorials.ts "豆包 API 教程分类不一致"
+require_fixed 'duration: "04:25"' src/lib/tool-tutorials.ts "豆包 API 教程时长不一致"
 require_fixed 'publishedAt: "2026-08-27"' src/lib/tool-tutorials.ts "视频教程发布日期不一致"
+require_fixed "TOOL_TUTORIALS.length" src/components/tools/ToolsSubnav.tsx "AI 工具二级导航教程数量不是动态统计"
+require_fixed "tutorialCountByTrack" src/app/tools/tutorials/page.tsx "视频教程学习路径数量不是动态统计"
+forbid_fixed 'badge: "1 条教程"' src/components/tools/ToolsSubnav.tsx "AI 工具二级导航仍硬编码一条教程"
+forbid_fixed '"已上线 1 条"' src/app/tools/tutorials/page.tsx "视频教程路径仍硬编码一条教程"
 require_fixed "aspect-ratio: 3 / 2;" src/app/globals.css "视频播放器不是 3:2 比例"
 require_fixed "object-fit: contain;" src/app/globals.css "视频播放器未完整容纳画面"
 
