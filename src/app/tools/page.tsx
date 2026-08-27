@@ -12,6 +12,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { PageHeader } from "@/components/PageHeader";
 import { CopyAddress } from "@/components/tools/CopyAddress";
+import { ToolsSubnav } from "@/components/tools/ToolsSubnav";
 import {
   DMP_AUTOMATION_DOWNLOAD_NAME,
   DMP_AUTOMATION_NAME,
@@ -196,6 +197,8 @@ export default async function ToolsPage() {
         title="AI 自动化工具"
         description="围绕电商增长，把市场机会、商品策略、视觉生产与经营复盘连接成一套可持续使用的 AI 工作台。"
       />
+
+      <ToolsSubnav active="overview" />
 
       <section className="tool-card dmp-tool-card">
         <header className="tool-card-head">

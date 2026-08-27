@@ -63,6 +63,9 @@ for file in \
   src/middleware.ts \
   prisma/schema.prisma \
   src/app/tools/page.tsx \
+  src/app/tools/tutorials/page.tsx \
+  src/components/tools/ToolsSubnav.tsx \
+  src/lib/tool-tutorials.ts \
   src/app/tools/dmp-report/page.tsx \
   src/app/api/dmp-market-reports/route.ts \
   src/app/api/dmp-reports/route.ts \
@@ -138,6 +141,20 @@ require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录�
 require_fixed 'pathname.startsWith("/api/auth/")' src/middleware.ts "中间件缺少认证接口公开规则"
 forbid_fixed 'pathname === "/tools"' src/middleware.ts "工具页被错误加入未登录公开白名单"
 require_fixed "downloads/" src/middleware.ts "插件下载目录未从鉴权中间件排除"
+
+# 教程专区必须沿用工具页登录保护，只在配置正式视频地址后生成播放器。
+require_fixed '<ToolsSubnav active="overview" />' src/app/tools/page.tsx "AI 工具页缺少视频教程二级导航"
+require_fixed 'href: "/tools/tutorials"' src/components/tools/ToolsSubnav.tsx "AI 工具二级导航缺少教程入口"
+require_fixed '<ToolsSubnav active="tutorials" />' src/app/tools/tutorials/page.tsx "视频教程页缺少当前导航状态"
+require_fixed "TOOL_TUTORIALS.length > 0" src/app/tools/tutorials/page.tsx "视频教程页缺少正式视频门禁"
+require_fixed "NEXT_PUBLIC_TUTORIAL_VIDEO_URL" src/lib/tool-tutorials.ts "视频教程缺少正式视频环境变量"
+require_fixed "POSTER_URL" src/lib/tool-tutorials.ts "视频教程缺少封面环境变量"
+require_fixed "if (!videoSrc) return [];" src/lib/tool-tutorials.ts "未配置视频地址时仍可能展示伪视频"
+require_fixed 'title: "少壮AI自动化教程"' src/lib/tool-tutorials.ts "视频教程标题不一致"
+require_fixed 'duration: "04:04"' src/lib/tool-tutorials.ts "视频教程时长不一致"
+require_fixed 'publishedAt: "2026-08-27"' src/lib/tool-tutorials.ts "视频教程发布日期不一致"
+require_fixed "aspect-ratio: 3 / 2;" src/app/globals.css "视频播放器不是 3:2 比例"
+require_fixed "object-fit: contain;" src/app/globals.css "视频播放器未完整容纳画面"
 
 # 工具页版本、文件与哈希必须一致，避免页面版本和下载包串版。
 require_fixed "version: \"${EXPECTED_VERSION}\"" src/app/tools/page.tsx "工具页版本不是 v${EXPECTED_VERSION}"

@@ -80,6 +80,19 @@ describe("DMP shared report middleware", () => {
     expect(mocks.parseSession).toHaveBeenCalledOnce();
   });
 
+  it("keeps the tool tutorial route behind normal page authentication", async () => {
+    mocks.parseSession.mockResolvedValue(null);
+    const response = await middleware(
+      new NextRequest("https://shaozhuangai.com/tools/tutorials")
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "https://shaozhuangai.com/login"
+    );
+    expect(mocks.parseSession).toHaveBeenCalledOnce();
+  });
+
   it.each(["POST", "OPTIONS"])("lets the DMP export endpoint validate an extension session header for %s", async (method) => {
     mocks.parseSession.mockResolvedValue(null);
     const response = await middleware(new NextRequest(
