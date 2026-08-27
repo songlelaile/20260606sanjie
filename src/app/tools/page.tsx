@@ -31,10 +31,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.9.23",
-  zipHref: "/downloads/sycm-keyword-collector-v1.9.23.zip",
-  downloadName: "少壮AI自动化-v1.9.23.zip",
-  sizeLabel: "约 3.1 MB",
+  version: "1.9.26",
+  zipHref: "/downloads/sycm-keyword-collector-v1.9.26.zip",
+  downloadName: "少壮AI自动化-v1.9.26.zip",
+  sizeLabel: "约 3.5 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
 };
@@ -50,7 +50,7 @@ const DMP_AUTOMATION = {
 const FEATURES = [
   {
     title: "经营数据采集与市场证据",
-    desc: "从生意参谋采集关键词、相关词、市场商品榜和分日商品排行；没有生意参谋市场榜时，也可按淘宝销量采集 Top300 商品卡。持续执行广告识别、成交语义与价格边界复核，减少真实商品误过滤和证据误算。"
+    desc: "从生意参谋采集关键词、相关词和市场商品榜；没有生意参谋市场榜时，也可按淘宝销量采集 Top300 商品卡。持续执行广告识别、成交语义与价格边界复核，减少真实商品误过滤和证据误算。"
   },
   {
     title: "词根、需求与商业任务",
@@ -164,16 +164,8 @@ const USAGE_GROUPS = [
     desc: "在商品缩略图或大图预览旁点击「导入参考」，选择主图、详情、SKU 或裂变参考；插件会把当前原图、译图或除字图带到对应工作台并预填正确位置，确认提示词和参数后再由你手动发起生成。"
   },
   {
-    title: "商品排行分日下载",
-    desc: "进入 生意参谋 → 商品 → 商品排行，先关闭浏览器下载前询问；在插件「商品排行」填写起止日期后按天下载，一天一个文件，漏日可按下载清单补下。"
-  },
-  {
     title: "三阶源表回流",
-    desc: "将关键词、衍生词、词根需求、市场排行和商品排行等导出文件上传到本平台「数据导入」，即可进入三阶计算、业务诊断和看板复盘。"
-  },
-  {
-    title: "货盘 / 无界源表",
-    desc: "货盘、无界商品、无界人群属于异步源表接入口，按插件页提示进入对应后台页触发采集或下载；当前以插件内实际开放状态为准，产出的源表同样回流数据导入。"
+    desc: "将关键词、衍生词、词根需求，以及市场排行、商品榜或竞品表等已有导出文件上传到本平台「数据导入」，即可进入三阶计算、业务诊断和看板复盘。"
   }
 ];
 

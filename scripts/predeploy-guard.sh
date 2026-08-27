@@ -3,8 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
-EXPECTED_VERSION="1.9.23"
-EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
+EXPECTED_VERSION="1.9.26"
+EXPECTED_ZIP_SIZE_BYTES="3590990"
+EXPECTED_ZIP_SHA256="09d1c63bb2935fc838b25e415652c449ac1f61a146d40f55cfe1212378046fae"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
 DMP_VERSION="2.3.23"
 DMP_ZIP_SHA256="b001cb5e4087e774e6b6d62b6adcc7f64dac6e4385d21ff4818400401ef66e06"
@@ -175,10 +176,21 @@ require_fixed "object-fit: contain;" src/app/globals.css "视频播放器未完�
 # 工具页版本、文件与哈希必须一致，避免页面版本和下载包串版。
 require_fixed "version: \"${EXPECTED_VERSION}\"" src/app/tools/page.tsx "工具页版本不是 v${EXPECTED_VERSION}"
 require_fixed "sycm-keyword-collector-v${EXPECTED_VERSION}.zip" src/app/tools/page.tsx "工具页下载地址不是 v${EXPECTED_VERSION}"
+require_fixed 'sizeLabel: "约 3.5 MB"' src/app/tools/page.tsx "工具页插件包大小标识不一致"
 require_fixed "shaozhuang-ai-legacy-icon.png" src/app/tools/page.tsx "工具页未使用老板旧版 Logo"
+forbid_fixed "分日商品排行" src/app/tools/page.tsx "工具页仍宣称已移除的分日商品排行模块"
+forbid_fixed "商品排行分日下载" src/app/tools/page.tsx "工具页仍展示已移除的商品排行模块"
+forbid_fixed "货盘 / 无界源表" src/app/tools/page.tsx "工具页仍展示已移除的货盘/无界插件模块"
+forbid_fixed "插件「商品排行」" src/app/tools/page.tsx "工具页仍指导使用已移除的商品排行入口"
+forbid_fixed 'title: "商品排行"' src/app/tools/page.tsx "工具页重新出现已移除的商品排行卡片"
+forbid_fixed 'title: "货盘"' src/app/tools/page.tsx "工具页重新出现已移除的货盘卡片"
+forbid_fixed 'title: "无界商品"' src/app/tools/page.tsx "工具页重新出现已移除的无界商品卡片"
+forbid_fixed 'title: "无界人群"' src/app/tools/page.tsx "工具页重新出现已移除的无界人群卡片"
 require_file "$ZIP_PATH"
 require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 
+actual_zip_size_bytes="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
+[[ "$actual_zip_size_bytes" == "$EXPECTED_ZIP_SIZE_BYTES" ]] || fail "v${EXPECTED_VERSION} ZIP 大小不一致：${actual_zip_size_bytes} bytes"
 actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
 
