@@ -8,15 +8,28 @@ const toolsPageSource = readFileSync(
 );
 
 describe("tools page collector release contract", () => {
-  it("publishes the v1.9.26 collector package metadata", () => {
-    expect(toolsPageSource).toContain('version: "1.9.26"');
+  it("publishes the v1.9.27 collector package metadata", () => {
+    expect(toolsPageSource).toContain('version: "1.9.27"');
     expect(toolsPageSource).toContain(
-      'zipHref: "/downloads/sycm-keyword-collector-v1.9.26.zip"'
+      'zipHref: "/downloads/sycm-keyword-collector-v1.9.27.zip"'
     );
     expect(toolsPageSource).toContain(
-      'downloadName: "少壮AI自动化-v1.9.26.zip"'
+      'downloadName: "少壮AI自动化-v1.9.27.zip"'
     );
-    expect(toolsPageSource).toContain('sizeLabel: "约 3.5 MB"');
+    expect(toolsPageSource).toContain('sizeLabel: "约 3.6 MB"');
+  });
+
+  it("describes the fixed-layout SKU JPG download contract", () => {
+    for (const releaseClaim of [
+      "模型只创作无字、无商品背景",
+      "字体、字号、文字位置、整体布局和商品主体位置由浏览器固定",
+      "仅背景色、邻近渐变和轻背景氛围可变",
+      "真实 JPG",
+      "商品规格.jpg",
+      "不含 SKU 编号"
+    ]) {
+      expect(toolsPageSource).toContain(releaseClaim);
+    }
   });
 
   it("does not advertise removed collector modules", () => {

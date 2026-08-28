@@ -31,10 +31,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.9.26",
-  zipHref: "/downloads/sycm-keyword-collector-v1.9.26.zip",
-  downloadName: "少壮AI自动化-v1.9.26.zip",
-  sizeLabel: "约 3.5 MB",
+  version: "1.9.27",
+  zipHref: "/downloads/sycm-keyword-collector-v1.9.27.zip",
+  downloadName: "少壮AI自动化-v1.9.27.zip",
+  sizeLabel: "约 3.6 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
 };
@@ -85,8 +85,8 @@ const FEATURES = [
     desc: "批量查看淘宝商品主图，人工打标、分类和导出商品数据；可调用视觉与图片编辑 API 完成文字识别、翻译排版和整图除字，并把成功生图自动留存在当前账号的本机成果档案。"
   },
   {
-    title: "SKU 与爆款裂变",
-    desc: "批量 SKU 支持稳定编号、属性映射、视觉模板、并发控制、停止和失败重试；爆款裂变以参考风格和当前同款商品为双重约束，批量生成同系列差异化视觉方向。"
+    title: "SKU 摘取与固定版式批量生产",
+    desc: "支持摘取淘宝/天猫当前公开 SKU 并批量生成。模型只创作无字、无商品背景，字体、字号、文字位置、整体布局和商品主体位置由浏览器固定；仅背景色、邻近渐变和轻背景氛围可变。下载统一为真实 JPG，并按“商品规格.jpg”命名，不含 SKU 编号；同名自动追加 -2、-3。"
   },
   {
     title: "参考流转、修复与拼接",
