@@ -6,11 +6,14 @@ const mocks = vi.hoisted(() => ({
   findMany: vi.fn(),
   reportGetFindFirst: vi.fn(),
   transaction: vi.fn(),
+  executeRaw: vi.fn(),
   shopFindFirst: vi.fn(),
   shopFindMany: vi.fn(),
   reportFindFirst: vi.fn(),
+  reportTxFindMany: vi.fn(),
   reportCount: vi.fn(),
-  reportUpdateMany: vi.fn()
+  reportUpdateMany: vi.fn(),
+  reportDeleteMany: vi.fn()
 }));
 
 vi.mock("server-only", () => ({}));
@@ -111,6 +114,16 @@ function completeGrowthReport() {
     ["全域ROAS", "10.2", "10", "30日"]
   ].map((cells) => ({ cells }));
   return report;
+}
+
+function assignmentRow(id: string, shopId: string | null = "old-shop") {
+  return {
+    id,
+    shopId,
+    subjectItemId: "768239824008",
+    competitorItemId: "563697874317",
+    report: validateDmpCanonicalReport(completeGrowthReport()).report!
+  };
 }
 
 function marketReport() {
@@ -274,14 +287,20 @@ describe("DMP growth render_data storage contract", () => {
     mocks.findMany.mockReset();
     mocks.reportGetFindFirst.mockReset();
     mocks.transaction.mockReset();
+    mocks.executeRaw.mockReset();
     mocks.shopFindFirst.mockReset();
     mocks.shopFindMany.mockReset();
     mocks.reportFindFirst.mockReset();
+    mocks.reportTxFindMany.mockReset();
     mocks.reportCount.mockReset();
     mocks.reportUpdateMany.mockReset();
+    mocks.reportDeleteMany.mockReset();
     mocks.reportFindFirst.mockResolvedValue(null);
+    mocks.reportTxFindMany.mockResolvedValue([]);
+    mocks.executeRaw.mockResolvedValue(0);
     mocks.shopFindMany.mockResolvedValue([]);
     mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work({
+      $executeRaw: mocks.executeRaw,
       shop: {
         findFirst: mocks.shopFindFirst,
         findMany: mocks.shopFindMany
@@ -289,8 +308,10 @@ describe("DMP growth render_data storage contract", () => {
       dmpBusinessReport: {
         upsert: mocks.upsert,
         findFirst: mocks.reportFindFirst,
+        findMany: mocks.reportTxFindMany,
         count: mocks.reportCount,
-        updateMany: mocks.reportUpdateMany
+        updateMany: mocks.reportUpdateMany,
+        deleteMany: mocks.reportDeleteMany
       }
     }));
   });
@@ -781,6 +802,7 @@ describe("DMP growth render_data storage contract", () => {
     });
     expect(mocks.reportFindFirst).not.toHaveBeenCalled();
     expect(mocks.shopFindMany).not.toHaveBeenCalled();
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({ shopId: "shop-source" })
     }));
@@ -1031,8 +1053,8 @@ describe("DMP growth render_data storage contract", () => {
 
   it("assigns only owned reports to a tenant-scoped shop and supports returning to unassigned", async () => {
     mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
-    mocks.reportCount.mockResolvedValue(2);
-    mocks.reportUpdateMany.mockResolvedValue({ count: 2 });
+    mocks.reportTxFindMany.mockResolvedValue([assignmentRow("report-a"), assignmentRow("report-b")]);
+    mocks.reportUpdateMany.mockResolvedValue({ count: 1 });
 
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
@@ -1049,16 +1071,25 @@ describe("DMP growth render_data storage contract", () => {
     });
     expect(mocks.reportUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ tenantId: "tenant-a", userId: "user-a" }),
-      data: { shopId: "shop-a" }
+      data: { shopId: "shop-a", fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) }
     }));
+    expect(mocks.executeRaw.mock.calls.map((call) => call[1])).toEqual([
+      "dmp-report-target:tenant-a:user-a:report-a",
+      "dmp-report-target:tenant-a:user-a:report-b",
+      "dmp-report-pair:tenant-a:user-a:old-shop:768239824008:563697874317",
+      "dmp-report-pair:tenant-a:user-a:shop-a:768239824008:563697874317"
+    ]);
 
-    mocks.reportCount.mockResolvedValue(1);
+    mocks.reportTxFindMany.mockResolvedValue([assignmentRow("report-a", "shop-a")]);
+    mocks.reportUpdateMany.mockResolvedValue({ count: 1 });
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a"],
       shopId: ""
     })).resolves.toEqual({ ok: true, reportIds: ["report-a"], shop: null });
-    expect(mocks.reportUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: { shopId: null } }));
+    expect(mocks.reportUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: { shopId: null, fingerprint: null }
+    }));
   });
 
   it("rejects foreign shops and mixed-ownership report batches before updating", async () => {
@@ -1071,12 +1102,47 @@ describe("DMP growth render_data storage contract", () => {
     expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
 
     mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
-    mocks.reportCount.mockResolvedValue(1);
+    mocks.reportTxFindMany.mockResolvedValue([assignmentRow("report-a")]);
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a", "foreign-report"],
       shopId: "shop-a"
     })).resolves.toMatchObject({ ok: false, status: 404 });
     expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when an assignment changes after the locked ownership recheck", async () => {
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
+    mocks.reportTxFindMany
+      .mockResolvedValueOnce([assignmentRow("report-a", "old-shop")])
+      .mockResolvedValueOnce([assignmentRow("report-a", "changed-shop")]);
+
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a"],
+      shopId: "shop-a"
+    })).resolves.toEqual({
+      ok: false,
+      error: "报告归类期间发生变化，请刷新后重试",
+      status: 409
+    });
+    expect(mocks.executeRaw.mock.calls.map((call) => call[1])).toEqual([
+      "dmp-report-target:tenant-a:user-a:report-a",
+      "dmp-report-pair:tenant-a:user-a:old-shop:768239824008:563697874317",
+      "dmp-report-pair:tenant-a:user-a:shop-a:768239824008:563697874317"
+    ]);
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("maps a reassignment fingerprint collision to 409 so the whole transaction rolls back", async () => {
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
+    mocks.reportTxFindMany.mockResolvedValue([assignmentRow("report-a")]);
+    mocks.reportUpdateMany.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      reportIds: ["report-a"],
+      shopId: "shop-a"
+    })).resolves.toMatchObject({ ok: false, status: 409 });
   });
 });

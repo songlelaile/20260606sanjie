@@ -1,7 +1,7 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
-import { getDmpBusinessReport, type DmpReportAccess, validateDmpCanonicalReport } from "@/lib/dmp-report-store";
+import { lockDmpReportTargets, type DmpReportAccess, validateDmpCanonicalReport } from "@/lib/dmp-report-store";
 import { groupDmpBusinessReports, mergeDmpReportGroupDaily } from "@/lib/dmp-report-library";
 import type { DmpNormalizedPublicShareEvent } from "@/lib/dmp-report-share-events";
 import type {
@@ -31,16 +31,41 @@ export function hashDmpReportShareToken(token: string) {
 }
 
 export async function createDmpReportShare(access: DmpReportAccess, reportId: string) {
-  const report = await getDmpBusinessReport(access, reportId);
-  if (!report) return null;
+  const cleanReportId = String(reportId ?? "").trim();
+  if (!cleanReportId || cleanReportId.length > 100) return null;
   const token = randomBytes(32).toString("hex");
-  const row = await prisma.dmpReportShare.create({
-    data: {
-      reportId: report.id,
-      tokenHash: hashDmpReportShareToken(token)
-    },
-    select: { id: true, createdAt: true }
+  const row = await prisma.$transaction(async (tx) => {
+    await lockDmpReportTargets(tx, access, [cleanReportId]);
+    // 锁后重新核验租户、用户归属与可解析报告；不能复用锁前快照，否则 replace
+    // 可能已迁移/删除该报告，而新分享随后指向旧编号。
+    const report = await tx.dmpBusinessReport.findFirst({
+      where: {
+        id: cleanReportId,
+        tenantId: access.tenantId,
+        userId: access.userId
+      },
+      select: {
+        id: true,
+        subjectItemId: true,
+        competitorItemId: true,
+        report: true
+      }
+    });
+    if (!report) return null;
+    const checked = validateDmpCanonicalReport(report.report, {
+      subjectItemId: report.subjectItemId,
+      competitorItemId: report.competitorItemId
+    });
+    if (!checked.report) return null;
+    return tx.dmpReportShare.create({
+      data: {
+        reportId: report.id,
+        tokenHash: hashDmpReportShareToken(token)
+      },
+      select: { id: true, createdAt: true }
+    });
   });
+  if (!row) return null;
   return {
     id: row.id,
     token,

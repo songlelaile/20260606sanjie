@@ -68,11 +68,18 @@ export async function POST(request: Request) {
         quality?: unknown;
         sourceVersion?: unknown;
         sourceShop?: unknown;
+        archiveMode?: unknown;
+        replaceReportId?: unknown;
+        absorbedReportIds?: unknown;
       }
     | null;
   const sourceShop = parseSourceShop(body?.sourceShop);
   if (!sourceShop.ok) {
     return NextResponse.json({ error: sourceShop.error }, { status: 400, headers: CORS });
+  }
+  const replacement = parseArchiveReplacement(body);
+  if (!replacement.ok) {
+    return NextResponse.json({ error: replacement.error }, { status: 400, headers: CORS });
   }
   const checked = validateDmpCanonicalReport(body?.report, {
     subjectItemId: body?.subjectItemId,
@@ -113,16 +120,31 @@ export async function POST(request: Request) {
       competitorItemId,
       quality: body?.quality === "partial" || checked.issues?.length ? "partial" : "complete",
       sourceVersion: String(body?.sourceVersion ?? "").slice(0, 32),
-      ...(sourceShop.value ? { sourceShop: sourceShop.value } : {})
+      ...(sourceShop.value ? { sourceShop: sourceShop.value } : {}),
+      ...(replacement.value ?? {})
     });
   } catch (error) {
+    if (isHistoryStaleConflict(error)) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409, headers: CORS });
+    }
+    if (isAtomicReplaceConflict(error)) {
+      return NextResponse.json({ error: error.message }, { status: 409, headers: CORS });
+    }
     if (isSourceShopArchiveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status, headers: CORS });
     }
     throw error;
   }
-  const reportUrl = toOfficialDmpReportUrl(report.id);
-  return NextResponse.json({ data: { report, reportUrl, archived: true } }, { status: 201, headers: CORS });
+  const { retention, ...storedReport } = report;
+  const reportUrl = toOfficialDmpReportUrl(storedReport.id);
+  return NextResponse.json({
+    data: {
+      report: storedReport,
+      reportUrl,
+      archived: true,
+      ...(retention ? { retention } : {})
+    }
+  }, { status: 201, headers: CORS });
 }
 
 export async function PATCH(request: Request) {
@@ -189,9 +211,67 @@ function parseSourceShop(value: unknown):
   };
 }
 
+function parseArchiveReplacement(body: {
+  archiveMode?: unknown;
+  replaceReportId?: unknown;
+  absorbedReportIds?: unknown;
+} | null):
+  | {
+      ok: true;
+      value?: {
+        archiveMode: "replace-latest-pair";
+        replaceReportId: string;
+        absorbedReportIds: string[];
+      };
+    }
+  | { ok: false; error: string } {
+  const mode = body?.archiveMode;
+  if (mode == null || mode === "") {
+    if (body?.replaceReportId != null || body?.absorbedReportIds != null) {
+      return { ok: false, error: "缺少原子替换模式" };
+    }
+    return { ok: true };
+  }
+  if (mode !== "replace-latest-pair") return { ok: false, error: "报告归档模式无效" };
+  if (typeof body?.replaceReportId !== "string" || !Array.isArray(body.absorbedReportIds)) {
+    return { ok: false, error: "原子替换目标或吸收报告清单无效" };
+  }
+  const replaceReportId = body.replaceReportId.trim();
+  const rawIds = body.absorbedReportIds;
+  if (
+    !replaceReportId
+    || replaceReportId.length > 100
+    || rawIds.length < 1
+    || rawIds.length > 200
+    || rawIds.some((id) => typeof id !== "string" || !id.trim() || id.trim().length > 100)
+  ) {
+    return { ok: false, error: "原子替换目标或吸收报告清单无效" };
+  }
+  const absorbedReportIds = [...new Set(rawIds.map((id) => id.trim()))];
+  if (!absorbedReportIds.includes(replaceReportId)) {
+    return { ok: false, error: "吸收报告清单必须包含原位更新目标" };
+  }
+  return {
+    ok: true,
+    value: { archiveMode: mode, replaceReportId, absorbedReportIds }
+  };
+}
+
 function isSourceShopArchiveError(error: unknown): error is Error & { status: 400 | 404 } {
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
   return candidate.code === "DMP_REPORT_SOURCE_SHOP_INVALID"
     && (candidate.status === 400 || candidate.status === 404);
+}
+
+function isAtomicReplaceConflict(error: unknown): error is Error & { status: 409 } {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return candidate.code === "DMP_REPORT_REPLACE_CONFLICT" && candidate.status === 409;
+}
+
+function isHistoryStaleConflict(error: unknown): error is Error & { code: "DMP_REPORT_HISTORY_STALE"; status: 409 } {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return candidate.code === "DMP_REPORT_HISTORY_STALE" && candidate.status === 409;
 }

@@ -17,6 +17,7 @@ import { getCurrentSession } from "@/lib/server-session";
 import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
 import { withDmpAutomationBrand } from "@/lib/dmp-product";
 import { effectiveDmpReportQuality } from "@/lib/dmp-report-quality";
+import { dmpCanonicalReportIdentity } from "@/lib/dmp-report-library";
 
 const MAX_REPORT_BYTES = 8 * 1024 * 1024;
 export const DMP_REPORT_ARCHIVE_MAX_BODY_BYTES = MAX_REPORT_BYTES + 64 * 1024;
@@ -97,6 +98,67 @@ export interface DmpReportSourceShopInput {
   shopName?: string;
   /** 达摩盘外部来源标识，只作来源提示，绝不写入 DmpBusinessReport.shopId。 */
   sourceShopId?: string;
+}
+
+export interface DmpReportReplaceLatestPairRetention {
+  mode: "replace-latest-pair";
+  confirmed: true;
+  replacedReportId: string;
+  absorbedReportIds: string[];
+}
+
+export class DmpReportReplaceConflictError extends Error {
+  readonly code = "DMP_REPORT_REPLACE_CONFLICT";
+  readonly status = 409;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "DmpReportReplaceConflictError";
+  }
+}
+
+export class DmpReportHistoryStaleError extends Error {
+  readonly code = "DMP_REPORT_HISTORY_STALE";
+  readonly status = 409;
+
+  constructor(message = "官网同商品对历史已变化，请重新读取并合并后再提交") {
+    super(message);
+    this.name = "DmpReportHistoryStaleError";
+  }
+}
+
+/**
+ * 所有会改动报告归属、报告本体或其分享外键的事务都按同一稳定顺序获取这些锁。
+ * 锁键包含租户与用户作用域，避免跨账号互相阻塞；排序可避免多报告操作死锁。
+ */
+export async function lockDmpReportTargets(
+  tx: Prisma.TransactionClient,
+  access: DmpReportAccess,
+  reportIds: string[]
+) {
+  const normalized = reportIds.map((id) => String(id ?? "").trim());
+  if (normalized.some((id) => !id || id.length > 100)) throw new Error("报告锁目标无效");
+  const ordered = [...new Set(normalized)]
+    .sort((left, right) => left.localeCompare(right, "en"));
+  for (const reportId of ordered) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`dmp-report-target:${access.tenantId}:${access.userId}:${reportId}`}))`;
+  }
+}
+
+function dmpReportPairLockKey(
+  access: DmpReportAccess,
+  shopId: string,
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  return `dmp-report-pair:${access.tenantId}:${access.userId}:${shopId}:${subjectItemId}:${competitorItemId}`;
+}
+
+async function lockDmpReportPairKeys(tx: Prisma.TransactionClient, pairKeys: string[]) {
+  const ordered = [...new Set(pairKeys)].sort((left, right) => left.localeCompare(right, "en"));
+  for (const pairKey of ordered) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${pairKey}))`;
+  }
 }
 
 async function parseExtensionSession(token: string) {
@@ -457,9 +519,40 @@ export async function saveDmpBusinessReport(input: {
   quality: DmpReportQuality;
   sourceVersion: string;
   sourceShop?: DmpReportSourceShopInput;
-}): Promise<DmpBusinessReportRecord> {
-  const sourceShop = normalizeDmpReportSourceShop(input.sourceShop);
+  archiveMode?: "replace-latest-pair";
+  replaceReportId?: string;
+  absorbedReportIds?: string[];
+}): Promise<DmpBusinessReportRecord & { retention?: DmpReportReplaceLatestPairRetention }> {
+  let sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>;
+  try {
+    sourceShop = normalizeDmpReportSourceShop(input.sourceShop);
+  } catch (error) {
+    if (input.archiveMode === "replace-latest-pair") {
+      throw new DmpReportReplaceConflictError(error instanceof Error ? error.message : "冻结店铺信息无效");
+    }
+    throw error;
+  }
   const effectiveQuality = effectiveDmpReportQuality(input.report, input.quality);
+  if (input.archiveMode === "replace-latest-pair") {
+    try {
+      const replacement = normalizeDmpReportReplacement(input.replaceReportId, input.absorbedReportIds);
+      const result = await prisma.$transaction(async (tx) => replaceLatestDmpGrowthReport(tx, {
+        ...input,
+        sourceShop,
+        effectiveQuality,
+        replacement
+      }));
+      return {
+        ...storedDmpBusinessReportRecord(result.row, input.report, effectiveQuality),
+        retention: result.retention
+      };
+    } catch (error) {
+      if (isPrismaUniqueConstraintError(error)) {
+        throw new DmpReportReplaceConflictError("新报告指纹已被另一份报告占用，未执行原子替换");
+      }
+      throw error;
+    }
+  }
   const row = await prisma.$transaction(async (tx) => {
     let tenantShops: Array<{ id: string; name: string }> | null = null;
     let shop = sourceShop?.internalShopId
@@ -506,6 +599,14 @@ export async function saveDmpBusinessReport(input: {
         });
       if (fallbackShops.length === 1) shop = fallbackShops[0];
     }
+    if (shop && dmpReportKind(input.report) === "growth") {
+      await lockDmpReportPairKeys(tx, [dmpReportPairLockKey(
+        input.access,
+        shop.id,
+        input.subjectItemId,
+        input.competitorItemId
+      )]);
+    }
     const fingerprint = dmpBusinessReportFingerprint({
       report: input.report,
       subjectItemId: input.subjectItemId,
@@ -515,6 +616,36 @@ export async function saveDmpBusinessReport(input: {
         sourceScope: shop ? `internal-shop:${shop.id}` : sourceShop.fingerprintScope
       } : {})
     });
+    if (shop && dmpReportKind(input.report) === "growth" && effectiveQuality === "complete") {
+      const incomingRange = continuousGrowthDailyRange(input.report);
+      if (incomingRange) {
+        const existing = await tx.dmpBusinessReport.findMany({
+          where: {
+            tenantId: input.access.tenantId,
+            userId: input.access.userId,
+            shopId: shop.id,
+            subjectItemId: input.subjectItemId,
+            competitorItemId: input.competitorItemId,
+            quality: "complete"
+          },
+          select: growthCandidateSelect
+        });
+        for (const candidate of existing) {
+          const validated = validatedGrowthCandidate(candidate, input.subjectItemId, input.competitorItemId);
+          if (!validated) continue;
+          const candidateFingerprint = dmpBusinessReportFingerprint({
+            report: validated.report,
+            subjectItemId: input.subjectItemId,
+            competitorItemId: input.competitorItemId,
+            shopId: shop.id
+          });
+          if (candidateFingerprint === fingerprint) continue;
+          if (dateRangesTouch(incomingRange, validated.range)) {
+            throw new DmpReportHistoryStaleError();
+          }
+        }
+      }
+    }
     return tx.dmpBusinessReport.upsert({
       where: {
         tenantId_userId_fingerprint: {
@@ -551,10 +682,29 @@ export async function saveDmpBusinessReport(input: {
       }
     });
   });
+  return storedDmpBusinessReportRecord(row, input.report, effectiveQuality);
+}
+
+type StoredDmpReportRow = {
+  id: string;
+  shop: { id: string; name: string } | null;
+  subjectItemId: string;
+  competitorItemId: string;
+  period: string;
+  quality: string;
+  createdAt: Date;
+  report: unknown;
+};
+
+function storedDmpBusinessReportRecord(
+  row: StoredDmpReportRow,
+  fallbackReport: DmpCanonicalReport,
+  fallbackQuality: DmpReportQuality
+): DmpBusinessReportRecord {
   const storedReport = validateDmpCanonicalReport(row.report, {
     subjectItemId: row.subjectItemId,
     competitorItemId: row.competitorItemId
-  }).report ?? input.report;
+  }).report ?? fallbackReport;
   return {
     id: row.id,
     reportType: dmpReportKind(storedReport),
@@ -564,11 +714,409 @@ export async function saveDmpBusinessReport(input: {
     period: row.period,
     quality: effectiveDmpReportQuality(
       storedReport,
-      row.quality === "partial" ? "partial" : effectiveQuality
+      row.quality === "partial" ? "partial" : fallbackQuality
     ),
     createdAt: row.createdAt.toISOString(),
     report: storedReport
   };
+}
+
+function normalizeDmpReportReplacement(replaceReportId: unknown, absorbedReportIds: unknown) {
+  const targetId = String(replaceReportId ?? "").trim();
+  const rawIds = Array.isArray(absorbedReportIds) ? absorbedReportIds : [];
+  const normalizedIds = rawIds.map((value) => String(value ?? "").trim());
+  const absorbed = [...new Set(normalizedIds)];
+  if (
+    !targetId
+    || targetId.length > 100
+    || rawIds.length < 1
+    || rawIds.length > 200
+    || normalizedIds.some((id) => !id || id.length > 100)
+    || !absorbed.includes(targetId)
+  ) {
+    throw new DmpReportReplaceConflictError("原子替换目标或吸收报告清单无效");
+  }
+  return { targetId, absorbed };
+}
+
+const growthCandidateSelect = {
+  id: true,
+  tenantId: true,
+  userId: true,
+  shopId: true,
+  subjectItemId: true,
+  competitorItemId: true,
+  period: true,
+  quality: true,
+  createdAt: true,
+  report: true
+} as const;
+
+type DmpGrowthCandidateRow = {
+  id: string;
+  tenantId: string;
+  userId: string;
+  shopId: string | null;
+  subjectItemId: string;
+  competitorItemId: string;
+  period: string;
+  quality: string;
+  createdAt: Date;
+  report: unknown;
+};
+
+function validatedGrowthCandidate(
+  row: DmpGrowthCandidateRow,
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  if (
+    row.quality !== "complete"
+    || row.subjectItemId !== subjectItemId
+    || row.competitorItemId !== competitorItemId
+  ) return null;
+  const checked = validateDmpCanonicalReport(row.report, {
+    subjectItemId: row.subjectItemId,
+    competitorItemId: row.competitorItemId
+  });
+  if (!checked.report || checked.issues?.length || dmpReportKind(checked.report) !== "growth") return null;
+  const identity = dmpCanonicalReportIdentity(checked.report, {
+    subjectItemId: row.subjectItemId,
+    competitorItemId: row.competitorItemId
+  });
+  if (
+    identity.reportType !== "growth"
+    || identity.subjectItemId !== subjectItemId
+    || identity.competitorItemIds.length !== 1
+    || identity.competitorItemIds[0] !== competitorItemId
+    || effectiveDmpReportQuality(checked.report, "complete") !== "complete"
+  ) return null;
+  const range = continuousGrowthDailyRange(checked.report);
+  return range ? { report: checked.report, range } : null;
+}
+
+async function replaceLatestDmpGrowthReport(
+  tx: Prisma.TransactionClient,
+  input: {
+    access: DmpReportAccess;
+    report: DmpCanonicalReport;
+    subjectItemId: string;
+    competitorItemId: string;
+    quality: DmpReportQuality;
+    sourceVersion: string;
+    sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>;
+    effectiveQuality: DmpReportQuality;
+    replacement: { targetId: string; absorbed: string[] };
+  }
+) {
+  const conflict = (message: string): never => {
+    throw new DmpReportReplaceConflictError(message);
+  };
+  if (dmpReportKind(input.report) !== "growth") conflict("只有完整的商品成长报告可以原子更新");
+  if (input.quality !== "complete" || input.effectiveQuality !== "complete") {
+    conflict("本次商品成长报告仍为部分数据，已保留原报告且未覆盖");
+  }
+  const incomingIdentity = dmpCanonicalReportIdentity(input.report, {
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId
+  });
+  if (
+    incomingIdentity.reportType !== "growth"
+    || incomingIdentity.subjectItemId !== input.subjectItemId
+    || incomingIdentity.competitorItemIds.length !== 1
+    || incomingIdentity.competitorItemIds[0] !== input.competitorItemId
+  ) {
+    conflict("新报告的主体或竞品身份不一致，未执行原子替换");
+  }
+  const incomingRange = continuousGrowthDailyRange(input.report);
+  if (!incomingRange) throw new DmpReportReplaceConflictError("新报告缺少连续的分日数据，未执行原子替换");
+
+  // 所有 absorbed 目标先按统一顺序锁定，再锁冻结店铺商品对；assignment/share/delete
+  // 使用同一 target 锁协议，因此验收后的迁移、删除和原位更新不会被交叉写入打断。
+  await lockDmpReportTargets(tx, input.access, input.replacement.absorbed);
+  const targetSeed = await tx.dmpBusinessReport.findFirst({
+    where: {
+      id: input.replacement.targetId,
+      tenantId: input.access.tenantId,
+      userId: input.access.userId
+    },
+    select: {
+      id: true,
+      shopId: true,
+      subjectItemId: true,
+      competitorItemId: true
+    }
+  });
+  if (!targetSeed || !targetSeed.shopId) {
+    throw new DmpReportReplaceConflictError("原报告不存在、未归类到冻结店铺或无权更新");
+  }
+  await lockDmpReportPairKeys(tx, [dmpReportPairLockKey(
+    input.access,
+    targetSeed.shopId,
+    targetSeed.subjectItemId,
+    targetSeed.competitorItemId
+  )]);
+
+  const rows = await tx.dmpBusinessReport.findMany({
+    where: {
+      id: { in: input.replacement.absorbed },
+      tenantId: input.access.tenantId,
+      userId: input.access.userId
+    },
+    select: {
+      id: true,
+      tenantId: true,
+      userId: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      sourceVersion: true,
+      fingerprint: true,
+      createdAt: true,
+      report: true
+    }
+  });
+  if (rows.length !== input.replacement.absorbed.length) {
+    conflict("吸收报告清单包含不存在或无权访问的记录，未执行原子替换");
+  }
+  const target = rows.find((row) => row.id === input.replacement.targetId);
+  if (!target?.shopId || !target.shop || target.shopId !== targetSeed.shopId) {
+    throw new DmpReportReplaceConflictError("原报告的冻结店铺已变化，未执行原子替换");
+  }
+  await validateFrozenReplacementShop(tx, input.access.tenantId, input.sourceShop, target.shopId);
+
+  const absorbedRanges: Array<{ id: string; startDate: string; endDate: string }> = [];
+  for (const row of rows) {
+    if (
+      row.tenantId !== input.access.tenantId
+      || row.userId !== input.access.userId
+      || row.shopId !== target.shopId
+      || row.subjectItemId !== input.subjectItemId
+      || row.competitorItemId !== input.competitorItemId
+      || row.quality !== "complete"
+    ) {
+      conflict("待吸收报告不属于同一冻结店铺、主体与竞品，或质量不是完整报告");
+    }
+    const checked = validateDmpCanonicalReport(row.report, {
+      subjectItemId: row.subjectItemId,
+      competitorItemId: row.competitorItemId
+    });
+    if (!checked.report || checked.issues?.length || dmpReportKind(checked.report) !== "growth") {
+      throw new DmpReportReplaceConflictError("待吸收记录不是可验证的完整商品成长报告");
+    }
+    const identity = dmpCanonicalReportIdentity(checked.report, {
+      subjectItemId: row.subjectItemId,
+      competitorItemId: row.competitorItemId
+    });
+    if (
+      identity.reportType !== "growth"
+      || identity.subjectItemId !== input.subjectItemId
+      || identity.competitorItemIds.length !== 1
+      || identity.competitorItemIds[0] !== input.competitorItemId
+      || effectiveDmpReportQuality(checked.report, "complete") !== "complete"
+    ) {
+      conflict("待吸收报告的身份或有效质量与本次更新不一致");
+    }
+    const range = continuousGrowthDailyRange(checked.report);
+    if (!range) throw new DmpReportReplaceConflictError("待吸收报告的分日表自身不连续");
+    absorbedRanges.push({ id: row.id, ...range });
+  }
+  const rangeById = new Map(absorbedRanges.map((range) => [range.id, range]));
+  const targetRange = rangeById.get(target.id);
+  const newestAbsorbed = targetRange
+    ? [...rows].sort((left, right) => compareGrowthReportRecency(
+        left,
+        rangeById.get(left.id)!,
+        right,
+        rangeById.get(right.id)!
+      ))[0]
+    : null;
+  if (!newestAbsorbed || newestAbsorbed.id !== target.id) {
+    conflict("原位更新目标不是吸收清单中按生成时间、分日截止日和编号确定的最新报告");
+  }
+  if (absorbedRanges.some((range) => (
+    isoDateDay(range.startDate) < isoDateDay(incomingRange.startDate)
+    || isoDateDay(range.endDate) > isoDateDay(incomingRange.endDate)
+  ))) {
+    throw new DmpReportReplaceConflictError("新报告未完整覆盖待吸收报告的分日范围，未执行原子替换");
+  }
+  if (!dateRangeUnionIsConnected([incomingRange, ...absorbedRanges])) {
+    throw new DmpReportReplaceConflictError("新报告与待吸收报告的分日范围存在断层，未执行原子替换");
+  }
+
+  const absorbedIds = new Set(input.replacement.absorbed);
+  const currentCandidates = await tx.dmpBusinessReport.findMany({
+    where: {
+      tenantId: input.access.tenantId,
+      userId: input.access.userId,
+      shopId: target.shopId,
+      subjectItemId: input.subjectItemId,
+      competitorItemId: input.competitorItemId,
+      quality: "complete"
+    },
+    select: growthCandidateSelect
+  });
+  for (const candidate of currentCandidates) {
+    if (absorbedIds.has(candidate.id)) continue;
+    const validated = validatedGrowthCandidate(candidate, input.subjectItemId, input.competitorItemId);
+    if (!validated) continue;
+    if (dateRangesTouch(incomingRange, validated.range)) {
+      throw new DmpReportHistoryStaleError();
+    }
+  }
+
+  const fingerprint = dmpBusinessReportFingerprint({
+    report: input.report,
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId,
+    shopId: target.shopId
+  });
+  const fingerprintCollision = await tx.dmpBusinessReport.findFirst({
+    where: {
+      tenantId: input.access.tenantId,
+      userId: input.access.userId,
+      fingerprint,
+      id: { notIn: input.replacement.absorbed }
+    },
+    select: { id: true }
+  });
+  if (fingerprintCollision) conflict("新报告指纹已被未吸收的报告占用，未执行原子替换");
+
+  const absorbedExceptTarget = input.replacement.absorbed.filter((id) => id !== target.id);
+  if (absorbedExceptTarget.length) {
+    // 仅迁移外键，分享令牌、访问/点击统计、热力与会话明细全部保持原值。
+    await tx.dmpReportShare.updateMany({
+      where: { reportId: { in: absorbedExceptTarget } },
+      data: { reportId: target.id }
+    });
+    const deleted = await tx.dmpBusinessReport.deleteMany({
+      where: {
+        id: { in: absorbedExceptTarget },
+        tenantId: input.access.tenantId,
+        userId: input.access.userId,
+        shopId: target.shopId
+      }
+    });
+    if (deleted.count !== absorbedExceptTarget.length) {
+      conflict("吸收报告在事务内发生变化，已回滚且未覆盖原报告");
+    }
+  }
+
+  const row = await tx.dmpBusinessReport.update({
+    where: { id: target.id },
+    data: {
+      report: input.report as unknown as Prisma.InputJsonValue,
+      period: input.report.period,
+      quality: "complete",
+      sourceVersion: input.sourceVersion,
+      fingerprint,
+      createdAt: new Date()
+    },
+    select: {
+      id: true,
+      shop: { select: { id: true, name: true } },
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      createdAt: true,
+      report: true
+    }
+  });
+  return {
+    row,
+    retention: {
+      mode: "replace-latest-pair" as const,
+      confirmed: true as const,
+      replacedReportId: target.id,
+      absorbedReportIds: [...input.replacement.absorbed]
+    }
+  };
+}
+
+async function validateFrozenReplacementShop(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>,
+  frozenShopId: string
+) {
+  if (!sourceShop?.internalShopId) {
+    throw new DmpReportReplaceConflictError("本次更新缺少可验证的冻结店铺，未执行原子替换");
+  }
+  const shop = await tx.shop.findFirst({
+    where: { id: sourceShop.internalShopId, tenantId },
+    select: { id: true, name: true }
+  });
+  if (!shop || shop.id !== frozenShopId) {
+    throw new DmpReportReplaceConflictError("本次冻结店铺与原报告店铺不一致，未执行原子替换");
+  }
+}
+
+function continuousGrowthDailyRange(report: DmpCanonicalReport) {
+  const tables = report.tables.filter((table) => table.name === "日GMV与费比");
+  if (tables.length !== 1) return null;
+  const table = tables[0];
+  const dateIndex = table.columns.findIndex((column) => /^(?:日期|自然日)$/.test(String(column).trim()));
+  if (dateIndex < 0 || !table.rows.length) return null;
+  const dates = table.rows.map((row) => String(row.cells[dateIndex] ?? "").trim());
+  if (dates.some((date) => !validIsoBusinessDate(date)) || new Set(dates).size !== dates.length) return null;
+  const sorted = [...dates].sort();
+  for (let index = 1; index < sorted.length; index += 1) {
+    if (isoDateDay(sorted[index]) !== isoDateDay(sorted[index - 1]) + 1) return null;
+  }
+  return { startDate: sorted[0], endDate: sorted.at(-1) ?? sorted[0] };
+}
+
+function validIsoBusinessDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function isoDateDay(value: string) {
+  return Math.floor(Date.parse(`${value}T00:00:00.000Z`) / 86_400_000);
+}
+
+function dateRangeUnionIsConnected(ranges: Array<{ startDate: string; endDate: string }>) {
+  const ordered = [...ranges].sort((left, right) => (
+    isoDateDay(left.startDate) - isoDateDay(right.startDate)
+    || isoDateDay(left.endDate) - isoDateDay(right.endDate)
+  ));
+  if (!ordered.length) return false;
+  let connectedEnd = isoDateDay(ordered[0].endDate);
+  for (const range of ordered.slice(1)) {
+    if (isoDateDay(range.startDate) > connectedEnd + 1) return false;
+    connectedEnd = Math.max(connectedEnd, isoDateDay(range.endDate));
+  }
+  return true;
+}
+
+function dateRangesTouch(
+  left: { startDate: string; endDate: string },
+  right: { startDate: string; endDate: string }
+) {
+  return isoDateDay(right.startDate) <= isoDateDay(left.endDate) + 1
+    && isoDateDay(right.endDate) >= isoDateDay(left.startDate) - 1;
+}
+
+function compareGrowthReportRecency(
+  left: { id: string; createdAt: Date },
+  leftRange: { endDate: string },
+  right: { id: string; createdAt: Date },
+  rightRange: { endDate: string }
+) {
+  const leftTime = left.createdAt.getTime();
+  const rightTime = right.createdAt.getTime();
+  if (leftTime !== rightTime) return rightTime - leftTime;
+  return rightRange.endDate.localeCompare(leftRange.endDate)
+    || left.id.localeCompare(right.id, "en");
+}
+
+function isPrismaUniqueConstraintError(error: unknown) {
+  return Boolean(error && typeof error === "object" && (error as { code?: unknown }).code === "P2002");
 }
 
 function normalizeDmpReportSourceShop(value: DmpReportSourceShopInput | undefined) {
@@ -645,11 +1193,31 @@ export async function getDmpBusinessReport(access: DmpReportAccess, id: string) 
 }
 
 export async function deleteDmpBusinessReport(access: DmpReportAccess, id: string) {
-  const result = await prisma.dmpBusinessReport.deleteMany({
-    where: { id, tenantId: access.tenantId, userId: access.userId }
+  const reportId = String(id ?? "").trim();
+  if (!reportId || reportId.length > 100) return false;
+  return prisma.$transaction(async (tx) => {
+    await lockDmpReportTargets(tx, access, [reportId]);
+    const owned = await tx.dmpBusinessReport.findFirst({
+      where: { id: reportId, tenantId: access.tenantId, userId: access.userId },
+      select: { id: true }
+    });
+    if (!owned) return false;
+    const result = await tx.dmpBusinessReport.deleteMany({
+      where: { id: reportId, tenantId: access.tenantId, userId: access.userId }
+    });
+    return result.count === 1;
   });
-  return result.count > 0;
 }
+
+class DmpReportAssignmentRaceError extends Error {}
+
+const assignmentReportSelect = {
+  id: true,
+  shopId: true,
+  subjectItemId: true,
+  competitorItemId: true,
+  report: true
+} as const;
 
 export async function assignDmpBusinessReportsShop(input: {
   access: DmpReportAccess;
@@ -657,7 +1225,7 @@ export async function assignDmpBusinessReportsShop(input: {
   shopId: string;
 }): Promise<
   | { ok: true; reportIds: string[]; shop: { id: string; name: string } | null }
-  | { ok: false; error: string; status: 400 | 404 }
+  | { ok: false; error: string; status: 400 | 404 | 409 }
 > {
   const rawReportIds = input.reportIds.map((id) => String(id ?? "").trim()).filter(Boolean);
   const reportIds = [...new Set(rawReportIds)];
@@ -667,34 +1235,97 @@ export async function assignDmpBusinessReportsShop(input: {
   }
   if (shopId.length > 100) return { ok: false, error: "店铺编号无效", status: 400 };
 
-  return prisma.$transaction(async (tx) => {
-    const shop = shopId
-      ? await tx.shop.findFirst({
-          where: { id: shopId, tenantId: input.access.tenantId },
-          select: { id: true, name: true }
-        })
-      : null;
-    if (shopId && !shop) return { ok: false as const, error: "店铺不存在或不属于当前账号", status: 404 as const };
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await lockDmpReportTargets(tx, input.access, reportIds);
+      const shop = shopId
+        ? await tx.shop.findFirst({
+            where: { id: shopId, tenantId: input.access.tenantId },
+            select: { id: true, name: true }
+          })
+        : null;
+      if (shopId && !shop) return { ok: false as const, error: "店铺不存在或不属于当前账号", status: 404 as const };
 
-    const owned = await tx.dmpBusinessReport.count({
-      where: {
-        id: { in: reportIds },
-        tenantId: input.access.tenantId,
-        userId: input.access.userId
+      const initialRows = await tx.dmpBusinessReport.findMany({
+        where: {
+          id: { in: reportIds },
+          tenantId: input.access.tenantId,
+          userId: input.access.userId
+        },
+        select: assignmentReportSelect
+      });
+      if (initialRows.length !== reportIds.length) {
+        return { ok: false as const, error: "报告不存在或无权修改", status: 404 as const };
       }
-    });
-    if (owned !== reportIds.length) return { ok: false as const, error: "报告不存在或无权修改", status: 404 as const };
+      const pairKeys = initialRows.flatMap((row) => [
+        ...(row.shopId ? [dmpReportPairLockKey(
+          input.access,
+          row.shopId,
+          row.subjectItemId,
+          row.competitorItemId
+        )] : []),
+        ...(shop ? [dmpReportPairLockKey(
+          input.access,
+          shop.id,
+          row.subjectItemId,
+          row.competitorItemId
+        )] : [])
+      ]);
+      await lockDmpReportPairKeys(tx, pairKeys);
 
-    await tx.dmpBusinessReport.updateMany({
-      where: {
-        id: { in: reportIds },
-        tenantId: input.access.tenantId,
-        userId: input.access.userId
-      },
-      data: { shopId: shop?.id ?? null }
+      const rows = await tx.dmpBusinessReport.findMany({
+        where: {
+          id: { in: reportIds },
+          tenantId: input.access.tenantId,
+          userId: input.access.userId
+        },
+        select: assignmentReportSelect
+      });
+      const initialById = new Map(initialRows.map((row) => [row.id, row]));
+      if (
+        rows.length !== reportIds.length
+        || rows.some((row) => {
+          const initial = initialById.get(row.id);
+          return !initial
+            || initial.shopId !== row.shopId
+            || initial.subjectItemId !== row.subjectItemId
+            || initial.competitorItemId !== row.competitorItemId;
+        })
+      ) throw new DmpReportAssignmentRaceError();
+
+      for (const row of [...rows].sort((left, right) => left.id.localeCompare(right.id, "en"))) {
+        const checked = validateDmpCanonicalReport(row.report, {
+          subjectItemId: row.subjectItemId,
+          competitorItemId: row.competitorItemId
+        });
+        if (!checked.report) throw new DmpReportAssignmentRaceError();
+        const fingerprint = shop
+          ? dmpBusinessReportFingerprint({
+              report: checked.report,
+              subjectItemId: row.subjectItemId,
+              competitorItemId: row.competitorItemId,
+              shopId: shop.id
+            })
+          : null;
+        const updated = await tx.dmpBusinessReport.updateMany({
+          where: {
+            id: row.id,
+            tenantId: input.access.tenantId,
+            userId: input.access.userId,
+            shopId: row.shopId
+          },
+          data: { shopId: shop?.id ?? null, fingerprint }
+        });
+        if (updated.count !== 1) throw new DmpReportAssignmentRaceError();
+      }
+      return { ok: true as const, reportIds, shop };
     });
-    return { ok: true as const, reportIds, shop };
-  });
+  } catch (error) {
+    if (error instanceof DmpReportAssignmentRaceError || isPrismaUniqueConstraintError(error)) {
+      return { ok: false, error: "报告归类期间发生变化，请刷新后重试", status: 409 };
+    }
+    throw error;
+  }
 }
 
 export function validItemId(value: unknown) {

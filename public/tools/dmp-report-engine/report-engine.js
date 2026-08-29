@@ -785,25 +785,44 @@
     const labels = completenessEngine.CHANNELS.map(([, label]) => label);
     const subjectDailyRows = (model.subjectDaily?.rows || []).map(row => [row.date, modelCell(row.gmv)]);
     const subjectByDate = new Map((model.subjectDaily?.rows || []).map(row => [row.date, row]));
-    const competitorByDate = new Map((model.daily?.rows || []).map(row => [row.date, row]));
-    const dates = [...new Set([...subjectByDate.keys(), ...competitorByDate.keys()])].sort();
+    const competitorByDate = new Map((model.competitorDaily?.rows || []).map(row => [row.date, row]));
+    const lineByDate = new Map((model.daily?.rows || []).map(row => [row.date, row]));
+    const dates = [...new Set([...subjectByDate.keys(), ...competitorByDate.keys(), ...lineByDate.keys()])].sort();
     const columns = [
       "日期", "主体日GMV", "对手日GMV",
+      "主体日付费成交额", "对手日付费成交额",
       ...labels.flatMap(label => [`主体${label}日消耗`, `对手${label}日消耗`]),
-      "主体日总消耗", "对手日总消耗", "主体日费比", "对手日费比", "阶段"
+      "主体日总消耗", "对手日总消耗",
+      "主体日ROI", "对手日ROI", "主体日PPC", "对手日PPC",
+      "主体日费比", "对手日费比", "阶段"
     ];
     const rows = dates.map(date => {
       const subject = subjectByDate.get(date);
       const competitor = competitorByDate.get(date);
-      const stage = competitor?.stage || model.stages?.find(current => (!current.start || date >= current.start) && (!current.end || date <= current.end))?.name || "";
+      const line = lineByDate.get(date);
+      const stage = line?.stage || model.stages?.find(current => (!current.start || date >= current.start) && (!current.end || date <= current.end))?.name || "";
+      const competitorGmv = competitor?.gmv ?? line?.dailyGmv;
+      const competitorSpend = competitor?.totalSpend ?? line?.totalSpend;
+      const competitorFeeRatio = competitor?.feeRatio ?? (Number.isFinite(competitorSpend) && Number.isFinite(competitorGmv) && competitorGmv !== 0
+        ? Math.round((competitorSpend / competitorGmv + Number.EPSILON) * 1_000_000) / 1_000_000
+        : null);
       return [
-        date, modelCell(subject?.gmv), modelCell(competitor?.dailyGmv),
-        ...labels.flatMap(label => [modelCell(subject?.channelSpend?.[label]), modelCell(competitor?.channelSpend?.[label])]),
-        modelCell(subject?.totalSpend), modelCell(competitor?.totalSpend), modelCell(subject?.feeRatio), modelCell(competitor?.feeRatio), stage
+        date, modelCell(subject?.gmv), modelCell(competitorGmv),
+        modelCell(subject?.metrics?.paidGmv), modelCell(competitor?.metrics?.paidGmv),
+        ...labels.flatMap(label => [
+          modelCell(subject?.channelSpend?.[label]),
+          modelCell(competitor?.channelSpendConflict
+            ? null
+            : competitor?.channelSpend?.[label] ?? line?.channelSpend?.[label])
+        ]),
+        modelCell(subject?.totalSpend), modelCell(competitorSpend),
+        modelCell(subject?.metrics?.roi), modelCell(competitor?.metrics?.roi),
+        modelCell(subject?.metrics?.ppc), modelCell(competitor?.metrics?.ppc),
+        modelCell(subject?.feeRatio), modelCell(competitorFeeRatio), stage
       ];
     });
     return table("日GMV与费比", columns, rows, {
-      widths: [13, 16, 16, ...labels.flatMap(() => [24, 24]), 16, 16, 14, 14, 15],
+      widths: [13, 16, 16, 20, 20, ...labels.flatMap(() => [24, 24]), 16, 16, 14, 14, 14, 14, 14, 14, 15],
       subjectDailyRows
     });
   }
@@ -853,7 +872,7 @@
     const subjectRows = (model.subjectDaily?.rows || []).filter(row => Number.isFinite(row.gmv));
     const subjectDailyGmv = subjectRows.map(row => row.gmv);
     const subjectPeakRow = subjectRows.slice().sort((left, right) => right.gmv - left.gmv)[0];
-    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "广告消耗", "费比", "全域ROAS", "付费金额占比", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
+    const columns = ["商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV", "付费成交额", "付费成交笔数", "广告消耗", "费比", "全域ROAS", "付费金额占比", "广告订单贡献率", "日均GMV", "日均消耗", "GMV峰值日", "GMV波动率"];
     const make = (id, label, source, side, peakDate = "", volatility = null) => {
       const spendScope = reportSideSpendScope(model, side);
       const spendDays = spendScope.partial
@@ -865,7 +884,7 @@
       const spend = reportMetricValue(model, side, "spend");
       return [
         id, scopedLabel, model.period.startDate, model.period.endDate, model.period.days,
-        modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(spend),
+        modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(source.paidOrders), modelCell(spend),
         modelCell(reportMetricValue(model, side, "feeRatio")), modelCell(reportMetricValue(model, side, "roas")),
         modelCell(source.paidGmvContribution), modelCell(source.paidOrderContribution),
         Number.isFinite(source.totalGmv) ? round(source.totalGmv / model.period.days) : EMPTY,
@@ -877,7 +896,7 @@
       make(item.id, `主体商品・${model.period.days}日`, model.metrics.subject, "subject", subjectPeakRow?.date || "", populationVolatility(subjectDailyGmv)),
       make(item.competitorId, `目标对手・${model.period.days}日`, model.metrics.competitor, "competitor", competitorPeakRow?.date || "", populationVolatility(competitorDailyGmv))
     ];
-    return table("周期汇总", columns, rows, { widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14] });
+    return table("周期汇总", columns, rows, { widths: [18, 18, 13, 13, 9, 13, 15, 16, 16, 16, 16, 13, 13, 18, 18, 16, 16, 15, 14] });
   }
 
   function buildBenchmarkFromModel(model) {
@@ -891,6 +910,7 @@
       ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors],
       ["投放", "推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["投放", "付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["投放", "付费成交笔数", metrics.subject.paidOrders, metrics.competitor.paidOrders],
       ["投放", "付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
       ["投放", "ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["投放", "PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
@@ -982,6 +1002,7 @@
       ["总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
       ["广告/推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
       ["付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
+      ["付费成交笔数", metrics.subject.paidOrders, metrics.competitor.paidOrders],
       ["付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
       ["ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["PPC", metric("subject", "ppc"), metric("competitor", "ppc")],

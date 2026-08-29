@@ -61,12 +61,12 @@ describe("GET /api/tools/dmp/download", () => {
     expect(response.headers.get("content-type")).toBe("application/zip");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''");
-    expect(response.headers.get("content-disposition")).toContain("v2.3.23");
+    expect(response.headers.get("content-disposition")).toContain("v2.3.46");
     expect(mocks.readFile).toHaveBeenCalledWith(path.join(
       process.cwd(),
       "private-assets",
       "dmp",
-      "shaozhuang-dmp-unified-automation-v2.3.23.zip"
+      "shaozhuang-dmp-unified-automation-v2.3.46.zip"
     ));
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("zip-bytes");
   });

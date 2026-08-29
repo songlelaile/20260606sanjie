@@ -295,6 +295,108 @@ describe("POST /api/dmp-reports archive contract", () => {
     expect(mocks.saveDmpBusinessReport).toHaveBeenCalledTimes(2);
   });
 
+  it("passes the atomic latest-pair contract and returns confirmed retention beside the report", async () => {
+    mocks.saveDmpBusinessReport.mockResolvedValueOnce({
+      ...REPORT,
+      id: "report-target",
+      shopId: "shop-a",
+      shopName: "西西礼",
+      report: canonical,
+      retention: {
+        mode: "replace-latest-pair",
+        confirmed: true,
+        replacedReportId: "report-target",
+        absorbedReportIds: ["report-target", "report-older"]
+      }
+    });
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({
+        report: canonical,
+        quality: "complete",
+        sourceVersion: "2.3.46",
+        sourceShop: { shopId: "shop-a" },
+        archiveMode: "replace-latest-pair",
+        replaceReportId: "report-target",
+        absorbedReportIds: ["report-target", "report-older", "report-older"]
+      })
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      archiveMode: "replace-latest-pair",
+      replaceReportId: "report-target",
+      absorbedReportIds: ["report-target", "report-older"]
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        archived: true,
+        report: { id: "report-target" },
+        retention: {
+          mode: "replace-latest-pair",
+          confirmed: true,
+          replacedReportId: "report-target",
+          absorbedReportIds: ["report-target", "report-older"]
+        }
+      }
+    });
+  });
+
+  it("returns 409 when atomic validation refuses to overwrite the current report", async () => {
+    mocks.saveDmpBusinessReport.mockRejectedValueOnce(Object.assign(new Error("分日范围不连通，未执行原子替换"), {
+      code: "DMP_REPORT_REPLACE_CONFLICT",
+      status: 409
+    }));
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report: canonical,
+        archiveMode: "replace-latest-pair",
+        replaceReportId: "report-target",
+        absorbedReportIds: ["report-target"]
+      })
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "分日范围不连通，未执行原子替换" });
+  });
+
+  it("returns the recognizable HISTORY_STALE code when pair history changed under the snapshot", async () => {
+    mocks.saveDmpBusinessReport.mockRejectedValueOnce(Object.assign(new Error("官网同商品对历史已变化，请重新读取并合并后再提交"), {
+      code: "DMP_REPORT_HISTORY_STALE",
+      status: 409
+    }));
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report: canonical })
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "官网同商品对历史已变化，请重新读取并合并后再提交",
+      code: "DMP_REPORT_HISTORY_STALE"
+    });
+  });
+
+  it("rejects an incomplete atomic target list before calling the save layer", async () => {
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report: canonical,
+        archiveMode: "replace-latest-pair",
+        replaceReportId: "report-target",
+        absorbedReportIds: ["report-older"]
+      })
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
   it("archives malformed channel-spend columns as partial instead of rejecting the report", async () => {
     const malformed = structuredClone(canonical);
     malformed.tables.push({
