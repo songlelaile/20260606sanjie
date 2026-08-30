@@ -1,0 +1,17 @@
+{
+  "version": "2.3.59",
+  "packagePath": "private-assets/dmp/shaozhuang-dmp-unified-automation-v2.3.59.zip",
+  "packageBytes": 406176,
+  "packageSha256": "98abed5ddad3f6dd12d46d7c8d758134a0e4b699bcf53406b79c3d6eed99be27",
+  "publicEngines": {
+    "public/tools/dmp-report-engine/completeness-engine.js": "21d2d0a1b554e54530e06c21e70b2680a7bab411601c3e827e0ce0745cee29c0",
+    "public/tools/dmp-report-engine/report-engine.js": "6495010735c43c792864c13c85146d3542aa75e365b3afaa12dbb74bed1beffa"
+  },
+  "contracts": [
+    "30 日汇总与逐日数据分源",
+    "缺失不补 0，区间不取中点",
+    "默认同步官网并自动打开",
+    "同商品对同精确周期原地重生成保持同一 reportId",
+    "失败保留本机报告和 outbox，客户端不发送 DELETE"
+  ]
+}

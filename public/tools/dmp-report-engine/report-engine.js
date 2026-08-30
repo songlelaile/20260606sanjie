@@ -733,6 +733,13 @@
   }
 
   function reportMetricValue(model, side, key) {
+    // 完整周期目标对手的付费成交额与 ROI 已通过同 run、商品对、当前周期和
+    // 紧邻等长上一周期门禁；报告四个汇总出口统一优先使用该直出值。
+    // 分日表不调用本函数中的 periodDirectMetrics，因此两种时间粒度不会串值。
+    const periodDirect = side === "competitor" && ["paidGmv", "roi"].includes(key)
+      ? numericModelValue(model.metrics?.competitor?.periodDirectMetrics?.[key])
+      : null;
+    if (periodDirect !== null) return periodDirect;
     const formula = reportEfficiencyMetric(model, side, key);
     return formula.applicable ? formula.value : reportRawMetricValue(model, side, key);
   }
@@ -843,12 +850,46 @@
     return table("商品与成功品", columns, rows, { widths: [14, 19, 58, 70, 20, 13, 18, 18, 18, 16, 14, 14, 18, 18, 24, 20, 54] });
   }
 
+  function competitorDailyGmvSource(model) {
+    // 对手日 GMV 有两套同周期来源：核心卡累计差分与成长趋势指数拟合。
+    // 两者都是完整序列时，逐格比较会把正常的口径差异误判为冲突并清空整列。
+    // 因此先在整条序列级别锁定一个来源，禁止按天混拼：能严格闭合周期总
+    // GMV 的差分优先；否则使用已闭合的趋势拟合；拟合不可用时才保留现有
+    // 差分单日值。两套都没有时继续留空，绝不均摊或补 0。
+    return model.competitorDaily?.gmvClosed === true
+      ? "paired"
+      : model.daily?.gmvFit?.status === "ready"
+        ? "line"
+        : (model.competitorDaily?.rows || []).some(row => completenessEngine.isNumericMetricValue(row?.gmv))
+          ? "paired"
+          : "none";
+  }
+
+  function competitorDailyGmvValue(source, pairedRow, lineRow) {
+    if (source === "paired") return pairedRow?.gmv;
+    if (source === "line") return lineRow?.dailyGmv;
+    return null;
+  }
+
+  function competitorDailyGmvRows(model) {
+    const source = competitorDailyGmvSource(model);
+    const lineRows = model.daily?.rows || [];
+    if (source !== "paired") return source === "line" ? lineRows : [];
+    const lineByDate = new Map(lineRows.map(row => [row.date, row]));
+    return (model.competitorDaily?.rows || []).map(row => ({
+      ...(lineByDate.get(row.date) || {}),
+      date: row.date,
+      dailyGmv: row.gmv
+    }));
+  }
+
   function buildDailyTableFromModel(model) {
     const labels = completenessEngine.CHANNELS.map(([, label]) => label);
     const subjectDailyRows = (model.subjectDaily?.rows || []).map(row => [row.date, modelCell(row.gmv)]);
     const subjectByDate = new Map((model.subjectDaily?.rows || []).map(row => [row.date, row]));
     const competitorByDate = new Map((model.competitorDaily?.rows || []).map(row => [row.date, row]));
     const lineByDate = new Map((model.daily?.rows || []).map(row => [row.date, row]));
+    const competitorGmvSource = competitorDailyGmvSource(model);
     // 05 表按完整目标周期保留每天一行。平台尚未返回的那天仍显示日期并
     // 保持业务格为空，不能因为三类日源都缺失就让整行从报告中消失。
     const dates = [...new Set([
@@ -920,7 +961,9 @@
         ? (isSubject ? lineRow?.subjectTotalSpend : lineRow?.totalSpend)
         : null;
       const spendSelection = numericSelection(pairedRow?.totalSpend, lineSpend, channelTotal);
-      const gmvSelection = numericSelection(pairedRow?.gmv, isSubject ? null : lineRow?.dailyGmv);
+      const gmvSelection = numericSelection(isSubject
+        ? pairedRow?.gmv
+        : competitorDailyGmvValue(competitorGmvSource, pairedRow, lineRow));
       const spend = spendSelection.value;
       const gmv = gmvSelection.value;
       const metrics = pairedRow?.metrics || {};
@@ -1030,8 +1073,9 @@
   }
 
   function buildPeriodTableFromModel(model, item) {
-    const competitorDailyGmv = model.daily.rows.map(row => row.dailyGmv).filter(Number.isFinite);
-    const competitorPeakRow = model.daily.rows.filter(row => Number.isFinite(row.dailyGmv)).sort((left, right) => right.dailyGmv - left.dailyGmv)[0];
+    const competitorRows = competitorDailyGmvRows(model);
+    const competitorDailyGmv = competitorRows.map(row => row.dailyGmv).filter(Number.isFinite);
+    const competitorPeakRow = competitorRows.filter(row => Number.isFinite(row.dailyGmv)).sort((left, right) => right.dailyGmv - left.dailyGmv)[0];
     const subjectRows = (model.subjectDaily?.rows || []).filter(row => Number.isFinite(row.gmv));
     const subjectDailyGmv = subjectRows.map(row => row.gmv);
     const subjectPeakRow = subjectRows.slice().sort((left, right) => right.gmv - left.gmv)[0];
@@ -1097,6 +1141,7 @@
 
   function buildStageTableFromModel(model) {
     const rows = [];
+    const competitorSeriesRows = competitorDailyGmvRows(model);
     const stats = (selected, role) => {
       const gmvKey = role === "主体" ? "gmv" : "dailyGmv";
       const gmvRows = selected.filter(row => Number.isFinite(row?.[gmvKey]));
@@ -1130,7 +1175,7 @@
       const end = stage.end && stage.end > model.period.endDate ? model.period.endDate : stage.end;
       const inStage = row => (!start || row.date >= start) && (!end || row.date <= end);
       const subjectSelected = (model.subjectDaily?.rows || []).filter(inStage);
-      const competitorSelected = (model.daily?.rows || []).filter(inStage);
+      const competitorSelected = competitorSeriesRows.filter(inStage);
       const subject = stats(subjectSelected, "主体");
       const competitor = stats(competitorSelected, "对手");
       const hasPromotionDetails = [stage.description, stage.adStrategy, stage.executionDetails, stage.operations]

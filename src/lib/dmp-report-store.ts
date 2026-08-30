@@ -107,6 +107,18 @@ export interface DmpReportReplaceLatestPairRetention {
   absorbedReportIds: string[];
 }
 
+export interface DmpReportReplaceCurrentRetention {
+  mode: "replace-current-report";
+  confirmed: true;
+  replacedReportId: string;
+  previousCreatedAt: string;
+  newCreatedAt: string;
+}
+
+export type DmpReportReplacementRetention =
+  | DmpReportReplaceLatestPairRetention
+  | DmpReportReplaceCurrentRetention;
+
 export class DmpReportReplaceConflictError extends Error {
   readonly code = "DMP_REPORT_REPLACE_CONFLICT";
   readonly status = 409;
@@ -124,6 +136,16 @@ export class DmpReportHistoryStaleError extends Error {
   constructor(message = "官网同商品对历史已变化，请重新读取并合并后再提交") {
     super(message);
     this.name = "DmpReportHistoryStaleError";
+  }
+}
+
+export class DmpReportTargetStaleError extends Error {
+  readonly code = "DMP_REPORT_TARGET_STALE";
+  readonly status = 409;
+
+  constructor(message = "当前报告已被其他页面更新，本次未覆盖，请刷新后重试") {
+    super(message);
+    this.name = "DmpReportTargetStaleError";
   }
 }
 
@@ -575,20 +597,44 @@ export async function saveDmpBusinessReport(input: {
   quality: DmpReportQuality;
   sourceVersion: string;
   sourceShop?: DmpReportSourceShopInput;
-  archiveMode?: "replace-latest-pair";
+  archiveMode?: "replace-latest-pair" | "replace-current-report";
   replaceReportId?: string;
+  replaceReportCreatedAt?: string;
   absorbedReportIds?: string[];
-}): Promise<DmpBusinessReportRecord & { retention?: DmpReportReplaceLatestPairRetention }> {
+}): Promise<DmpBusinessReportRecord & { retention?: DmpReportReplacementRetention }> {
   let sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>;
   try {
     sourceShop = normalizeDmpReportSourceShop(input.sourceShop);
   } catch (error) {
-    if (input.archiveMode === "replace-latest-pair") {
+    if (input.archiveMode === "replace-latest-pair" || input.archiveMode === "replace-current-report") {
       throw new DmpReportReplaceConflictError(error instanceof Error ? error.message : "冻结店铺信息无效");
     }
     throw error;
   }
   const effectiveQuality = effectiveDmpReportQuality(input.report, input.quality);
+  if (input.archiveMode === "replace-current-report") {
+    try {
+      const replacement = normalizeCurrentDmpReportReplacement(
+        input.replaceReportId,
+        input.replaceReportCreatedAt
+      );
+      const result = await prisma.$transaction(async (tx) => replaceCurrentDmpGrowthReport(tx, {
+        ...input,
+        sourceShop,
+        effectiveQuality,
+        replacement
+      }));
+      return {
+        ...storedDmpBusinessReportRecord(result.row, input.report, effectiveQuality),
+        retention: result.retention
+      };
+    } catch (error) {
+      if (isPrismaUniqueConstraintError(error)) {
+        throw new DmpReportReplaceConflictError("新报告指纹已被另一份报告占用，未执行原地替换");
+      }
+      throw error;
+    }
+  }
   if (input.archiveMode === "replace-latest-pair") {
     try {
       const replacement = normalizeDmpReportReplacement(input.replaceReportId, input.absorbedReportIds);
@@ -795,6 +841,22 @@ function normalizeDmpReportReplacement(replaceReportId: unknown, absorbedReportI
   return { targetId, absorbed };
 }
 
+function normalizeCurrentDmpReportReplacement(replaceReportId: unknown, replaceReportCreatedAt: unknown) {
+  const targetId = String(replaceReportId ?? "").trim();
+  const expectedCreatedAtText = String(replaceReportCreatedAt ?? "").trim();
+  const expectedCreatedAt = new Date(expectedCreatedAtText);
+  if (
+    !targetId
+    || targetId.length > 100
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(expectedCreatedAtText)
+    || !Number.isFinite(expectedCreatedAt.getTime())
+    || expectedCreatedAt.toISOString() !== expectedCreatedAtText
+  ) {
+    throw new DmpReportReplaceConflictError("当前报告替换目标或版本无效");
+  }
+  return { targetId, expectedCreatedAt, expectedCreatedAtText };
+}
+
 const growthCandidateSelect = {
   id: true,
   tenantId: true,
@@ -820,6 +882,243 @@ type DmpGrowthCandidateRow = {
   createdAt: Date;
   report: unknown;
 };
+
+async function replaceCurrentDmpGrowthReport(
+  tx: Prisma.TransactionClient,
+  input: {
+    access: DmpReportAccess;
+    report: DmpCanonicalReport;
+    subjectItemId: string;
+    competitorItemId: string;
+    quality: DmpReportQuality;
+    sourceVersion: string;
+    sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>;
+    effectiveQuality: DmpReportQuality;
+    replacement: {
+      targetId: string;
+      expectedCreatedAt: Date;
+      expectedCreatedAtText: string;
+    };
+  }
+) {
+  const conflict = (message: string): never => {
+    throw new DmpReportReplaceConflictError(message);
+  };
+  if (dmpReportKind(input.report) !== "growth") {
+    conflict("只有商品成长报告可以原地替换");
+  }
+  const incomingIdentity = dmpCanonicalReportIdentity(input.report, {
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId
+  });
+  if (
+    incomingIdentity.reportType !== "growth"
+    || incomingIdentity.subjectItemId !== input.subjectItemId
+    || incomingIdentity.competitorItemIds.length !== 1
+    || incomingIdentity.competitorItemIds[0] !== input.competitorItemId
+  ) {
+    conflict("新报告的主体或竞品身份不一致，未执行原地替换");
+  }
+  const incomingPeriod = exactGrowthPeriod(input.report.period);
+  if (!incomingPeriod) {
+    throw new DmpReportReplaceConflictError("新报告缺少可唯一确认的精确周期，未执行原地替换");
+  }
+
+  // assignment/delete/latest-pair replacement all participate in the same target-lock
+  // protocol. The createdAt predicate below remains the authoritative compare-and-swap
+  // version so a write outside this process cannot silently overwrite a newer revision.
+  await lockDmpReportTargets(tx, input.access, [input.replacement.targetId]);
+  const target = await tx.dmpBusinessReport.findFirst({
+    where: {
+      id: input.replacement.targetId,
+      tenantId: input.access.tenantId,
+      userId: input.access.userId
+    },
+    select: {
+      id: true,
+      tenantId: true,
+      userId: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      sourceVersion: true,
+      fingerprint: true,
+      createdAt: true,
+      report: true
+    }
+  });
+  if (!target) {
+    throw new DmpReportReplaceConflictError("原报告不存在或不属于当前登录账号，未执行原地替换");
+  }
+  if (target.createdAt.toISOString() !== input.replacement.expectedCreatedAtText) {
+    throw new DmpReportTargetStaleError();
+  }
+  if (
+    target.tenantId !== input.access.tenantId
+    || target.userId !== input.access.userId
+    || target.subjectItemId !== input.subjectItemId
+    || target.competitorItemId !== input.competitorItemId
+  ) {
+    conflict("原报告不属于同一账号、主体与竞品，未执行原地替换");
+  }
+  await validateCurrentReplacementShop(
+    tx,
+    input.access.tenantId,
+    input.sourceShop,
+    target.shopId
+  );
+
+  const checked = validateDmpCanonicalReport(target.report, {
+    subjectItemId: target.subjectItemId,
+    competitorItemId: target.competitorItemId
+  });
+  const targetReport = checked.report;
+  if (!targetReport || dmpReportKind(targetReport) !== "growth") {
+    throw new DmpReportReplaceConflictError("原记录不是可验证的商品成长报告，未执行原地替换");
+  }
+  const targetIdentity = dmpCanonicalReportIdentity(targetReport, {
+    subjectItemId: target.subjectItemId,
+    competitorItemId: target.competitorItemId
+  });
+  if (
+    targetIdentity.reportType !== "growth"
+    || targetIdentity.subjectItemId !== input.subjectItemId
+    || targetIdentity.competitorItemIds.length !== 1
+    || targetIdentity.competitorItemIds[0] !== input.competitorItemId
+  ) {
+    conflict("原报告的主体或竞品身份不一致，未执行原地替换");
+  }
+  const targetRowPeriod = exactGrowthPeriod(target.period);
+  const targetReportPeriod = exactGrowthPeriod(targetReport.period);
+  if (
+    !targetRowPeriod
+    || !targetReportPeriod
+  ) {
+    throw new DmpReportReplaceConflictError("新报告与原报告的精确周期不一致，未执行原地替换");
+  }
+  if (
+    !sameExactGrowthPeriod(incomingPeriod, targetRowPeriod)
+    || !sameExactGrowthPeriod(incomingPeriod, targetReportPeriod)
+  ) {
+    conflict("新报告与原报告的精确周期不一致，未执行原地替换");
+  }
+
+  const targetEffectiveQuality = effectiveDmpReportQuality(
+    targetReport,
+    target.quality === "partial" ? "partial" : "complete"
+  );
+  if (targetEffectiveQuality === "complete" && input.effectiveQuality !== "complete") {
+    conflict("完整报告不能降级为部分报告，已保留原报告且未覆盖");
+  }
+
+  const fingerprint = dmpBusinessReportFingerprint({
+    report: input.report,
+    subjectItemId: input.subjectItemId,
+    competitorItemId: input.competitorItemId,
+    ...(target.shopId ? { shopId: target.shopId } : {})
+  });
+  const fingerprintCollision = await tx.dmpBusinessReport.findFirst({
+    where: {
+      tenantId: input.access.tenantId,
+      userId: input.access.userId,
+      fingerprint,
+      id: { not: target.id }
+    },
+    select: { id: true }
+  });
+  if (fingerprintCollision) conflict("新报告指纹已被另一份报告占用，未执行原地替换");
+
+  const newCreatedAt = new Date(Math.max(Date.now(), target.createdAt.getTime() + 1));
+  const updated = await tx.dmpBusinessReport.updateMany({
+    where: {
+      id: target.id,
+      tenantId: input.access.tenantId,
+      userId: input.access.userId,
+      shopId: target.shopId,
+      subjectItemId: input.subjectItemId,
+      competitorItemId: input.competitorItemId,
+      period: target.period,
+      createdAt: input.replacement.expectedCreatedAt
+    },
+    data: {
+      report: input.report as unknown as Prisma.InputJsonValue,
+      quality: input.effectiveQuality,
+      sourceVersion: input.sourceVersion,
+      fingerprint,
+      createdAt: newCreatedAt
+    }
+  });
+  if (updated.count !== 1) throw new DmpReportTargetStaleError();
+
+  const row = await tx.dmpBusinessReport.findFirst({
+    where: {
+      id: target.id,
+      tenantId: input.access.tenantId,
+      userId: input.access.userId,
+      createdAt: newCreatedAt
+    },
+    select: {
+      id: true,
+      shop: { select: { id: true, name: true } },
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      createdAt: true,
+      report: true
+    }
+  });
+  if (!row) throw new DmpReportTargetStaleError("当前报告原地替换结果无法确认，事务已回滚");
+  return {
+    row,
+    retention: {
+      mode: "replace-current-report" as const,
+      confirmed: true as const,
+      replacedReportId: target.id,
+      previousCreatedAt: input.replacement.expectedCreatedAtText,
+      newCreatedAt: newCreatedAt.toISOString()
+    }
+  };
+}
+
+async function validateCurrentReplacementShop(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  sourceShop: ReturnType<typeof normalizeDmpReportSourceShop>,
+  frozenShopId: string | null
+) {
+  if (!frozenShopId) {
+    if (!sourceShop) return;
+    throw new DmpReportReplaceConflictError("本次店铺目标无法与原报告冻结店铺核验，未执行原地替换");
+  }
+  const shop = await tx.shop.findFirst({
+    where: { id: frozenShopId, tenantId },
+    select: { id: true, name: true }
+  });
+  if (!shop || shop.id !== frozenShopId) {
+    throw new DmpReportReplaceConflictError("原报告冻结店铺不存在或不属于当前账号，未执行原地替换");
+  }
+  if (sourceShop && sourceShop.internalShopId !== frozenShopId) {
+    throw new DmpReportReplaceConflictError("本次冻结店铺与原报告店铺不一致，未执行原地替换");
+  }
+}
+
+function exactGrowthPeriod(value: unknown) {
+  const dates = String(value ?? "").match(/20\d{2}-\d{2}-\d{2}/g) ?? [];
+  if (dates.length !== 2 || !dates.every(validIsoBusinessDate)) return null;
+  if (isoDateDay(dates[0]) > isoDateDay(dates[1])) return null;
+  return { startDate: dates[0], endDate: dates[1] };
+}
+
+function sameExactGrowthPeriod(
+  left: { startDate: string; endDate: string },
+  right: { startDate: string; endDate: string }
+) {
+  return left.startDate === right.startDate && left.endDate === right.endDate;
+}
 
 function validatedGrowthCandidate(
   row: DmpGrowthCandidateRow,

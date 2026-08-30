@@ -449,6 +449,103 @@ describe("POST /api/dmp-reports archive contract", () => {
     });
   });
 
+  it("passes the current-report CAS contract and returns the same report ID with confirmed retention", async () => {
+    const previousCreatedAt = "2026-08-22T00:00:00.000Z";
+    const newCreatedAt = "2026-08-30T14:05:00.000Z";
+    mocks.saveDmpBusinessReport.mockResolvedValueOnce({
+      ...REPORT,
+      id: "report-current",
+      createdAt: newCreatedAt,
+      report: canonical,
+      retention: {
+        mode: "replace-current-report",
+        confirmed: true,
+        replacedReportId: "report-current",
+        previousCreatedAt,
+        newCreatedAt
+      }
+    });
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
+      body: JSON.stringify({
+        report: canonical,
+        quality: "partial",
+        sourceVersion: "2.3.59",
+        archiveMode: "replace-current-report",
+        replaceReportId: "report-current",
+        replaceReportCreatedAt: previousCreatedAt
+      })
+    }));
+
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      archiveMode: "replace-current-report",
+      replaceReportId: "report-current",
+      replaceReportCreatedAt: previousCreatedAt
+    }));
+    await expect(response.json()).resolves.toMatchObject({
+      data: {
+        archived: true,
+        report: { id: "report-current", createdAt: newCreatedAt },
+        retention: {
+          mode: "replace-current-report",
+          confirmed: true,
+          replacedReportId: "report-current",
+          previousCreatedAt,
+          newCreatedAt
+        }
+      }
+    });
+  });
+
+  it("returns recognizable TARGET_STALE without claiming a write", async () => {
+    mocks.saveDmpBusinessReport.mockRejectedValueOnce(Object.assign(new Error("当前报告已被其他页面更新"), {
+      code: "DMP_REPORT_TARGET_STALE",
+      status: 409
+    }));
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        report: canonical,
+        archiveMode: "replace-current-report",
+        replaceReportId: "report-current",
+        replaceReportCreatedAt: "2026-08-22T00:00:00.000Z"
+      })
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "当前报告已被其他页面更新",
+      code: "DMP_REPORT_TARGET_STALE"
+    });
+  });
+
+  it.each([
+    ["missing revision", { archiveMode: "replace-current-report", replaceReportId: "report-current" }],
+    ["noncanonical revision", {
+      archiveMode: "replace-current-report",
+      replaceReportId: "report-current",
+      replaceReportCreatedAt: "2026-08-22T00:00:00Z"
+    }],
+    ["absorbed IDs", {
+      archiveMode: "replace-current-report",
+      replaceReportId: "report-current",
+      replaceReportCreatedAt: "2026-08-22T00:00:00.000Z",
+      absorbedReportIds: ["report-current"]
+    }]
+  ])("rejects an invalid current-report contract: %s", async (_label, replacement) => {
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ report: canonical, ...replacement })
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  });
+
   it("returns 409 when atomic validation refuses to overwrite the current report", async () => {
     mocks.saveDmpBusinessReport.mockRejectedValueOnce(Object.assign(new Error("分日范围不连通，未执行原子替换"), {
       code: "DMP_REPORT_REPLACE_CONFLICT",

@@ -126,6 +126,7 @@ export async function POST(request: Request) {
         sourceShop?: unknown;
         archiveMode?: unknown;
         replaceReportId?: unknown;
+        replaceReportCreatedAt?: unknown;
         absorbedReportIds?: unknown;
       }
     | null;
@@ -181,6 +182,9 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (isHistoryStaleConflict(error)) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409, headers: CORS });
+    }
+    if (isReportTargetStaleConflict(error)) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 409, headers: CORS });
     }
     if (isAtomicReplaceConflict(error)) {
@@ -315,6 +319,7 @@ function parseSourceShop(value: unknown):
 function parseArchiveReplacement(body: {
   archiveMode?: unknown;
   replaceReportId?: unknown;
+  replaceReportCreatedAt?: unknown;
   absorbedReportIds?: unknown;
 } | null):
   | {
@@ -323,17 +328,50 @@ function parseArchiveReplacement(body: {
         archiveMode: "replace-latest-pair";
         replaceReportId: string;
         absorbedReportIds: string[];
+      } | {
+        archiveMode: "replace-current-report";
+        replaceReportId: string;
+        replaceReportCreatedAt: string;
       };
     }
   | { ok: false; error: string } {
   const mode = body?.archiveMode;
   if (mode == null || mode === "") {
-    if (body?.replaceReportId != null || body?.absorbedReportIds != null) {
+    if (
+      body?.replaceReportId != null
+      || body?.replaceReportCreatedAt != null
+      || body?.absorbedReportIds != null
+    ) {
       return { ok: false, error: "缺少原子替换模式" };
     }
     return { ok: true };
   }
+  if (mode === "replace-current-report") {
+    if (
+      typeof body?.replaceReportId !== "string"
+      || typeof body?.replaceReportCreatedAt !== "string"
+      || body?.absorbedReportIds != null
+    ) {
+      return { ok: false, error: "当前报告替换目标或版本无效" };
+    }
+    const replaceReportId = body.replaceReportId.trim();
+    const replaceReportCreatedAt = body.replaceReportCreatedAt.trim();
+    if (
+      !replaceReportId
+      || replaceReportId.length > 100
+      || !isCanonicalIsoTimestamp(replaceReportCreatedAt)
+    ) {
+      return { ok: false, error: "当前报告替换目标或版本无效" };
+    }
+    return {
+      ok: true,
+      value: { archiveMode: mode, replaceReportId, replaceReportCreatedAt }
+    };
+  }
   if (mode !== "replace-latest-pair") return { ok: false, error: "报告归档模式无效" };
+  if (body?.replaceReportCreatedAt != null) {
+    return { ok: false, error: "同商品对合并模式不能携带当前报告版本" };
+  }
   if (typeof body?.replaceReportId !== "string" || !Array.isArray(body.absorbedReportIds)) {
     return { ok: false, error: "原子替换目标或吸收报告清单无效" };
   }
@@ -358,6 +396,12 @@ function parseArchiveReplacement(body: {
   };
 }
 
+function isCanonicalIsoTimestamp(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+}
+
 function isSourceShopArchiveError(error: unknown): error is Error & { status: 400 | 404 } {
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
@@ -375,4 +419,10 @@ function isHistoryStaleConflict(error: unknown): error is Error & { code: "DMP_R
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
   return candidate.code === "DMP_REPORT_HISTORY_STALE" && candidate.status === 409;
+}
+
+function isReportTargetStaleConflict(error: unknown): error is Error & { code: "DMP_REPORT_TARGET_STALE"; status: 409 } {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return candidate.code === "DMP_REPORT_TARGET_STALE" && candidate.status === 409;
 }

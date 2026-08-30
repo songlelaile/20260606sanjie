@@ -1292,6 +1292,7 @@
         const audit = competitionItemSupplement.applyToMetrics(pairedMetrics, supplementValue, {
           subjectItemId,
           competitorItemId: successItemId,
+          runId,
           period: { startDate: date, endDate: date, days: 1 },
           previousPeriod: previousOneDayPeriod(date)
         });
@@ -2071,6 +2072,14 @@
     const resolved = current.canonicalEfficiencyMetrics || (current.canonicalEfficiencyMetrics = {});
     current.valueConflicts = current.valueConflicts || {};
     for (const definition of CANONICAL_EFFICIENCY_FORMULAS) {
+      const periodDirect = current.periodDirectMetrics?.[definition.key];
+      if (isNumericMetricValue(periodDirect)) {
+        current[definition.key] = periodDirect;
+        valueContexts[definition.key] = valueContexts[definition.key] || expectedContext;
+        delete resolved[definition.key];
+        delete current.valueConflicts[definition.key];
+        continue;
+      }
       const numeratorState = metricValueState(current[definition.numeratorKey]);
       const denominatorState = metricValueState(current[definition.denominatorKey]);
       const numericStates = [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL];
@@ -2266,6 +2275,7 @@
       const current = metrics?.[side];
       if (!current) continue;
       for (const [key, direction] of Object.entries(current.directionalComparisons || {})) {
+        if (isNumericMetricValue(current.periodDirectMetrics?.[key])) continue;
         // 三项效率指标一旦由同期间分子/分母公式闭合，方向文案仅保留为内部
         // 原始披露，不得撤销公式结果或重新进入生产报告。
         if (current.canonicalEfficiencyMetrics?.[key]) continue;
@@ -2459,6 +2469,7 @@
 
   function enrichItemSupplementMetrics(metrics, gate) {
     const accepted = new Set(Array.isArray(gate?.acceptedFields) ? gate.acceptedFields : []);
+    const aggregateDirect = new Set(Array.isArray(gate?.aggregateDirectFields) ? gate.aggregateDirectFields : []);
     for (const side of ["subject", "competitor"]) {
       const current = metrics?.[side];
       if (!current) continue;
@@ -2473,6 +2484,26 @@
         current.spendCoverage = null;
       }
       current.valueConflicts = current.valueConflicts || {};
+      const directKeys = ["paidGmv", "roi"].filter(key => aggregateDirect.has(`${side}.${key}`)
+        && isNumericMetricValue(current[key]));
+      if (directKeys.length) {
+        current.periodDirectMetrics = current.periodDirectMetrics || {};
+        for (const key of directKeys) {
+          current.periodDirectMetrics[key] = current[key];
+          valueContexts[key] = expectedContext;
+          delete current.valueConflicts[key];
+        }
+      }
+      if (directKeys.includes("paidGmv")) {
+        current.attributedGmv = current.paidGmv;
+        valueContexts.attributedGmv = expectedContext;
+        current.paidGmvContribution = null;
+        current.paidAmountShare = null;
+        delete valueContexts.paidGmvContribution;
+        delete valueContexts.paidAmountShare;
+        delete current.valueConflicts.paidGmvContribution;
+      }
+      if (directKeys.includes("roi")) delete current.canonicalEfficiencyMetrics?.roi;
       captureDirectionalComparisons(current);
       applyCanonicalEfficiencyMetrics(current, expectedContext);
       closePeriodMetricSet(current, expectedContext);
@@ -2517,6 +2548,16 @@
       closePeriodMetricSet(current, expectedContext);
     }
     finalizeMetricDirections(metrics);
+    const directCompetitor = metrics?.competitor?.periodDirectMetrics || {};
+    for (const aligned of metrics?.aligned || []) {
+      const modelKey = aligned.key === "paidAmountShare" ? "paidGmvContribution" : aligned.key;
+      if (["paidGmv", "roi"].includes(modelKey) && isNumericMetricValue(directCompetitor[modelKey])) {
+        aligned.competitor = directCompetitor[modelKey];
+      }
+      if (modelKey === "paidGmvContribution" && isNumericMetricValue(metrics?.competitor?.paidGmvContribution)) {
+        aligned.competitor = metrics.competitor.paidGmvContribution;
+      }
+    }
     return metrics;
   }
 
@@ -2788,7 +2829,7 @@
       period,
       metrics,
       options.competitionItemDailySupplements,
-      options.id
+      options.id || options.runId
     );
     const subjectDaily = pairedDaily.subject;
     const competitorDaily = pairedDaily.competitor;
@@ -2918,7 +2959,8 @@
           competitorItemId: successItemId,
           period,
           previousPeriod: options.previousPeriod,
-          runId: options.id || options.runId
+          runId: options.id || options.runId,
+          preferAggregateDirect: daysInclusive(period.startDate, period.endDate) === 30
         })
       : null;
     if (itemSupplementGate?.acceptedFields?.length) enrichItemSupplementMetrics(metrics, itemSupplementGate);

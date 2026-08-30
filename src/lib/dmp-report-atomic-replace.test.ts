@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   reportFindMany: vi.fn(),
   reportDeleteMany: vi.fn(),
   reportUpdate: vi.fn(),
+  reportUpdateMany: vi.fn(),
   reportUpsert: vi.fn(),
   shareUpdateMany: vi.fn()
 }));
@@ -40,6 +41,7 @@ describe("DMP latest-pair atomic replacement", () => {
         findMany: mocks.reportFindMany,
         deleteMany: mocks.reportDeleteMany,
         update: mocks.reportUpdate,
+        updateMany: mocks.reportUpdateMany,
         upsert: mocks.reportUpsert
       },
       dmpReportShare: { updateMany: mocks.shareUpdateMany }
@@ -312,6 +314,178 @@ describe("DMP latest-pair atomic replacement", () => {
       where: { id: owned.id, tenantId: ACCESS.tenantId, userId: ACCESS.userId }
     });
   });
+
+  it.each([
+    ["partial to partial", "partial", "partial"],
+    ["partial to complete", "partial", "complete"],
+    ["complete to complete", "complete", "complete"]
+  ] as const)("replaces the current report in place for %s", async (_label, targetQuality, incomingQuality) => {
+    const incoming = incomingQuality === "complete"
+      ? growth("2026-08-01", 3)
+      : partialGrowth("2026-08-01", 3);
+    const targetReport = targetQuality === "complete"
+      ? growth("2026-08-01", 3)
+      : partialGrowth("2026-08-01", 3);
+    const target = row("current-target", targetReport, "2026-08-04T00:00:00.000Z");
+    target.quality = targetQuality;
+    arrangeCurrent(target, incoming);
+
+    const saved = await replaceCurrent(
+      incoming,
+      target.id,
+      target.createdAt.toISOString(),
+      incomingQuality
+    );
+
+    expect(mocks.executeRaw.mock.calls.map((call) => call[1])).toEqual([
+      `dmp-report-target:${ACCESS.tenantId}:${ACCESS.userId}:${target.id}`
+    ]);
+    expect(mocks.reportUpdateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        id: target.id,
+        tenantId: ACCESS.tenantId,
+        userId: ACCESS.userId,
+        shopId: SHOP.id,
+        subjectItemId: SUBJECT,
+        competitorItemId: COMPETITOR,
+        period: target.period,
+        createdAt: target.createdAt
+      }),
+      data: expect.objectContaining({
+        report: incoming,
+        quality: incomingQuality,
+        sourceVersion: "2.3.59",
+        createdAt: expect.any(Date)
+      })
+    });
+    expect(mocks.reportUpsert).not.toHaveBeenCalled();
+    expect(mocks.reportDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+    expect(saved).toMatchObject({
+      id: target.id,
+      quality: incomingQuality,
+      retention: {
+        mode: "replace-current-report",
+        confirmed: true,
+        replacedReportId: target.id,
+        previousCreatedAt: target.createdAt.toISOString(),
+        newCreatedAt: expect.stringMatching(/^2026-|^20\d{2}-/)
+      }
+    });
+    expect(saved.retention?.mode).toBe("replace-current-report");
+    if (saved.retention?.mode !== "replace-current-report") throw new Error("current replacement retention missing");
+    expect(saved.retention.newCreatedAt).not.toBe(target.createdAt.toISOString());
+  });
+
+  it("refuses complete to partial without writing", async () => {
+    const incoming = partialGrowth("2026-08-01", 3);
+    const target = row("current-target", growth("2026-08-01", 3), "2026-08-04T00:00:00.000Z");
+    arrangeCurrent(target, incoming);
+
+    await expect(replaceCurrent(
+      incoming,
+      target.id,
+      target.createdAt.toISOString(),
+      "partial"
+    )).rejects.toMatchObject({ code: "DMP_REPORT_REPLACE_CONFLICT", status: 409 });
+    expectNoMutation();
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unassigned current report unassigned when the plugin omits routing metadata", async () => {
+    const incoming = growth("2026-08-01", 3);
+    const target = row("current-unassigned", growth("2026-08-01", 3), "2026-08-04T00:00:00.000Z");
+    target.shopId = null;
+    target.shop = null;
+    arrangeCurrent(target, incoming);
+
+    const saved = await replaceCurrent(
+      incoming,
+      target.id,
+      target.createdAt.toISOString(),
+      "complete"
+    );
+
+    expect(saved.id).toBe(target.id);
+    expect(saved).not.toHaveProperty("shopId");
+    expect(mocks.shopFindFirst).not.toHaveBeenCalled();
+    expect(mocks.reportUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ shopId: null })
+    }));
+  });
+
+  it("returns TARGET_STALE before mutation when the frozen createdAt no longer matches", async () => {
+    const incoming = growth("2026-08-01", 3);
+    const target = row("current-target", incoming, "2026-08-04T00:00:00.000Z");
+    arrangeCurrent(target, incoming);
+
+    await expect(replaceCurrent(
+      incoming,
+      target.id,
+      "2026-08-03T00:00:00.000Z",
+      "complete"
+    )).rejects.toMatchObject({ code: "DMP_REPORT_TARGET_STALE", status: 409 });
+    expectNoMutation();
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns TARGET_STALE and rolls back when the CAS update loses a race", async () => {
+    const incoming = growth("2026-08-01", 3);
+    const target = row("current-target", incoming, "2026-08-04T00:00:00.000Z");
+    arrangeCurrent(target, incoming, { updateCount: 0 });
+
+    await expect(replaceCurrent(
+      incoming,
+      target.id,
+      target.createdAt.toISOString(),
+      "complete"
+    )).rejects.toMatchObject({ code: "DMP_REPORT_TARGET_STALE", status: 409 });
+    expect(mocks.reportUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.reportUpsert).not.toHaveBeenCalled();
+    expect(mocks.reportDeleteMany).not.toHaveBeenCalled();
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["account", (target: ReturnType<typeof row>, incoming: DmpCanonicalReport) => {
+      target.tenantId = "tenant-b";
+      return { target, incoming, sourceShop: undefined };
+    }],
+    ["subject", (target: ReturnType<typeof row>, incoming: DmpCanonicalReport) => {
+      target.subjectItemId = "997165076209";
+      return { target, incoming, sourceShop: undefined };
+    }],
+    ["competitor", (target: ReturnType<typeof row>, incoming: DmpCanonicalReport) => {
+      target.competitorItemId = "997165076209";
+      return { target, incoming, sourceShop: undefined };
+    }],
+    ["period", (target: ReturnType<typeof row>) => ({
+      target,
+      incoming: growth("2026-08-02", 3),
+      sourceShop: undefined
+    })],
+    ["shop", (target: ReturnType<typeof row>, incoming: DmpCanonicalReport) => ({
+      target,
+      incoming,
+      sourceShop: { shopId: "shop-b" }
+    })]
+  ] as const)("fails closed for a mismatched %s", async (_label, mutate) => {
+    const baseIncoming = growth("2026-08-01", 3);
+    const baseTarget = row("current-target", growth("2026-08-01", 3), "2026-08-04T00:00:00.000Z");
+    const { target, incoming, sourceShop } = mutate(baseTarget, baseIncoming);
+    arrangeCurrent(target, incoming);
+    if (sourceShop) mocks.shopFindFirst.mockResolvedValue({ id: "shop-b", name: "北北店" });
+
+    await expect(replaceCurrent(
+      incoming,
+      target.id,
+      target.createdAt.toISOString(),
+      "complete",
+      sourceShop
+    )).rejects.toMatchObject({ code: "DMP_REPORT_REPLACE_CONFLICT", status: 409 });
+    expectNoMutation();
+    expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
+  });
 });
 
 function arrange(
@@ -342,6 +516,56 @@ function replace(
     archiveMode: "replace-latest-pair",
     replaceReportId,
     absorbedReportIds
+  });
+}
+
+function arrangeCurrent(
+  target: ReturnType<typeof row>,
+  incoming: DmpCanonicalReport,
+  options: { updateCount?: number; collision?: { id: string } | null } = {}
+) {
+  let updatedRow: ReturnType<typeof row> | null = null;
+  mocks.reportFindFirst.mockImplementation(async ({ where }: {
+    where: { id?: unknown; fingerprint?: unknown; createdAt?: unknown };
+  }) => {
+    if (where.fingerprint) return options.collision ?? null;
+    if (where.id === target.id && where.createdAt) return updatedRow;
+    if (where.id === target.id) return target;
+    return null;
+  });
+  mocks.reportUpdateMany.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => {
+    if ((options.updateCount ?? 1) !== 1) return { count: options.updateCount ?? 0 };
+    updatedRow = {
+      ...target,
+      report: incoming,
+      quality: String(data.quality ?? target.quality),
+      sourceVersion: String(data.sourceVersion ?? target.sourceVersion),
+      fingerprint: String(data.fingerprint ?? target.fingerprint),
+      createdAt: data.createdAt as Date,
+      shop: target.shop
+    };
+    return { count: 1 };
+  });
+}
+
+function replaceCurrent(
+  report: DmpCanonicalReport,
+  replaceReportId: string,
+  replaceReportCreatedAt: string,
+  quality: "complete" | "partial",
+  sourceShop?: { shopId?: string; shopName?: string }
+) {
+  return saveDmpBusinessReport({
+    access: ACCESS,
+    report,
+    subjectItemId: SUBJECT,
+    competitorItemId: COMPETITOR,
+    quality,
+    sourceVersion: "2.3.59",
+    ...(sourceShop ? { sourceShop } : {}),
+    archiveMode: "replace-current-report",
+    replaceReportId,
+    replaceReportCreatedAt
   });
 }
 
@@ -431,6 +655,13 @@ function growth(startDate: string, days: number): DmpCanonicalReport {
   });
   if (!checked.report || checked.issues?.length) throw new Error(checked.error || checked.issues?.join("；") || "fixture invalid");
   return checked.report;
+}
+
+function partialGrowth(startDate: string, days: number) {
+  const report = growth(startDate, days);
+  const overview = report.tables.find((table) => table.name === "报告总览")!;
+  overview.rows = overview.rows.filter((row) => row.cells[0] !== "PPC");
+  return report;
 }
 
 function addDays(startDate: string, offset: number) {
