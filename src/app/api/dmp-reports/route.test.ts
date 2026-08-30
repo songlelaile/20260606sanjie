@@ -2,9 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   assignDmpBusinessReportsShop: vi.fn(),
+  getDmpDefaultArchiveShop: vi.fn(),
   getDmpBusinessReport: vi.fn(),
   getDmpReportAccess: vi.fn(),
   getDmpReportAccessFromToken: vi.fn(),
+  listDmpBusinessReportArchivePair: vi.fn(),
   listDmpBusinessReports: vi.fn(),
   saveDmpBusinessReport: vi.fn(),
   validCategoryId: vi.fn(),
@@ -17,9 +19,11 @@ vi.mock("@/lib/dmp-report-store", () => ({
   DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 8 * 1024 * 1024 + 64 * 1024,
   assignDmpBusinessReportsShop: mocks.assignDmpBusinessReportsShop,
   deleteDmpBusinessReport: vi.fn(),
+  getDmpDefaultArchiveShop: mocks.getDmpDefaultArchiveShop,
   getDmpBusinessReport: mocks.getDmpBusinessReport,
   getDmpReportAccess: mocks.getDmpReportAccess,
   getDmpReportAccessFromToken: mocks.getDmpReportAccessFromToken,
+  listDmpBusinessReportArchivePair: mocks.listDmpBusinessReportArchivePair,
   listDmpBusinessReports: mocks.listDmpBusinessReports,
   saveDmpBusinessReport: mocks.saveDmpBusinessReport,
   validCategoryId: mocks.validCategoryId,
@@ -27,7 +31,7 @@ vi.mock("@/lib/dmp-report-store", () => ({
   validateDmpCanonicalReport: mocks.validateDmpCanonicalReport
 }));
 
-import { GET, PATCH, POST } from "./route";
+import { GET, OPTIONS, PATCH, POST } from "./route";
 
 const ACCESS = { userId: "user-a", tenantId: "tenant-a" };
 const REPORT = {
@@ -65,6 +69,108 @@ describe("GET /api/dmp-reports online-only policy", () => {
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: "当前版本仅支持官网在线查看，暂不提供数据下载" });
+  });
+});
+
+describe("GET /api/dmp-reports default archive shop", () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((mock) => mock.mockReset());
+    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
+    mocks.getDmpDefaultArchiveShop.mockResolvedValue({ id: "shop-default", name: "西西礼" });
+  });
+
+  it("allows the frozen shop header in CORS preflight", () => {
+    expect(OPTIONS().headers.get("access-control-allow-headers")).toContain("x-sanjie-shop");
+  });
+
+  it("resolves the account default shop from the extension token and ignores an old shop header", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-shop",
+      { headers: { "x-sanjie-session": "extension-token", "x-sanjie-shop": "shop-old" } }
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.getDmpReportAccessFromToken).toHaveBeenCalledWith("extension-token");
+    expect(mocks.getDmpDefaultArchiveShop).toHaveBeenCalledWith(ACCESS);
+    expect(mocks.listDmpBusinessReports).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ data: { shop: { id: "shop-default", name: "西西礼" } } });
+  });
+
+  it("does not expose the resolver to a browser-only request", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-shop",
+      { headers: { cookie: "sanjie_active_shop=shop-old" } }
+    ));
+
+    expect(response.status).toBe(401);
+    expect(mocks.getDmpReportAccess).not.toHaveBeenCalled();
+    expect(mocks.getDmpDefaultArchiveShop).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mixed archive-shop and report-detail request before authentication", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-shop&id=report-a",
+      { headers: { "x-sanjie-session": "extension-token" } }
+    ));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "INVALID_ARCHIVE_SHOP_SCOPE" });
+    expect(mocks.getDmpReportAccessFromToken).not.toHaveBeenCalled();
+    expect(mocks.getDmpBusinessReport).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/dmp-reports archive pair", () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((mock) => mock.mockReset());
+    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
+    mocks.validCategoryId.mockImplementation((value: unknown) => /^\d{1,20}$/.test(String(value ?? "")));
+    mocks.validItemId.mockImplementation((value: unknown) => /^\d{6,20}$/.test(String(value ?? "")));
+    mocks.listDmpBusinessReportArchivePair.mockResolvedValue([REPORT]);
+  });
+
+  it("returns only the frozen shop and requested product pair", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-pair&reportType=growth&subjectItemId=593063365092&competitorItemId=623803508105&quality=complete",
+      { headers: { "x-sanjie-session": "extension-token", "x-sanjie-shop": "shop-default" } }
+    ));
+
+    expect(response.status).toBe(200);
+    expect(mocks.listDmpBusinessReportArchivePair).toHaveBeenCalledWith(ACCESS, {
+      shopId: "shop-default",
+      reportType: "growth",
+      subjectItemId: "593063365092",
+      competitorItemId: "623803508105",
+      quality: "complete"
+    });
+    expect(mocks.listDmpBusinessReports).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ data: { reports: [REPORT] } });
+  });
+
+  it("requires the extension session and frozen shop", async () => {
+    const noSession = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-pair&reportType=growth&subjectItemId=593063365092&competitorItemId=623803508105&quality=complete"
+    ));
+    expect(noSession.status).toBe(401);
+
+    const noShop = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-pair&reportType=growth&subjectItemId=593063365092&competitorItemId=623803508105&quality=complete",
+      { headers: { "x-sanjie-session": "extension-token" } }
+    ));
+    expect(noShop.status).toBe(400);
+    await expect(noShop.json()).resolves.toMatchObject({ code: "SHOP_REQUIRED" });
+    expect(mocks.listDmpBusinessReportArchivePair).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed pair parameters before querying history", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-pair&reportType=growth&subjectItemId=bad&competitorItemId=623803508105&quality=complete",
+      { headers: { "x-sanjie-session": "extension-token", "x-sanjie-shop": "shop-default" } }
+    ));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "INVALID_ARCHIVE_PAIR_SCOPE" });
+    expect(mocks.listDmpBusinessReportArchivePair).not.toHaveBeenCalled();
   });
 });
 

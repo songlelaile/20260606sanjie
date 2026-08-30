@@ -114,8 +114,8 @@ describe("DMP report product-image upload contract", () => {
   });
 });
 
-describe("DMP report overview ROI interval contract", () => {
-  it("calculates only overview ROI from paid GMV divided by spend and keeps other tables unchanged", () => {
+describe("DMP report overview ROI disclosure contract", () => {
+  it("keeps an exact subject ROI and removes an unvalidated competitor ROI from every output table", () => {
     const baseModel = growthModel("https://img.alicdn.com/subject-main.jpg", "//img.alicdn.com/competitor-main.jpg");
     const model = {
       ...baseModel,
@@ -154,22 +154,22 @@ describe("DMP report overview ROI interval contract", () => {
     const benchmark = report.tables.find((table) => table.name === "对标总表");
     const base = report.tables.find((table) => table.name === "基础指标对比");
 
-    expect(overview?.rows.find((row) => row[0] === "ROI")?.slice(1, 3)).toEqual([2.04, "2.98~3.58"]);
+    expect(overview?.rows.find((row) => row[0] === "ROI")?.slice(1, 3)).toEqual([2.04, ""]);
     expect(overview?.overviewMetrics?.find((metric) => metric.key === "roi")).toMatchObject({
       subject: 2.04,
-      competitor: "2.98~3.58"
+      competitor: ""
     });
     expect(overview?.kpis?.filter((kpi) => kpi.label.endsWith("ROI")).map((kpi) => kpi.value)).toEqual([
       2.04,
-      "2.98~3.58"
+      ""
     ]);
-    expect(benchmark?.rows.find((row) => row[1] === "ROI")?.slice(2, 4)).toEqual([2.04, "比本品高"]);
-    expect(base?.rows.find((row) => row[0] === "ROI")?.slice(1, 3)).toEqual([2.04, "比本品高"]);
+    expect(benchmark?.rows.find((row) => row[1] === "ROI")?.slice(2, 4)).toEqual([2.04, ""]);
+    expect(base?.rows.find((row) => row[0] === "ROI")?.slice(1, 3)).toEqual([2.04, ""]);
 
     const canonicalOverview = engine.toCanonicalReport(report).tables.find((table) => table.name === "报告总览");
     expect(canonicalOverview?.rows.find((row) => row.cells[0] === "ROI")?.cells.slice(1, 3)).toEqual([
       "2.04",
-      "2.98~3.58"
+      ""
     ]);
   });
 });

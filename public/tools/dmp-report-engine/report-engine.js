@@ -36,6 +36,7 @@
   ];
 
   const FORBIDDEN_COLUMN = /^(判断|结构解读|业务解读|复盘结论|趋势判断|建议动作|备注|证据等级|校验状态|反推口径|请求|接口路径|数据来源)$/;
+  const DIRECTION_ONLY = /^(?:(?:比|较)(?:本品|对手|竞品)[高低]|[高低]于(?:本品|对手|竞品))$/;
   const EMPTY = "";
   const CHANNELS = [
     ["内容运营", "内容运营日消耗"],
@@ -640,6 +641,16 @@
     return value === null || value === undefined || (typeof value === "number" && !Number.isFinite(value)) ? EMPTY : value;
   }
 
+  function numericModelValue(value) {
+    const state = completenessEngine.metricValueState(value);
+    if (state.state === completenessEngine.VALUE_STATES.EXACT) return state.value;
+    return state.state === completenessEngine.VALUE_STATES.INTERVAL ? value : null;
+  }
+
+  function metricCell(value) {
+    return modelCell(numericModelValue(value));
+  }
+
   function disclosedModelValue(value) {
     if (value === null || value === undefined) return false;
     return !(typeof value === "string" && /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim()));
@@ -653,7 +664,7 @@
       : model.daily?.spendCoverage || model.daily?.coverageSummary || null;
   }
 
-  function reportMetricValue(model, side, key) {
+  function reportRawMetricValue(model, side, key) {
     const metrics = model.metrics?.[side] || {};
     const aliases = {
       paidGmvContribution: ["paidGmvContribution", "paidAmountShare"],
@@ -661,7 +672,13 @@
       globalROAS: ["globalROAS", "roas"],
       roas: ["roas", "globalROAS"]
     }[key] || [key];
-    for (const alias of aliases) if (disclosedModelValue(metrics[alias])) return metrics[alias];
+    if (aliases.some(alias => metrics.valueConflicts?.[alias])
+      || (["roas", "globalROAS"].includes(key) && metrics.valueConflicts?.roas)
+      || (["paidGmvContribution", "paidAmountShare"].includes(key) && metrics.valueConflicts?.paidGmvContribution)) return null;
+    for (const alias of aliases) {
+      const numeric = numericModelValue(metrics[alias]);
+      if (numeric !== null) return numeric;
+    }
     const coverage = reportSpendCoverage(model, side);
     const coverageKey = {
       spend: "spend",
@@ -676,35 +693,48 @@
       && Array.isArray(coverage?.missingDates)
       && coverage.missingDates.length === 1;
     const coverageValueAllowed = coverage?.complete === true || coverage?.singleDayPartial === true || legacySingleDayPartial;
-    return coverageKey && coverageValueAllowed && disclosedModelValue(coverage?.[coverageKey]) ? coverage[coverageKey] : null;
+    return coverageKey && coverageValueAllowed ? numericModelValue(coverage?.[coverageKey]) : null;
   }
 
-  // 仅供“01 报告总览”使用：ROI 在同一对象、同一周期及同一覆盖口径下，
-  // 按付费成交额 ÷ 推广消耗现算。不改写完整性模型，因此其他表仍保留原始 ROI 披露。
-  function overviewRoiValue(model, side) {
+  const REPORT_EFFICIENCY_FORMULAS = Object.freeze({
+    roi: Object.freeze({ numeratorKey: "paidGmv", denominatorKey: "spend", digits: 2, metric: "ROI", compact: false }),
+    ppc: Object.freeze({ numeratorKey: "spend", denominatorKey: "marketingClicks", digits: 2, metric: "PPC", compact: false }),
+    feeRatio: Object.freeze({ numeratorKey: "spend", denominatorKey: "totalGmv", digits: 6, metric: "费比", compact: true })
+  });
+
+  // 报告层再做一次同期间公式锁定，确保总览、对标、周期和基础表不会因
+  // 旧模型值或后置填充而分叉。只有分子、分母都为具体值/合法区间时才接管。
+  function reportEfficiencyMetric(model, side, key) {
+    const definition = REPORT_EFFICIENCY_FORMULAS[key];
+    if (!definition) return { applicable: false, value: null };
     const metrics = model.metrics?.[side] || {};
-    const paidGmv = reportMetricValue(model, side, "paidGmv");
-    const spend = reportMetricValue(model, side, "spend");
-    const spendState = completenessEngine.metricValueState(spend);
+    if (!metrics.canonicalEfficiencyMetrics?.[key]) return { applicable: false, value: null };
+    const numerator = reportRawMetricValue(model, side, definition.numeratorKey);
+    const denominator = reportRawMetricValue(model, side, definition.denominatorKey);
+    const numeratorState = completenessEngine.metricValueState(numerator);
+    const denominatorState = completenessEngine.metricValueState(denominator);
     const numericStates = [completenessEngine.VALUE_STATES.EXACT, completenessEngine.VALUE_STATES.INTERVAL];
-    // 消耗区间可能包含 0 时不产出单边界或 Infinity，保持原展示值。
-    if (!numericStates.includes(spendState.state)
-      || !spendState.range
-      || !Number.isFinite(spendState.range.min)
-      || spendState.range.min <= 0) {
-      return reportMetricValue(model, side, "roi");
+    if (!numericStates.includes(numeratorState.state) || !numericStates.includes(denominatorState.state)) {
+      return { applicable: false, value: null };
     }
     const contexts = metrics.valueContexts || {};
-    const calculated = completenessEngine.safeIntervalDivide(paidGmv, spend, {
-      digits: 2,
-      metric: "ROI",
+    const calculated = completenessEngine.safeIntervalDivide(numerator, denominator, {
+      digits: definition.digits,
+      metric: definition.metric,
+      compact: definition.compact,
       outward: true,
-      numeratorContext: contexts.paidGmv,
-      denominatorContext: contexts.spend
+      numeratorContext: contexts[definition.numeratorKey] || metrics.expectedContext,
+      denominatorContext: contexts[definition.denominatorKey] || metrics.expectedContext
     });
-    return numericStates.includes(calculated.state)
-      ? calculated.value
-      : reportMetricValue(model, side, "roi");
+    return {
+      applicable: true,
+      value: numericStates.includes(calculated.state) ? calculated.value : null
+    };
+  }
+
+  function reportMetricValue(model, side, key) {
+    const formula = reportEfficiencyMetric(model, side, key);
+    return formula.applicable ? formula.value : reportRawMetricValue(model, side, key);
   }
 
   function reportSideSpendScope(model, side) {
@@ -748,9 +778,11 @@
     const rows = [];
     for (const metric of model.metrics?.aligned || []) {
       const key = metric.key || identity(metric.name);
-      if (seen.has(key) || (!disclosedModelValue(metric.subject) && !disclosedModelValue(metric.competitor))) continue;
+      const subject = numericModelValue(metric.subject);
+      const competitor = numericModelValue(metric.competitor);
+      if (seen.has(key) || (subject === null && competitor === null)) continue;
       seen.add(key);
-      rows.push(metric);
+      rows.push({ ...metric, subject, competitor });
     }
     return rows;
   }
@@ -763,8 +795,10 @@
     return rows.map(source => {
       const row = [...source];
       const fallback = aligned.get(identity(row[nameIndex]));
-      if (!disclosedModelValue(row[subjectIndex]) && disclosedModelValue(fallback?.subject)) row[subjectIndex] = fallback.subject;
-      if (!disclosedModelValue(row[competitorIndex]) && disclosedModelValue(fallback?.competitor)) row[competitorIndex] = fallback.competitor;
+      const subject = numericModelValue(row[subjectIndex]);
+      const competitor = numericModelValue(row[competitorIndex]);
+      row[subjectIndex] = subject ?? numericModelValue(fallback?.subject);
+      row[competitorIndex] = competitor ?? numericModelValue(fallback?.competitor);
       return row;
     });
   }
@@ -815,7 +849,113 @@
     const subjectByDate = new Map((model.subjectDaily?.rows || []).map(row => [row.date, row]));
     const competitorByDate = new Map((model.competitorDaily?.rows || []).map(row => [row.date, row]));
     const lineByDate = new Map((model.daily?.rows || []).map(row => [row.date, row]));
-    const dates = [...new Set([...subjectByDate.keys(), ...competitorByDate.keys(), ...lineByDate.keys()])].sort();
+    // 05 表按完整目标周期保留每天一行。平台尚未返回的那天仍显示日期并
+    // 保持业务格为空，不能因为三类日源都缺失就让整行从报告中消失。
+    const dates = [...new Set([
+      ...(model.daily?.expectedDates || []),
+      ...(model.subjectDaily?.expectedDates || []),
+      ...(model.competitorDaily?.expectedDates || []),
+      ...completenessEngine.enumerateDates(model.period?.startDate, model.period?.endDate),
+      ...subjectByDate.keys(), ...competitorByDate.keys(), ...lineByDate.keys()
+    ])].sort();
+    const numericSelection = (...values) => {
+      const candidates = values.map(value => ({ value, state: completenessEngine.metricValueState(value) }))
+        .filter(candidate => [completenessEngine.VALUE_STATES.EXACT, completenessEngine.VALUE_STATES.INTERVAL].includes(candidate.state.state));
+      if (!candidates.length) return { value: null, conflict: false };
+      const conflict = candidates.some((left, index) => candidates.slice(index + 1)
+        .some(right => !completenessEngine.metricRangesCompatible(left.value, right.value)));
+      if (conflict) return { value: null, conflict: true };
+      let selected = null;
+      let selectedRank = 0;
+      for (const candidate of candidates) {
+        const rank = candidate.state.state === completenessEngine.VALUE_STATES.EXACT
+          ? 2
+          : 1;
+        if (rank <= selectedRank) continue;
+        selectedRank = rank;
+        selected = candidate.state.state === completenessEngine.VALUE_STATES.EXACT
+          ? candidate.state.value
+          : candidate.value && typeof candidate.value === "object" && Object.prototype.hasOwnProperty.call(candidate.value, "value")
+            ? candidate.value.value
+            : candidate.value;
+      }
+      return { value: selectedRank ? selected : null, conflict: false };
+    };
+    const numericPreferred = (...values) => numericSelection(...values).value;
+    const formulaOrFallback = (numerator, denominator, options, fallback = null, blocked = false) => {
+      if (blocked) return null;
+      const numericStates = [completenessEngine.VALUE_STATES.EXACT, completenessEngine.VALUE_STATES.INTERVAL];
+      const operandsReady = numericStates.includes(completenessEngine.metricValueState(numerator).state)
+        && numericStates.includes(completenessEngine.metricValueState(denominator).state);
+      if (!operandsReady) return numericPreferred(fallback);
+      const result = completenessEngine.safeIntervalDivide(numerator, denominator, {
+        ...options,
+        outward: true
+      });
+      return numericStates.includes(result.state)
+        ? result.value
+        : null;
+    };
+    const sideValues = (side, pairedRow, lineRow) => {
+      const isSubject = side === "subject";
+      const lineSideAllowed = !isSubject || lineRow?.hasPairedChannels === true;
+      const channelConflict = pairedRow?.channelSpendConflict === true;
+      const lineChannels = lineSideAllowed && !channelConflict
+        ? (isSubject ? lineRow?.subjectChannelSpend : lineRow?.channelSpend) || {}
+        : {};
+      const channelSelections = Object.fromEntries(labels.map(label => [
+        label,
+        numericSelection(
+          channelConflict ? null : pairedRow?.channelSpend?.[label],
+          lineChannels[label]
+        )
+      ]));
+      const channels = Object.fromEntries(labels.map(label => [label, channelSelections[label].value]));
+      const channelValues = labels.map(label => channels[label]);
+      const channelTotal = !labels.some(label => channelSelections[label].conflict)
+        && channelValues.length && channelValues.every(value => completenessEngine.isNumericMetricValue(value))
+        ? completenessEngine.sumMetricRanges(channelValues)
+        : null;
+      const lineSpend = lineSideAllowed && !channelConflict
+        ? (isSubject ? lineRow?.subjectTotalSpend : lineRow?.totalSpend)
+        : null;
+      const spendSelection = numericSelection(pairedRow?.totalSpend, lineSpend, channelTotal);
+      const gmvSelection = numericSelection(pairedRow?.gmv, isSubject ? null : lineRow?.dailyGmv);
+      const spend = spendSelection.value;
+      const gmv = gmvSelection.value;
+      const metrics = pairedRow?.metrics || {};
+      const sourceRoi = numericPreferred(metrics.roi);
+      const directPaidGmv = numericPreferred(metrics.paidGmv);
+      const calculatedPaidGmv = directPaidGmv == null
+        ? numericPreferred(completenessEngine.paidGmvFromSpendAndRoi(spend, sourceRoi))
+        : null;
+      const paidGmv = numericPreferred(directPaidGmv, calculatedPaidGmv);
+
+      // 方向值在模型后置解析为单边数值区间后，必须在此处按最终同日分子/
+      // 分母重新闭合；公式成功时覆盖接口旧效率值，失败时才保留同日数值源。
+      const roi = formulaOrFallback(
+        paidGmv,
+        spend,
+        { digits: 2, metric: "ROI", compact: false },
+        sourceRoi,
+        spendSelection.conflict
+      );
+      const ppc = formulaOrFallback(
+        spend,
+        numericPreferred(metrics.marketingClicks),
+        { digits: 2, metric: "PPC", compact: false },
+        metrics.ppc,
+        spendSelection.conflict
+      );
+      const feeRatio = formulaOrFallback(
+        spend,
+        gmv,
+        { digits: 6, metric: "费比", compact: true },
+        numericPreferred(pairedRow?.feeRatio, metrics.feeRatio, isSubject ? null : lineRow?.feeRatio),
+        spendSelection.conflict || gmvSelection.conflict
+      );
+      return { channels, spend, gmv, paidGmv, roi, ppc, feeRatio };
+    };
     const columns = [
       "日期", "主体日GMV", "对手日GMV",
       "主体日付费成交额", "对手日付费成交额",
@@ -829,24 +969,19 @@
       const competitor = competitorByDate.get(date);
       const line = lineByDate.get(date);
       const stage = line?.stage || model.stages?.find(current => (!current.start || date >= current.start) && (!current.end || date <= current.end))?.name || "";
-      const competitorGmv = competitor?.gmv ?? line?.dailyGmv;
-      const competitorSpend = competitor?.totalSpend ?? line?.totalSpend;
-      const competitorFeeRatio = competitor?.feeRatio ?? (Number.isFinite(competitorSpend) && Number.isFinite(competitorGmv) && competitorGmv !== 0
-        ? Math.round((competitorSpend / competitorGmv + Number.EPSILON) * 1_000_000) / 1_000_000
-        : null);
+      const subjectValues = sideValues("subject", subject, line);
+      const competitorValues = sideValues("competitor", competitor, line);
       return [
-        date, modelCell(subject?.gmv), modelCell(competitorGmv),
-        modelCell(subject?.metrics?.paidGmv), modelCell(competitor?.metrics?.paidGmv),
+        date, metricCell(subjectValues.gmv), metricCell(competitorValues.gmv),
+        metricCell(subjectValues.paidGmv), metricCell(competitorValues.paidGmv),
         ...labels.flatMap(label => [
-          modelCell(subject?.channelSpend?.[label]),
-          modelCell(competitor?.channelSpendConflict
-            ? null
-            : competitor?.channelSpend?.[label] ?? line?.channelSpend?.[label])
+          metricCell(subjectValues.channels[label]),
+          metricCell(competitorValues.channels[label])
         ]),
-        modelCell(subject?.totalSpend), modelCell(competitorSpend),
-        modelCell(subject?.metrics?.roi), modelCell(competitor?.metrics?.roi),
-        modelCell(subject?.metrics?.ppc), modelCell(competitor?.metrics?.ppc),
-        modelCell(subject?.feeRatio), modelCell(competitorFeeRatio), stage
+        metricCell(subjectValues.spend), metricCell(competitorValues.spend),
+        metricCell(subjectValues.roi), metricCell(competitorValues.roi),
+        metricCell(subjectValues.ppc), metricCell(competitorValues.ppc),
+        metricCell(subjectValues.feeRatio), metricCell(competitorValues.feeRatio), stage
       ];
     });
     return table("日GMV与费比", columns, rows, {
@@ -857,7 +992,7 @@
 
   function buildSceneTablesFromModel(model) {
     const columns = ["对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "消耗占比", "分配后消耗", "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"];
-    const convert = row => [row.role, row.level, row.primary, row.secondary, row.sceneId, modelCell(row.charge), modelCell(row.ratio), modelCell(row.allocated), modelCell(row.impression), modelCell(row.click), modelCell(row.ctr), modelCell(row.cpc), modelCell(row.directDealAmount), modelCell(row.directRoi)];
+    const convert = row => [row.role, row.level, row.primary, row.secondary, row.sceneId, metricCell(row.charge), metricCell(row.ratio), metricCell(row.allocated), metricCell(row.impression), metricCell(row.click), metricCell(row.ctr), metricCell(row.cpc), metricCell(row.directDealAmount), metricCell(row.directRoi)];
     return [
       table("一级场景", columns, model.sceneRows.level1.map(convert), { widths: [10, 8, 16, 12, 12, 17, 19, 16, 15, 12, 12, 12, 17, 13] }),
       table("二级场景", columns, model.sceneRows.level2.map(convert), { widths: [10, 8, 16, 48, 11, 17, 19, 16, 15, 12, 12, 12, 17, 13] })
@@ -875,7 +1010,7 @@
       return [label, apiName, modelCell(competitorSpend), Number.isFinite(competitorSpend) && Number.isFinite(competitorTotal) && competitorTotal !== 0 ? round(competitorSpend / competitorTotal, 6) : EMPTY,
         modelCell(subjectSpend), Number.isFinite(subjectSpend) && Number.isFinite(subjectTotal) && subjectTotal !== 0 ? round(subjectSpend / subjectTotal, 6) : EMPTY];
     });
-    rows.push(["合计", "", modelCell(model.daily.totalSpend), Number.isFinite(competitorTotal) ? 1 : EMPTY, modelCell(model.metrics.subject.spend), Number.isFinite(subjectTotal) ? 1 : EMPTY]);
+    rows.push(["合计", "", metricCell(model.daily.totalSpend), Number.isFinite(competitorTotal) ? 1 : EMPTY, metricCell(reportMetricValue(model, "subject", "spend")), Number.isFinite(subjectTotal) ? 1 : EMPTY]);
     const subjectAllocation = model.sceneRows?.allocationScope || {};
     const subjectDays = subjectAllocation.subject === "coverage-period"
       ? Number(subjectAllocation.subjectDays) || model.period.days || 30
@@ -910,13 +1045,18 @@
         ? `${label}（花费已返回${spendScope.coverage.coverageDays}/${spendScope.coverage.expectedDays}日）`
         : label;
       const spend = reportMetricValue(model, side, "spend");
+      const value = key => reportMetricValue(model, side, key);
+      const average = (metricValue, days, metric) => completenessEngine.safeIntervalDivide(metricValue, days, {
+        digits: 2, metric, outward: true
+      }).value;
+      const totalGmv = value("totalGmv");
       return [
         id, scopedLabel, model.period.startDate, model.period.endDate, model.period.days,
-        modelCell(source.orders), modelCell(source.aov), modelCell(source.totalGmv), modelCell(source.paidGmv), modelCell(source.paidOrders), modelCell(spend),
-        modelCell(reportMetricValue(model, side, "feeRatio")), modelCell(reportMetricValue(model, side, "roas")),
-        modelCell(source.paidGmvContribution), modelCell(source.paidOrderContribution),
-        Number.isFinite(source.totalGmv) ? round(source.totalGmv / model.period.days) : EMPTY,
-        Number.isFinite(spend) && spendDays > 0 ? round(spend / spendDays) : EMPTY,
+        metricCell(value("orders")), metricCell(value("aov")), metricCell(totalGmv), metricCell(value("paidGmv")), metricCell(value("paidOrders")), metricCell(spend),
+        metricCell(value("feeRatio")), metricCell(value("roas")),
+        metricCell(value("paidGmvContribution")), metricCell(value("paidOrderContribution")),
+        metricCell(average(totalGmv, model.period.days, "日均GMV")),
+        metricCell(spendDays > 0 ? average(spend, spendDays, "日均消耗") : null),
         peakDate, modelCell(volatility == null ? null : round(volatility, 6))
       ];
     };
@@ -931,21 +1071,21 @@
     const metric = (side, key) => reportMetricValue(model, side, key);
     const metrics = model.metrics;
     const core = [
-      ["成交", "总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
-      ["成交", "成交笔数", metrics.subject.orders, metrics.competitor.orders],
-      ["成交", "笔单价", metrics.subject.aov, metrics.competitor.aov],
-      ["转化", "支付转化率", metrics.subject.conversion, metrics.competitor.conversion],
-      ["流量", "访客数", metrics.subject.visitors, metrics.competitor.visitors],
+      ["成交", "总GMV", metric("subject", "totalGmv"), metric("competitor", "totalGmv")],
+      ["成交", "成交笔数", metric("subject", "orders"), metric("competitor", "orders")],
+      ["成交", "笔单价", metric("subject", "aov"), metric("competitor", "aov")],
+      ["转化", "支付转化率", metric("subject", "conversion"), metric("competitor", "conversion")],
+      ["流量", "访客数", metric("subject", "visitors"), metric("competitor", "visitors")],
       ["投放", "推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
-      ["投放", "付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
-      ["投放", "付费成交笔数", metrics.subject.paidOrders, metrics.competitor.paidOrders],
-      ["投放", "付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
+      ["投放", "付费成交额", metric("subject", "paidGmv"), metric("competitor", "paidGmv")],
+      ["投放", "付费成交笔数", metric("subject", "paidOrders"), metric("competitor", "paidOrders")],
+      ["投放", "付费金额占比", metric("subject", "paidGmvContribution"), metric("competitor", "paidGmvContribution")],
       ["投放", "ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["投放", "PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
       ["投放", "费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
       ["投放", "全域ROAS", metric("subject", "roas"), metric("competitor", "roas")],
       ["结构", "关键词消耗占比", metric("subject", "keywordShare"), metric("competitor", "keywordShare")],
-      ["结构", "渠道集中度HHI", metrics.subject.channelHhi, metrics.competitor.channelHhi]
+      ["结构", "渠道集中度HHI", metric("subject", "channelHhi"), metric("competitor", "channelHhi")]
     ];
     const resolvedCore = coreRowsWithAlignedFallback(model, core, 1, 2, 3);
     const appended = alignedMetricRows(model, resolvedCore.map(row => row[1]))
@@ -1020,18 +1160,18 @@
     const metric = (side, key) => reportMetricValue(model, side, key);
     const metrics = model.metrics;
     const core = [
-      ["营销推广点击量", metrics.subject.marketingClicks, metrics.competitor.marketingClicks],
-      ["自然点击量", metrics.subject.naturalClicks, metrics.competitor.naturalClicks],
-      ["成交笔数", metrics.subject.orders, metrics.competitor.orders],
-      ["支付转化率", metrics.subject.conversion, metrics.competitor.conversion],
-      ["笔单价", metrics.subject.aov, metrics.competitor.aov],
-      ["加购率", metrics.subject.cartRate, metrics.competitor.cartRate],
-      ["访客数", metrics.subject.visitors, metrics.competitor.visitors],
-      ["总GMV", metrics.subject.totalGmv, metrics.competitor.totalGmv],
+      ["营销推广点击量", metric("subject", "marketingClicks"), metric("competitor", "marketingClicks")],
+      ["自然点击量", metric("subject", "naturalClicks"), metric("competitor", "naturalClicks")],
+      ["成交笔数", metric("subject", "orders"), metric("competitor", "orders")],
+      ["支付转化率", metric("subject", "conversion"), metric("competitor", "conversion")],
+      ["笔单价", metric("subject", "aov"), metric("competitor", "aov")],
+      ["加购率", metric("subject", "cartRate"), metric("competitor", "cartRate")],
+      ["访客数", metric("subject", "visitors"), metric("competitor", "visitors")],
+      ["总GMV", metric("subject", "totalGmv"), metric("competitor", "totalGmv")],
       ["广告/推广消耗", metric("subject", "spend"), metric("competitor", "spend")],
-      ["付费成交额", metrics.subject.paidGmv, metrics.competitor.paidGmv],
-      ["付费成交笔数", metrics.subject.paidOrders, metrics.competitor.paidOrders],
-      ["付费金额占比", metrics.subject.paidGmvContribution, metrics.competitor.paidGmvContribution],
+      ["付费成交额", metric("subject", "paidGmv"), metric("competitor", "paidGmv")],
+      ["付费成交笔数", metric("subject", "paidOrders"), metric("competitor", "paidOrders")],
+      ["付费金额占比", metric("subject", "paidGmvContribution"), metric("competitor", "paidGmvContribution")],
       ["ROI", metric("subject", "roi"), metric("competitor", "roi")],
       ["PPC", metric("subject", "ppc"), metric("competitor", "ppc")],
       ["费比", metric("subject", "feeRatio"), metric("competitor", "feeRatio")],
@@ -1102,9 +1242,7 @@
     const spendScope = reportSpendScope(model);
     const subjectSpendScope = spendScope.sides.find(side => side.side === "subject");
     const competitorSpendScope = spendScope.sides.find(side => side.side === "competitor");
-    const metric = (side, key) => modelCell(key === "roi"
-      ? overviewRoiValue(model, side)
-      : reportMetricValue(model, side, key));
+    const metric = (side, key) => modelCell(reportMetricValue(model, side, key));
     const spendMetricKeys = new Set(["spend", "feeRatio", "roi", "ppc", "globalROAS"]);
     const overviewMetrics = CORE_METRIC_CONTRACT.map(definition => ({
       key: definition.key,
@@ -1136,8 +1274,8 @@
       widths: [18, 46, 46, 18, 16, 16, 16, 16, 16, 16, 16, 16],
       overviewMetrics,
       kpis: [
-        { role: "subject", label: `主体${model.period.days}日GMV`, value: modelCell(subject.totalGmv), source: "'周期汇总'!H5" },
-        { role: "competitor", label: `对手${model.period.days}日GMV`, value: modelCell(competitor.totalGmv), source: "'周期汇总'!H6" },
+        { role: "subject", label: `主体${model.period.days}日GMV`, value: metric("subject", "totalGmv"), source: "'周期汇总'!H5" },
+        { role: "competitor", label: `对手${model.period.days}日GMV`, value: metric("competitor", "totalGmv"), source: "'周期汇总'!H6" },
         {
           role: "subject",
           label: subjectSpendScope?.partial ? `主体费比（已返回${subjectSpendScope.coverage.coverageDays}/${subjectSpendScope.coverage.expectedDays}日）` : "主体费比",
@@ -1404,6 +1542,9 @@
       const forbidden = current.columns.filter(column => FORBIDDEN_COLUMN.test(column));
       if (forbidden.length) return { ok: false, error: `${current.name} 含禁止列：${forbidden.join("、")}` };
       if (current.rows.some(row => !Array.isArray(row.cells) || row.cells.length !== current.columns.length)) return { ok: false, error: `${current.name} 行列不一致` };
+      if (current.rows.some(row => row.cells.some(cell => DIRECTION_ONLY.test(String(cell ?? "").trim())))) {
+        return { ok: false, error: `${current.name} 的数值单元格仍含相对方向文字` };
+      }
     }
     if (report.render_data != null) {
       const render = report.render_data;
@@ -1489,6 +1630,7 @@
       if (typeof raw === "object") { reject("返回值不是标量"); continue; }
       const text = String(raw);
       if (text.length > 200) { reject("返回值超过 200 字符"); continue; }
+      if (DIRECTION_ONLY.test(text.trim())) { reject("相对方向文字不能写入生产报告数值单元格"); continue; }
       // 必须说明这个值出自哪个模块的哪个字段。没有出处的值不填——
       // 这是防"模型自己编一个看起来合理的数"的唯一有效手段。
       const sourceField = String(cell?.source_field || "").trim();

@@ -31,10 +31,10 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.9.27",
-  zipHref: "/downloads/sycm-keyword-collector-v1.9.27.zip",
-  downloadName: "少壮AI自动化-v1.9.27.zip",
-  sizeLabel: "约 3.6 MB",
+  version: "1.9.30",
+  zipHref: "/downloads/sycm-keyword-collector-v1.9.30.zip",
+  downloadName: "少壮AI自动化-v1.9.30.zip",
+  sizeLabel: "约 4.5 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
 };
@@ -73,8 +73,8 @@ const FEATURES = [
     desc: "严格按 L001、L002、L003 等链接编号读取定位、关键词、场景、差异化和核心文案；明确产品名可从当前链接清单自动采用，无需重复填写确认。提示词和生图按每个编号独立执行，失败只影响当前 L。"
   },
   {
-    title: "编号详情页叙事生产",
-    desc: "按每个链接的详情定位和文案逻辑生成连续分屏方案，以“问题—功能证据—用户利益—差异化—信任说明”组织说服顺序；每一屏都是独立工位，稳定按 L 号和屏号落位，部分失败不会拖住整批。"
+    title: "链接成详（L 编号）",
+    desc: "保留原有 L001、L002、L003 等链接清单定位逻辑，按每条链接自己的详情定位和文案逻辑生成连续分屏；每一屏都是独立工位，稳定按 L 号和屏号落位，部分失败不会拖住整批。"
   },
   {
     title: "标题精确 60 字符",
@@ -85,8 +85,8 @@ const FEATURES = [
     desc: "批量查看淘宝商品主图，人工打标、分类和导出商品数据；可调用视觉与图片编辑 API 完成文字识别、翻译排版和整图除字，并把成功生图自动留存在当前账号的本机成果档案。"
   },
   {
-    title: "SKU 摘取与固定版式批量生产",
-    desc: "支持摘取淘宝/天猫当前公开 SKU 并批量生成。模型只创作无字、无商品背景，字体、字号、文字位置、整体布局和商品主体位置由浏览器固定；仅背景色、邻近渐变和轻背景氛围可变。下载统一为真实 JPG，并按“商品规格.jpg”命名，不含 SKU 编号；同名自动追加 -2、-3。"
+    title: "SKU 摘取、固定版式与自定义尺寸",
+    desc: "支持摘取淘宝/天猫当前公开 SKU 并批量生成，也支持用户自定义最终宽×高：每边 256–4096 px、总像素不超过 16,777,216。模型只创作无字、无商品背景，底图与成品尺寸不同时由浏览器等比裁切且不拉伸；字体、字号、文字位置、整体布局和商品主体位置由浏览器固定，仅背景色、邻近渐变和轻背景氛围可变。最终真实 JPG 会重新解码并按用户指定的精确尺寸验收；下载按“商品规格.jpg”命名，不含 SKU 编号，同名自动追加 -2、-3。"
   },
   {
     title: "参考流转、修复与拼接",
@@ -126,6 +126,37 @@ const INSTALL_STEPS = [
   }
 ];
 
+const REFERENCE_DETAIL_STEPS = [
+  {
+    title: "提取同行详情",
+    body: "粘贴淘宝 / 天猫同行商品 URL，或在商品页点击「提取当前商品详情」。插件只扫描页面已公开加载的完整图文，并按照原页面顺序生成只读来源快照。"
+  },
+  {
+    title: "形成一句话分屏蓝图",
+    body: "把来源快照按原顺序拆成 5–16 个最终分屏；每屏只突出一句可编辑的核心内容 / 描述方向。确认前可修改方向、重排、删除、复制、合并和锁定模块。"
+  },
+  {
+    title: "建立自家事实与素材",
+    body: "建立多张自家商品事实卡，绑定自有或已授权的商品主体图、模特图和素材槽；同行来源素材仅用于结构参考，不直接作为自家商品素材。"
+  },
+  {
+    title: "一次确认进入批量",
+    body: "准备好后只点一次「确认并进入批量生成」；系统内部自动保存 revision、核验事实与授权素材并完成显式审批，不让用户反复审核。任一步失败只显示一个可操作原因，修改后可再次确认。"
+  },
+  {
+    title: "建立多个生成目标",
+    body: "从同一个已确认蓝图新增多个自家商品目标，分别选择事实卡、主体 / 模特图、SKU、人群、语言与卖点角度。"
+  },
+  {
+    title: "批量生成与恢复",
+    body: "每个目标生成 5–16 个独立分屏；支持双并发、停止、失败屏重试、刷新恢复和逐目标长详情预览。"
+  },
+  {
+    title: "安全归档并隔离结果",
+    body: "结果先写入当前账号的本机图片档案，成功取得安全句柄后才标记完成；不同商品的事实、提示词、图片和结果严格隔离。"
+  }
+];
+
 const USAGE_GROUPS = [
   {
     title: "关键词榜单采集",
@@ -152,8 +183,8 @@ const USAGE_GROUPS = [
     desc: "从插件启动界面进入「知识库」，可用三步引导建立产品、品牌、受众、场景、卖点、差异化、文案、视觉和合规底稿，也可导入文件或连接 Obsidian；选择作用域后先核对命中数、来源顺序和事实依据，再进入正式生产。"
   },
   {
-    title: "清单生图",
-    desc: "选择连续 L 编号和主图/详情模式，上传商品主体多角度图；插件按每条链接自己的规划顺序提词，再按编号并发生图。参考图模式会先反推并覆盖当前提示词；生成后可在结果卡点击“引导重生”，标注局部并锁定其他区域后精确修复。"
+    title: "链接成详（L 编号）与清单生图",
+    desc: "链接成详继续使用现有链接清单定位逻辑：选择连续 L 编号和主图 / 详情模式，上传商品主体多角度图，插件按每条链接自己的规划顺序提词，再按编号并发生图。生成后可在结果卡点击“引导重生”，标注局部并锁定其他区域后精确修复。"
   },
   {
     title: "少壮图片实验室",
@@ -281,6 +312,35 @@ export default async function ToolsPage() {
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="tool-block">
+          <div className="tool-block-label">
+            <Sparkles size={15} />
+            参考成详
+          </div>
+          <article className="tool-usage-card" aria-labelledby="reference-detail-title">
+            <span className="tool-usage-no">新</span>
+            <div>
+              <strong id="reference-detail-title">
+                单链接完整拆解 + 蓝图编辑 + 一个蓝图批量生成自家详情页
+              </strong>
+              <p>
+                参考成详是一条独立生产线，不替代链接成详的 L 编号流程。从一个同行商品详情建立只读来源快照，先把每屏核心方向编辑清楚，再一次确认并安全批量生成多个自家商品详情页。
+              </p>
+            </div>
+          </article>
+          <ol className="tool-steps">
+            {REFERENCE_DETAIL_STEPS.map((step, index) => (
+              <li key={step.title} className="tool-step">
+                <span className="tool-step-no">{index + 1}</span>
+                <div className="tool-step-body">
+                  <strong>{step.title}</strong>
+                  <span>{step.body}</span>
+                </div>
+              </li>
+            ))}
+          </ol>
         </div>
 
         <div className="tool-block">

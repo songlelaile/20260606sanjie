@@ -4,9 +4,11 @@ import { toOfficialDmpReportUrl } from "@/lib/dmp-public-origin";
 import {
   assignDmpBusinessReportsShop,
   deleteDmpBusinessReport,
+  getDmpDefaultArchiveShop,
   getDmpBusinessReport,
   getDmpReportAccess,
   getDmpReportAccessFromToken,
+  listDmpBusinessReportArchivePair,
   listDmpBusinessReports,
   saveDmpBusinessReport,
   DMP_REPORT_ARCHIVE_MAX_BODY_BYTES,
@@ -21,7 +23,7 @@ export const runtime = "nodejs";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type, x-sanjie-session",
+  "Access-Control-Allow-Headers": "content-type, x-sanjie-session, x-sanjie-shop",
   "Cache-Control": "private, no-store"
 };
 
@@ -30,10 +32,64 @@ export function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  const access = await resolveAccess(request);
-  if (!access) return unauthorized();
   const requestUrl = new URL(request.url);
   const id = requestUrl.searchParams.get("id")?.trim() ?? "";
+  const scope = requestUrl.searchParams.get("scope")?.trim() ?? "";
+  const resolvesArchiveShop = scope === "archive-shop";
+  const resolvesArchivePair = scope === "archive-pair";
+  if ((resolvesArchiveShop || resolvesArchivePair) && id) {
+    return NextResponse.json(
+      {
+        error: resolvesArchiveShop
+          ? "默认归档店铺解析请求不能同时读取报告正文"
+          : "店铺内商品对查询不能同时读取指定报告正文",
+        code: resolvesArchiveShop ? "INVALID_ARCHIVE_SHOP_SCOPE" : "INVALID_ARCHIVE_PAIR_SCOPE"
+      },
+      { status: 400, headers: CORS }
+    );
+  }
+  const extensionToken = request.headers.get("x-sanjie-session")?.trim() ?? "";
+  if ((resolvesArchiveShop || resolvesArchivePair) && !extensionToken) {
+    return NextResponse.json(
+      {
+        error: resolvesArchiveShop
+          ? "默认归档店铺仅供已登录扩展解析"
+          : "店铺内商品对查询仅供已登录扩展使用",
+        code: "UNAUTHORIZED"
+      },
+      { status: 401, headers: CORS }
+    );
+  }
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
+  if (resolvesArchiveShop) {
+    const shop = await getDmpDefaultArchiveShop(access);
+    if (!shop) {
+      return NextResponse.json(
+        { error: "当前登录账号没有可用的默认店铺", code: "SHOP_REQUIRED" },
+        { status: 400, headers: CORS }
+      );
+    }
+    return NextResponse.json({ data: { shop } }, { headers: CORS });
+  }
+  if (resolvesArchivePair) {
+    const pair = parseArchivePairQuery(requestUrl.searchParams);
+    if (!pair.ok) {
+      return NextResponse.json(
+        { error: pair.error, code: "INVALID_ARCHIVE_PAIR_SCOPE" },
+        { status: 400, headers: CORS }
+      );
+    }
+    const shopId = request.headers.get("x-sanjie-shop")?.trim() ?? "";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(shopId)) {
+      return NextResponse.json(
+        { error: "店铺内商品对查询缺少有效的冻结店铺", code: "SHOP_REQUIRED" },
+        { status: 400, headers: CORS }
+      );
+    }
+    const reports = await listDmpBusinessReportArchivePair(access, { shopId, ...pair.value });
+    return NextResponse.json({ data: { reports } }, { headers: CORS });
+  }
   if (!id) return NextResponse.json({ data: { reports: await listDmpBusinessReports(access) } }, { headers: CORS });
 
   const report = await getDmpBusinessReport(access, id);
@@ -180,6 +236,51 @@ async function resolveAccess(request: Request) {
 
 function unauthorized() {
   return NextResponse.json({ error: "请先登录并开通达摩盘报告权限" }, { status: 401, headers: CORS });
+}
+
+function parseArchivePairQuery(searchParams: URLSearchParams):
+  | {
+      ok: true;
+      value: {
+        reportType: "growth" | "competition" | "market";
+        subjectItemId: string;
+        competitorItemId: string;
+        quality: "complete" | "partial";
+      };
+    }
+  | { ok: false; error: string } {
+  const reportTypeValue = searchParams.get("reportType")?.trim() ?? "";
+  const reportType = reportTypeValue === "growth" || reportTypeValue === "competition" || reportTypeValue === "market"
+    ? reportTypeValue
+    : undefined;
+  const subjectItemId = searchParams.get("subjectItemId")?.trim() ?? "";
+  const competitorItemId = searchParams.get("competitorItemId")?.trim() ?? "";
+  const qualityValue = searchParams.get("quality")?.trim() ?? "";
+  const quality = qualityValue === "complete" || qualityValue === "partial" ? qualityValue : undefined;
+  const competitorIds = competitorItemId.split(",").map((value) => value.trim()).filter(Boolean);
+  const validIdentity = reportType === "market"
+    ? validCategoryId(subjectItemId) && competitorIds.length === 0
+    : reportType === "competition"
+      ? validItemId(subjectItemId)
+        && competitorIds.length >= 1
+        && competitorIds.length <= 3
+        && competitorIds.every(validItemId)
+      : reportType === "growth"
+        && validItemId(subjectItemId)
+        && competitorIds.length === 1
+        && competitorIds.every(validItemId);
+  if (!reportType || !quality || !validIdentity) {
+    return { ok: false, error: "报告类型、商品对或质量参数无效" };
+  }
+  return {
+    ok: true,
+    value: {
+      reportType,
+      subjectItemId,
+      competitorItemId: reportType === "competition" ? competitorIds.join(",") : competitorItemId,
+      quality
+    }
+  };
 }
 
 function parseSourceShop(value: unknown):

@@ -192,6 +192,14 @@ export async function getDmpReportAccessFromToken(rawToken: string | null | unde
   return token ? resolveAccess(await parseExtensionSession(token)) : null;
 }
 
+export async function getDmpDefaultArchiveShop(access: DmpReportAccess) {
+  return prisma.shop.findFirst({
+    where: { tenantId: access.tenantId },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true, name: true }
+  });
+}
+
 export function validateDmpCanonicalReport(
   value: unknown,
   fallback: { subjectItemId?: unknown; competitorItemId?: unknown } = {}
@@ -508,6 +516,54 @@ export async function listDmpBusinessReports(access: DmpReportAccess): Promise<D
       createdAt: row.createdAt.toISOString(),
       report: checked.report
     }];
+  });
+}
+
+export async function listDmpBusinessReportArchivePair(
+  access: DmpReportAccess,
+  input: {
+    shopId: string;
+    reportType: "growth" | "competition" | "market";
+    subjectItemId: string;
+    competitorItemId: string;
+    quality: DmpReportQuality;
+  }
+): Promise<DmpBusinessReportRecord[]> {
+  const rows = await prisma.dmpBusinessReport.findMany({
+    where: {
+      tenantId: access.tenantId,
+      userId: access.userId,
+      shopId: input.shopId,
+      subjectItemId: input.subjectItemId,
+      competitorItemId: input.competitorItemId,
+      quality: input.quality
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: 200,
+    select: {
+      id: true,
+      shopId: true,
+      shop: { select: { id: true, name: true } },
+      subjectItemId: true,
+      competitorItemId: true,
+      period: true,
+      quality: true,
+      createdAt: true,
+      report: true
+    }
+  });
+  return rows.flatMap((row) => {
+    const checked = validateDmpCanonicalReport(row.report, {
+      subjectItemId: row.subjectItemId,
+      competitorItemId: row.competitorItemId
+    });
+    if (!checked.report || dmpReportKind(checked.report) !== input.reportType) return [];
+    const record = storedDmpBusinessReportRecord(
+      row,
+      checked.report,
+      row.quality === "partial" ? "partial" : "complete"
+    );
+    return record.quality === input.quality ? [record] : [];
   });
 }
 

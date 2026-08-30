@@ -691,7 +691,7 @@ const getShopScope = cache(async (): Promise<ShopScope> => {
   const user = userDomainFrom(userRow, session);
   let shops = await prisma.shop.findMany({
     where: { tenantId: session.tenantId },
-    orderBy: { createdAt: "asc" }
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
   });
   if (shops.length === 0) {
     shops = [await ensureDefaultShop({ tenant, user })];
@@ -1507,7 +1507,7 @@ export async function getShopSwitcherData(): Promise<{
   const scope = await requireShopScope();
   const rows = await prisma.shop.findMany({
     where: { tenantId: scope.tenantId },
-    orderBy: { createdAt: "asc" }
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
   });
   const shops = rows.map(toDomainShop);
   const limit = scope.isAdmin ? null : TENANT_SHOP_LIMIT;
@@ -1631,7 +1631,7 @@ export async function deleteShop(
     }
     const fallback = await tx.shop.findFirst({
       where: { tenantId: scope.tenantId, id: { not: shopId } },
-      orderBy: { createdAt: "asc" }
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
     });
     await Promise.all([
       tx.dailyProductMetric.deleteMany({ where: { tenantId: scope.tenantId, shopId } }),
@@ -1642,7 +1642,7 @@ export async function deleteShop(
     await tx.shop.delete({ where: { id: shopId } });
     const rows = await tx.shop.findMany({
       where: { tenantId: scope.tenantId },
-      orderBy: { createdAt: "asc" }
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
     });
     const activeShopId = fallback?.id ?? rows[0]?.id;
     if (!activeShopId) {
