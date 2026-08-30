@@ -679,6 +679,34 @@
     return coverageKey && coverageValueAllowed && disclosedModelValue(coverage?.[coverageKey]) ? coverage[coverageKey] : null;
   }
 
+  // 仅供“01 报告总览”使用：ROI 在同一对象、同一周期及同一覆盖口径下，
+  // 按付费成交额 ÷ 推广消耗现算。不改写完整性模型，因此其他表仍保留原始 ROI 披露。
+  function overviewRoiValue(model, side) {
+    const metrics = model.metrics?.[side] || {};
+    const paidGmv = reportMetricValue(model, side, "paidGmv");
+    const spend = reportMetricValue(model, side, "spend");
+    const spendState = completenessEngine.metricValueState(spend);
+    const numericStates = [completenessEngine.VALUE_STATES.EXACT, completenessEngine.VALUE_STATES.INTERVAL];
+    // 消耗区间可能包含 0 时不产出单边界或 Infinity，保持原展示值。
+    if (!numericStates.includes(spendState.state)
+      || !spendState.range
+      || !Number.isFinite(spendState.range.min)
+      || spendState.range.min <= 0) {
+      return reportMetricValue(model, side, "roi");
+    }
+    const contexts = metrics.valueContexts || {};
+    const calculated = completenessEngine.safeIntervalDivide(paidGmv, spend, {
+      digits: 2,
+      metric: "ROI",
+      outward: true,
+      numeratorContext: contexts.paidGmv,
+      denominatorContext: contexts.spend
+    });
+    return numericStates.includes(calculated.state)
+      ? calculated.value
+      : reportMetricValue(model, side, "roi");
+  }
+
   function reportSideSpendScope(model, side) {
     const metrics = model.metrics?.[side] || {};
     const coverage = reportSpendCoverage(model, side) || {};
@@ -1074,7 +1102,9 @@
     const spendScope = reportSpendScope(model);
     const subjectSpendScope = spendScope.sides.find(side => side.side === "subject");
     const competitorSpendScope = spendScope.sides.find(side => side.side === "competitor");
-    const metric = (side, key) => modelCell(reportMetricValue(model, side, key));
+    const metric = (side, key) => modelCell(key === "roi"
+      ? overviewRoiValue(model, side)
+      : reportMetricValue(model, side, key));
     const spendMetricKeys = new Set(["spend", "feeRatio", "roi", "ppc", "globalROAS"]);
     const overviewMetrics = CORE_METRIC_CONTRACT.map(definition => ({
       key: definition.key,
