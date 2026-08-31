@@ -219,12 +219,12 @@ const expectedReferenceDetailSteps = [
 describe("tools page collector release contract", () => {
   const sourceFile = parsePage(toolsPageSource);
 
-  it("publishes the verified v1.9.30 collector package metadata", () => {
+  it("publishes the verified v1.9.32 collector package metadata", () => {
     const collector = objectRecord(findConstInitializer(sourceFile, "COLLECTOR"), "COLLECTOR");
     expect(collector).toMatchObject({
-      version: "1.9.30",
-      zipHref: "/downloads/sycm-keyword-collector-v1.9.30.zip",
-      downloadName: "少壮AI自动化-v1.9.30.zip",
+      version: "1.9.32",
+      zipHref: "/downloads/sycm-keyword-collector-v1.9.32.zip",
+      downloadName: "少壮AI自动化-v1.9.32.zip",
       sizeLabel: "约 4.5 MB"
     });
   });
@@ -296,22 +296,35 @@ describe("tools page collector release contract", () => {
 
   it("keeps the supported SKU and market-evidence release contracts", () => {
     for (const supportedClaim of [
-      "模型只创作无字、无商品背景",
-      "字体、字号、文字位置、整体布局和商品主体位置由浏览器固定",
-      "仅背景色、邻近渐变和轻背景氛围可变",
+      "对象 / 参考 SKU 原图",
+      "冻结为不可变视觉基底",
+      "只替换其中的商品主体",
+      "其他可见细节保持原样",
+      "不得重新设计、改色、重排或增删",
       "真实 JPG",
-      "商品规格.jpg",
-      "不含 SKU 编号",
+      "业务 SKU 标题",
+      "技术 SKU 编号",
       "用户自定义最终宽×高",
       "每边 256–4096 px",
       "总像素不超过 16,777,216",
-      "等比裁切且不拉伸",
       "用户指定的精确尺寸验收",
       "市场商品榜",
       "Top300 商品卡",
       "市场排行、商品榜或竞品表"
     ]) {
       expect(toolsPageSource).toContain(supportedClaim);
+    }
+  });
+
+  it("removes the retired background-only SKU contract", () => {
+    for (const retiredClaim of [
+      "模型只创作无字、无商品背景",
+      "字体、字号、文字位置、整体布局和商品主体位置由浏览器固定",
+      "仅背景色、邻近渐变和轻背景氛围可变",
+      "商品规格.jpg",
+      "等比裁切且不拉伸"
+    ]) {
+      expect(toolsPageSource).not.toContain(retiredClaim);
     }
   });
 });

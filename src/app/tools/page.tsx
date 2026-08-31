@@ -31,9 +31,9 @@ export const metadata: Metadata = {
 // 插件元信息（升级版本只需改这里，并把新 ZIP 放进 public/downloads/）
 const COLLECTOR = {
   name: "少壮AI自动化",
-  version: "1.9.30",
-  zipHref: "/downloads/sycm-keyword-collector-v1.9.30.zip",
-  downloadName: "少壮AI自动化-v1.9.30.zip",
+  version: "1.9.32",
+  zipHref: "/downloads/sycm-keyword-collector-v1.9.32.zip",
+  downloadName: "少壮AI自动化-v1.9.32.zip",
   sizeLabel: "约 4.5 MB",
   platform: "Chrome / Edge 111+",
   iconHref: "/downloads/shaozhuang-ai-legacy-icon.png"
@@ -85,8 +85,8 @@ const FEATURES = [
     desc: "批量查看淘宝商品主图，人工打标、分类和导出商品数据；可调用视觉与图片编辑 API 完成文字识别、翻译排版和整图除字，并把成功生图自动留存在当前账号的本机成果档案。"
   },
   {
-    title: "SKU 摘取、固定版式与自定义尺寸",
-    desc: "支持摘取淘宝/天猫当前公开 SKU 并批量生成，也支持用户自定义最终宽×高：每边 256–4096 px、总像素不超过 16,777,216。模型只创作无字、无商品背景，底图与成品尺寸不同时由浏览器等比裁切且不拉伸；字体、字号、文字位置、整体布局和商品主体位置由浏览器固定，仅背景色、邻近渐变和轻背景氛围可变。最终真实 JPG 会重新解码并按用户指定的精确尺寸验收；下载按“商品规格.jpg”命名，不含 SKU 编号，同名自动追加 -2、-3。"
+    title: "对象 SKU 复刻、主体替换与自定义尺寸",
+    desc: "支持摘取淘宝/天猫当前公开 SKU 并批量生成，也支持用户自定义最终宽×高：每边 256–4096 px、总像素不超过 16,777,216。用户选定的对象 / 参考 SKU 原图会冻结为不可变视觉基底；每个任务只替换其中的商品主体，画布比例与尺寸、整体版式、背景、光影、文字、价格、卖点、装饰和其他可见细节保持原样，不得重新设计、改色、重排或增删。最终真实 JPG 会重新解码并按用户指定的精确尺寸验收；下载文件名只使用生成时冻结的业务 SKU 标题，不含 SKU01、SKU03 等技术 SKU 编号，同名自动追加 -2、-3。"
   },
   {
     title: "参考流转、修复与拼接",
