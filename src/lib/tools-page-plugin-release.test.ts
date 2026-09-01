@@ -188,48 +188,40 @@ function referenceDetailCardStructure(sourceFile: ts.SourceFile) {
 const expectedReferenceDetailSteps = [
   {
     title: "提取同行详情",
-    body: "粘贴淘宝 / 天猫同行商品 URL，或在商品页点击「提取当前商品详情」。插件只扫描页面已公开加载的完整图文，并按照原页面顺序生成只读来源快照。"
+    body: "粘贴淘宝 / 天猫同行商品 URL，或在商品页点击「摘取详情页面」。插件只扫描当前登录账号可见、页面已公开加载的正文；严格从可见“图文详情”之后取到随后第一个可见“本店推荐”之前，并按原页面顺序形成只读来源快照。"
   },
   {
-    title: "形成一句话分屏蓝图",
-    body: "把来源快照按原顺序拆成 5–16 个最终分屏；每屏只突出一句可编辑的核心内容 / 描述方向。确认前可修改方向、重排、删除、复制、合并和锁定模块。"
+    title: "分析并整理结构框架",
+    body: "将只读快照按来源顺序分析为 5–16 个最终分屏，每屏只保留一句可编辑的核心内容 / 描述方向。普通 warning、确定性 fallback 和 partial 会自动整理；受阻模块自动跳过，全部模块都受阻时仍会阻断。确认前可修改方向、重排、删除、复制或合并。"
   },
   {
-    title: "建立自家事实与素材",
-    body: "建立多张自家商品事实卡，绑定自有或已授权的商品主体图、模特图和素材槽；同行来源素材仅用于结构参考，不直接作为自家商品素材。"
+    title: "绑定主体与可选模特",
+    body: "每个商品目标至少绑定 1 张自有或已授权的主体图并确认素材权利；模特图完全可选，并以独立角色进入任务。新链不创建、不选择、不审核事实卡，同行原图、原文和竞品事实不会成为自家事实或生成素材。"
   },
   {
-    title: "一次确认进入批量",
-    body: "准备好后只点一次「确认并进入批量生成」；系统内部自动保存 revision、核验事实与授权素材并完成显式审批，不让用户反复审核。任一步失败只显示一个可操作原因，修改后可再次确认。"
+    title: "一次锁定进入批量",
+    body: "只点一次「锁定结构并进入批量」即可保存不可变 revision，并自动建立绑定当前全部已授权主体与可选模特的默认目标。正式来源、至少一个安全模块、授权、视觉服务商能力、精确 revision / 账号 / 任务身份和防重复计费仍是硬门禁。"
   },
   {
-    title: "建立多个生成目标",
-    body: "从同一个已确认蓝图新增多个自家商品目标，分别选择事实卡、主体 / 模特图、SKU、人群、语言与卖点角度。"
-  },
-  {
-    title: "批量生成与恢复",
-    body: "每个目标生成 5–16 个独立分屏；支持双并发、停止、失败屏重试、刷新恢复和逐目标长详情预览。"
-  },
-  {
-    title: "安全归档并隔离结果",
-    body: "结果先写入当前账号的本机图片档案，成功取得安全句柄后才标记完成；不同商品的事实、提示词、图片和结果严格隔离。"
+    title: "批量生成、恢复与归档",
+    body: "每个目标生成 5–16 个独立分屏；支持双并发、停止、失败屏重试、刷新恢复和逐目标长详情预览。结果先写入当前账号的本机图片档案，取得安全完成权威后才标记完成；不同商品的主体、模特、提示词、图片和结果严格隔离。"
   }
 ];
 
 describe("tools page collector release contract", () => {
   const sourceFile = parsePage(toolsPageSource);
 
-  it("publishes the verified v1.9.32 collector package metadata", () => {
+  it("publishes the verified v1.9.43 collector package metadata", () => {
     const collector = objectRecord(findConstInitializer(sourceFile, "COLLECTOR"), "COLLECTOR");
     expect(collector).toMatchObject({
-      version: "1.9.32",
-      zipHref: "/downloads/sycm-keyword-collector-v1.9.32.zip",
-      downloadName: "少壮AI自动化-v1.9.32.zip",
-      sizeLabel: "约 4.5 MB"
+      version: "1.9.43",
+      zipHref: "/downloads/sycm-keyword-collector-v1.9.43.zip",
+      downloadName: "少壮AI自动化-v1.9.43.zip",
+      sizeLabel: "约 5.1 MB"
     });
   });
 
-  it("publishes seven ordered reference-detail steps and consumes them in one labelled card", () => {
+  it("publishes five ordered reference-detail steps and consumes them in one labelled card", () => {
     expect(objectArray(sourceFile, "REFERENCE_DETAIL_STEPS")).toEqual(
       expectedReferenceDetailSteps
     );
@@ -249,7 +241,7 @@ describe("tools page collector release contract", () => {
     expect(referenceDetailCardStructure(detached).mapsSteps).toBe(false);
 
     const firstTitle = 'title: "提取同行详情"';
-    const secondTitle = 'title: "形成一句话分屏蓝图"';
+    const secondTitle = 'title: "分析并整理结构框架"';
     const reordered = parsePage(
       toolsPageSource
         .replace(firstTitle, 'title: "__TEMP_REFERENCE_STEP__"')
@@ -278,6 +270,10 @@ describe("tools page collector release contract", () => {
     for (const retiredClaim of [
       "参考图模式会先反推并覆盖当前提示词",
       "保存 revision，逐项完成商品事实与目标素材核验后再显式审批",
+      "多张自家商品事实卡",
+      "分别选择事实卡",
+      "核验事实",
+      "确认并进入批量生成",
       "1–6 张参考图",
       "原 1–6 张参考图",
       "分日商品排行",
@@ -291,6 +287,24 @@ describe("tools page collector release contract", () => {
       'title: "无界人群"'
     ]) {
       expect(toolsPageSource).not.toContain(retiredClaim);
+    }
+  });
+
+  it("publishes the autonomous reference-detail release gates", () => {
+    for (const supportedClaim of [
+      "warning",
+      "fallback",
+      "partial",
+      "受阻模块自动跳过",
+      "全部模块都受阻",
+      "至少绑定 1 张自有或已授权的主体图",
+      "模特图完全可选",
+      "不创建、不选择、不审核事实卡",
+      "锁定结构并进入批量",
+      "防重复计费",
+      "安全完成权威"
+    ]) {
+      expect(toolsPageSource).toContain(supportedClaim);
     }
   });
 
