@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#080f04">
+  <meta name="description" content="支持多种创作路线、视觉风格、脚本与分镜确认的生成视频工作台。">
+  <title>生成视频工作台</title>
+  <link rel="icon" href="../../icons/icon48.png">
+  <link rel="stylesheet" href="./video-studio.css">
+</head>
+<body>
+  <a class="skip-link" href="#studio-main">跳到主要内容</a>
+
+  <header class="topbar">
+    <div class="brand-lockup" aria-label="生成视频工作台">
+      <span class="brand-mark" aria-hidden="true">映</span>
+      <span>
+        <strong>生成视频工作台</strong>
+        <small>路线 · 风格 · 分镜 · 生成</small>
+      </span>
+    </div>
+    <div class="topbar-actions">
+      <span id="runtime-status" class="runtime-status is-checking" role="status">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="runtime-status-text">正在检查生成能力</span>
+      </span>
+      <button id="open-api-settings" class="button button-primary button-small" type="button">配置视频 API</button>
+      <button id="refresh-capabilities" class="button button-quiet button-small" type="button">刷新能力</button>
+    </div>
+  </header>
+
+  <main id="studio-main" class="page-shell">
+    <section class="intro" aria-labelledby="page-title">
+      <div>
+        <div class="eyebrow">VIDEO GENERATION STUDIO</div>
+        <h1 id="page-title">从一句话或参考素材生成可审、可控的视频</h1>
+        <p>先选创作路线，再设视觉风格；每个选择都会进入真实生成请求，素材仅保存在本机 IndexedDB。</p>
+      </div>
+      <div class="privacy-chip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2m-9 0h8a2 2 0 0 1 2 2v7H6v-7a2 2 0 0 1 2-2Z"/></svg>
+        本地素材库
+      </div>
+    </section>
+
+    <div class="workspace-grid">
+      <div class="workspace-main">
+        <section class="panel composer" aria-labelledby="composer-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="composer-title">创建任务</h2>
+              <p id="mode-description">填写一句话或上传参考素材，直接生成视频。</p>
+            </div>
+            <button id="reset-draft" class="text-button" type="button">清空当前草稿</button>
+          </div>
+
+          <div id="mode-tabs" class="mode-tabs" role="tablist" aria-label="生成模式">
+            <button id="tab-direct" class="mode-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="mode-panel" data-mode="direct">
+              <span class="mode-icon" aria-hidden="true">▶</span>
+              <span><strong>脚本直出</strong><small>提示词直接生成</small></span>
+            </button>
+            <button id="tab-assist" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="mode-panel" data-mode="assist" tabindex="-1">
+              <span class="mode-icon" aria-hidden="true">✦</span>
+              <span><strong>脚本帮写</strong><small>先分析再确认</small></span>
+            </button>
+            <button id="tab-remix" class="mode-tab" type="button" role="tab" aria-selected="false" aria-controls="mode-panel" data-mode="remix" tabindex="-1">
+              <span class="mode-icon" aria-hidden="true">↗</span>
+              <span><strong>爆款复刻</strong><small>拆解参考视频</small></span>
+            </button>
+          </div>
+
+          <div id="mode-panel" role="tabpanel" aria-labelledby="tab-direct">
+            <section class="route-section" aria-labelledby="creative-route-title">
+              <div class="section-label-row">
+                <div>
+                  <h3 id="creative-route-title">创作路线</h3>
+                  <p id="creative-route-help">路线决定素材门槛和提示词结构；不可用的路线会按当前模式禁用。</p>
+                </div>
+                <span class="route-layer-badge">第一层 · 生成方法</span>
+              </div>
+              <div id="creative-route-grid" class="creative-route-grid" role="radiogroup" aria-label="创作路线">
+                <button type="button" class="creative-route-option" data-creative-route="free_direct" aria-pressed="false">
+                  <strong>一句话生成</strong><small>文字直接成片</small>
+                </button>
+                <button type="button" class="creative-route-option is-active" data-creative-route="hero_product" aria-pressed="true">
+                  <strong>商品图成片</strong><small>锁定主体与材质</small>
+                </button>
+                <button type="button" class="creative-route-option" data-creative-route="elements_compose" aria-pressed="false">
+                  <strong>多素材导演</strong><small>按角色组合素材</small>
+                </button>
+                <button type="button" class="creative-route-option" data-creative-route="storyboard_direct" aria-pressed="false">
+                  <strong>分镜成片</strong><small>按顺序执行镜头</small>
+                </button>
+                <button type="button" class="creative-route-option" data-creative-route="reference_rebuild" aria-pressed="false">
+                  <strong>参考重构</strong><small>只重构结构与节奏</small>
+                </button>
+                <button type="button" class="creative-route-option" data-creative-route="audio_visual" aria-pressed="false">
+                  <strong>音画成片</strong><small>由音频驱动节奏</small>
+                </button>
+              </div>
+
+              <div class="style-profile-heading">
+                <div>
+                  <h3 id="style-profile-title">视觉风格</h3>
+                  <p>风格只控制画面、光线和节奏，不改变素材用途。</p>
+                </div>
+                <span class="route-layer-badge">第二层 · 视觉表达</span>
+              </div>
+              <div id="style-profile-grid" class="style-profile-grid" role="radiogroup" aria-labelledby="style-profile-title">
+                <button type="button" class="style-profile-option is-active" data-style-profile="commerce_studio" aria-pressed="true">商品棚拍</button>
+                <button type="button" class="style-profile-option" data-style-profile="lifestyle_social" aria-pressed="false">生活方式</button>
+                <button type="button" class="style-profile-option" data-style-profile="ugc_mobile" aria-pressed="false">UGC 手机感</button>
+                <button type="button" class="style-profile-option" data-style-profile="cinematic_brand" aria-pressed="false">电影品牌片</button>
+                <button type="button" class="style-profile-option" data-style-profile="viral_fastcut" aria-pressed="false">快节奏爆款</button>
+                <button type="button" class="style-profile-option" data-style-profile="animation_ip" aria-pressed="false">动画 / IP</button>
+                <button type="button" class="style-profile-option" data-style-profile="mixed_motion" aria-pressed="false">混合媒体</button>
+                <button type="button" class="style-profile-option" data-style-profile="surreal_vfx" aria-pressed="false">超现实特效</button>
+              </div>
+            </section>
+
+            <section id="reference-section" class="reference-section" aria-labelledby="reference-title" hidden>
+              <div class="section-label-row">
+                <div>
+                  <h3 id="reference-title">参考视频</h3>
+                  <p>本地均匀抽取 5 帧，只用于画面结构参考；不宣称精确提取运镜、剪辑点或音轨。</p>
+                </div>
+                <span class="required-badge">爆款复刻必填</span>
+              </div>
+              <label id="reference-dropzone" class="reference-dropzone" for="reference-video-input">
+                <span class="upload-symbol" aria-hidden="true">↥</span>
+                <span><strong>上传 1 个参考视频</strong><small>MP4 / MOV / WebM，4–15 秒，最大 200 MB</small></span>
+                <input id="reference-video-input" type="file" accept="video/mp4,video/quicktime,video/webm" hidden>
+              </label>
+              <div id="reference-preview" class="reference-preview" hidden></div>
+            </section>
+
+            <section class="asset-section" aria-labelledby="asset-title">
+              <div class="section-label-row">
+                <div>
+                  <h3 id="asset-title">参考素材</h3>
+                  <p id="asset-help">数量和本地上传入口会按当前模型与供应商能力动态调整。</p>
+                </div>
+                <span id="asset-count" class="count-badge">0 个素材</span>
+              </div>
+
+              <div class="upload-grid">
+                <label class="upload-tile" for="image-input">
+                  <span class="upload-symbol image-symbol" aria-hidden="true">▧</span>
+                  <span><strong>参考图片</strong><small><span id="image-quota">0 / 9</span> · 单张 ≤ 20 MB</small></span>
+                  <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                </label>
+                <label id="video-upload-tile" class="upload-tile" for="video-input">
+                  <span class="upload-symbol video-symbol" aria-hidden="true">▷</span>
+                  <span><strong>参考视频</strong><small><span id="video-quota">0 / 3</span> · 单个 ≤ 200 MB</small></span>
+                  <input id="video-input" type="file" accept="video/mp4,video/quicktime" multiple hidden>
+                </label>
+                <label class="upload-tile" for="audio-input">
+                  <span class="upload-symbol audio-symbol" aria-hidden="true">♫</span>
+                  <span><strong>配乐 / 音效</strong><small><span id="audio-quota">0 / 3</span> · 单个 ≤ 15 MB</small></span>
+                  <input id="audio-input" type="file" accept="audio/mpeg,audio/wav" multiple hidden>
+                </label>
+              </div>
+              <div id="asset-list" class="asset-list" aria-live="polite"></div>
+            </section>
+
+            <section class="prompt-section" aria-labelledby="prompt-title">
+              <div class="section-label-row">
+                <div>
+                  <h3 id="prompt-title">创作要求</h3>
+                  <p id="prompt-hint">描述商品卖点、目标人群、场景、节奏和希望避开的内容。</p>
+                </div>
+                <span id="prompt-count" class="character-count">0 / 2000</span>
+              </div>
+              <textarea id="prompt-input" rows="7" maxlength="2000" placeholder="例如：为这款便携咖啡机制作 15 秒竖版种草视频。开头 2 秒突出办公室也能喝到现磨咖啡，中段展示三步操作，结尾给出通勤场景和行动引导。语气自然，避免夸大功效。"></textarea>
+              <div class="prompt-suggestions" aria-label="提示词建议">
+                <button type="button" data-prompt-snippet="开头 2 秒用明确痛点抓住注意力；">痛点开场</button>
+                <button type="button" data-prompt-snippet="用真实使用场景展示核心卖点；">场景演示</button>
+                <button type="button" data-prompt-snippet="结尾给出自然、不过度承诺的行动引导。">行动引导</button>
+              </div>
+              <div id="expert-mode-block" class="expert-mode-block" hidden>
+                <label class="expert-toggle" for="expert-mode-enabled">
+                  <span>
+                    <strong>专家模式</strong>
+                    <small>把镜头、节奏、卖点和禁用项作为独立高级约束交给分析服务。</small>
+                  </span>
+                  <input id="expert-mode-enabled" type="checkbox" role="switch" aria-controls="expert-requirements-wrap">
+                  <i aria-hidden="true"></i>
+                </label>
+                <div id="expert-requirements-wrap" class="expert-requirements-wrap" hidden>
+                  <label for="expert-requirements">高级约束</label>
+                  <textarea id="expert-requirements" rows="5" maxlength="8000" placeholder="镜头：特写与手部操作为主；节奏：前快后稳；卖点：突出便携和易清洗；禁用项：不出现价格、疗效或绝对化承诺。"></textarea>
+                  <span id="expert-count" class="character-count">0 / 8000</span>
+                </div>
+              </div>
+            </section>
+
+            <label class="rights-check" for="rights-confirmed">
+              <input id="rights-confirmed" type="checkbox">
+              <span>
+                <strong>我确认拥有全部上传素材的合法使用、改编及生成权限</strong>
+                <small>新增、删除或更换素材后需重新确认。请勿上传未获授权的人像、商标、音乐或参考视频；真人参考应使用供应商已认证的可信素材。</small>
+              </span>
+            </label>
+
+            <div id="composer-validation" class="inline-notice" role="status" hidden></div>
+
+            <div class="composer-actions">
+              <div id="action-summary" class="action-summary">生成前会进行本地校验</div>
+              <button id="primary-action" class="button button-primary button-large" type="button">
+                <span id="primary-action-label">生成视频</span>
+                <span class="button-arrow" aria-hidden="true">→</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="review-panel" class="panel review-panel" aria-labelledby="review-title" hidden>
+          <div class="panel-heading">
+            <div>
+              <div class="step-kicker">步骤 2 / 2</div>
+              <h2 id="review-title">编辑并确认脚本与分镜</h2>
+              <p>模型只负责起稿；你确认的版本才会进入视频生成。</p>
+            </div>
+            <span id="review-state" class="state-chip">待确认</span>
+          </div>
+
+          <div id="analysis-summary" class="analysis-summary" hidden></div>
+
+          <div class="editor-block">
+            <label for="script-editor">
+              <span><strong>口播 / 字幕脚本</strong><small id="script-count">0 / 4000</small></span>
+            </label>
+            <textarea id="script-editor" rows="9" maxlength="4000" placeholder="分析完成后将在这里生成可编辑脚本。"></textarea>
+          </div>
+
+          <div class="storyboard-heading">
+            <div>
+              <h3>镜头分镜</h3>
+              <p>逐镜头调整画面、文案和时长；总时长需与生成设置一致。</p>
+            </div>
+            <button id="add-shot" class="button button-secondary button-small" type="button">+ 添加镜头</button>
+          </div>
+          <div id="storyboard-list" class="storyboard-list"></div>
+
+          <div id="review-validation" class="inline-notice" role="status" hidden></div>
+          <div class="review-actions">
+            <button id="reanalyze" class="button button-secondary" type="button">重新分析</button>
+            <button id="confirm-review" class="button button-primary" type="button">确认脚本与分镜并生成</button>
+          </div>
+        </section>
+
+        <section id="job-panel" class="panel job-panel" aria-labelledby="job-title" hidden>
+          <div class="job-heading">
+            <div class="job-spinner" aria-hidden="true"></div>
+            <div>
+              <span id="job-stage" class="step-kicker">正在提交</span>
+              <h2 id="job-title">视频任务处理中</h2>
+              <p id="job-message">等待生成服务返回真实状态…</p>
+            </div>
+            <span id="job-status-chip" class="state-chip">等待中</span>
+          </div>
+          <div class="progress-track" role="progressbar" aria-label="任务进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <span id="job-progress" style="width:0%"></span>
+          </div>
+          <div class="job-meta">
+            <span id="job-id">任务 ID：—</span>
+            <span id="job-updated">尚未收到状态</span>
+          </div>
+          <div class="job-actions">
+            <button id="cancel-job" class="button button-secondary" type="button">取消任务</button>
+            <button id="retry-job" class="button button-primary" type="button" hidden>重试失败任务</button>
+            <button id="view-result" class="button button-primary" type="button" hidden>查看生成结果</button>
+          </div>
+        </section>
+      </div>
+
+      <aside class="settings-rail" aria-label="生成设置">
+        <section class="panel settings-card">
+          <div class="panel-heading compact">
+            <div>
+              <h2>生成设置</h2>
+              <p>每次提交都会锁定一份设置快照。</p>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label for="model-select">视频模型</label>
+            <select id="model-select">
+              <option value="seedance-2.0">Seedance 2.0 · 检查中</option>
+              <option value="seedance-2.5">Seedance 2.5 · 检查中</option>
+            </select>
+            <div id="model-help" class="field-help">正在读取后台模型映射。</div>
+          </div>
+
+          <fieldset class="field-group">
+            <legend>分辨率</legend>
+            <div class="segmented-control resolution-control">
+              <label><input type="radio" name="resolution" value="480p"><span>480P · 流畅</span></label>
+              <label><input type="radio" name="resolution" value="720p" checked><span>720P · 高清</span></label>
+              <label><input type="radio" name="resolution" value="1080p"><span>1080P · 超清</span></label>
+              <label><input type="radio" name="resolution" value="4k"><span>4K · 专业</span></label>
+            </div>
+            <div id="resolution-help" class="field-help">分辨率会按当前模型能力动态开放。</div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend>画面比例</legend>
+            <div class="ratio-grid">
+              <label><input type="radio" name="aspect-ratio" value="9:16" checked><span><i class="ratio-icon portrait"></i>9:16</span></label>
+              <label><input type="radio" name="aspect-ratio" value="16:9"><span><i class="ratio-icon landscape"></i>16:9</span></label>
+              <label><input type="radio" name="aspect-ratio" value="1:1"><span><i class="ratio-icon square"></i>1:1</span></label>
+              <label><input type="radio" name="aspect-ratio" value="3:4"><span><i class="ratio-icon r34"></i>3:4</span></label>
+              <label><input type="radio" name="aspect-ratio" value="4:3"><span><i class="ratio-icon r43"></i>4:3</span></label>
+              <label><input type="radio" name="aspect-ratio" value="21:9"><span><i class="ratio-icon cinema"></i>21:9</span></label>
+              <label><input type="radio" name="aspect-ratio" value="adaptive"><span><i class="ratio-icon adaptive"></i>自动</span></label>
+            </div>
+          </fieldset>
+
+          <div class="field-group duration-group">
+            <div class="field-label-row">
+              <label for="duration-input">视频时长</label>
+              <output id="duration-output" for="duration-input">15 秒</output>
+            </div>
+            <input id="duration-input" type="range" min="4" max="15" step="1" value="15">
+            <div class="range-labels"><span>4 秒</span><span>15 秒</span></div>
+            <div id="duration-presets" class="duration-presets" aria-label="快速选择视频时长">
+              <button type="button" data-duration-seconds="4">4 秒</button>
+              <button type="button" data-duration-seconds="5">5 秒</button>
+              <button type="button" data-duration-seconds="10">10 秒</button>
+              <button type="button" data-duration-seconds="15" aria-pressed="true">15 秒</button>
+              <button type="button" data-duration-seconds="20">20 秒</button>
+              <button type="button" data-duration-seconds="30">30 秒</button>
+            </div>
+          </div>
+
+          <fieldset class="field-group audio-fieldset">
+            <legend>声音方案</legend>
+            <div class="audio-options">
+              <label>
+                <input type="radio" name="audio-mode" value="silent">
+                <span><strong>无声音</strong><small>纯画面输出</small></span>
+              </label>
+              <label>
+                <input type="radio" name="audio-mode" value="sound_only" checked>
+                <span><strong>生成声音</strong><small>配乐 / 环境音，尽量无口播</small></span>
+              </label>
+              <label>
+                <input type="radio" name="audio-mode" value="narration">
+                <span><strong>有口播</strong><small>生成声音并合成人声</small></span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div id="audio-constraint-note" class="audio-constraint-note" role="note">
+            “尽量无口播”由提示词软约束实现：模型仍可能生成人声，交付前必须人工试听。
+          </div>
+
+          <div id="narration-settings" class="narration-settings" hidden>
+            <label for="narration-language">口播语言</label>
+            <select id="narration-language">
+              <option value="zh-CN">普通话</option>
+              <option value="en-US">英语（美国）</option>
+              <option value="ja-JP">日语</option>
+              <option value="ko-KR">韩语</option>
+            </select>
+          </div>
+
+          <div class="estimate-card">
+            <span>预计消耗</span>
+            <strong id="credit-estimate">等待能力返回</strong>
+            <small id="estimate-note">最终消耗以生成服务回执为准</small>
+          </div>
+        </section>
+
+        <section class="panel readiness-card">
+          <div class="readiness-heading">
+            <h2>提交前检查</h2>
+            <span id="readiness-count">0 / 4</span>
+          </div>
+          <ul id="readiness-list">
+            <li data-check="backend"><span aria-hidden="true">○</span>后台生成能力已连接</li>
+            <li data-check="model"><span aria-hidden="true">○</span>模型已配置且支持当前参数</li>
+            <li data-check="input"><span aria-hidden="true">○</span>必填素材与创作要求完整</li>
+            <li data-check="rights"><span aria-hidden="true">○</span>无外部素材或素材权利已确认</li>
+          </ul>
+        </section>
+      </aside>
+    </div>
+
+    <section class="panel history-panel" aria-labelledby="history-title">
+      <div class="panel-heading history-heading">
+        <div>
+          <h2 id="history-title">生成历史</h2>
+          <p>仅保存任务元数据和服务返回的结果地址，不在 chrome.storage 存放素材 Blob。火山方舟结果地址通常仅保留 24 小时，请及时转存。</p>
+        </div>
+        <div class="history-controls">
+          <label class="sr-only" for="history-filter">筛选生成历史</label>
+          <select id="history-filter">
+            <option value="all">全部任务</option>
+            <option value="active">处理中</option>
+            <option value="succeeded">已完成</option>
+            <option value="failed">失败</option>
+            <option value="cancelled">已取消</option>
+          </select>
+          <button id="refresh-history" class="button button-secondary button-small" type="button">刷新状态</button>
+        </div>
+      </div>
+      <div id="history-list" class="history-list"></div>
+      <div id="history-empty" class="history-empty">
+        <span aria-hidden="true">◫</span>
+        <strong>还没有生成任务</strong>
+        <p>完成第一次真实提交后，任务会出现在这里。</p>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="result-dialog" class="result-dialog" aria-labelledby="result-dialog-title">
+    <form method="dialog" class="dialog-close-row">
+      <button class="icon-button" value="close" aria-label="关闭结果预览">×</button>
+    </form>
+    <div class="dialog-content">
+      <div class="step-kicker">生成结果</div>
+      <h2 id="result-dialog-title">视频已完成</h2>
+      <p class="result-expiry-note">结果地址可能过期；火山方舟当前通常仅保留 24 小时，请立即打开并下载或转存。</p>
+      <div id="result-media" class="result-media"></div>
+      <div id="result-details" class="result-details"></div>
+    </div>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="/creative/web-chrome.js"></script>
+  <script src="./video-studio-contract.js"></script>
+  <script src="/creative/web-video-host.js"></script>
+  <script src="/creative/src/ecommerce-video-background.js"></script>
+  <script src="./video-studio-store.js"></script>
+  <script src="./video-studio.js"></script>
+</body>
+</html>

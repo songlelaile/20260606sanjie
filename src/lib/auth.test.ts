@@ -126,6 +126,8 @@ describe("route access", () => {
     expect(canAccess("tenant", "/management")).toBe(false);
     expect(canAccess("tenant", "/admin")).toBe(false);
     expect(canAccess("tenant", "/models")).toBe(true);
+    expect(canAccess("tenant", "/creative/labs/image-prompt-lab/promptlab.html")).toBe(true);
+    expect(canAccess("tenant", "/dashboards/operating-network/video")).toBe(true);
     expect(canAccess("admin", "/models/providers")).toBe(true);
     expect(canAccess("admin", "/management")).toBe(true);
   });

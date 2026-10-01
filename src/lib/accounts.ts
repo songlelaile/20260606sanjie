@@ -216,19 +216,28 @@ export async function validateRegistration(input: {
   return null;
 }
 
-/** 邀请码注册：为每个租户账号创建独立租户，首次登录默认空白数据。 */
+/**
+ * 自主注册：不消耗邀请码，为每个账号创建独立租户（空白默认店铺）。
+ * 与邀请注册共用同一 User / Tenant 表，管理员可在用户列表中统一管理。
+ */
 export async function createTenantOperator(input: {
   username: string;
   password: string;
   name: string;
-  shopName: string;
-}): Promise<AuthAccount> {
+  shopName?: string;
+}): Promise<{ ok: true; account: AuthAccount } | { ok: false; error: string }> {
   const username = input.username.trim();
   const password = normalizePassword(input.password);
   const name = input.name.trim() || username;
-  const rawShopName = input.shopName.trim();
+  const rawShopName = (input.shopName ?? "").trim();
   const shopName = rawShopName && rawShopName !== "未备注" ? rawShopName : name;
-  const user = await prisma.$transaction(async (tx) => {
+
+  return prisma.$transaction(async (tx) => {
+    const existingUser = await tx.user.findUnique({ where: { username } });
+    if (existingUser) {
+      return { ok: false, error: "该手机号已注册" };
+    }
+
     const tenant = await tx.tenant.create({
       data: {
         name: shopName,
@@ -240,7 +249,7 @@ export async function createTenantOperator(input: {
       shopName,
       createdBy: name
     });
-    return tx.user.create({
+    const user = await tx.user.create({
       data: {
         tenantId: tenant.id,
         username,
@@ -251,13 +260,16 @@ export async function createTenantOperator(input: {
         shopName
       }
     });
+    return {
+      ok: true,
+      account: {
+        username: user.username,
+        name: user.name,
+        role: "tenant",
+        tenantId: user.tenantId
+      }
+    };
   });
-  return {
-    username: user.username,
-    name: user.name,
-    role: "tenant",
-    tenantId: user.tenantId
-  };
 }
 
 /** 邀请注册：邀请码消耗与租户账号创建保持同一事务，避免“码已用但账号未创建”。 */

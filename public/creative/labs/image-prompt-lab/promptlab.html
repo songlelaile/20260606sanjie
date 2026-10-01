@@ -1,0 +1,1589 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="/creative/web-chrome.js"></script>
+  <title>少壮图片实验室 · 主图生成</title>
+  <link rel="stylesheet" href="promptlab.css?v=20260901-reference-detail-structure-batch-v2">
+  <link rel="stylesheet" href="reference-detail-blueprint.css?v=20260902-reference-detail-autonomous-release-v1">
+</head>
+<body class="main-lab-mode">
+  <main class="app">
+    <header class="hero">
+      <div class="hero-brand-block">
+        <div class="lab-logo" aria-hidden="true">
+          <svg viewBox="0 0 48 48" fill="none">
+            <path d="M10 12.5h19a5 5 0 0 1 5 5V37H15a5 5 0 0 1-5-5V12.5Z" stroke="currentColor" stroke-width="3"/>
+            <path d="m15 31 6-6 4.5 4.5 4.5-4.5 4 4" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M36.5 7v8M32.5 11h8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="18" cy="20" r="2.5" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="hero-brand-copy">
+          <div class="product-name">少壮图片实验室</div>
+          <div id="labHeroEyebrow" class="eyebrow">IMAGE PROMPT LAB</div>
+          <h1 id="labHeroTitle">主图生成实验室</h1>
+          <p id="labHeroSubtitle">参考图提词、链接清单主图方向、参考图/主体图生图和批量下载。</p>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <button id="openArchiveBtn" class="btn ghost archive-entry-btn" type="button" title="查看当前账号保存在这台电脑上的生图档案">本机历史 · 0</button>
+        <button id="openKnowledgeBtn" class="btn ghost knowledge-link" type="button" title="当前账号共享的业务知识库">知识库 · 未导入</button>
+        <button id="loadSampleBtn" class="btn ghost" type="button">载入示例</button>
+        <button id="openConfigBtn" class="btn primary" type="button" title="在插件启动界面统一管理主图、详情页、SKU 与链接清单的 API">统一 API 设置</button>
+      </div>
+    </header>
+
+    <section id="viralCoreRouteStep" class="panel viral-core-only viral-core-route-panel">
+      <div class="panel-head">
+        <div class="flow-heading">
+          <span class="flow-step-no">01</span>
+          <div>
+            <h2>选择爆款裂变方式</h2>
+            <p class="panel-subtitle">案例裂变学习指定爆款案例；风格焕新从经典视觉库开始。两条路线共享商品主体，但参考、提示词与结果完全隔离。</p>
+          </div>
+        </div>
+        <span id="viralCoreRouteState" class="pill">案例裂变</span>
+      </div>
+      <div class="viral-core-route-grid" role="tablist" aria-label="爆款裂变方式">
+        <button id="viralCaseModeBtn" class="viral-core-route-card active" type="button" role="tab" aria-selected="true" data-viral-core-route="case">
+          <span>REFERENCE DRIVEN</span>
+          <strong>案例裂变</strong>
+          <small>图1 爆款参考 + 图2 同款商品；提炼约 30% 视觉基因，默认生成 5 张差异化系列图。</small>
+          <em>需要案例图</em>
+        </button>
+        <button id="viralStyleModeBtn" class="viral-core-route-card" type="button" role="tab" aria-selected="false" data-viral-core-route="style-refresh">
+          <span>STYLE LIBRARY · NEW</span>
+          <strong>风格焕新</strong>
+          <small>商品主体 + V1经典风格 / V2智能推荐 / V3自由共创备选；文案由用户自主决定。</small>
+          <em>无需案例图</em>
+        </button>
+      </div>
+      <div class="detail-rule-strip">
+        <span>商品主体是唯一身份</span>
+        <span>路线素材互不混用</span>
+        <span>生成前先看批量计划</span>
+        <span>结果自动检查商品保真</span>
+      </div>
+    </section>
+
+    <section id="detailRouteStep" class="panel detail-only detail-flow-panel detail-route-panel">
+      <div class="panel-head">
+        <div class="flow-heading">
+          <span class="flow-step-no">01</span>
+          <div>
+            <h2>选择详情策划方向</h2>
+            <p class="panel-subtitle">两条路线互斥：参考成详只消费正式来源快照；链接 JSON 负责编号定位与详情策略。</p>
+          </div>
+        </div>
+        <span id="detailSourceState" class="pill">待选择来源</span>
+      </div>
+      <div class="detail-mode-grid">
+        <button id="detailRefModeBtn" class="detail-mode-card active" type="button" data-detail-mode="reference">
+          <strong>参考详情结构</strong>
+          <span>正式来源快照 → 可编辑结构框架 → 商品主体/可选模特 → 一次锁定 → 一结构多商品生成。</span>
+        </button>
+        <button id="detailLinkModeBtn" class="detail-mode-card" type="button" data-detail-mode="link">
+          <strong>链接定位 JSON 策划</strong>
+          <span>链接编号定位 + 产品主体图；严格读取每个 L 编号自己的定位、文案与承接逻辑。</span>
+        </button>
+      </div>
+      <div id="detailModeHint" class="detail-rule-strip">
+        <span>正式来源快照只读</span>
+        <span>两条路线不混用</span>
+        <span>revision 全程留痕</span>
+        <span>确认后才可生成</span>
+      </div>
+    </section>
+
+    <section class="layout input-layout">
+      <section id="referenceSourcePanel" class="panel media-panel source-input-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="referenceSourceTitle"><span class="detail-only flow-inline-step">01A</span><span id="referenceSourceTitleText">参考图 / 竞品图</span></h2>
+            <p id="referenceSourceSubtitle" class="panel-subtitle detail-only">通用参考图入口，供主图参考与案例 / 爆款裂变等非参考成详场景使用；最多 6 张，支持多选上传、URL、粘贴图片和网页图片右键导入。</p>
+          </div>
+          <span id="contextState" class="pill">等待图片</span>
+        </div>
+        <div id="viralDerivativeBlueprint" class="viral-only viral-derivative-blueprint">
+          <div class="viral-blueprint-card source">
+            <b>图1</b>
+            <strong>爆款视觉参考</strong>
+            <span>约 30% 视觉基因：风格、文案层级、内容主题、构图节奏、互动关系</span>
+          </div>
+          <span class="viral-blueprint-operator">＋</span>
+          <div class="viral-blueprint-card product">
+            <b>图2</b>
+            <strong>唯一产品主体</strong>
+            <span>100% 锁定真实结构、比例、颜色、材质、包装和可见细节</span>
+          </div>
+          <span class="viral-blueprint-operator arrow">→</span>
+          <div class="viral-blueprint-card output">
+            <b>输出</b>
+            <strong>同款系列裂变图</strong>
+            <span>默认 5 张，可自定义 1-20 张：款式一致、图片差异化、风格一致；图1商品与品牌全部禁入</span>
+          </div>
+        </div>
+        <div class="image-grid">
+          <div class="image-box">
+            <div id="referenceBoxTitle" class="box-title"><span id="referenceBoxTitleLabel" class="box-title-label">参考图 / 竞品图</span> <span id="refImageCount">0 / 6</span></div>
+            <div id="refPreview" class="preview reference-preview-grid empty">上传主图 / 竞品视觉参考，最多 6 张</div>
+            <div class="row">
+              <input id="refFile" type="file" accept="image/*" multiple>
+              <button id="clearRefBtn" class="btn ghost" type="button">清空</button>
+            </div>
+            <input id="refUrl" type="text" placeholder="也可粘贴最多 6 个图片 URL（用空格分隔）；聚焦后 Cmd+V 可贴图片">
+            <div id="referenceLearningNote" class="reference-learning-note detail-only">通用参考图只用于对应非参考成详场景的视觉学习；商品身份始终由产品主体素材决定。</div>
+          </div>
+        </div>
+        <div class="actions main-lab-only">
+          <button id="analyzeBtn" class="btn primary" type="button">反推提示词</button>
+          <button id="copyCnBtn" class="btn ghost" type="button">复制中文</button>
+        </div>
+      </section>
+
+      <section id="linkSourcePanel" class="panel link-panel source-input-panel">
+        <div class="panel-head">
+          <div>
+            <h2><span class="detail-only flow-inline-step">01B</span>链接定位</h2>
+            <p class="panel-subtitle detail-only">仅用于链接定位 JSON 策划路线；每个 L 编号必须使用自己的定位、文案与详情逻辑。</p>
+          </div>
+          <span id="linkState" class="pill">可粘贴 JSON</span>
+        </div>
+        <div class="link-table-import">
+          <div class="link-table-import-copy">
+            <strong>自定义链接清单表格 → JSON</strong>
+            <span>支持 XLSX / XLS / CSV / TSV / JSON；只在本机解析，不会覆盖插件原生链接清单，也不会自动调用 AI。</span>
+          </div>
+          <div class="link-table-import-actions">
+            <label class="link-table-file-btn" for="linkTableFile">
+              <input id="linkTableFile" type="file" accept=".xlsx,.xls,.csv,.tsv,.json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/json">
+              <span>选择自定义链接清单</span>
+            </label>
+            <button id="linkTableTemplateBtn" class="btn ghost" type="button">下载导入模板</button>
+          </div>
+          <div id="linkTableImportState" class="link-table-import-state" role="status">标准字段会自动识别；若整张表没有编号，将按原表顺序生成 L001、L002…；部分缺号或重复编号会阻止导入。</div>
+        </div>
+        <textarea id="linkJson" class="json-area" placeholder='可粘贴单条链接 JSON、链接数组 JSON、{"rows":[...]}，也支持从链接清单 Excel 复制表头+行。'></textarea>
+        <div class="link-category-preflight">
+          <label>当前品类（知识库提词必填）
+            <input id="linkCategory" type="text" placeholder="例如：婚房布置；可从清单 category / 品类字段自动读取">
+          </label>
+          <div id="categoryPreflightState" class="preflight-message" role="status">
+            载入链接清单后会自动读取品类；未读取到时请在这里确认，系统不会静默猜测。
+          </div>
+        </div>
+        <div class="grid two compact">
+          <label><span id="positioningLabel">链接定位</span>
+            <input id="positioning" type="text" placeholder="例如：家庭厨房鲜味升级">
+          </label>
+          <label><span id="imageCopyLabel">主图文案方向</span>
+            <input id="imageCopy" type="text" placeholder="例如：一勺爆鲜，家常菜提味">
+          </label>
+        </div>
+        <div class="grid four compact batch-range-grid">
+          <label>起始链接编号
+            <input id="batchLinkStart" type="text" value="L001" placeholder="例如：L001">
+          </label>
+          <label>结束链接编号
+            <input id="batchLinkEnd" type="text" value="L003" placeholder="例如：L1000">
+          </label>
+          <label>链接队列来源
+            <button id="loadStoredLinksBtn" class="btn ghost" type="button">载入链接JSON</button>
+          </label>
+        </div>
+        <p id="linkBatchHint" class="link-batch-hint">批量提词会复用当前主体下仍有效的提示词，只补缺失或失效编号；个别失败时可先用已有提示词直接生图。</p>
+        <section id="subjectOrchestrationPanel" class="subject-orchestration-panel" hidden>
+          <div class="subject-orchestration-head">
+            <div><strong>商品主体子批次</strong><span id="subjectOrchestrationSummary"></span></div>
+            <button id="openProductFitLabBtn" class="btn ghost" type="button">打开商品承接工作台</button>
+          </div>
+          <label>当前生产主体
+            <select id="subjectBatchSelect"></select>
+          </label>
+          <div id="subjectBatchState" class="preflight-message" role="status"></div>
+          <label class="subject-override-check"><input id="subjectManualOverride" type="checkbox"> 我明确选择用当前手工上传主体覆盖此子批次（会写入提示词记录）</label>
+          <div class="actions subject-orchestration-actions">
+            <button id="allSubjectPromptsBtn" class="btn primary soft" type="button">全部可生产主体增量提词</button>
+            <button id="allSubjectImagesBtn" class="btn ghost" type="button">用已有提示词直接批量生图</button>
+          </div>
+        </section>
+        <div class="actions link-prompt-actions" aria-describedby="linkBatchHint">
+          <button id="buildPromptBtn" class="btn primary" type="button">生成当前/选定范围提示词</button>
+          <button id="batchLinksBtn" class="btn primary soft" type="button" title="按选定编号范围依次生成提示词">按编号批量生成提示词</button>
+          <button id="copyAllPromptBtn" class="btn ghost" type="button">复制全部提示词</button>
+        </div>
+        <section id="promptErrorPanel" class="prompt-error-panel" aria-live="polite" hidden>
+          <div class="prompt-error-head">
+            <div>
+              <strong>提示词错误明细</strong>
+              <p id="promptErrorSummary">错误会保留在这里，不会被进度状态覆盖。</p>
+            </div>
+            <div class="actions prompt-error-actions">
+              <button id="retryFailedPromptsBtn" class="btn primary soft" type="button" disabled>只重试失败编号</button>
+              <button id="clearPromptErrorsBtn" class="btn ghost" type="button">清除错误</button>
+            </div>
+          </div>
+          <div id="promptErrorList" class="prompt-error-list" role="list"></div>
+        </section>
+      </section>
+    </section>
+
+    <section id="referenceDetailWorkbench" class="panel detail-only reference-detail-workbench" aria-labelledby="referenceDetailWorkbenchTitle" aria-describedby="referenceDetailSourceSummary" hidden>
+      <div class="reference-detail-source-bar">
+        <div>
+          <span class="reference-detail-eyebrow">REFERENCE_DETAIL_SOURCE_V1</span>
+          <h2 id="referenceDetailWorkbenchTitle">参考详情结构工作台</h2>
+          <p id="referenceDetailSourceSummary">仅消费由插件弹窗正式交接或手动导入的 REFERENCE_DETAIL_SOURCE_V1 快照；来源保持只读。</p>
+        </div>
+        <div class="reference-detail-source-meta" aria-live="polite">
+          <span id="referenceDetailSourceKind" class="pill">未导入来源</span>
+          <span id="referenceDetailBuildState" class="pill">待拆解</span>
+          <span id="referenceDetailRevisionState" class="pill">revision 0</span>
+        </div>
+        <div class="reference-detail-source-actions">
+          <label class="btn ghost reference-detail-file-button" for="referenceDetailSourceFile">
+            <input id="referenceDetailSourceFile" type="file" accept="application/json,.json">
+            <span>导入正式来源快照</span>
+          </label>
+          <button id="referenceDetailBuildBtn" class="btn primary" type="button" disabled>分析结构框架</button>
+          <button id="referenceDetailCancelBtn" class="btn ghost" type="button" disabled>取消拆解</button>
+        </div>
+      </div>
+
+      <div id="referenceDetailMigrationNotice" class="reference-detail-migration-notice" role="status" aria-live="polite" hidden>检测到旧版上传参考图状态，已安全清理；请重新从插件弹窗提取正式商品详情快照。</div>
+      <p id="referenceDetailSourceEmptyState" class="reference-detail-source-empty-state" role="status" aria-live="polite">请从插件弹窗粘贴商品 URL 或提取当前商品详情</p>
+
+      <div id="referenceDetailFormalFlow" class="reference-detail-formal-flow" hidden>
+        <nav class="reference-detail-v2-flow" aria-label="参考详情结构批量生成流程">
+          <ol>
+            <li data-reference-detail-stage="source"><span>01</span><strong>来源详情</strong></li>
+            <li data-reference-detail-stage="modules"><span>02</span><strong>结构框架</strong></li>
+            <li data-reference-detail-stage="product-assets"><span>03</span><strong>商品素材</strong></li>
+            <li data-reference-detail-stage="batch-targets"><span>04</span><strong>批量生成</strong></li>
+            <li data-reference-detail-stage="generation-results"><span>05</span><strong>结果</strong></li>
+          </ol>
+        </nav>
+
+        <div class="reference-detail-workbench-grid">
+        <aside class="reference-detail-column reference-detail-source-column" data-reference-detail-stage="source" aria-labelledby="referenceDetailSourceHeading">
+          <div class="reference-detail-column-head">
+            <div><span class="reference-detail-column-index">01</span><h3 id="referenceDetailSourceHeading">只读来源</h3></div>
+            <span id="referenceDetailSourceBlockCount">0 块</span>
+          </div>
+          <div id="referenceDetailCompleteness" class="reference-detail-completeness" role="list" aria-label="来源完整度"></div>
+          <div id="referenceDetailWarnings" class="reference-detail-warnings" role="status" aria-live="polite"></div>
+          <div id="referenceDetailSourcePreview" class="reference-detail-source-preview" role="list" aria-label="按原顺序展示的来源块">
+            <p class="reference-detail-empty-copy">导入商品快照后按原顺序显示结构角色与来源血缘；参考内容仅用于分析。</p>
+          </div>
+        </aside>
+
+        <section class="reference-detail-column reference-detail-modules-column" data-reference-detail-stage="modules" aria-labelledby="referenceDetailModulesHeading">
+          <div class="reference-detail-column-head">
+            <div><span class="reference-detail-column-index">02</span><h3 id="referenceDetailModulesHeading">结构框架</h3></div>
+            <span id="referenceDetailModuleCount">0 个分屏</span>
+          </div>
+          <p class="reference-detail-column-help">一张卡就是最终一屏。点击后只需修改一句核心内容，也可拖拽调整顺序。</p>
+          <div id="referenceDetailSalesLogic" class="reference-detail-sales-logic" aria-live="polite">销售逻辑：待拆解</div>
+          <div class="reference-detail-module-toolbar">
+            <button id="referenceDetailMergeSelectedBtn" class="btn ghost" type="button" disabled>合并已选模块</button>
+            <small>确认前可排序、合并、拆分与锁定；拆分仅适用于未锁定的多来源块模块。</small>
+          </div>
+          <div id="referenceDetailModuleList" class="reference-detail-module-list" role="list" aria-label="可排序的结构模块"></div>
+        </section>
+
+        <aside class="reference-detail-column reference-detail-editor-column" data-reference-detail-stage="modules" aria-labelledby="referenceDetailEditorHeading">
+          <div class="reference-detail-column-head">
+            <div><span class="reference-detail-column-index">02B</span><h3 id="referenceDetailEditorHeading">编辑本屏结构</h3></div>
+            <span id="referenceDetailSelectedModule">未选择</span>
+          </div>
+          <form id="referenceDetailEditor" class="reference-detail-editor" novalidate>
+            <fieldset id="referenceDetailEditorFields" disabled>
+              <label class="reference-detail-direction-field">该屏核心内容 / 描述方向（仅一句）
+                <textarea id="referenceModuleVisualDescription" class="reference-detail-editor-area" maxlength="160" rows="3" placeholder="例如：完整展示礼盒外观与内容物，先建立体面送礼的第一印象。"></textarea>
+                <small>这句话就是该屏的最终生成方向；确认前可随时修改。本路线只复用结构与视觉节奏，不搬运来源文案。</small>
+              </label>
+              <div class="reference-detail-structure-fields" aria-label="可编辑的本屏视觉结构">
+                <label>版式结构<input id="referenceModuleVisualLayout" type="text" maxlength="160" autocomplete="off" placeholder="例如：上图下文，主体居中"></label>
+                <label>视觉氛围<input id="referenceModuleVisualMood" type="text" maxlength="160" autocomplete="off" placeholder="例如：清爽、克制、高级"></label>
+                <label>镜头类型<input id="referenceModuleShotType" type="text" maxlength="160" autocomplete="off" placeholder="例如：正面全景 / 局部特写"></label>
+                <label>主体位置<input id="referenceModuleSubjectPlacement" type="text" maxlength="160" autocomplete="off" placeholder="例如：中心偏下，留出上方呼吸区"></label>
+                <label>背景<input id="referenceModuleBackground" type="text" maxlength="160" autocomplete="off"></label>
+                <label>光线<input id="referenceModuleLighting" type="text" maxlength="160" autocomplete="off"></label>
+                <label>色彩组合<textarea id="referenceModulePalette" rows="2" placeholder="每行一项"></textarea></label>
+                <label>文字区域<textarea id="referenceModuleTextZones" rows="2" placeholder="每行一项"></textarea></label>
+                <label>信息密度<input id="referenceModuleDensity" type="text" maxlength="160" autocomplete="off"></label>
+                <label>与下一屏衔接<input id="referenceModuleTransition" type="text" maxlength="160" autocomplete="off"></label>
+                <label>必须保留<textarea id="referenceModuleMustKeep" rows="2" placeholder="每行一项"></textarea></label>
+                <label>必须避免<textarea id="referenceModuleAvoid" rows="2" placeholder="每行一项"></textarea></label>
+              </div>
+              <details class="reference-detail-technical-editor">
+                <summary>查看来源血缘与安全检查</summary>
+                <section class="reference-detail-source-readonly" aria-label="当前模块只读来源">
+                  <strong>只读来源血缘</strong>
+                  <p id="referenceModuleSourceSummary">未选择模块</p>
+                </section>
+                <div class="reference-detail-legacy-editor" hidden>
+                  <select id="referenceModuleType"></select>
+                  <select id="referenceModuleSalesRole"></select>
+                  <input id="referenceModuleHeadline" type="text" autocomplete="off">
+                  <textarea id="referenceModuleBody"></textarea>
+                  <textarea id="referenceModuleBullets"></textarea>
+                  <input id="referenceModuleCta" type="text" autocomplete="off">
+                </div>
+                <section class="reference-detail-editor-section" aria-labelledby="referenceDetailAssetHeading" hidden>
+                  <div class="reference-detail-editor-section-head"><h4 id="referenceDetailAssetHeading">素材槽</h4><span>生成时按目标核验自有/授权素材</span></div>
+                  <div id="referenceAssetSlotList" class="reference-detail-binding-list"></div>
+                </section>
+                <section class="reference-detail-editor-section" aria-labelledby="referenceDetailRiskHeading">
+                  <div class="reference-detail-editor-section-head"><h4 id="referenceDetailRiskHeading">系统安全检查</h4><span>只读</span></div>
+                  <div id="referenceRiskFlagList" class="reference-detail-risk-list"></div>
+                </section>
+              </details>
+            </fieldset>
+          </form>
+        </aside>
+        </div>
+
+        <div class="reference-detail-footer-actions" data-reference-detail-stage="modules">
+        <div>
+          <div id="referenceDetailGateState" class="reference-detail-gate-state" role="status" aria-live="polite">完善结构框架，准备好后锁定一次即可。</div>
+          <div id="referenceDetailTrustState" class="reference-detail-trust-state" role="status" aria-live="polite" hidden>系统将在确认时只校验主体与模特素材的授权引用。</div>
+        </div>
+        <div id="referenceDetailConfirmationHome" class="actions">
+          <details class="reference-detail-advanced-actions">
+            <summary>高级操作</summary>
+            <div>
+              <button id="referenceDetailSaveRevisionBtn" class="btn ghost" type="button" disabled>立即保存本屏</button>
+              <button id="referenceDetailRestoreOrderBtn" class="btn ghost" type="button" disabled>恢复来源顺序</button>
+              <button id="referenceDetailLoadBlueprintBtn" class="btn ghost" type="button" disabled>恢复已保存结构</button>
+              <button id="referenceDetailRebuildBtn" class="btn ghost" type="button" disabled>重新拆解</button>
+              <button id="referenceDetailVerifyTrustBtn" class="btn ghost" type="button" disabled>重新校验素材</button>
+              <button id="referenceDetailSaveBlueprintBtn" class="btn ghost" type="button" disabled>仅保存草稿</button>
+            </div>
+          </details>
+          <div id="referenceDetailOneConfirm" class="reference-detail-one-confirm">
+            <small>普通警告不阻断；blocked 模块自动跳过，全部 blocked 才会阻断。点击后自动整理屏数并补齐空白、重复或不安全方向，再用自己的主体或主体+模特批量生成。</small>
+            <button id="referenceDetailApproveBtn" class="btn primary soft" type="button" disabled title="锁定结构与当前授权素材">锁定结构并进入批量</button>
+          </div>
+        </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="referenceDetailBatchPanel" class="panel detail-only reference-detail-batch-panel reference-detail-downstream-stage" data-reference-detail-stage="batch-targets" aria-labelledby="referenceDetailBatchTitle" hidden>
+      <div class="reference-detail-batch-head">
+        <div>
+          <span class="reference-detail-eyebrow">REFERENCE_DETAIL_BATCH_V2</span>
+          <h2 id="referenceDetailBatchTitle">按同一结构批量生成详情图</h2>
+          <p>每行是一个完全独立的商品目标。只复用分屏结构和顺序，主体、可选模特、提示词与结果按目标严格隔离。</p>
+        </div>
+        <div class="reference-detail-batch-head-state">
+          <span id="referenceDetailBatchBundleState" class="pill" role="status" aria-live="polite">等待锁定结构</span>
+          <span id="referenceDetailBatchSummary" class="reference-detail-batch-summary">0 个目标 · 0 个已选</span>
+        </div>
+      </div>
+
+      <div class="reference-detail-batch-toolbar">
+        <div class="reference-detail-batch-settings">
+          <label>已确认屏数
+            <input id="referenceDetailBatchScreenCount" type="number" min="5" max="16" value="10" step="1" inputmode="numeric" autocomplete="off">
+          </label>
+          <label>目标级并发
+            <select id="referenceDetailBatchConcurrency">
+              <option value="1">1 路（稳妥）</option>
+              <option value="2" selected>2 路（安全上限）</option>
+            </select>
+          </label>
+        </div>
+        <div class="reference-detail-batch-toolbar-actions">
+          <button id="referenceDetailBatchSelectAll" class="btn ghost" type="button" aria-pressed="false" disabled>全选目标</button>
+          <button id="referenceDetailBatchAddTargetBtn" class="btn primary soft" type="button" disabled>添加商品</button>
+        </div>
+      </div>
+
+      <div class="reference-detail-batch-table-wrap">
+        <table class="reference-detail-batch-table">
+          <thead>
+            <tr>
+              <th scope="col">选中</th>
+              <th scope="col">商品</th>
+              <th scope="col">主体素材（必选）</th>
+              <th scope="col">模特素材（可选）</th>
+              <th scope="col">生成设置</th>
+              <th scope="col">运行状态</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody id="referenceDetailBatchRows"></tbody>
+        </table>
+        <div id="referenceDetailBatchEmpty" class="reference-detail-batch-empty">
+          <strong>还没有批量目标</strong>
+          <span>点击上方“自主放行并添加商品”即可自动锁定结构并绑定当前主体图；模特图完全可选。</span>
+        </div>
+      </div>
+
+      <div class="reference-detail-batch-footer">
+        <p>生成阶段不会发送来源原图、来源原文或 reference_only 素材。结构 revision 或当前目标输入变化后，旧任务和结果会标记为 stale。</p>
+        <div class="reference-detail-batch-run-actions">
+          <button id="referenceDetailBatchResumeBtn" class="btn ghost" type="button" disabled>恢复未完成批次</button>
+          <button id="referenceDetailBatchRetryFailedBtn" class="btn ghost" type="button" disabled>重试失败屏</button>
+          <button id="referenceDetailBatchStopAllBtn" class="btn ghost reference-detail-batch-stop" type="button" disabled>停止全部</button>
+          <button id="referenceDetailBatchStartBtn" class="btn primary" type="button" disabled>生成已选商品详情图</button>
+        </div>
+      </div>
+
+      <section id="referenceDetailBatchResults" class="reference-detail-batch-results" data-reference-detail-stage="generation-results" aria-labelledby="referenceDetailBatchResultsTitle" hidden>
+        <div class="results-head">
+          <strong id="referenceDetailBatchResultsTitle">逐目标生成结果</strong>
+          <span id="referenceDetailBatchResultSummary">每个目标按屏序展示独立长详情预览</span>
+        </div>
+        <div id="referenceDetailBatchResultGroups" class="reference-detail-batch-result-groups"></div>
+      </section>
+    </section>
+
+    <section id="detailSubjectStep" class="panel detail-flow-panel subject-panel reference-detail-downstream-stage" data-reference-detail-stage="product-assets">
+      <div class="panel-head">
+        <div class="flow-heading">
+          <span id="detailSubjectStepNo" class="flow-step-no detail-only">02</span>
+          <div>
+            <h2 id="detailSubjectTitle">产品主体与可选模特</h2>
+            <p id="detailSubjectSubtitle" class="panel-subtitle">产品主体图至少上传 1 张，决定唯一商品身份、结构、比例和包装；模特图完全可选，只在详情场景需要人物时辅助。</p>
+          </div>
+        </div>
+        <span id="detailSubjectState" class="pill">缺少产品主体图</span>
+      </div>
+      <div class="image-box product-box">
+        <div id="productSubjectBoxTitle" class="box-title"><span id="productSubjectBoxTitleLabel" class="box-title-label">产品主体图（必填）</span> <span>正视图 / 侧视图 / 背视图，至少 1 张</span></div>
+        <div class="product-angle-grid">
+          <div class="angle-card">
+            <div class="angle-title">正视图</div>
+            <div id="productFrontPreview" class="preview empty compact-preview">上传正面包装或主展示面</div>
+            <input id="productFrontFile" type="file" accept="image/*">
+            <button id="clearProductFrontBtn" class="btn ghost" type="button">清空</button>
+            <input id="productFrontUrl" type="text" placeholder="正视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+          <div class="angle-card">
+            <div class="angle-title">侧视图</div>
+            <div id="productSidePreview" class="preview empty compact-preview">上传侧面厚度、结构或规格角度</div>
+            <input id="productSideFile" type="file" accept="image/*">
+            <button id="clearProductSideBtn" class="btn ghost" type="button">清空</button>
+            <input id="productSideUrl" type="text" placeholder="侧视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+          <div class="angle-card">
+            <div class="angle-title">背视图</div>
+            <div id="productBackPreview" class="preview empty compact-preview">上传背面信息、开盒或反面角度</div>
+            <input id="productBackFile" type="file" accept="image/*">
+            <button id="clearProductBackBtn" class="btn ghost" type="button">清空</button>
+            <input id="productBackUrl" type="text" placeholder="背视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+        </div>
+        <div id="imageEvidenceWarning" class="image-evidence-warning" role="status" hidden></div>
+      </div>
+      <div class="model-view-panel detail-only">
+        <div class="box-title">详情人物模特（可选） <span>没有模特图也可正常提词和生图</span></div>
+        <div class="model-angle-grid">
+          <div class="angle-card">
+            <div class="angle-title">正视图</div>
+            <div id="modelFrontPreview" class="preview empty compact-preview">上传正面人物、姿态或穿搭</div>
+            <input id="modelFrontFile" type="file" accept="image/*">
+            <button id="clearModelFrontBtn" class="btn ghost" type="button">清空</button>
+            <input id="modelFrontUrl" type="text" placeholder="正视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+          <div class="angle-card">
+            <div class="angle-title">侧视图</div>
+            <div id="modelSidePreview" class="preview empty compact-preview">上传侧面姿势、身形比例或动作</div>
+            <input id="modelSideFile" type="file" accept="image/*">
+            <button id="clearModelSideBtn" class="btn ghost" type="button">清空</button>
+            <input id="modelSideUrl" type="text" placeholder="侧视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+          <div class="angle-card">
+            <div class="angle-title">背视图</div>
+            <div id="modelBackPreview" class="preview empty compact-preview">上传背面轮廓、发型或服饰细节</div>
+            <input id="modelBackFile" type="file" accept="image/*">
+            <button id="clearModelBackBtn" class="btn ghost" type="button">清空</button>
+            <input id="modelBackUrl" type="text" placeholder="背视图 URL；聚焦后 Cmd+V 可贴图片">
+          </div>
+        </div>
+        <div class="model-prompt-row">
+          <label>模特设定 / 生成提示词
+            <textarea id="detailModelPrompt" class="detail-small-area" placeholder="可选。例如：自然生活方式女性模特，三视图一致，姿态真实，服装简洁，只作为详情页场景辅助，不抢商品主体。"></textarea>
+          </label>
+          <button id="detailModelGenerateBtn" class="btn ghost" type="button">生成模特三视图提示词</button>
+        </div>
+      </div>
+      <label class="reference-detail-confirm-row reference-detail-asset-rights-row detail-only">
+        <input id="referenceProductAssetRightsConfirmed" type="checkbox">
+        <span>我确认上传的产品主体与可选模特素材为自有或已获本次生成授权</span>
+      </label>
+      <div id="referenceDetailProductConfirmSlot" class="reference-detail-product-confirm-slot detail-only"></div>
+    </section>
+
+    <section id="styleRefreshPanel" class="panel style-refresh-only style-refresh-panel">
+      <div class="panel-head">
+        <div class="flow-heading">
+          <span class="flow-step-no">03</span>
+          <div>
+            <h2>选择视觉方案</h2>
+            <p class="panel-subtitle">V1 手动选择经典风格；V2 智能识别并推荐；V3 自由共创仅作为用户备选，不替换前两种方案。</p>
+          </div>
+        </div>
+        <span id="styleRefreshState" class="pill">待选择风格</span>
+      </div>
+      <div id="styleRefreshSourceModes" class="style-refresh-source-modes" role="tablist" aria-label="风格方案来源">
+        <button class="active" type="button" role="tab" aria-selected="true" data-style-source="library">
+          <b>经典风格</b><small>V1 手动选择 · V2 智能推荐</small>
+        </button>
+        <button type="button" role="tab" aria-selected="false" data-style-source="custom">
+          <b>自由共创</b><small>V3 用户备选 · 自己描述风格</small>
+        </button>
+      </div>
+      <div id="styleRefreshLibraryPanel">
+        <div class="style-refresh-smart-bar">
+          <label>商品品类
+            <input id="styleRefreshCategory" type="text" placeholder="例如：鱼油 / 维生素 / 钙铁锌 / 女装 / 箱包">
+          </label>
+          <label>主要材质
+            <input id="styleRefreshMaterial" type="text" placeholder="例如：针织 / 皮革 / 金属">
+          </label>
+          <button id="styleRefreshRecommendBtn" class="btn primary soft" type="button">智能识别并推荐</button>
+        </div>
+        <div id="styleRefreshAnalysis" class="style-refresh-analysis" role="status">可手动填写后推荐；配置了视觉模型时，会优先根据商品主体图识别品类、材质与保真要点。</div>
+        <div id="styleRefreshRecommendations" class="style-refresh-recommendations" hidden></div>
+        <div id="styleRefreshStyleFilters" class="style-refresh-style-filters" aria-label="风格分类筛选"></div>
+        <div id="styleRefreshStyleGrid" class="style-refresh-style-grid" aria-label="经典视觉风格"></div>
+      </div>
+      <div id="styleRefreshCustomPanel" class="style-refresh-custom-panel" hidden>
+        <div class="style-refresh-custom-head">
+          <div><strong>V3 · 自由共创备选</strong><span>只使用文字描述建立新风格，不读取案例裂变参考图。</span></div>
+          <em>OPTIONAL</em>
+        </div>
+        <div class="style-refresh-custom-grid">
+          <label>自定义风格名称
+            <input id="styleRefreshCustomName" type="text" maxlength="40" placeholder="例如：新中式机能编辑">
+          </label>
+          <label>视觉描述 <em>必填</em>
+            <textarea id="styleRefreshCustomVisual" rows="3" maxlength="600" placeholder="描述色彩、场景、构图、镜头、光影、材质、留白和整体气质"></textarea>
+          </label>
+          <label>避让要求（可选）
+            <textarea id="styleRefreshCustomAvoid" rows="3" maxlength="300" placeholder="例如：不要霓虹色，不用夸张透视，不出现复杂道具"></textarea>
+          </label>
+        </div>
+      </div>
+      <div class="style-refresh-options">
+        <div>
+          <strong>创意强度</strong>
+          <div id="styleRefreshStrengths" class="style-refresh-strength-grid">
+            <button type="button" data-style-strength="stable"><b>稳妥焕新</b><small>保留常规电商结构</small></button>
+            <button class="active" type="button" data-style-strength="commercial"><b>商业升级</b><small>明显升级场景与光影</small></button>
+            <button type="button" data-style-strength="breakthrough"><b>破圈创意</b><small>大胆尺度与艺术表达</small></button>
+          </div>
+        </div>
+        <label>文案策略
+          <select id="styleRefreshCopyMode">
+            <option value="none" selected>不要文案</option>
+            <option value="generate">生成新文案</option>
+            <option value="rewrite">修改已有文案</option>
+          </select>
+          <small>文案语气、字体气质、信息密度和排版会跟随当前风格与创意强度。</small>
+        </label>
+      </div>
+      <div id="styleRefreshCopyConfig" class="style-refresh-copy-config" hidden>
+        <label><span id="styleRefreshCopySourceLabel">必须包含的卖点或关键词</span>
+          <textarea id="styleRefreshCopySource" rows="2" placeholder="只填写已经确认的真实卖点、短语或关键词；可留空"></textarea>
+        </label>
+        <label>文案生成 / 修改要求
+          <textarea id="styleRefreshCopyInstruction" rows="2" placeholder="例如：突出轻盈感；标题更短；保留品牌语气，不写价格参数"></textarea>
+        </label>
+        <div id="styleRefreshCopyProfile" class="style-refresh-copy-profile">文案方式会根据当前视觉风格与创意强度自动生成。</div>
+      </div>
+      <div id="styleRefreshPlanPreview" class="style-refresh-plan-preview">
+        <div><b>01</b><strong>英雄主图</strong><span>首图识别与高级完成度</span></div>
+        <div><b>02</b><strong>材质特写</strong><span>纹理、工艺与细节证明</span></div>
+        <div><b>03</b><strong>自然互动</strong><span>尺度、动作与使用关系</span></div>
+        <div><b>04</b><strong>创意场景</strong><span>传播记忆点与风格表达</span></div>
+      </div>
+      <div class="style-refresh-qa-preflight">
+        <strong>生成前保真门禁</strong>
+        <span>商品主体 ≥ 1 张</span>
+        <span>风格已确认</span>
+        <span id="styleRefreshCopyGate">文案选择已确认</span>
+        <span>生成后自动检查：商品 / 风格 / 文字</span>
+      </div>
+    </section>
+
+    <section id="detailPromptStep" class="panel detail-panel reference-detail-downstream-stage" data-reference-detail-stage="batch-targets">
+      <div class="panel-head">
+        <div class="flow-heading">
+          <span id="detailPromptStepNo" class="flow-step-no detail-only">03</span>
+          <span class="flow-step-no style-refresh-only">04</span>
+          <div>
+            <h2 id="detailPromptStepTitle">按当前路线生成详情提示词</h2>
+            <p id="detailPromptStepSubtitle" class="panel-subtitle">参考成详路线只读取已锁定结构；链接路线严格按 L 编号逐条读取各自定位与文案，两条路线都必须绑定授权产品主体素材。</p>
+          </div>
+        </div>
+        <span id="detailState" class="pill">待生成</span>
+      </div>
+      <div class="detail-shell">
+        <div class="detail-config">
+          <div class="detail-empty" id="detailEmpty">
+            <div class="detail-empty-icon">✦</div>
+            <strong>按选定正式路线生成详情提示词</strong>
+            <span>参考成详需先导入正式来源快照并锁定结构；链接路线需载入链接定位 JSON。模特素材可留空。</span>
+            <ol>
+              <li>参考成详路线：正式快照 → 结构框架编辑 → 商品主体/可选模特 → 一次锁定 → 批量生成</li>
+              <li>链接路线：L001、L002…各自定位 + 同一产品主体图，严格逐条生成对应提示词</li>
+              <li>模特可选；若上传，只作为尺度、动作、情绪或信任场景的辅助证据</li>
+            </ol>
+          </div>
+
+          <div class="detail-input-grid">
+            <label>产品名称
+              <input id="detailProductName" type="text" placeholder="例如：儿童软艺拼接床">
+            </label>
+            <label>平台
+              <select id="detailPlatform">
+                <option value="淘宝">淘宝</option>
+                <option value="天猫">天猫</option>
+                <option value="京东">京东</option>
+                <option value="拼多多">拼多多</option>
+                <option value="小红书">小红书</option>
+              </select>
+            </label>
+            <label>页面类型
+              <select id="detailPageType">
+                <option value="详情页">详情页</option>
+                <option value="长图详情">长图详情</option>
+                <option value="卖点分屏">卖点分屏</option>
+                <option value="活动承接页">活动承接页</option>
+              </select>
+            </label>
+            <label>语言
+              <select id="detailLanguage">
+                <option value="中文">中文</option>
+                <option value="中英双语">中英双语</option>
+                <option value="英文">英文</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="detail-text-grid">
+            <label>产品特性
+              <textarea id="detailProductFeatures" class="detail-small-area" placeholder="例如：拼接床加宽床边铁艺，儿童床大人可睡，床拼接大床床加宽拼接神器，无缝拼接，高度可调节。"></textarea>
+            </label>
+            <label>核心卖点
+              <textarea id="detailSellingPoints" class="detail-small-area" placeholder="例如：大床贴合对比 / 拼接大床 / 婴儿拼接床，床边同睡更安心。"></textarea>
+            </label>
+          </div>
+
+          <div class="detail-param-grid">
+            <label><span id="detailCountLabel">屏数</span> <small id="detailScreenRule">参考详情结构可选 5–16 屏</small>
+              <input id="detailScreenCount" type="number" min="5" max="16" value="10" step="1" inputmode="numeric" autocomplete="off">
+            </label>
+            <label>比例
+              <select id="detailRatio">
+                <option value="1:1">1:1 方图</option>
+                <option value="3:4" selected>3:4 竖图</option>
+                <option value="16:9">16:9 横图</option>
+                <option value="9:16">9:16 竖图</option>
+                <option value="21:9 超宽">21:9 超宽</option>
+              </select>
+            </label>
+            <label>分辨率
+              <select id="detailResolution">
+                <option value="1K">1K</option>
+                <option value="2K" selected>2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </label>
+            <label>生成方式
+              <select id="detailGenerateStyle">
+                <option value="分段提示词">分段提示词</option>
+                <option value="逐屏生图提示词">逐屏生图提示词</option>
+                <option value="详情页脚本+提示词">详情页脚本+提示词</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="actions detail-actions">
+            <button id="detailSmartFillBtn" class="btn ghost" type="button" title="根据当前路线的正式来源或链接清单，自动补全产品名称、产品特性和核心卖点">智能补全信息</button>
+            <button id="detailRefGenerateBtn" class="btn primary" type="button">按已锁定结构生成详情提示词</button>
+            <button id="copyDetailPromptBtn" class="btn ghost" type="button">复制详情提示词</button>
+          </div>
+        </div>
+
+        <div class="detail-output-panel">
+          <label>详情页提示词
+            <textarea id="detailPrompt" class="detail-prompt-area" placeholder="当前链接或按 L001、L002…分组的详情页提示词会显示在这里"></textarea>
+          </label>
+          <div id="detailJson" class="json-preview"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel main-lab-only">
+      <div class="panel-head">
+        <h2>提示词结果</h2>
+        <span id="runState" class="pill">空闲</span>
+      </div>
+      <div class="grid prompt-result-grid">
+        <label>中文提示词
+          <textarea id="cnPrompt" class="prompt-area" placeholder="参考图反推、当前链接或按 L001、L002…分组的提示词会显示在这里"></textarea>
+        </label>
+      </div>
+      <textarea id="enPrompt" hidden></textarea>
+      <label>负面提示词
+        <textarea id="negativePrompt" class="small-area" placeholder="例如：logo、商标、品牌名、模糊、畸形文字、低清晰度"></textarea>
+      </label>
+      <div id="analysisJson" class="json-preview"></div>
+    </section>
+
+    <section id="generationPanel" class="panel generation-panel reference-detail-downstream-stage" data-reference-detail-stage="generation-results">
+      <div class="panel-head generation-head">
+        <div class="flow-heading">
+          <span id="generationStepNo" class="flow-step-no detail-only">04</span>
+          <span class="flow-step-no style-refresh-only">05</span>
+          <div>
+            <h2 id="generationTitle">生图参数</h2>
+            <p id="detailGenerationRoute" class="panel-subtitle detail-only">已锁定结构 + 授权产品主体素材；来源原图、来源原文与 reference_only 素材不进入生成。</p>
+          </div>
+        </div>
+        <div class="state-actions">
+          <span id="generateState" class="pill">未生成</span>
+          <button id="stopGenerateBtn" class="link-danger" type="button" hidden>终止</button>
+        </div>
+      </div>
+      <div class="generation-frame">
+        <div class="generation-controls">
+          <div id="generationParamSummary" class="generation-param-summary detail-only">
+            详情生图沿用上方屏数、比例和分辨率；10 屏会生成 10 张独立图片，生成后可手动勾选拼接成长详情预览。
+          </div>
+          <div class="style-refresh-operation-guide style-refresh-only" aria-label="风格焕新本页操作说明">
+            <strong>本页只需：设置输出规格 → 点击开始生成</strong>
+            <span>双并发生图、失败隔离和商品 / 风格 / 文字检查都由系统自动完成；失败时留在本页重试，不用返回前面。</span>
+          </div>
+          <div class="control-grid">
+            <label><span id="imageRatioLabel">图片比例</span>
+              <select id="imageRatio">
+                <option value="1:1">1:1 方图</option>
+                <option value="3:4">3:4 竖图</option>
+                <option value="16:9">16:9 横图</option>
+                <option value="9:16">9:16 竖图</option>
+                <option value="21:9">21:9 超宽</option>
+              </select>
+            </label>
+            <label><span id="imageResolutionLabel">图片清晰度</span>
+              <select id="imageResolution">
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </label>
+            <label><span id="imageCountLabel">生成数量</span>
+              <input id="imageCount" type="number" min="1" max="20" value="1">
+            </label>
+          </div>
+          <div class="generation-actions">
+            <button id="generateBtn" class="btn primary" type="button" title="按当前路线已核验的提示词与授权商品主体素材生图">按当前正式路线生成详情</button>
+            <button id="linkNumberGenerateBtn" class="btn primary soft" type="button" title="每个链接编号使用自己的提示词并发生图">按编号并发生图</button>
+            <button id="downloadAllBtn" class="btn ghost" type="button">下载全部</button>
+            <button id="clearSelectedResultsBtn" class="btn ghost viral-result-clear-only" type="button" disabled>清空勾选（0）</button>
+            <button id="clearResultsBtn" class="btn ghost" type="button">清空全部结果</button>
+            <label class="detail-stitch-toggle main-only" for="mainStitchToggle">
+              <input id="mainStitchToggle" type="checkbox">
+              <span id="mainStitchSelectedCount">左右拼接所选主图（0 / 20）</span>
+            </label>
+            <button id="mainStitchBtn" class="btn ghost main-only" type="button">查看左右拼接</button>
+            <label class="detail-stitch-toggle detail-only" for="detailStitchToggle">
+              <input id="detailStitchToggle" type="checkbox">
+              <span id="detailStitchSelectedCount">拼接所选长图（0 / 20）</span>
+            </label>
+            <button id="detailStitchBtn" class="btn ghost detail-only" type="button">查看拼接预览</button>
+          </div>
+          <div id="styleRefreshWorkStatus" class="style-refresh-work-status style-refresh-only" role="status" aria-live="polite">
+            <div class="style-refresh-run-head">
+              <div>
+                <small>生成与自动检查状态</small>
+                <strong id="styleRefreshRunTitle">待开始：系统会自动锁定当前方案</strong>
+              </div>
+              <b id="styleRefreshRunCount">0 / 4</b>
+            </div>
+            <div class="style-refresh-run-track" aria-hidden="true"><i id="styleRefreshRunProgress"></i></div>
+            <div id="styleRefreshRunSteps" class="style-refresh-run-steps" aria-label="风格焕新操作顺序">
+              <span data-style-run-stage="plan">1 设置输出规格</span>
+              <span data-style-run-stage="generate">2 开始 / 补图</span>
+              <span data-style-run-stage="qa">3 系统自动检查</span>
+              <span data-style-run-stage="done">4 下载结果</span>
+            </div>
+            <p id="styleRefreshRunDetail">设置规格后点击开始；图片生成完会自动检查商品、风格和文字。</p>
+          </div>
+        </div>
+        <div class="results-shell">
+          <div class="results-head">
+            <strong id="resultsTitle">生成结果</strong>
+            <div class="results-meta">
+              <span id="resultsHint">结果素材</span>
+            </div>
+          </div>
+          <div id="resultGrid" class="result-grid">
+            <div class="empty-result">还没有生成结果</div>
+          </div>
+          <div id="mainStitchPreviewWrap" class="main-stitch-preview main-only" hidden>
+            <div class="results-head">
+              <strong>主图左右拼接预览</strong>
+              <span id="mainStitchPreviewHint">按勾选先后从左到右排列</span>
+            </div>
+            <div id="mainStitchPreview" class="main-stitch-strip"></div>
+          </div>
+          <div id="detailLongPreviewWrap" class="detail-long-preview detail-only" hidden>
+            <div class="results-head">
+              <strong>长详情预览</strong>
+              <span id="detailLongPreviewHint">按生成顺序合并预览</span>
+            </div>
+            <div id="detailLongPreview" class="detail-long-strip">
+              <div class="empty-result">详情图生成后会在这里纵向合并预览</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="skuPanel" class="panel sku-panel sku-only">
+      <div class="sku-workflow-bar">
+        <ol class="sku-progress" aria-label="批量 SKU 工作流程">
+          <li><b>01</b><span>添加素材</span></li>
+          <li><b>02</b><span>检查任务</span></li>
+          <li><b>03</b><span>设置并生成</span></li>
+          <li><b>04</b><span>查看结果</span></li>
+        </ol>
+        <div class="sku-workflow-actions">
+          <span id="skuState" class="pill" role="status" aria-live="polite">等待素材</span>
+          <button id="skuStopBtn" class="link-danger" type="button" hidden>终止生成</button>
+          <button id="skuClearBtn" class="link-danger sku-clear-link" type="button">清空项目</button>
+        </div>
+      </div>
+      <div id="skuSourceImportSummary" class="sku-source-import-summary" hidden></div>
+      <div class="sku-shell">
+        <div class="sku-flow">
+          <section class="sku-step">
+            <div class="sku-step-head">
+              <span>01</span>
+              <div>
+                <strong>添加产品素材</strong>
+                <p>添加要替换进去的商品主体，并绑定需要完美复刻的完整对象 SKU 底图。</p>
+              </div>
+            </div>
+            <div class="sku-material-grid">
+              <div class="sku-upload-card sku-product-card">
+                <div class="sku-upload-head">
+                  <div>
+                    <strong>产品主体图 <em>必填</em></strong>
+                    <span id="skuMaxHint">最多 20 张替换主体，每张只替换对象图里的原主体</span>
+                  </div>
+                  <b id="skuProductCount">0 / 20</b>
+                </div>
+                <label class="sku-drop">
+                  <input id="skuProductFiles" type="file" accept="image/*" multiple>
+                  <span>上传产品图</span>
+                  <small>支持多选，也可直接粘贴图片</small>
+                </label>
+                <details class="sku-inline-details">
+                  <summary>通过图片 URL 添加</summary>
+                  <textarea id="skuProductUrls" class="sku-mini-area" placeholder="每行一个产品图 URL"></textarea>
+                </details>
+                <div id="skuProductPreview" class="sku-thumb-grid"></div>
+              </div>
+
+              <div class="sku-upload-card sku-template-card">
+                <div class="sku-upload-head">
+                  <div>
+                    <strong>对象 SKU 底图 <em>必填</em></strong>
+                    <span>整张图不可变，只允许把其中原商品主体换掉</span>
+                  </div>
+                  <b id="skuTemplateCount">0 / 1</b>
+                </div>
+                <div id="skuTemplatePreview" class="sku-template-preview empty">对象 SKU 底图预览</div>
+                <div class="sku-template-controls">
+                  <label class="sku-drop compact">
+                    <input id="skuTemplateFile" type="file" accept="image/*">
+                    <span>添加对象 SKU 底图</span>
+                  </label>
+                  <input id="skuTemplateUrl" type="text" placeholder="或粘贴完整对象 SKU 图片 URL">
+                  <button id="skuTemplateClearBtn" class="btn ghost" type="button" hidden>移除对象图</button>
+                </div>
+                <label class="sku-rights-confirmation">
+                  <input id="skuBaseRightsConfirmed" type="checkbox">
+                  <span>我确认对象 SKU 底图与替换主体为自有素材，或已获得本次编辑与商业使用授权。</span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="sku-step">
+            <div class="sku-step-head">
+              <span>02</span>
+              <div>
+                <strong>检查 SKU 任务</strong>
+                <p>每张主体图建立一个替换任务；业务标题只用于结果与下载命名，不写入画面。</p>
+              </div>
+            </div>
+            <div class="sku-task-toolbar">
+              <div>
+                <strong>待生成任务</strong>
+                <span id="skuTaskSummary">0 条任务 · 0 条已选</span>
+              </div>
+              <div class="sku-task-toolbar-actions">
+                <button id="skuSelectAllBtn" class="btn ghost" type="button">全选</button>
+                <button id="skuSelectNextBtn" class="btn ghost" type="button">选择下一批</button>
+                <button id="skuSelectNoneBtn" class="btn ghost" type="button">取消全选</button>
+              </div>
+            </div>
+            <div id="skuTaskList" class="sku-task-list sku-task-editor"></div>
+            <details class="sku-bulk-attributes">
+              <summary>
+                <span>批量粘贴 SKU 标题 <small>生成前必填 · 每行对应一个结果文件名</small></span>
+                <b id="skuAttrCount">0 / 0</b>
+              </summary>
+              <textarea id="skuAttrText" class="sku-mini-area" placeholder="喜结良缘长条礼盒套餐B&#10;喜结良缘长条礼盒套餐C"></textarea>
+              <p>标题只用于结果和 JPG 文件名；不会生成 SKU 字样、编号或标题文字。空行会保留位置。</p>
+            </details>
+          </section>
+
+          <section class="sku-step sku-generate-step">
+            <div class="sku-step-head">
+              <span>03</span>
+              <div>
+                <strong>设置并生成</strong>
+                <p>模型跟随统一 API 设置；这里只保留本批次真正需要调整的三个参数。</p>
+              </div>
+            </div>
+            <div class="sku-param-grid sku-core-params">
+              <label>分辨率
+                <select id="skuResolution">
+                  <option value="1K" selected>1K</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                  <option value="custom">自定义尺寸</option>
+                </select>
+              </label>
+              <label>图片比例
+                <select id="skuRatio">
+                  <option value="1:1" selected>1:1 方形</option>
+                  <option value="2:3">2:3 纵向</option>
+                  <option value="3:2">3:2 横向</option>
+                  <option value="3:4">3:4 纵向</option>
+                  <option value="4:3">4:3 横向</option>
+                  <option value="4:5">4:5 纵向</option>
+                  <option value="5:4">5:4 横向</option>
+                  <option value="9:16">9:16 纵向</option>
+                  <option value="16:9">16:9 横向</option>
+                  <option value="21:9">21:9 超宽</option>
+                </select>
+              </label>
+              <label>并发数
+                <select id="skuConcurrency">
+                  <option value="1">1 路（稳妥）</option>
+                  <option value="2" selected>2 路（推荐）</option>
+                  <option value="3">3 路（高配额）</option>
+                </select>
+              </label>
+            </div>
+            <div id="skuCustomSizeFields" class="sku-custom-size" hidden>
+              <span class="sku-custom-size-title">精确输出尺寸</span>
+              <label>宽
+                <input id="skuCustomWidth" type="number" min="256" max="4096" step="1" inputmode="numeric" value="1024" aria-describedby="skuSizeHelp skuSizeError">
+              </label>
+              <span class="sku-custom-size-times" aria-hidden="true">×</span>
+              <label>高
+                <input id="skuCustomHeight" type="number" min="256" max="4096" step="1" inputmode="numeric" value="1024" aria-describedby="skuSizeHelp skuSizeError">
+              </label>
+              <span id="skuSizeHelp" class="sku-custom-size-help">每边 256–4096 px，最多 1677 万像素；最终 JPG 严格按该尺寸输出。</span>
+              <span id="skuSizeError" class="sku-custom-size-error" role="alert" aria-live="polite" hidden></span>
+            </div>
+            <details class="sku-advanced-settings">
+              <summary>高级设置：视觉策略与知识库</summary>
+              <div class="sku-config-grid">
+                <div class="sku-prompt-field">
+                  <div class="sku-prompt-title">
+                    <strong>主体替换约束</strong>
+                    <button id="skuPromptTemplateBtn" class="mini-link" type="button">恢复默认</button>
+                  </div>
+                  <textarea id="skuPrompt" class="sku-prompt-area" aria-label="主体替换约束">以对象 SKU 图为不可变底图，仅将其中旧商品主体替换为当前商品主体；原图的尺寸比例、构图、主体位置与占比、透视、背景、光影、阴影、道具、文案、字体、标签和所有其他细节保持不变。</textarea>
+                </div>
+                <div id="skuKnowledgeState" class="sku-knowledge-state">业务知识库不得改写对象底图；SKU 标题仅作为下载元数据。</div>
+              </div>
+            </details>
+            <div class="sku-runbar">
+              <div id="skuPreflight" class="sku-preflight">请先添加替换主体和对象 SKU 底图；生成前会检查是否具备一一对应的两张输入图。</div>
+              <div class="sku-actions">
+                <button id="skuRetryFailedBtn" class="btn ghost" type="button" disabled hidden>重试失败项</button>
+                <button id="skuGenerateBtn" class="btn primary soft" type="button">生成所选 SKU（0）</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="sku-step sku-result-step">
+            <div class="sku-step-head sku-result-head">
+              <span>04</span>
+              <div>
+                <strong>查看与下载结果</strong>
+                <p>成功结果按业务标题保留；下载文件名只使用标题，不带 SKU 技术编号。</p>
+              </div>
+              <button id="skuDownloadAllBtn" class="btn ghost" type="button" disabled hidden>下载全部结果</button>
+            </div>
+            <div class="sku-output">
+              <div id="skuEmpty" class="sku-empty">
+                <div class="detail-empty-icon">▧</div>
+                <strong>结果会按 SKU 顺序出现在这里</strong>
+                <span>完成上方三个步骤后，点击“生成所选 SKU”。</span>
+              </div>
+              <div id="skuResultGrid" class="result-grid sku-result-grid"></div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <section id="archivePanel" class="panel local-archive-panel" aria-labelledby="archivePanelTitle">
+      <div class="panel-head archive-panel-head">
+        <div class="flow-heading">
+          <span class="flow-step-no">历史</span>
+          <div>
+            <h2 id="archivePanelTitle">本机成果档案</h2>
+            <p class="panel-subtitle">只展示当前账号在这台电脑上仍真实存在的图片档案；本机图片数据被删除后，不保留空卡片。</p>
+          </div>
+        </div>
+        <div class="state-actions archive-head-actions">
+          <span id="archiveState" class="pill">正在读取本机档案</span>
+          <button id="archiveRefreshBtn" class="btn ghost" type="button">刷新本机档案</button>
+        </div>
+      </div>
+      <div class="archive-toolbar">
+        <label class="archive-search-field">检索档案
+          <input id="archiveSearchInput" type="search" placeholder="批次名称、L编号、SKU或图片方向">
+        </label>
+        <label>模块
+          <select id="archiveRouteFilter">
+            <option value="all">全部生图</option>
+            <option value="main">主图</option>
+            <option value="detail">详情页</option>
+            <option value="sku">批量 SKU</option>
+            <option value="case">案例裂变</option>
+            <option value="style-refresh">风格焕新</option>
+          </select>
+        </label>
+        <button id="archiveTrashToggleBtn" class="btn ghost archive-trash-toggle" type="button" aria-pressed="false">回收站 · 0</button>
+      </div>
+      <div id="archiveLocalRule" class="archive-local-rule">生成结果会自动写入本机档案。回收站保留 7 天，超期自动从本机永久删除；已下载到普通文件夹的副本不受影响。</div>
+      <div id="archiveBatchList" class="archive-batch-list"></div>
+      <div id="archiveEmpty" class="archive-empty">
+        <strong>这台电脑上还没有可展示的生图档案</strong>
+        <span>完成生图后会自动出现在这里；本机档案被删除或清理后会同步消失。</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="generatedImagePreviewModal" class="generated-image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generatedImagePreviewTitle" hidden>
+    <button id="generatedImagePreviewClose" class="generated-image-preview-close" type="button" aria-label="关闭大图预览">×</button>
+    <figure class="generated-image-preview-stage">
+      <h3 id="generatedImagePreviewTitle" class="sr-only">生成图大图预览</h3>
+      <img id="generatedImagePreviewImg" alt="生成图大图预览">
+      <figcaption id="generatedImagePreviewCaption"></figcaption>
+    </figure>
+    <div class="generated-image-preview-hint">点击空白处或按 Esc 关闭</div>
+  </div>
+
+  <div id="archiveDeleteModal" class="action-modal archive-delete-modal" role="dialog" aria-modal="true" aria-labelledby="archiveDeleteTitle" hidden>
+    <div class="action-dialog archive-delete-dialog">
+      <button id="archiveDeleteCloseBtn" class="action-close" type="button" aria-label="关闭">×</button>
+      <div class="archive-delete-title">
+        <span aria-hidden="true">⌫</span>
+        <div>
+          <h3 id="archiveDeleteTitle">移至回收站？</h3>
+          <p>已选择 <strong id="archiveDeleteCount">0</strong> 张本机档案图片，移入后会从成果历史中隐藏。</p>
+        </div>
+      </div>
+      <div class="archive-delete-rule">
+        <strong>档案保留 7 天</strong>
+        <span>7 天内可以从回收站恢复；超期后图片和生成记录将从本机自动永久删除，无法恢复。</span>
+        <span>已经下载到电脑普通文件夹中的图片不会被删除。</span>
+      </div>
+      <div class="actions archive-delete-actions">
+        <button id="archiveDeleteCancelBtn" class="btn ghost" type="button">取消</button>
+        <button id="archiveDeleteConfirmBtn" class="btn archive-delete-confirm" type="button">移至回收站</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="imageActionModal" class="action-modal" role="dialog" aria-modal="true" aria-labelledby="imageActionTitle" hidden>
+    <div class="action-dialog">
+      <button id="imageActionClose" class="action-close" type="button" aria-label="关闭">×</button>
+      <h3 id="imageActionTitle">选择图片复制方式</h3>
+      <p>优先复制原图，保留现在的工作流；也可以生成带提示词的分享卡。</p>
+      <div class="action-options">
+        <button id="copyOriginalImageBtn" class="action-option primary" type="button">
+          <strong>复制原图</strong>
+          <span>保留当前结果图，后续可继续导入参考图/竞品图。</span>
+        </button>
+        <button id="copyShareCardBtn" class="action-option" type="button">
+          <strong>复制分享卡</strong>
+          <span>按图片位置、边框和比例生成图文卡片。</span>
+        </button>
+      </div>
+      <div class="modal-settings">
+        <div class="settings-title">分享卡设置</div>
+        <div class="card-settings">
+          <label>图片位置
+            <select data-share-card="position">
+              <option value="top">上图下文</option>
+              <option value="center">居中主体</option>
+              <option value="left">左图右文</option>
+              <option value="full">整图封面</option>
+            </select>
+          </label>
+          <label>边框大小
+            <input data-share-card="border" type="number" min="0" max="80" step="4" value="36">
+          </label>
+          <label>卡片比例
+            <select data-share-card="ratio">
+              <option value="4:5">4:5 竖版</option>
+              <option value="1:1">1:1 方图</option>
+              <option value="3:4">3:4 竖版</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="contextActionModal" class="action-modal" role="dialog" aria-modal="true" aria-labelledby="contextActionTitle" hidden>
+    <div class="action-dialog">
+      <button id="contextActionClose" class="action-close" type="button" aria-label="关闭">×</button>
+      <h3 id="contextActionTitle">选择图片处理方式</h3>
+      <p>优先把右键图片导入参考图/竞品图，也可以先反推提示词并生成分享卡。</p>
+      <div class="action-options">
+        <button id="contextImportBtn" class="action-option primary" type="button">
+          <strong>导入参考</strong>
+          <span>进入参考图/竞品图流程，继续反推、生成或引导重生。</span>
+        </button>
+        <button id="contextShareCardBtn" class="action-option" type="button">
+          <strong>生成分享卡</strong>
+          <span>先反推提示词，再按当前卡片设置复制图文分享卡。</span>
+        </button>
+      </div>
+      <div class="modal-settings">
+        <div class="settings-title">分享卡设置</div>
+        <div class="card-settings">
+          <label>图片位置
+            <select data-share-card="position">
+              <option value="top">上图下文</option>
+              <option value="center">居中主体</option>
+              <option value="left">左图右文</option>
+              <option value="full">整图封面</option>
+            </select>
+          </label>
+          <label>边框大小
+            <input data-share-card="border" type="number" min="0" max="80" step="4" value="36">
+          </label>
+          <label>卡片比例
+            <select data-share-card="ratio">
+              <option value="4:5">4:5 竖版</option>
+              <option value="1:1">1:1 方图</option>
+              <option value="3:4">3:4 竖版</option>
+            </select>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="guideActionModal" class="action-modal" role="dialog" aria-modal="true" aria-labelledby="guideActionTitle" hidden>
+    <div class="action-dialog wide guide-rebirth-dialog">
+      <button id="guideActionClose" class="action-close" type="button" aria-label="关闭">×</button>
+      <div class="guide-rebirth-titlebar">
+        <div>
+          <div class="guide-test-badge">引导重生 · 精确修复</div>
+          <h3 id="guideActionTitle">告诉我们哪里不满意</h3>
+          <p>先选问题与作用范围，再描述你想要的结果。主体修复会优先保留真实商品，不会静默改款。</p>
+        </div>
+        <span class="guide-scope-current">当前作用：当前图片</span>
+      </div>
+
+      <div class="guide-rebirth-body">
+        <section class="guide-section guide-mode-section" aria-labelledby="guideModeTitle">
+          <div class="guide-section-title" id="guideModeTitle"><span>01</span>选择引导模式</div>
+          <div class="guide-segmented" role="radiogroup" aria-label="引导模式">
+            <label>
+              <input id="guideModeGeneral" type="radio" name="guideMode" value="general" checked>
+              <span><strong>普通引导</strong><small>文案、模特、背景、构图与光影</small></span>
+            </label>
+            <label>
+              <input id="guideModeSubjectRepair" type="radio" name="guideMode" value="subject-repair">
+              <span><strong>主体局部修复</strong><small>少件、多件、变形与真实商品还原</small></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="guide-section" aria-labelledby="guideIssueTitle">
+          <div class="guide-section-title" id="guideIssueTitle"><span>02</span>选择不满意的问题 <small>可多选</small></div>
+          <div id="guideIssueChips" class="guide-issue-groups">
+            <div class="guide-issue-group">
+              <b>常用调整</b>
+              <div class="guide-chip-list">
+                <button type="button" data-guide-issue="remove">去掉</button>
+                <button type="button" data-guide-issue="replace">替换</button>
+                <button type="button" data-guide-issue="add">增加</button>
+                <button type="button" data-guide-issue="transform">移动 / 缩放</button>
+                <button type="button" data-guide-issue="copy-font">文案 / 字体</button>
+                <button type="button" data-guide-issue="copy-remove-local">局部改文案</button>
+                <button type="button" data-guide-issue="model">换模特</button>
+                <button type="button" data-guide-issue="background-layout">背景 / 构图</button>
+                <button type="button" data-guide-issue="lighting-camera">光影 / 镜头</button>
+              </div>
+            </div>
+            <div class="guide-issue-group subject-issue-group">
+              <b>商品主体</b>
+              <div class="guide-chip-list">
+                <button type="button" data-guide-issue="subject-missing">主体少件</button>
+                <button type="button" data-guide-issue="subject-extra">主体多件</button>
+                <button type="button" data-guide-issue="subject-deformed">主体变形</button>
+                <button type="button" data-guide-issue="subject-logo-copy">Logo / 文字</button>
+                <button type="button" data-guide-issue="subject-color-material">颜色 / 材质</button>
+                <button type="button" data-guide-issue="subject-contact">遮挡 / 接触</button>
+              </div>
+            </div>
+          </div>
+          <div id="guideTextSurgerySection" class="guide-text-surgery" hidden>
+            <div class="guide-text-surgery-title">
+              <strong>局部文案编辑</strong>
+              <span>红色圈选旧文案后，可精准替换或清除；同区其他文字与圈选外像素保持不变。</span>
+            </div>
+            <div class="guide-text-surgery-grid">
+              <label class="guide-text-target-field">
+                <span>圈选的旧文案 <em>必填</em></span>
+                <input id="guideTextTarget" type="text" required autocomplete="off" placeholder="请逐字输入，例如：新婚卧室氛围感">
+              </label>
+              <label class="guide-text-target-field">
+                <span>替换为 <small>留空即清除</small></span>
+                <input id="guideTextReplacement" type="text" autocomplete="off" placeholder="例如：原木菜板">
+              </label>
+              <label>
+                <span>清除时的底板处理</span>
+                <select id="guideTextContainerMode">
+                  <option value="text-only" selected>只删文字，保留底板/标签框</option>
+                  <option value="text-and-container">文字与底板一起删除</option>
+                </select>
+              </label>
+            </div>
+            <label class="guide-text-lock">
+              <input id="guideLockOtherText" type="checkbox" checked disabled>
+              <span><strong>所有未选中文字逐字保留</strong><small>固定锁：不可取消</small></span>
+            </label>
+            <p class="guide-text-surgery-note">红区只代表目标字形，请用精细画笔沿文字本身涂抹，不要包围整行或整个文案区。未标注文字会在结果返回后由原图像素恢复。</p>
+          </div>
+        </section>
+
+        <section id="guideSubjectIntentSection" class="guide-section guide-subject-intent" aria-labelledby="guideSubjectIntentTitle">
+          <div class="guide-section-title" id="guideSubjectIntentTitle"><span>03</span>主体修复目的</div>
+          <div class="guide-segmented guide-intent-options" role="radiogroup" aria-label="主体修复目的">
+            <label>
+              <input id="guideIntentRestore" type="radio" name="guideSubjectIntent" value="restore" checked>
+              <span><strong>恢复真实商品</strong><small>修复生成错误，以主体图为准</small></span>
+            </label>
+            <label>
+              <input id="guideIntentPolish" type="radio" name="guideSubjectIntent" value="polish">
+              <span><strong>优化表现</strong><small>只优化光泽、清晰度与质感</small></span>
+            </label>
+            <label>
+              <input id="guideIntentConcept" type="radio" name="guideSubjectIntent" value="concept">
+              <span><strong>概念改款</strong><small>改变真实商品，结果不可当实拍</small></span>
+            </label>
+          </div>
+        </section>
+
+        <div class="guide-workspace-grid">
+          <section class="guide-section guide-markup-section" aria-labelledby="guideMarkupTitle">
+            <div class="guide-section-title" id="guideMarkupTitle"><span>04</span>圈出需要修改的位置</div>
+            <div id="guideCanvasShell" class="guide-canvas-shell">
+              <canvas id="guideMarkupCanvas" aria-label="当前图片标注画布"></canvas>
+              <div class="guide-canvas-placeholder">
+                <strong>当前结果图标注区</strong>
+                <span>在图上涂抹需要修改或允许联动的区域</span>
+              </div>
+            </div>
+            <div class="guide-markup-toolbar">
+              <div class="guide-markup-legend" aria-label="标注图例">
+                <span data-guide-mark-role="must" role="button" tabindex="0" aria-pressed="true"><i class="required"></i>红色：必须修改</span>
+                <span data-guide-mark-role="linked" role="button" tabindex="0" aria-pressed="false"><i class="linked"></i>黄色：允许联动</span>
+              </div>
+              <div class="guide-tool-actions">
+                <label class="guide-brush-size" for="guideBrushSize">画笔
+                  <select id="guideBrushSize">
+                    <option value="10" selected>精细</option>
+                    <option value="16">标准</option>
+                    <option value="28">大笔</option>
+                  </select>
+                </label>
+                <button id="guideUndoBtn" class="guide-tool-btn" type="button">撤销</button>
+                <button id="guideClearMarksBtn" class="guide-tool-btn" type="button">清除标注</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="guide-section guide-evidence-section" aria-labelledby="guideEvidenceTitle">
+            <div class="guide-section-title" id="guideEvidenceTitle"><span>05</span>主体证据</div>
+            <div id="guideEvidenceLevels" class="guide-evidence-levels" aria-label="证据等级">
+              <div class="e3" data-guide-evidence="E3" role="radio" tabindex="0"><b>E3</b><span>同角度清晰特写 / 标签、Logo、文字等关键细节</span><em>直接充分</em></div>
+              <div class="e2" data-guide-evidence="E2" role="radio" tabindex="0"><b>E2</b><span>多角度主体图组合</span><em>组合充分</em></div>
+              <div class="e1" data-guide-evidence="E1" role="radio" tabindex="0"><b>E1</b><span>单一远景 / 低清 / 局部证据</span><em>证据不足</em></div>
+              <div class="e0" data-guide-evidence="E0" role="radio" tabindex="0"><b>E0</b><span>无可用主体证据</span><em>禁止猜测</em></div>
+            </div>
+            <div id="guideEvidenceHint" class="guide-evidence-hint">
+              <strong>建议补图</strong>
+              <span>若部件被遮挡、Logo不清或颜色材质不确定，请补充对应角度或局部特写。</span>
+              <button id="guideEvidenceUploadBtn" class="guide-upload-placeholder" type="button">去补充主体证据图</button>
+            </div>
+          </section>
+        </div>
+
+        <section class="guide-section" aria-labelledby="guideLockTitle">
+          <div class="guide-section-title" id="guideLockTitle"><span>06</span>这些内容必须保持不变</div>
+          <div id="guideLockOptions" class="guide-check-grid">
+            <label><input id="guideLockSubject" type="checkbox" checked>商品其他区域</label>
+            <label><input id="guideLockSku" type="checkbox" checked>SKU颜色与数量</label>
+            <label><input id="guideLockLogo" type="checkbox" checked>Logo与包装文字</label>
+            <label><input id="guideLockCopy" type="checkbox" checked>已确认画面文案</label>
+            <label><input id="guideLockModel" type="checkbox" checked>模特身份与姿势</label>
+            <label><input id="guideLockBackground" type="checkbox" checked>背景与构图</label>
+            <label><input id="guideLockLighting" type="checkbox" checked>主光方向</label>
+            <label><input id="guideLockOutsideMask" type="checkbox" checked>标注区外不变</label>
+          </div>
+        </section>
+
+        <section class="guide-section guide-instruction-section" aria-labelledby="guidePromptTitle">
+          <div class="guide-section-title" id="guidePromptTitle"><span>07</span>描述你想要的结果</div>
+          <label class="guide-field">最高权重引导词
+            <textarea id="guidePrompt" class="guide-area" placeholder="例如：删除右侧多出的礼盒，恢复为与上传正面主体图一致的包装边缘；允许同步修复接触阴影，其他商品区域、模特和背景保持不变。"></textarea>
+          </label>
+        </section>
+
+        <section class="guide-section guide-plan-section" aria-labelledby="guidePlanTitle">
+          <div class="guide-section-title" id="guidePlanTitle"><span>08</span>执行预案</div>
+          <div class="guide-plan-grid">
+            <label>作用范围
+              <select id="guideScopeSelect">
+                <option value="current" selected>当前图片</option>
+                <option value="same-link" disabled>当前链接的全部图片（验证后开放）</option>
+                <option value="selected-links" disabled>已选链接图片（验证后开放）</option>
+              </select>
+            </label>
+            <div id="guidePlanSummary" class="guide-plan-summary">
+              <strong>等待选择问题与标注区域</strong>
+              <span>系统将汇总：修改项、锁定项、允许联动、证据等级、修复方式和失败回滚策略。</span>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="actions modal-actions guide-rebirth-actions">
+        <span class="guide-version-note">仅作用当前图片 · 不覆盖原图</span>
+        <div>
+          <button id="guideCancelBtn" class="btn ghost" type="button">取消</button>
+          <button id="guideRunBtn" class="btn primary" type="button">确认预案并引导重生</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="productSubjectModal" class="action-modal" role="dialog" aria-modal="true" aria-labelledby="productSubjectTitle" hidden>
+    <div class="action-dialog">
+      <button id="productSubjectClose" class="action-close" type="button" aria-label="关闭">×</button>
+      <h3 id="productSubjectTitle">需要产品主体图</h3>
+      <p id="productSubjectText">所有生图都会以产品主体图作为最终商品身份；请先上传正视图，侧视图/背视图可选。</p>
+      <div class="actions modal-actions">
+        <button id="productSubjectFocusBtn" class="btn primary" type="button">去上传主体图</button>
+        <button id="productSubjectCancelBtn" class="btn ghost" type="button">知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="configModal" class="action-modal" role="dialog" aria-modal="true" aria-labelledby="configTitle" hidden>
+    <div class="action-dialog config-dialog">
+      <button id="configCloseBtn" class="action-close" type="button" aria-label="关闭">×</button>
+      <div class="config-titlebar">
+        <div>
+          <h3 id="configTitle">独立版 API 配置</h3>
+          <p>此弹窗仅供独立实验室使用；主插件请在启动界面的“统一 API 设置”中管理所有服务商。</p>
+        </div>
+        <span id="configState" class="pill warn">未配置</span>
+      </div>
+
+      <div class="config-compact">
+        <div class="config-current">
+          <div class="config-current-main">
+            <span class="config-dot"></span>
+            <div>
+              <strong id="configProviderName">少壮托管 / Auto Mode</strong>
+              <span id="configSummaryText">未填写 API Key · 文本：chatGPT5.5 · 生图：image2</span>
+            </div>
+          </div>
+          <div id="configModelChips" class="config-model-chips"></div>
+        </div>
+
+        <div class="config-source-row">
+          <label>模型来源
+            <select id="provider">
+              <option value="openai-compatible">少壮托管 / Auto Mode</option>
+              <option value="openai">ChatGPT / GPT Image 2</option>
+              <option value="nano-banana">Nano Banana / Gemini</option>
+              <option value="doubao">集梦 / 豆包 / 火山方舟</option>
+              <option value="deepseek-v4">DeepSeek V4（文本提词）</option>
+              <option value="minimax">MiniMax</option>
+              <option value="zhipu">智谱 GLM / CogView</option>
+              <option value="dashscope">千问 / DashScope</option>
+            </select>
+          </label>
+          <label>API Key
+            <input id="apiKey" type="password" placeholder="少壮托管租户填网关 Key；直连模型填对应平台 Key">
+          </label>
+          <label>生图适配器
+            <select id="imageAdapter">
+              <option value="generic-json">少壮网关 JSON</option>
+              <option value="openai-images">OpenAI Images</option>
+              <option value="nano-banana">Nano Banana / Gemini</option>
+              <option value="doubao-image">豆包 Seedream</option>
+              <option value="minimax-image">MiniMax Image</option>
+              <option value="zhipu-cogview">智谱 CogView</option>
+              <option value="dashscope-wan">DashScope Wan 异步任务</option>
+              <option value="none">仅文本提词</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="providerRail" class="provider-rail" aria-label="快捷切换模型来源">
+          <button type="button" data-provider-pick="openai-compatible">
+            <strong>少壮托管</strong><span>sub.shaozhuangai.com</span>
+          </button>
+          <button type="button" data-provider-pick="openai">
+            <strong>ChatGPT</strong><span>GPT Image 2</span>
+          </button>
+          <button type="button" data-provider-pick="nano-banana">
+            <strong>Nano Banana</strong><span>Gemini</span>
+          </button>
+          <button type="button" data-provider-pick="doubao">
+            <strong>集梦 / 豆包</strong><span>Seedream</span>
+          </button>
+          <button type="button" data-provider-pick="deepseek-v4">
+            <strong>DeepSeek V4</strong><span>文本提词</span>
+          </button>
+          <button type="button" data-provider-pick="minimax">
+            <strong>MiniMax</strong><span>提词 / 生图</span>
+          </button>
+          <button type="button" data-provider-pick="zhipu">
+            <strong>智谱</strong><span>GLM / CogView</span>
+          </button>
+        </div>
+
+        <div class="gateway-note">
+          <strong>租户默认通道</strong>
+          <span>不会配置模型的账号可选择“少壮托管 / Auto Mode”，统一走 <code>sub.shaozhuangai.com</code>。托管默认别名为提词/文本 <code>chatGPT5.5</code>、生图 <code>image2</code>；若要填写 <code>gpt-*</code> 直连模型，请切换到“ChatGPT”来源。</span>
+        </div>
+
+        <details class="config-advanced">
+          <summary>
+            <span>高级模型与端点</span>
+            <small id="advancedModelHint">少壮托管请使用网关别名；gpt-* 模型请切换 ChatGPT 直连</small>
+          </summary>
+          <div class="grid three compact">
+            <label>提词模型
+              <input id="visionModel" type="text" list="visionModelOptions" placeholder="chatGPT5.5">
+            </label>
+            <label>文本模型
+              <input id="textModel" type="text" list="textModelOptions" placeholder="chatGPT5.5">
+            </label>
+            <label>生图模型
+              <input id="imageModel" type="text" list="imageModelOptions" placeholder="image2">
+            </label>
+          </div>
+          <div class="grid two compact">
+            <label>视觉 Base URL
+              <input id="visionBaseUrl" type="text" placeholder="https://sub.shaozhuangai.com/v1">
+            </label>
+            <label>生图 Endpoint
+              <input id="imageEndpoint" type="text" placeholder="https://sub.shaozhuangai.com/v1/images/generations">
+            </label>
+          </div>
+        </details>
+      </div>
+
+      <datalist id="hostedVisionModelOptions">
+        <option value="chatGPT5.5"></option>
+      </datalist>
+      <datalist id="hostedTextModelOptions">
+        <option value="chatGPT5.5"></option>
+      </datalist>
+      <datalist id="hostedImageModelOptions">
+        <option value="image2"></option>
+      </datalist>
+
+      <datalist id="visionModelOptions">
+        <option value="chatGPT5.5"></option>
+        <option value="gpt-5.5"></option>
+        <option value="gpt-5-mini"></option>
+        <option value="gpt-4o-mini"></option>
+        <option value="doubao-seed-evolving"></option>
+        <option value="deepseek-chat"></option>
+        <option value="deepseek-reasoner"></option>
+        <option value="deepseek-v4-flash"></option>
+        <option value="qwen-vl-plus"></option>
+        <option value="glm-4v-plus"></option>
+        <option value="MiniMax-M2.1"></option>
+        <option value="gemini-2.5-flash-image-preview"></option>
+      </datalist>
+      <datalist id="textModelOptions">
+        <option value="chatGPT5.5"></option>
+        <option value="gpt-5.5"></option>
+        <option value="gpt-5-mini"></option>
+        <option value="gpt-4o-mini"></option>
+        <option value="doubao-seed-evolving"></option>
+        <option value="deepseek-chat"></option>
+        <option value="deepseek-reasoner"></option>
+        <option value="deepseek-v4-flash"></option>
+        <option value="qwen-plus"></option>
+        <option value="glm-4-plus"></option>
+        <option value="MiniMax-M2.1"></option>
+        <option value="gemini-2.5-flash"></option>
+      </datalist>
+      <datalist id="imageModelOptions">
+        <option value="image2"></option>
+        <option value="gpt-image-2"></option>
+        <option value="gpt-image-1.5"></option>
+        <option value="gpt-image-1"></option>
+        <option value="doubao-seedream-5-0-260128"></option>
+        <option value="cogview-4-250304"></option>
+        <option value="image-01"></option>
+        <option value="wan2.7-image"></option>
+        <option value="gemini-2.5-flash-image-preview"></option>
+        <option value="nanobanana-2"></option>
+      </datalist>
+      <div class="actions modal-actions">
+        <button id="saveConfigBtn" class="btn primary" type="button">保存配置</button>
+        <button id="configCancelBtn" class="btn ghost" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+  <script src="../../src/local-import.js"></script>
+  <script src="../../src/business-knowledge.js"></script>
+  <script src="../../src/subject-orchestration.js"></script>
+  <script src="../../src/subject-assets.js"></script>
+  <script src="../../src/reference-detail-contract.js?v=20260901-graphic-detail-lazy-range-v4"></script>
+  <script src="reference-detail-blueprint.js?v=20260830-reference-detail-ai-direction-v1"></script>
+  <script src="reference-detail-batch.js?v=20260828-reference-detail-batch-v1"></script>
+  <script src="image-archive-store.js?v=20260830-sku-subject-replace-v2"></script>
+  <script src="viral-series-contract.js?v=20260721-v1875-viral-20"></script>
+  <script src="style-refresh-contract.js?v=20260905-nutrition-catalog-r1"></script>
+  <script src="/creative/labs/image-prompt-lab/background.js"></script>
+  <script src="promptlab.js?v=20260904-sku-subject-replace-geometry-v4"></script>
+</body>
+</html>

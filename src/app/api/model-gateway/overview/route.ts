@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { GATEWAY_MODELS, GATEWAY_PLANS } from "@/lib/model-gateway/catalog";
+import {
+  GATEWAY_MODELS,
+  GATEWAY_PLANS,
+  gatewayProviderLabel
+} from "@/lib/model-gateway/catalog";
 import { getGatewayOverview } from "@/lib/model-gateway/store";
 import { getCurrentUser } from "@/lib/server-session";
 
@@ -19,6 +23,7 @@ export async function GET() {
         id: model.id,
         label: model.label,
         provider: model.provider,
+        providerLabel: gatewayProviderLabel(model.provider),
         kind: model.kind,
         endpoint: model.endpoint
       }))

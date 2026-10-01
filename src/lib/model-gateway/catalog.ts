@@ -11,10 +11,18 @@ export type GatewayPlan = {
   recommended?: boolean;
 };
 
+export type GatewayProvider =
+  | "shaozhuang"
+  | "openai"
+  | "deepseek"
+  | "dashscope"
+  | "volc"
+  | "zhipu";
+
 export type GatewayModel = {
   id: string;
   label: string;
-  provider: "openai" | "deepseek" | "dashscope" | "volc" | "zhipu";
+  provider: GatewayProvider;
   upstreamModel: string;
   kind: "chat" | "image";
   endpoint: "chat.completions" | "images.generations";
@@ -24,6 +32,15 @@ export type GatewayModel = {
   promptCentsPer1K?: number;
   completionCentsPer1K?: number;
   imageCents?: number;
+};
+
+export const GATEWAY_PROVIDER_LABELS: Record<GatewayProvider, string> = {
+  shaozhuang: "少壮中转站",
+  openai: "OpenAI 直连",
+  deepseek: "DeepSeek 直连",
+  dashscope: "通义直连",
+  volc: "豆包直连",
+  zhipu: "智谱直连"
 };
 
 export const GATEWAY_PLANS: GatewayPlan[] = [
@@ -58,6 +75,31 @@ export const GATEWAY_PLANS: GatewayPlan[] = [
 ];
 
 export const GATEWAY_MODELS: GatewayModel[] = [
+  {
+    id: "chatGPT5.5",
+    label: "少壮中转 · chatGPT5.5",
+    provider: "shaozhuang",
+    upstreamModel: "chatGPT5.5",
+    kind: "chat",
+    endpoint: "chat.completions",
+    baseUrlEnv: "MODEL_GATEWAY_SHAOZHUANG_BASE_URL",
+    apiKeyEnv: "MODEL_GATEWAY_SHAOZHUANG_API_KEY",
+    defaultBaseUrl: "https://sub.shaozhuangai.com/v1",
+    promptCentsPer1K: 2,
+    completionCentsPer1K: 6
+  },
+  {
+    id: "image2",
+    label: "少壮中转 · image2",
+    provider: "shaozhuang",
+    upstreamModel: "image2",
+    kind: "image",
+    endpoint: "images.generations",
+    baseUrlEnv: "MODEL_GATEWAY_SHAOZHUANG_BASE_URL",
+    apiKeyEnv: "MODEL_GATEWAY_SHAOZHUANG_API_KEY",
+    defaultBaseUrl: "https://sub.shaozhuangai.com/v1",
+    imageCents: 50
+  },
   {
     id: "gpt-4o-mini",
     label: "OpenAI GPT-4o mini",
@@ -155,6 +197,14 @@ export function findGatewayPlan(code: string) {
 
 export function findGatewayModel(model: string, endpoint: GatewayModel["endpoint"]) {
   return GATEWAY_MODELS.find((item) => item.endpoint === endpoint && (item.id === model || item.upstreamModel === model));
+}
+
+export function gatewayProviderLabel(provider: GatewayProvider | string) {
+  return GATEWAY_PROVIDER_LABELS[provider as GatewayProvider] || provider;
+}
+
+export function listGatewayModelsByProvider(provider: GatewayProvider) {
+  return GATEWAY_MODELS.filter((item) => item.provider === provider);
 }
 
 export function centsToYuan(cents: number) {

@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "少壮图片实验室",
+  "version": "0.4.43",
+  "description": "将公开商品详情分析为可编辑结构框架，自动整理可修复警告，再结合自家主体或主体+模特素材批量生成。",
+  "permissions": ["storage", "unlimitedStorage", "alarms", "contextMenus", "downloads", "clipboardWrite", "scripting", "activeTab"],
+  "host_permissions": ["https://*/*", "http://*/*"],
+  "action": {
+    "default_title": "打开少壮图片实验室"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

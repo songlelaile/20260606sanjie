@@ -2,17 +2,13 @@
 
 import clsx from "clsx";
 import {
-  Activity,
-  BarChart3,
   Brain,
-  DatabaseZap,
-  LineChart,
+  Clapperboard,
+  Image as ImageIcon,
   LogOut,
   Menu,
   Network,
   Puzzle,
-  Settings2,
-  Target,
   X
 } from "lucide-react";
 import Link from "next/link";
@@ -23,13 +19,8 @@ import type { ShopSummary } from "@/lib/types/domain";
 import { ShopSwitcher } from "@/components/ShopSwitcher";
 
 const TENANT_NAV = [
-  { href: "/dashboards/operating-network", label: "经营网络", icon: Network },
-  { href: "/dashboards/management", label: "综合看板", icon: BarChart3 },
-  { href: "/dashboards/product-breakthrough", label: "单品突破", icon: Target },
-  { href: "/dashboards/audience-plan", label: "人群计划", icon: LineChart },
-  { href: "/dashboards/business-diagnosis", label: "业务诊断", icon: Activity },
-  { href: "/imports", label: "数据导入", icon: DatabaseZap },
-  { href: "/prefill", label: "预填写表", icon: Settings2 },
+  { href: "/dashboards/operating-network", label: "作图", icon: ImageIcon, exact: true },
+  { href: "/dashboards/operating-network/video", label: "做视频", icon: Clapperboard, exact: true },
   { href: "/tools", label: "AI 工具", icon: Puzzle },
   { href: "/models", label: "模型网关", icon: Network }
 ];
@@ -121,18 +112,20 @@ export function AppShell({
           onClick={() => setSidebarOpen(false)}
         >
           <span className="brand-mark">
-            <BarChart3 size={23} />
+            <ImageIcon size={23} />
           </span>
           <span>
             <strong>三阶引擎</strong>
-            <small>{role === "admin" ? "管理版" : "租户版"}</small>
+            <small>{role === "admin" ? "管理版 · 作图视频" : "作图 · 视频"}</small>
           </span>
         </Link>
         <ShopSwitcher {...shopSwitcher} />
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const active = item.exact
+              ? pathname === item.href
+              : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
               <Link
                 key={item.href}

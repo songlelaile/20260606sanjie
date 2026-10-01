@@ -1334,6 +1334,88 @@ button:disabled {
   padding: 28px;
 }
 
+.main:has(.creative-studio) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: 16px 16px 12px;
+}
+
+.creative-studio {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.creative-studio-bar {
+  align-items: flex-end;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.creative-studio-kicker {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin: 0 0 4px;
+}
+
+.creative-studio h1 {
+  color: #fff7db;
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.creative-studio-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.creative-studio-switch button {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #ded6bb;
+  cursor: pointer;
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.creative-studio-switch button.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #141b07;
+  font-weight: 700;
+}
+
+.creative-studio-note {
+  color: var(--muted);
+  margin: 0;
+}
+
+.creative-studio-frame {
+  background: #080f04;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  flex: 1;
+  min-height: 70dvh;
+  overflow: hidden;
+}
+
+.creative-studio-frame iframe {
+  border: 0;
+  display: block;
+  height: 78dvh;
+  min-height: 640px;
+  width: 100%;
+}
+
 .page-header {
   align-items: flex-start;
   display: flex;
@@ -5656,7 +5738,7 @@ td small {
 
 .auth-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 1fr;
   gap: 6px;
   padding: 4px;
   background: var(--surface-2);
@@ -5670,7 +5752,7 @@ td small {
   border-radius: 7px;
   background: transparent;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -7567,6 +7649,36 @@ button.review-metric {
   overflow: auto;
   padding: 13px;
   white-space: pre-wrap;
+}
+
+.modelgw-notes {
+  display: grid;
+  gap: 10px;
+}
+
+.modelgw-note {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+}
+
+.modelgw-note strong {
+  color: var(--brand);
+}
+
+.modelgw-note span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+
+.modelgw-note code {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
 }
 
 .modelgw-models {

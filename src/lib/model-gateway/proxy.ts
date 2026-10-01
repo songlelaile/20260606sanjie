@@ -9,17 +9,24 @@ import {
 } from "@/lib/model-gateway/store";
 
 type JsonObject = Record<string, unknown>;
+type EnvMap = Record<string, string | undefined>;
 
-function upstreamUrl(model: GatewayModel) {
-  const base = (process.env[model.baseUrlEnv] || model.defaultBaseUrl).replace(/\/+$/, "");
+export function buildGatewayUpstreamUrl(model: GatewayModel, env: EnvMap = process.env) {
+  const base = String(env[model.baseUrlEnv] || model.defaultBaseUrl).replace(/\/+$/, "");
   if (model.endpoint === "images.generations") {
     return `${base}/images/generations`;
   }
   return `${base}/chat/completions`;
 }
 
-function upstreamApiKey(model: GatewayModel) {
-  return process.env[model.apiKeyEnv] || "";
+export function resolveGatewayUpstreamApiKey(model: GatewayModel, env: EnvMap = process.env) {
+  return String(env[model.apiKeyEnv] || "").trim();
+}
+
+/** 未配置上游 Key 时失败关闭，返回面向调用方的错误文案。 */
+export function getMissingUpstreamApiKeyError(model: GatewayModel, env: EnvMap = process.env) {
+  if (resolveGatewayUpstreamApiKey(model, env)) return null;
+  return `上游 ${model.provider} 还没有配置 API Key`;
 }
 
 function textSizeTokens(body: JsonObject) {
@@ -62,20 +69,25 @@ async function parseGatewayRequest(request: Request, endpoint: GatewayModel["end
   if (!model) {
     return { error: jsonError(`模型未开通或端点不匹配：${modelName}`, 404) };
   }
-  const apiKey = upstreamApiKey(model);
-  if (!apiKey) {
-    return { error: jsonError(`上游 ${model.provider} 还没有配置 API Key`, 503) };
+  const missingKey = getMissingUpstreamApiKeyError(model);
+  if (missingKey) {
+    return { error: jsonError(missingKey, 503) };
   }
   return { auth, body, model };
 }
 
 async function forwardJson(model: GatewayModel, body: JsonObject) {
+  const apiKey = resolveGatewayUpstreamApiKey(model);
+  const missingKey = getMissingUpstreamApiKeyError(model);
+  if (missingKey || !apiKey) {
+    throw new Error(missingKey || `上游 ${model.provider} 还没有配置 API Key`);
+  }
   const upstreamBody = { ...body, model: model.upstreamModel };
-  const resp = await fetch(upstreamUrl(model), {
+  const resp = await fetch(buildGatewayUpstreamUrl(model), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${upstreamApiKey(model)}`
+      Authorization: `Bearer ${apiKey}`
     },
     body: JSON.stringify(upstreamBody),
     cache: "no-store"

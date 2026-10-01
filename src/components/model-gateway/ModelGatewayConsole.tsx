@@ -59,6 +59,7 @@ type GatewayModelView = {
   id: string;
   label: string;
   provider: string;
+  providerLabel?: string;
   kind: string;
   endpoint: string;
 };
@@ -165,8 +166,18 @@ export function ModelGatewayConsole({
     "curl " + `${baseUrl}/v1/chat/completions \\`,
     "  -H \"Content-Type: application/json\" \\",
     "  -H \"Authorization: Bearer sk-sz-你的Key\" \\",
-    "  -d '{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"帮我写一个电商主图提示词\"}]}'"
+    "  -d '{\"model\":\"chatGPT5.5\",\"messages\":[{\"role\":\"user\",\"content\":\"帮我写一个电商主图提示词\"}]}'"
   ].join("\n");
+
+  const imageExample = [
+    "curl " + `${baseUrl}/v1/images/generations \\`,
+    "  -H \"Content-Type: application/json\" \\",
+    "  -H \"Authorization: Bearer sk-sz-你的Key\" \\",
+    "  -d '{\"model\":\"image2\",\"prompt\":\"白底商品主图，干净棚拍光\",\"n\":1,\"size\":\"1024x1024\"}'"
+  ].join("\n");
+
+  const shaozhuangModels = models.filter((model) => model.provider === "shaozhuang");
+  const directModels = models.filter((model) => model.provider !== "shaozhuang");
 
   return (
     <div className="modelgw">
@@ -194,6 +205,42 @@ export function ModelGatewayConsole({
           <RefreshCw size={15} />
           刷新
         </button>
+      </section>
+
+      <section className="modelgw-panel">
+        <div className="modelgw-panel-head compact">
+          <div>
+            <h2>上游与接入说明</h2>
+            <p>平台侧配置少壮中转站 Key 后，用户用本网关 Key 调用 `/v1`；请求体会路由到对应上游。</p>
+          </div>
+        </div>
+        <div className="modelgw-notes">
+          <div className="modelgw-note">
+            <strong>少壮中转站</strong>
+            <span>
+              默认上游基址 <code>https://sub.shaozhuangai.com/v1</code>，可用环境变量
+              {" "}
+              <code>MODEL_GATEWAY_SHAOZHUANG_BASE_URL</code>
+              {" / "}
+              <code>MODEL_GATEWAY_SHAOZHUANG_API_KEY</code>
+              {" "}
+              覆盖。已开通文本模型 <code>chatGPT5.5</code>、生图模型 <code>image2</code>。
+            </span>
+          </div>
+          <div className="modelgw-note">
+            <strong>直连厂商</strong>
+            <span>仍保留 OpenAI、DeepSeek、通义、豆包、智谱直连；未配置对应上游 Key 时该上游调用会失败关闭（503）。</span>
+          </div>
+          <div className="modelgw-note">
+            <strong>当前能力边界</strong>
+            <span>
+              支持非流式 <code>/v1/chat/completions</code> 与 <code>/v1/images/generations</code>。
+              <code>stream=true</code>
+              {" "}
+              会被拒绝；视频生成尚未接入，请勿按已支持使用。
+            </span>
+          </div>
+        </div>
       </section>
 
       <section className="modelgw-panel">
@@ -271,13 +318,18 @@ export function ModelGatewayConsole({
           <div className="modelgw-panel-head compact">
             <div>
               <h2>调用示例</h2>
-              <p>兼容 OpenAI chat/completions 路径。</p>
+              <p>兼容 OpenAI 路径；示例默认走少壮中转站模型。勿传 stream=true。</p>
             </div>
           </div>
           <pre className="modelgw-code">{chatExample}</pre>
-          <button type="button" onClick={() => copyText(chatExample, "调用示例已复制。")}>
+          <button type="button" onClick={() => copyText(chatExample, "聊天示例已复制。")}>
             <Copy size={15} />
-            复制示例
+            复制聊天示例
+          </button>
+          <pre className="modelgw-code">{imageExample}</pre>
+          <button type="button" onClick={() => copyText(imageExample, "生图示例已复制。")}>
+            <Copy size={15} />
+            复制生图示例
           </button>
         </div>
       </section>
@@ -287,14 +339,16 @@ export function ModelGatewayConsole({
           <div className="modelgw-panel-head compact">
             <div>
               <h2>模型目录</h2>
-              <p>模型名可直接填到请求体 model 字段。</p>
+              <p>模型名可直接填到请求体 model 字段。少壮中转站模型优先列出。</p>
             </div>
           </div>
           <div className="modelgw-models">
-            {models.map((model) => (
+            {[...shaozhuangModels, ...directModels].map((model) => (
               <div key={`${model.endpoint}-${model.id}`} className="modelgw-model">
                 <strong>{model.id}</strong>
-                <span>{model.label} · {model.provider} · {model.kind === "image" ? "生图" : "文本"}</span>
+                <span>
+                  {model.label} · {model.providerLabel || model.provider} · {model.kind === "image" ? "生图" : "文本"}
+                </span>
               </div>
             ))}
           </div>
