@@ -1,0 +1,136 @@
+{
+  "schema": "SANJIE_PLATFORM_WALLET_BUTTON_REPLAY_V1",
+  "releaseId": "platform-wallet-button-20261008",
+  "baselineIdentity": "verified production image-repair-20261007 source; not repository HEAD",
+  "patch": {
+    "path": "wallet-button.patch",
+    "sha256": "993202e0583974123005372ca06dcb82c541955e3baa0a0daf195503776c4cb6",
+    "bytes": 19974
+  },
+  "files": [
+    {
+      "path": "public/creative/web-chrome.js",
+      "beforeSha256": "b1c5079f17693f9570834b6210eaf7766a94b5c70f4ee51a68645c642b6b2348",
+      "afterSha256": "480d2e3f81cd319993e43fa5a04812d282e840f8230bb2ff35e6021eea922c46",
+      "beforeBytes": 16159,
+      "afterBytes": 16884
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/background.js",
+      "beforeSha256": "06c08ae0a27994a965d8eba495e4818c117f80354e2cb5b4b62c6b1d9ef3c4ee",
+      "afterSha256": "e5b417c76f182e8b296b91e601c98fe621ce1b1a33256ca3ffec11a2b9b89812",
+      "beforeBytes": 876619,
+      "afterBytes": 878993
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/promptlab.js",
+      "beforeSha256": "a007c2ef98f1b2a4c18f0290d52f1b755b7dc45238229c0721d99d6586efa442",
+      "afterSha256": "18e57e073e0e1f40a9712a48f3fba71d916228b289a074c11ba6b325baec65f3",
+      "beforeBytes": 1203572,
+      "afterBytes": 1204406
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+      "beforeSha256": "2c35d24476825955ebefb40bbf69b4be01ae37beefd7f76af88331413cc63017",
+      "afterSha256": "ce4386957ca28640fc710a8a8435d0598e5b3991c6eed58b8fad998d62191b40",
+      "beforeBytes": 73288,
+      "afterBytes": 73310
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/promptlab.html",
+      "beforeSha256": "06e2f7e8cc508d02b6853c2fe1f2154ac47f32b0f18b8640ed559c05bc3fd082",
+      "afterSha256": "b04766285988a6503938fe324df8517478564aea4fbd1c5fc348a537465640ca",
+      "beforeBytes": 114419,
+      "afterBytes": 114421
+    }
+  ],
+  "testBaselineAssets": [
+    {
+      "path": "public/creative/web-chrome.js",
+      "sha256": "b1c5079f17693f9570834b6210eaf7766a94b5c70f4ee51a68645c642b6b2348",
+      "bytes": 16159
+    },
+    {
+      "path": "public/creative/src/business-knowledge.js",
+      "sha256": "1329a60441aa7296fe350d1bbc01a008c31b0265e8f498c7fea729ad45e4916e",
+      "bytes": 12609
+    },
+    {
+      "path": "public/creative/src/subject-orchestration.js",
+      "sha256": "23dfdf1fbd0cc6fded96678ea53e402225b1f243621b638174ec4b59b026a6f2",
+      "bytes": 28366
+    },
+    {
+      "path": "public/creative/src/subject-assets.js",
+      "sha256": "75ab6f95c3c087bd4e6ebd84abb8cad96873af4cda207114dbda6bef6d1c40b1",
+      "bytes": 5622
+    },
+    {
+      "path": "public/creative/src/reference-detail-contract.js",
+      "sha256": "d30bab12b893642d847ae3dac5a69d12c4b9027a38d465e01562ec5dc42deb68",
+      "bytes": 218742
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/reference-detail-blueprint.js",
+      "sha256": "ed194765709b06adbfe7c27dc64d407a31f7ac6c9a7024755591b304a60711b6",
+      "bytes": 131313
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/reference-detail-batch.js",
+      "sha256": "d56a05ec814d96a8fb585414683018a220aad4e4afbb73240e1a9793e9e9122b",
+      "bytes": 139426
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/viral-series-contract.js",
+      "sha256": "94a7edbaf58bca303853279f4407fe426a18c1fa35eb482b5e9f8ef91242f613",
+      "bytes": 12112
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/style-refresh-contract.js",
+      "sha256": "5d33e00059cf0ce35772e352a54135d4da525edead6e4159cee48b66f8bfd38e",
+      "bytes": 75486
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/scene-extension-contract.js",
+      "sha256": "a5c901cd13f318592c2a28020dc966249ad2db7c38e66def00dc783a2b7d3bcb",
+      "bytes": 28315
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/creative-tools-contract.js",
+      "sha256": "e81977342d163ec7469e99898da2775ae328b73d71340470655beaef4eabcac5",
+      "bytes": 41993
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/studio-genesis-contract.js",
+      "sha256": "9e676b5d031de1c0b8c9e05eb86992fbc2462130f36f8ffd2c54fb5df1249944",
+      "bytes": 46086
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/image-archive-store.js",
+      "sha256": "4bb4b3fd1cd8739074f8e785d09b9e700a5fd784603e896167d63c865444d9c5",
+      "bytes": 80423
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/background.js",
+      "sha256": "06c08ae0a27994a965d8eba495e4818c117f80354e2cb5b4b62c6b1d9ef3c4ee",
+      "bytes": 876619
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/promptlab.js",
+      "sha256": "a007c2ef98f1b2a4c18f0290d52f1b755b7dc45238229c0721d99d6586efa442",
+      "bytes": 1203572
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+      "sha256": "2c35d24476825955ebefb40bbf69b4be01ae37beefd7f76af88331413cc63017",
+      "bytes": 73288
+    },
+    {
+      "path": "public/creative/labs/image-prompt-lab/promptlab.html",
+      "sha256": "06e2f7e8cc508d02b6853c2fe1f2154ac47f32b0f18b8640ed559c05bc3fd082",
+      "bytes": 114419
+    }
+  ],
+  "scope": "four JavaScript files and four script cache query changes in one HTML file",
+  "supplierConfigurationChanged": false
+}

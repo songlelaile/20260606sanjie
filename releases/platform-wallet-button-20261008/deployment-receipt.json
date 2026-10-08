@@ -1,0 +1,62 @@
+{
+  "schema": "SANJIE_PLATFORM_WALLET_BUTTON_PUBLIC_RECEIPT_V1",
+  "appliedAtUtc": "2026-10-08T09:44:28.563662+00:00",
+  "appliedAtShanghai": "2026-10-08 17:44:28 +08:00",
+  "status": "production_static_patch_applied; real_image_generation_blocked_by_supplier_configuration",
+  "evidenceSource": "Public projection of root agent production fingerprint audit and authenticated browser observations",
+  "process": {
+    "name": "sanjie-image-repair-20261007-v1",
+    "pmId": 161,
+    "pid": 2367859,
+    "root": "/opt/sanjie-releases/20261007-image-repair-v1",
+    "port": 31989,
+    "restarts": 0
+  },
+  "nginxSha256": "25c1bfb9b5d1006e6f094aed04aba38f00ebeda39daaa1cbce188b50c242fe99",
+  "frozenPackage": {
+    "runnerSha256": "98e454c3b029712549393aeb3fb45c27ae15995ebb8c9302c81ae919b055ead4",
+    "manifestSha256": "0417c71e63868b74f976377611a74e79ea03851d23a80e30007d49a8bc0c2005",
+    "archiveSha256": "5475ec3aaee831e3ce5764deb00a2c1cd14f269f579e93a7a361aebf1cdc2a92",
+    "productionFileCount": 5
+  },
+  "staticAcceptance": {
+    "fiveAfterHashesVerified": true,
+    "fiveBeforeBackupsVerified": true,
+    "anonymousAuthBoundaryChecksPassed": 10,
+    "serviceRestarted": false,
+    "nginxChanged": false
+  },
+  "browserAcceptance": {
+    "originalAccountAndShopRetained": true,
+    "imageOutputRequested": 1,
+    "imageOutputCompleted": 0,
+    "generationStatus": "0/1; supplier subscription not configured",
+    "actualImageArtifactVerified": false,
+    "imageHistoryArtifactVerified": false,
+    "verifiedAtUtc": "2026-10-08T11:50:33Z",
+    "draftReferences": 2,
+    "draftDescription": "Current restored light blazer task, explicitly authorized by user after the original dark-blazer draft could not be recovered",
+    "retryButtonEnabled": true,
+    "submitControl": "重试此图",
+    "submitClicks": 1,
+    "uiReceipt": "供应订阅未配置，请联系管理员。本次未提交生图，请在供应配置恢复后重试。",
+    "rawNetworkResponseCaptured": false,
+    "sourceContractForUiReceipt": {
+      "code": "CREATIVE_SUPPLY_NOT_CONFIGURED",
+      "providerSubmitted": false,
+      "definitiveFailure": true
+    },
+    "balanceBefore": 1182.1,
+    "balanceAfterLedgerRead": 1182.1,
+    "newDebitRecordObserved": false,
+    "imageHistoryCountAfterSubmit": 0,
+    "requiredSupplyConfigMissing": [
+      "SUB2API_PROVISION_EMAIL",
+      "SUB2API_PROVISION_PASSWORD",
+      "SUB2API_PROVISION_GROUP_ID",
+      "SUB2API_PROVISION_KEY_QUOTA_USD"
+    ]
+  },
+  "remainingCondition": "Provision usable server-side supply credentials, then verify the same approved image task and its billing/history receipt.",
+  "credentialsOrSupplierConfigurationChangedByThisRelease": false
+}

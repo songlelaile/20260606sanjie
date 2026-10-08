@@ -1,0 +1,266 @@
+--- a/public/creative/web-chrome.js
++++ b/public/creative/web-chrome.js
+@@ -179,7 +179,20 @@
+     return headers;
+   }
+ 
+-  global.SZ_WEB_SUPPLY = Object.freeze({ usesServerCredentials: usesServerCredentials });
++  function usesPlatformWallet(config, kind) {
++    if (!config || config.provider !== "openai-compatible") return false;
++    var endpoint = kind === "image" ? config.imageEndpoint : kind === "chat" ? config.visionBaseUrl : "";
++    if (typeof endpoint !== "string" || !endpoint.trim()) return false;
++    try {
++      var url = new URL(endpoint);
++      if (url.protocol !== "https:" || url.hostname !== "sub.shaozhuangai.com" ||
++          url.username || url.password || url.port || url.search || url.hash) return false;
++      return kind === "image" ? /^\/v1\/images\/(?:generations|edits)\/?$/.test(url.pathname) : /^\/v1\/?$/.test(url.pathname);
++    } catch (_) { return false; }
++  }
++
++
++  global.SZ_WEB_SUPPLY = Object.freeze({ usesServerCredentials: usesServerCredentials, usesPlatformWallet: usesPlatformWallet });
+ 
+   function notifySupplyBalanceChanged() {
+     try {
+--- a/public/creative/labs/image-prompt-lab/background.js
++++ b/public/creative/labs/image-prompt-lab/background.js
+@@ -393,9 +393,21 @@
+   } catch (_) { return false; }
+ }
+ 
++function usesPlatformWallet(cfg, kind) {
++  var website = typeof globalThis !== 'undefined' && (globalThis.SZ_WEB_ACCOUNT || globalThis.SZ_WEB_SUPPLY);
++  return !!(website && typeof website.usesPlatformWallet === 'function' && website.usesPlatformWallet(cfg, kind));
++}
++function hasModelCredential(cfg, kind) {
++  return !!String(cfg && cfg.apiKey || '').trim() || usesPlatformWallet(cfg, kind);
++}
++function modelRequestHeaders(cfg, kind, headers) {
++  var result = Object.assign({}, headers || {});
++  if (!usesPlatformWallet(cfg, kind) && cfg.apiKey) result.Authorization = 'Bearer ' + cfg.apiKey;
++  return result;
++}
++
+ function hasModelApiCredential(cfg, kind) {
+-  var endpointUrl = cfg && (kind === 'image' ? cfg.imageEndpoint : cfg.visionBaseUrl);
+-  return !!(cfg && String(cfg.apiKey || '').trim()) || !!(globalThis.SZ_WEB_SUPPLY && globalThis.SZ_WEB_SUPPLY.usesServerCredentials(endpointUrl));
++  return hasModelCredential(cfg, kind);
+ }
+ 
+ function normalizeHostedTextModel(cfg, model) {
+@@ -1599,6 +1611,14 @@
+       saved = true;
+     }
+     if (!cfg) cfg = normalizeCfg({ provider: targetProvider });
++    // A website session can use platform credits without a local provider Key.
++    // Keep this fallback in the response; never replace the account's saved API.
++    if (!provider && accountKey !== 'local' && !String(cfg.apiKey || '').trim() &&
++        !usesPlatformWallet(cfg, 'image') && usesPlatformWallet(DEFAULT_CFG, 'image')) {
++      cfg = normalizeCfg(DEFAULT_CFG);
++      targetProvider = cfg.provider;
++      saved = false;
++    }
+ 
+     function finish() {
+       done({
+@@ -1646,9 +1666,15 @@
+         var cfg = raw ? normalizeCfg(Object.assign({ provider: entry.provider }, raw)) : null;
+         if (!cfg && legacyBelongsToAccount && legacy.provider === entry.provider) { cfg = legacy; saved = true; }
+         if (!cfg) cfg = normalizeCfg({ provider: entry.provider });
+-        if (!saved || !hasModelApiCredential(cfg, 'image') || !cfg.imageEndpoint || !cfg.imageModel || !contract.supportsReferenceConfig(cfg)) return null;
++        var platform = usesPlatformWallet(cfg, 'image') && !String(cfg.apiKey || '').trim();
++        if ((!platform && (!saved || !String(cfg.apiKey || '').trim())) || !cfg.imageEndpoint || !cfg.imageModel || !contract.supportsReferenceConfig(cfg)) return null;
++        if (platform) return { provider: cfg.provider, label: '少壮平台积分', imageModel: cfg.imageModel, imageAdapter: cfg.imageAdapter, platformWallet: true };
+         return { provider: cfg.provider, label: entry.label, imageModel: cfg.imageModel, imageAdapter: cfg.imageAdapter };
+       }).filter(Boolean);
++      if (usesPlatformWallet(DEFAULT_CFG, 'image') && !providers.some(function (entry) { return entry.provider === DEFAULT_CFG.provider; })) {
++        providers.unshift({ provider: DEFAULT_CFG.provider, label: '少壮平台积分', imageModel: DEFAULT_CFG.imageModel,
++          imageAdapter: DEFAULT_CFG.imageAdapter, platformWallet: true });
++      }
+       // This message never persists migrations or returns credentials. The normal
+       // profile/configuration path continues to own those writes.
+       done({ ok: true, accountKey: accountKey, providers: providers });
+@@ -4112,7 +4138,7 @@
+     var to = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, waitMs);
+     fetch(url, {
+       method: 'POST',
+-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
++      headers: modelRequestHeaders(cfg, 'chat', { 'Content-Type': 'application/json' }),
+       body: JSON.stringify(body),
+       signal: ctrl.signal
+     }).then(function (r) {
+@@ -13066,7 +13092,7 @@
+       return bodyBudget.then(function (fits) {
+         if (!fits) return { ok: false, code: 'hosted_image_request_too_large', providerSubmitted: false, definitiveFailure: true, stateUncertain: false,
+           error: '图片、遮罩和提示词超过网站 24MB 安全上限（含上传封装），本次未提交生图。请减少图片体积后重试。' };
+-        return fetchOpenAIImageForAccount(url, { method: 'POST', headers: { 'Authorization': 'Bearer ' + cfg.apiKey }, body: fd, signal: editSignal }, expectedAccount)
++        return fetchOpenAIImageForAccount(url, { method: 'POST', headers: modelRequestHeaders(cfg, 'image'), body: fd, signal: editSignal }, expectedAccount)
+           .then(function (res) { if (!res.ok) return res; var imgs = parseImageResponse(res.data); return imgs.length ? { ok: true, images: imgs, raw: res.data } : { ok: false, error: '未解析到图片', raw: res.data }; });
+       }, function () {
+         return { ok: false, code: 'hosted_image_request_invalid', providerSubmitted: false, definitiveFailure: true, stateUncertain: false,
+@@ -13078,7 +13104,7 @@
+   }
+   var body = { model: imageModel, prompt: prompt, size: normalizeSize(payload.size, 'x'), n: Math.max(1, Math.min(4, parseInt(payload.count, 10) || 1)) };
+   if (creativeOptions) { body.size = creativeOptions.size; if (creativeOptions.quality) body.quality = creativeOptions.quality; }
+-  return fetchOpenAIImageForAccount(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }, body: JSON.stringify(body), signal: signalForPayload(payload) }, expectedAccount)
++  return fetchOpenAIImageForAccount(url, { method: 'POST', headers: modelRequestHeaders(cfg, 'image', { 'Content-Type': 'application/json' }), body: JSON.stringify(body), signal: signalForPayload(payload) }, expectedAccount)
+     .then(function (res) { if (!res.ok) return res; var imgs = parseImageResponse(res.data); return imgs.length ? { ok: true, images: imgs, raw: res.data } : { ok: false, error: '未解析到图片', raw: res.data }; });
+ }
+ 
+@@ -13302,7 +13328,7 @@
+     body.output_ratio = payload.outputRatio || payload.ratio || '';
+     body.output_resolution = payload.outputResolution || payload.resolution || '';
+   }
+-  return fetchJson(cfg.imageEndpoint, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey }, body: JSON.stringify(body), signal: signalForPayload(payload) }, 180000)
++  return fetchJson(cfg.imageEndpoint, { method: 'POST', headers: modelRequestHeaders(cfg, 'image', { 'Content-Type': 'application/json' }), body: JSON.stringify(body), signal: signalForPayload(payload) }, 180000)
+     .then(function (res) {
+       if (!res.ok) {
+         var rawError = String(res.error || '');
+@@ -14580,7 +14606,21 @@
+         sendResponse(profile || { ok: false, code: 'config_missing', error: '请先在插件统一 API 设置中保存视觉模型配置' });
+         return;
+       }
+-      analyzeSubjectAsset(Object.assign({}, profile.config, { _accountKey: profile.accountKey }), msg.payload || {}).then(sendResponse).catch(function (error) {
++      var analysisConfig = profile.config;
++      if (msg.platformConfig) {
++        if (profile.accountKey === 'local' || typeof msg.accountKey !== 'string' || msg.accountKey !== profile.accountKey) {
++          sendResponse({ ok: false, code: 'account_changed', error: '登录账号已变化，平台积分分析尚未提交，请重新打开工作台。', definitiveFailure: true });
++          return;
++        }
++        if (!usesPlatformWallet(msg.platformConfig, 'chat')) {
++          sendResponse({ ok: false, code: 'platform_route_invalid', error: '平台积分分析接口无效，尚未提交请求。', definitiveFailure: true });
++          return;
++        }
++        // A verified session route is temporary. Do not resolve it back to a
++        // saved external profile that happens to use the same provider name.
++        analysisConfig = normalizeCfg(Object.assign({}, msg.platformConfig, { apiKey: '' }));
++      }
++      analyzeSubjectAsset(Object.assign({}, analysisConfig, { _accountKey: profile.accountKey }), msg.payload || {}).then(sendResponse).catch(function (error) {
+         sendResponse({ ok: false, code: error && error.code || 'subject_analysis_failed', error: (error && error.message) || String(error) });
+       });
+     });
+--- a/public/creative/labs/image-prompt-lab/promptlab.js
++++ b/public/creative/labs/image-prompt-lab/promptlab.js
+@@ -2366,7 +2366,7 @@
+   if (title) title.textContent = providerName;
+   if (sub) {
+     sub.textContent = [
+-      typeof window !== 'undefined' && window.SZ_WEB_SUPPLY && window.SZ_WEB_SUPPLY.usesServerCredentials(cfg.visionBaseUrl) ? '平台供应 · 按积分结算' : maskKey(cfg.apiKey),
++      creativeUsesPlatformWallet(cfg, 'image') ? '使用本站积分 · 无需填写 API Key' : maskKey(cfg.apiKey),
+       cfg.imageAdapter === 'none' ? '仅文本提词' : '生图：' + (cfg.imageModel || '未设定'),
+       '文本：' + (cfg.textModel || cfg.visionModel || '未设定')
+     ].join(' · ');
+@@ -2417,9 +2417,13 @@
+   return !!(cfg && isShaozhuangHostedEndpoint(cfg.provider, cfg.imageEndpoint, DEFAULT_CFG.imageEndpoint));
+ }
+ 
++function creativeUsesPlatformWallet(cfg, kind) {
++  return !!((window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY) && typeof (window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY).usesPlatformWallet === 'function' &&
++    (window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY).usesPlatformWallet(cfg, kind));
++}
++
+ function creativeHasApiCredential(cfg, kind) {
+-  var endpointUrl = cfg && (kind === 'image' ? cfg.imageEndpoint : cfg.visionBaseUrl);
+-  return !!(cfg && String(cfg.apiKey || '').trim()) || !!(typeof window !== 'undefined' && window.SZ_WEB_SUPPLY && window.SZ_WEB_SUPPLY.usesServerCredentials(endpointUrl));
++  return !!(cfg && String(cfg.apiKey || "").trim()) || creativeUsesPlatformWallet(cfg, kind);
+ }
+ 
+ function creativeSupplyChannel(kind) {
+@@ -2491,7 +2495,8 @@
+   $('imageEndpoint').value = cfg.imageEndpoint || DEFAULT_CFG.imageEndpoint;
+   $('imageModel').value = cfg.imageModel || DEFAULT_CFG.imageModel;
+   var apiReady = creativeHasApiCredential(cfg, 'chat') && (cfg.imageAdapter === 'none' || creativeHasApiCredential(cfg, 'image'));
+-  setPill('configState', apiReady ? '已配置' : '未配置', apiReady ? 'ok' : 'warn');
++  var platformWallet = creativeUsesPlatformWallet(cfg, 'image');
++  setPill('configState', platformWallet ? '使用本站积分' : apiReady ? '已配置' : '未配置', apiReady ? 'ok' : 'warn');
+   updateConfigSummary(cfg);
+   return cfg;
+ }
+@@ -22131,7 +22136,14 @@
+   var accountKey = state.archiveAccountKey;
+   return creativeWebProfile(provider).then(function (profile) {
+     var config = profile.config || {};
+-    if (String(profile.accountKey) !== String(accountKey) || !profile.saved || !creativeHasApiCredential(config, 'image')) throw new Error('该账号尚未保存此 API 配置。');
++    // The catalog offers platform credits when this provider has no usable
++    // external Key. Select that temporary route without replacing its profile.
++    if (provider === DEFAULT_CFG.provider && !String(config.apiKey || '').trim() &&
++        !creativeUsesPlatformWallet(config, 'image') && creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
++      config = normalizeCfg(DEFAULT_CFG);
++    }
++    var platformWallet = creativeUsesPlatformWallet(config, 'image');
++    if (String(profile.accountKey) !== String(accountKey) || !platformWallet && (!profile.saved || !String(config.apiKey || '').trim())) throw new Error('该账号尚未保存此 API 配置。');
+     return send('SET_ACTIVE_PROVIDER', { provider: provider }).then(function (changed) {
+       if (!changed || !changed.ok || String(changed.accountKey) !== String(accountKey)) throw new Error(changed && changed.error || '账号已变化，API 切换已停止。');
+       applyCfg(config);
+@@ -22186,7 +22198,8 @@
+       var cfg = cfgFromForm();
+       var unsupported = !window.SZ_CREATIVE_TOOLS_CONTRACT || !window.SZ_CREATIVE_TOOLS_CONTRACT.supportsReferenceConfig(cfg);
+       return { provider: cfg.provider, model: cfg.imageModel, adapter: cfg.imageAdapter, imageAdapter: cfg.imageAdapter,
+-        ready: !!((cfg.apiKey || window.SZ_WEB_SUPPLY && window.SZ_WEB_SUPPLY.usesServerCredentials(cfg.imageEndpoint)) && cfg.imageModel && cfg.imageEndpoint),
++        ready: !!(creativeHasApiCredential(cfg, 'image') && cfg.imageModel && cfg.imageEndpoint),
++        supplyChannel: creativeUsesPlatformWallet(cfg, 'image') ? 'platform_wallet' : 'external_key',
+         supportsReference: !unsupported,
+         qualityOptions: ['openai-images', 'generic-json'].indexOf(cfg.imageAdapter) >= 0 ? ['auto', 'low', 'medium', 'high'] : ['auto'],
+         generationSpeeds: ['standard'],
+@@ -22197,7 +22210,7 @@
+     analyze: function (input) {
+       input = input || {};
+       var cfg = cfgFromForm();
+-      if (!cfg.apiKey && !(window.SZ_WEB_SUPPLY && window.SZ_WEB_SUPPLY.usesServerCredentials(cfg.visionBaseUrl))) return Promise.resolve({ ok: false, error: '请先在统一 API 设置中保存可用配置。' });
++      if (!creativeHasApiCredential(cfg, 'chat')) return Promise.resolve({ ok: false, error: '请先在统一 API 设置中保存可用配置。' });
+       var studio = input.tool === 'product', settings = input.settings || {};
+       var images = (Array.isArray(input.products) ? input.products : []).map(function (entry) { return typeof entry === 'string' ? entry : entry && entry.image; }).filter(Boolean).slice(0, studio ? 6 : 3);
+       var facts = [];
+@@ -22221,7 +22234,12 @@
+       }
+       var payload = { productImages: images, category: input.tool === 'clothing' ? '服装' : '', requiredFacts: facts };
+       if (studio) payload.studioContext = true;
+-      return send('ANALYZE_SUBJECT_ASSET', { provider: cfg.provider, payload: payload });
++      var request = { provider: cfg.provider, payload: payload };
++      if (creativeUsesPlatformWallet(cfg, 'chat')) {
++        request.platformConfig = Object.assign({}, cfg, { apiKey: '' });
++        request.accountKey = state.archiveAccountKey;
++      }
++      return send('ANALYZE_SUBJECT_ASSET', request);
+     },
+     resultActions: ['edit', 'fission'],
+     openResultAction: async function (action, item) {
+--- a/public/creative/labs/image-prompt-lab/studio-genesis-ui.js
++++ b/public/creative/labs/image-prompt-lab/studio-genesis-ui.js
+@@ -262,7 +262,7 @@
+     const ready=draft.tasks.length&&draft.tasks.every(entry=>entry.plan&&entry.confirmed&&engine.validatePlan(entry.plan,entry,settings(entry)).ok!==false);
+     const hasPending=draft.tasks.some(entry=>{const record=current().tasks.find(item=>item.id===entry.id);return !record||entry.plan&&record.plan.signature!==entry.plan.signature||record.slots.some(slot=>['ready','queued'].includes(slot.status));});
+     const imageApiUnavailable=!modelInfo.ready||modelInfo.supportsReference===false;
+-    const apiReason=!initializing&&imageApiUnavailable?(!modelInfo.ready?'当前账号尚未配置可用的生图 API。请先配置并保存 API，再生成已确认的方案。':'当前 API 的生图模型不支持产品参考图。请配置支持产品参考图的生图 API。'):'';
++    const apiReason=!initializing&&imageApiUnavailable?(!modelInfo.ready?'当前自有 API 尚未配置完整，请选择平台积分模式或配置并保存自有 API，再生成已确认的方案。':'当前 API 的生图模型不支持产品参考图。请配置支持产品参考图的生图 API。'):'';
+     return `<div class="sg-actions"><button type="button" class="sg-button sg-primary" data-action="generate"${!ready||locked()||imageApiUnavailable||saveFault||!hasPending?' disabled':''}>${icon('spark')}${current().busy?'正在生成…':slots.length?'继续未完成任务':isBatch?'提交批量生成':'确认并生成'}</button>${current().busy?'<button type="button" class="sg-button" data-action="stop">停止后续生成</button>':''}${slots.some(slot=>slot.status==='failed')?`<button type="button" class="sg-button" data-action="retry"${locked()||imageApiUnavailable?' disabled':''}>只重试失败项</button>`:''}${slots.some(slot=>slot.item)?'<button type="button" class="sg-button" data-action="download-all">下载已完成图片</button>':''}</div>${apiReason?`<div class="sg-note" data-generation-api-required role="status"><p>${esc(apiReason)}</p><button type="button" class="sg-button sg-small" data-action="config"${locked()?' disabled':''}>配置 API</button></div>`:''}${uncertain?`<div class="sg-message is-error" style="margin-top:12px"><p>上一请求的生成回执未确认，请先核对服务商任务或用量记录。</p><label class="sg-confirm"><input type="checkbox" data-uncertain-confirm><span>我已核对上一请求状态</span></label><button type="button" class="sg-button" data-action="resolve" disabled>解除等待</button></div>`:''}`;
+   }
+   function renderBatch() {
+--- a/public/creative/labs/image-prompt-lab/promptlab.html
++++ b/public/creative/labs/image-prompt-lab/promptlab.html
+@@ -85,7 +85,7 @@
+       timer = setTimeout(() => fail('工作台加载超时，请重新加载。'), 30000);
+     })();
+   </script>
+-  <script src="/creative/web-chrome.js?v=20261003-supply-holds-v1"></script>
++  <script src="/creative/web-chrome.js?v=20261008-wallet-button-v1"></script>
+   <link rel="stylesheet" href="promptlab.css?v=20261002-generation-history-v2">
+   <link rel="stylesheet" href="reference-detail-blueprint.css?v=20260902-reference-detail-autonomous-release-v1">
+   <link rel="stylesheet" href="creative-tools.css?v=20261001-web-creative-tools-v1">
+@@ -1755,13 +1755,13 @@
+   <script src="creative-tools-contract.js?v=20261002-entry-flash-v1"></script>
+   <script src="studio-genesis-contract.js?v=20261002-studio-replica-v1"></script>
+   <script src="scene-extension-contract.js?v=20261002-list-workspace-v1"></script>
+-  <script src="/creative/labs/image-prompt-lab/background.js?v=20261003-supply-holds-v1"></script>
++  <script src="/creative/labs/image-prompt-lab/background.js?v=20261008-wallet-button-v1"></script>
+   <script src="image-upload.js?v=20261002-upload-v3"></script>
+   <script src="/creative/credit-display.js?v=20261003-supply-holds-v1"></script>
+   <script src="creative-credit-hints.js?v=20261003-supply-holds-v1"></script>
+-  <script src="promptlab.js?v=20261003-supply-holds-v1"></script>
++  <script src="promptlab.js?v=20261008-wallet-button-v1"></script>
+   <script src="creative-tools-ui.js?v=20261002-credit-hints-v1"></script>
+-  <script src="studio-genesis-ui.js?v=20261002-studio-replica-v2"></script>
++  <script src="studio-genesis-ui.js?v=20261008-wallet-button-v1"></script>
+   <script src="scene-extension-ui.js?v=20261002-credit-hints-v1"></script>
+   <script src="studio-legacy-layout.js?v=20261002-list-workspace-v1"></script>
+   <script src="viral-workflow-layout.js?v=20261002-viral-split-v1"></script>
