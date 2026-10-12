@@ -1,0 +1,68 @@
+{
+  "release": "studio-continue-new-20261012-v2",
+  "published": true,
+  "publishedAtUTC": "2026-10-12T01:50:51.589763+00:00",
+  "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99",
+  "verificationScope": "Published static asset fingerprints and HTTP smoke checks. Browser workflow acceptance and paid generation are separate checks.",
+  "productionChecks": {
+    "authenticatedAssets": {
+      "checked": 5,
+      "matchingHashes": 5,
+      "matchingSizes": 5,
+      "files": [
+        {
+          "publicPath": "public/creative/labs/image-prompt-lab/studio-genesis-contract.js",
+          "sha256": "6d3c66184b3c3dcab6c7fb8746cd639f51a0a13903fb7d341594ce00d82c77dd",
+          "bytes": 87570
+        },
+        {
+          "publicPath": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+          "sha256": "3dfb95a352c5de48911434934a143b070047da0cd6b7ece95bafd40ddf68ad4b",
+          "bytes": 116339
+        },
+        {
+          "publicPath": "public/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js",
+          "sha256": "5c3a001aa7aa7e8d554a0297ae7d2b9039544e4ee5bdee9402b9b06fdc557919",
+          "bytes": 1198106
+        },
+        {
+          "publicPath": "public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
+          "sha256": "3a494b301866a66a3eef60911255b91ef1ec6987b2e150bc110fe11b6786cae9",
+          "bytes": 254991
+        },
+        {
+          "publicPath": "public/creative/labs/image-prompt-lab/promptlab.html",
+          "sha256": "558d1040729ee8b571953333bd737a40e9b70425d8394969e3a7f058ee2cbc1f",
+          "bytes": 136394
+        }
+      ]
+    },
+    "loginStatus": 200,
+    "anonymousProxyStatus": 401,
+    "anonymousAssetsStatus": 401,
+    "invalidJsonStatus": 400,
+    "slowInvalidUploadStatuses": [
+      400,
+      400,
+      400,
+      400,
+      400
+    ],
+    "invalidRequestsRejectedBeforeProvider": true,
+    "compiledBuildFilesPreserved": 841,
+    "publicationOutputMatchesState": true
+  },
+  "offlineValidation": {
+    "frozenComponentPassed": 119,
+    "deploymentPassed": 43,
+    "workingRepositoryPassed": 2957,
+    "workingRepositorySkipped": 62,
+    "typecheck": true,
+    "lint": true,
+    "build": true
+  },
+  "providerRequestsPerformed": 0,
+  "billingActionsPerformed": 0,
+  "paidGenerationVerified": false,
+  "rollbackReady": true
+}

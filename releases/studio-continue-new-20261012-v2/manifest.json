@@ -1,6 +1,6 @@
 {
   "release": "studio-continue-new-20261012-v2",
-  "status": "frozen-components-deployment-pending",
+  "status": "published-static-smoke-verified",
   "scope": "Component snapshots and offline regression tests, not the complete website source.",
   "productionFiles": [
     {
@@ -69,5 +69,8 @@
     "parentRecoveryTests": 24,
     "recoveryRowCasTests": 2
   },
-  "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99"
+  "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99",
+  "publishedAtUTC": "2026-10-12T01:50:51.589763+00:00",
+  "deploymentReceipt": "deployment-receipt.json",
+  "paidGenerationVerified": false
 }

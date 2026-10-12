@@ -8,9 +8,12 @@ The update gives an explicitly requested new image generation its own task ident
 
 - `assets/public/creative/labs/image-prompt-lab/`: release component snapshots.
 - `tests/`: receipt UI, deep UI, plan-copy, concurrent-receipt, late-receipt, storage-lifecycle, inherited draft-recovery, and recovery-row CAS tests, with a shared browser fixture.
-- `manifest.json`: SHA-256 hashes and production-freeze status. `image-upload.js` is an existing helper needed by the test fixture, not a changed production file in this release.
+- `manifest.json`: SHA-256 hashes and release status.
+- `deployment-receipt.json`: sanitized publication and production smoke-check results.
 
-All five production component snapshots are frozen and recorded in the manifest, with before/after hashes against `studio-draft-recovery-20261012-v3`. The new baseline’s mixed-draft migration, explanatory banner, and read-only original-task view are retained. Online deployment is pending; the snapshots and test results do not establish a live release.
+`image-upload.js` is an existing helper needed by the test fixture, not a changed production file in this release.
+
+All five production component snapshots are frozen and recorded in the manifest, with before/after hashes against `studio-draft-recovery-20261012-v3`. The new baseline’s mixed-draft migration, explanatory banner, and read-only original-task view are retained. The release was published at **2026-10-12 01:50:51 UTC**. Authenticated readback matched all five asset hashes and sizes. The login and rejection smoke checks passed, and 841 existing compiled build files were preserved. The deployment receipt records these checks separately from the offline tests.
 
 ## Run the offline tests
 
@@ -32,4 +35,6 @@ Offline validation on the included frozen snapshots: **8 files, 119 tests passed
 
 The 24 inherited recovery cases retain their full assertions; checkpoint comparisons explicitly validate the new storage revision before comparing the complete retained payload. Two additional cases protect recovered rows from stale tabs and keep main/detail storage revisions independent.
 
-The tests cover repeated clicks, edited pending plans, late replies, refreshed tasks, mixed batches, saved image-type plans, account/storage errors, concurrent browser tabs, and project/workspace changes. Passing them verifies local behavior only; it does not prove paid generation or a live deployment. Nothing in this directory automatically publishes the website.
+The tests cover repeated clicks, edited pending plans, late replies, refreshed tasks, mixed batches, saved image-type plans, account/storage errors, concurrent browser tabs, and project/workspace changes. Passing them verifies local behavior only. Publication was verified separately by the readback and HTTP smoke checks in the deployment receipt. No real supplier generation or billing action was performed; paid generation remains unverified. Nothing in this directory automatically publishes the website.
+
+Additional release checks: **43/43** deployment and drift-protection tests. The broader local repository quality gate passed TypeScript, lint, **2,957 tests** with **62 configured skips**, and the Next.js build; that gate covers more code than this component capsule.
