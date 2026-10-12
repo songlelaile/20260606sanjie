@@ -1,0 +1,76 @@
+{
+  "release": "studio-continue-new-20261012-v2",
+  "status": "published-static-smoke-verified",
+  "scope": "Component snapshots and offline regression tests, not the complete website source.",
+  "productionFiles": [
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/studio-genesis-contract.js",
+      "productionPath": "public/creative/labs/image-prompt-lab/studio-genesis-contract.js",
+      "beforeSha256": "c92737653d98e6ef7d5465bda8fbf6115b28f707c710abf4ac9d1d27b9c0c07f",
+      "afterSha256": "6d3c66184b3c3dcab6c7fb8746cd639f51a0a13903fb7d341594ce00d82c77dd",
+      "afterBytes": 87570
+    },
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+      "productionPath": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+      "beforeSha256": "efc0c69a20f14bb2d655ea5cd79f54c6a6529ac9584f8a343367be0f8cf68c0f",
+      "afterSha256": "3dfb95a352c5de48911434934a143b070047da0cd6b7ece95bafd40ddf68ad4b",
+      "afterBytes": 116339
+    },
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js",
+      "productionPath": "public/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js",
+      "beforeSha256": "2c5a240914189daf73901b3e8ae8329ff28d6827f0e9e8b60457391b33163be3",
+      "afterSha256": "5c3a001aa7aa7e8d554a0297ae7d2b9039544e4ee5bdee9402b9b06fdc557919",
+      "afterBytes": 1198106
+    },
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
+      "productionPath": "public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
+      "beforeSha256": "dd810deb2e4b490b724d67c1c6c780de5895b12c13e7d1eadc49b878fa36e873",
+      "afterSha256": "3a494b301866a66a3eef60911255b91ef1ec6987b2e150bc110fe11b6786cae9",
+      "afterBytes": 254991
+    },
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/promptlab.html",
+      "productionPath": "public/creative/labs/image-prompt-lab/promptlab.html",
+      "beforeSha256": "e208117bfc3b9a048e1dfef70ea3197aab32fe115992d7792f121406a7203570",
+      "afterSha256": "558d1040729ee8b571953333bd737a40e9b70425d8394969e3a7f058ee2cbc1f",
+      "afterBytes": 136394
+    }
+  ],
+  "auxiliaryFixtures": [
+    {
+      "path": "assets/public/creative/labs/image-prompt-lab/image-upload.js",
+      "sha256": "5dffe2fd3e2d24007fe21898201f367cda6d5d3b9d328da3d63da4e8309f4812",
+      "bytes": 23864,
+      "purpose": "Existing upload markup helper used by the VM harness; not a changed production file in this release."
+    }
+  ],
+  "tests": [
+    "tests/studio-genesis-receipt-ui.test.ts",
+    "tests/studio-genesis-new-generation-deep.test.ts",
+    "tests/studio-genesis-plan-copy.test.ts",
+    "tests/studio-genesis-concurrent-receipt-isolation.test.ts",
+    "tests/studio-genesis-late-receipt.test.ts",
+    "tests/studio-storage-lifecycle.test.ts",
+    "tests/studio-draft-recovery-parent.test.ts",
+    "tests/studio-recovery-row-cas.test.ts"
+  ],
+  "baselineRelease": "studio-draft-recovery-20261012-v3",
+  "providerRequestsPerformed": 0,
+  "offlineValidation": {
+    "suiteCount": 8,
+    "testsPassed": 119,
+    "vitestVersion": "4.1.8",
+    "syntheticInputsOnly": true,
+    "providerRequestsPerformed": 0,
+    "storageLifecycleSource": "included frozen views bundle",
+    "parentRecoveryTests": 24,
+    "recoveryRowCasTests": 2
+  },
+  "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99",
+  "publishedAtUTC": "2026-10-12T01:50:51.589763+00:00",
+  "deploymentReceipt": "deployment-receipt.json",
+  "paidGenerationVerified": false
+}
