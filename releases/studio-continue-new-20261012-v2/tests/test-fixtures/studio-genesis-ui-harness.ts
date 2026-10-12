@@ -166,6 +166,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     recoverGenerationJob: vi.fn(), setApiBusy: vi.fn(), openConfig: vi.fn(), analyze: vi.fn(), send: vi.fn()
   };
   const persistedDrafts=startup.sharedDrafts||new Map<string,unknown>();let initialDraftSeeded=!!startup.sharedDrafts;
+  const initialDraftKey=`${accountKey}:${entry==='batch'?'batch':'single'}:${mode}${entry==='ad'?':ad':''}`;
   const db = {
     transaction: (_store: string, access?: string) => {
       if (access && !["readonly","readwrite"].includes(access)) throw new Error(`Unexpected access: ${access}`);
@@ -186,7 +187,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
           pending++;
           prior.then(()=>read.promise).then(value=>{
             if(finished)return;
-            if(!initialDraftSeeded){initialDraftSeeded=true;if(value!==undefined)persistedDrafts.set(key,clone(value));}
+            if(!initialDraftSeeded){initialDraftSeeded=true;if(value!==undefined)persistedDrafts.set(initialDraftKey,clone(value));}
             const saved=pendingWrites.has(key)?pendingWrites.get(key):persistedDrafts.get(key);
             request.result=saved===undefined?undefined:clone(saved);request.onsuccess?.();
           }).finally(()=>{pending--;idle();});

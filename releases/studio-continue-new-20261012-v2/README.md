@@ -7,10 +7,10 @@ The update gives an explicitly requested new image generation its own task ident
 ## Contents
 
 - `assets/public/creative/labs/image-prompt-lab/`: release component snapshots.
-- `tests/`: receipt UI, deep UI, plan-copy, concurrent-receipt, late-receipt, and storage-lifecycle tests, with a shared browser fixture.
+- `tests/`: receipt UI, deep UI, plan-copy, concurrent-receipt, late-receipt, storage-lifecycle, inherited draft-recovery, and recovery-row CAS tests, with a shared browser fixture.
 - `manifest.json`: SHA-256 hashes and production-freeze status. `image-upload.js` is an existing helper needed by the test fixture, not a changed production file in this release.
 
-All five production component snapshots are frozen and recorded in the manifest, with before/after hashes against V1. Online deployment is pending; the snapshots and test results do not establish a live release.
+All five production component snapshots are frozen and recorded in the manifest, with before/after hashes against `studio-draft-recovery-20261012-v3`. The new baseline’s mixed-draft migration, explanatory banner, and read-only original-task view are retained. Online deployment is pending; the snapshots and test results do not establish a live release.
 
 ## Run the offline tests
 
@@ -28,6 +28,8 @@ node releases/studio-continue-new-20261012-v2/run-tests.mjs --node-modules /path
 
 The runner always loads the included assets, requires native receipt recovery, and ignores external contract overrides. Storage-lifecycle tests read the frozen views bundle; other suites use the included component sources. Tests use in-memory storage, synthetic account identifiers, synthetic API keys, and fixture image URLs; they make no model, billing, or production API calls. No real accounts, images, receipts, or credentials are included.
 
-Offline validation on the included frozen snapshots: **6 files, 93 tests passed** with Vitest 4.1.8.
+Offline validation on the included frozen snapshots: **8 files, 119 tests passed** with Vitest 4.1.8.
+
+The 24 inherited recovery cases retain their full assertions; checkpoint comparisons explicitly validate the new storage revision before comparing the complete retained payload. Two additional cases protect recovered rows from stale tabs and keep main/detail storage revisions independent.
 
 The tests cover repeated clicks, edited pending plans, late replies, refreshed tasks, mixed batches, saved image-type plans, account/storage errors, concurrent browser tabs, and project/workspace changes. Passing them verifies local behavior only; it does not prove paid generation or a live deployment. Nothing in this directory automatically publishes the website.

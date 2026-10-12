@@ -21,7 +21,7 @@
   let busy = false, analyzing = false, uploading = false, saveTimer, saveQueue = Promise.resolve(), saveFault = false, restoring = false, initializing = true;
   const draftStorageTimeoutMs = 15 * 1000;
   let saveError = '';
-  let startupFailed = false, receiptRecovery = null;
+  let startupFailed = false, receiptRecovery = null, bound = false;
   let deactivating = false, deactivationPromise = null;
   let moduleTab = 'official', moduleGroup = '', managingModules = false, selectedResults = new Set(), showPlan = true, briefCandidate = '';
   const displayedPlanChecks = new WeakMap();
@@ -140,6 +140,23 @@
     // Only advance the expected revision after the transaction commits.
     return draftToken(saved);
   }
+  async function installRecoveredDraft(key,recoveryKey,original,next) {
+    let installed;
+    await draftTransaction('readwrite',(store,finish)=>{
+      const request=store.get(recoveryKey);
+      request.onerror=()=>finish(request.error||new Error('恢复草稿读取失败，请重试。'));
+      request.onsuccess=()=>{
+        if(request.result){installed=request.result;return;}
+        const source=store.get(key);
+        source.onerror=()=>finish(source.error||new Error('原草稿读取失败，请重试。'));
+        source.onsuccess=()=>{
+          if(JSON.stringify(source.result)!==JSON.stringify(original)){finish(new Error('原草稿已在其他页面更新，请重试读取。'));return;}
+          installed={...next,revision:uid()};store.put(installed,recoveryKey);
+        };
+      };
+    });
+    return installed;
+  }
   const scopeFor = type => `${isBatch?'batch':'single'}:${type==='detail'?'detail':'main'}${type==='ad'?':ad':''}`;
   let workspaceScope = scopeFor(initialAd?'ad':mode);
   const draftKey = (scope=workspaceScope) => `${account}:${scope}`;
@@ -181,8 +198,8 @@
     }
     return {concurrent:true,read,readAll,readExcluding:read,readReceipt:receipt=>{const raw=localStorage.getItem(prefix+receipt.jobId)??localStorage.getItem(legacyKey);return raw===null?null:validate(raw);},write:value=>localStorage.setItem(prefix+value.jobId,JSON.stringify(value)),compareAndClear,clear:()=>{const pending=read();if(pending)compareAndClear(pending);}};
   }
-  function createWorkspace(nextDraft,scope,expectedDraftToken='missing') {
-    const binding={draft:nextDraft,scope,controller:null,restoring:true,expectedDraftToken};
+  function createWorkspace(nextDraft,scope,storageKey=draftKey(scope),legacy=null,expectedDraftToken='missing') {
+    const binding={draft:nextDraft,scope,storageKey,legacy,legacyBackupKey:nextDraft.legacyBackupKey,controller:null,restoring:true,expectedDraftToken};
     binding.controller=engine.createController({bridge,journal:journal(scope),concurrency:100,workspaceKey:scope,withGenerationSlot,async onChange(){
       if(binding.restoring)return;
       if(workspaceBinding===binding)render();
@@ -195,9 +212,62 @@
     workspaceBinding=binding;workspaceScope=binding.scope;draft=binding.draft;controller=binding.controller;
   }
   function validateWorkspace(saved,type) {
-    if(!saved?.draft||!Array.isArray(saved.draft.tasks)||workspaceType(saved.draft.settings||{})!==type)throw new Error('该图片类型的草稿内容不一致，原草稿仍保留，请先核对本机任务。');
     if(saved.snapshot?.accountKey&&saved.snapshot.accountKey!==account)throw new Error('该图片类型的草稿属于其他账号，原草稿仍保留。');
+    if(!saved?.draft||!Array.isArray(saved.draft.tasks)||workspaceType(saved.draft.settings||{})!==type)throw new Error('该图片类型的草稿内容不一致，原草稿仍保留，请先核对本机任务。');
     if(saved.snapshot?.tasks?.some(entry=>workspaceType(entry.plan?.settings||{})!==type))throw new Error('该图片类型的旧任务含有其他图片类型，原任务和回执仍保留，请先核对。');
+  }
+  const typeLabel = type => ({main:'主图',detail:'详情图',ad:'广告图'})[type];
+  async function loadWorkspace(type,scope) {
+    const key=draftKey(scope),recoveryKey=`${key}:type-recovery-v1`;
+    const recovered=await dbGet(recoveryKey);await ensureAccount();
+    if(recovered){
+      validateWorkspace(recovered,type);
+      const backupKey=recovered.draft.legacyBackupKey;
+      if(typeof backupKey!=='string'||!backupKey.startsWith(`${key}:before-explicit-mode:`))throw new Error('保留的旧任务位置暂不能核对，请重试读取。');
+      const legacy=await dbGet(backupKey);await ensureAccount();
+      if(!legacy?.draft||legacy.snapshot?.accountKey&&legacy.snapshot.accountKey!==account)throw new Error('保留的旧任务暂不能读取，请重试；原数据仍保留。');
+      return {saved:recovered,storageKey:recoveryKey,legacy};
+    }
+    const saved=await dbGet(key);await ensureAccount();
+    if(!saved)return {saved:null,storageKey:key,legacy:null};
+    if(!saved.draft||!Array.isArray(saved.draft.tasks)||saved.snapshot?.accountKey&&saved.snapshot.accountKey!==account){validateWorkspace(saved,type);}
+    const mixed=workspaceType(saved.draft.settings||{})!==type||saved.snapshot?.tasks?.some(entry=>workspaceType(entry.plan?.settings||{})!==type);
+    if(!mixed){validateWorkspace(saved,type);return {saved,storageKey:key,legacy:null};}
+    // Old versions saved all three types under the entry URL's fixed key.
+    // Keep the complete record and its original receipt scope. Fresh task IDs
+    // ensure that editable inputs cannot retry or impersonate an old request.
+    const backupKey=`${key}:before-explicit-mode:${uid()}`;
+    await dbPut(backupKey,saved);await ensureAccount();
+    const defaults=engine.defaults(type==='detail'?'detail':'main');
+    const oldSettings=workspaceType(saved.draft.settings||{})===type?saved.draft.settings:saved.draft.typeSettings?.[type];
+    const config=oldSettings&&workspaceType(oldSettings)===type?clone(oldSettings):{...defaults,model:saved.draft.settings?.model||''};
+    config.mode=type==='detail'?'detail':'main';config.imageType=type==='ad'?'ad':'main';
+    if(type==='ad'){config.adTemplate=config.adTemplate||engine.adTemplates?.[0]?.id;config.adType=config.adType||'电商广告';}
+    const tasks=saved.draft.tasks.map((entry,index)=>{
+      const old=workspaceType(saved.draft.settings||{})===type?entry:entry.typeDrafts?.[type];
+      const overrides=old?.overrides?{...clone(old.overrides),mode:config.mode,imageType:config.imageType}:null;
+      return {...task(index+1),name:entry.name||`商品任务 ${index+1}`,products:clone(entry.products||[]),requirements:old?.requirements||'',analysis:old?.analysis||'',overrides};
+    });
+    const next={draft:{settings:config,tasks:tasks.length?tasks:[task(1)],legacyBackupKey:backupKey,viewStep:0,userModules:clone(saved.draft.userModules||[]),userModuleGroups:clone(saved.draft.userModuleGroups||[])},savedAt:new Date().toISOString()};
+    // Saving the separate recovery row makes reload/switching deterministic;
+    // neither the original canonical record nor its receipt journal is changed.
+    const installed=await installRecoveredDraft(key,recoveryKey,saved,next);await ensureAccount();
+    validateWorkspace(installed,type);
+    if(typeof installed.draft.legacyBackupKey!=='string'||!installed.draft.legacyBackupKey.startsWith(`${key}:before-explicit-mode:`))throw new Error('保留的旧任务位置暂不能核对，请重试读取。');
+    const retained=installed.draft.legacyBackupKey===backupKey?saved:await dbGet(installed.draft.legacyBackupKey);await ensureAccount();
+    if(!retained?.draft||retained.snapshot?.accountKey&&retained.snapshot.accountKey!==account)throw new Error('保留的旧任务暂不能核对，请重试读取。');
+    return {saved:installed,storageKey:recoveryKey,legacy:retained};
+  }
+  function legacyBanner() {
+    if(!workspaceBinding?.legacy)return '';
+    return `<section class="sg-card" role="status"><strong>已保留旧版混合草稿</strong><p class="sg-note">产品图和当前${typeLabel(workspaceType(draft.settings))}的输入已恢复。旧方案、生成成果和待确认请求完整保留；请重新整理并核对当前类型的方案。</p><button type="button" class="sg-button" data-action="legacy-tasks">查看保留的旧任务</button></section>`;
+  }
+  function showLegacyTasks() {
+    const saved=workspaceBinding?.legacy;if(!saved)return;
+    const slots=[...(saved.snapshot?.tasks||[]).flatMap(entry=>entry.slots||[]),...(saved.snapshot?.previousResults||[])];
+    const unfinished=slots.filter(slot=>!slot.item&&['generating','uncertain'].includes(slot.status)).length;
+    const content=`<p class="sg-note">以下为保留的原草稿和任务记录。待确认请求继续保留原身份，不会自动重新提交。若旧图片预览暂不可用，可在生成记录中查看已归档原件。</p><button type="button" class="sg-button" data-action="history">打开生成记录</button>${(saved.draft.tasks||[]).map(entry=>`<section class="sg-card"><h3>${esc(entry.name||'商品任务')}</h3><p>${esc(entry.requirements||'未填写创作要求')}</p>${(entry.products||[]).filter(asset=>engine.validImage(asset.image)).map(asset=>`<img src="${esc(asset.image)}" alt="${esc(asset.name||'原产品图')}" style="max-width:160px;max-height:200px">`).join('')}</section>`).join('')}<p>${slots.filter(slot=>slot.item).length} 张已有成果 · ${unfinished||saved.snapshot?.uncertain?Math.max(unfinished,1):0} 张结果待确认</p>${slots.filter(slot=>slot.item&&engine.validImage(slot.item.url)).map(slot=>`<figure><img src="${esc(slot.item.url)}" alt="${esc(slot.shot?.label||'原生成成果')}" style="max-width:240px;max-height:280px"><figcaption>${esc(slot.shot?.label||'原生成成果')}</figcaption></figure>`).join('')}`;
+    openDialog('保留的旧任务',content);
   }
   async function switchWorkspace(next) {
     if(!['main','detail','ad'].includes(next)||next===workspaceType(draft.settings)||locked())return;
@@ -205,7 +275,7 @@
     const previous=workspaceBinding;
     try {
       await persist();await ensureAccount();
-      const scope=scopeFor(next),saved=await dbGet(draftKey(scope));await ensureAccount();
+      const scope=scopeFor(next),loaded=await loadWorkspace(next,scope),saved=loaded.saved;await ensureAccount();
       let nextDraft;
       if(saved){validateWorkspace(saved,next);nextDraft=clone(saved.draft);}
       else {
@@ -214,7 +284,7 @@
         nextDraft={settings:cfg,tasks:draft.tasks.map((entry,index)=>({...task(index+1),name:entry.name,products:clone(entry.products)}))};
       }
       nextDraft.userModules=clone(library());nextDraft.userModuleGroups=clone(groups());
-      const binding=createWorkspace(nextDraft,scope,draftToken(saved));
+      const binding=createWorkspace(nextDraft,scope,loaded.storageKey,loaded.legacy,draftToken(saved));
       if(saved?.snapshot){const result=await binding.controller.restore(saved.snapshot);if(!result?.ok)throw new Error(result?.error||'该图片类型的草稿暂不能安全恢复，原草稿仍保留。');}
       const recovered=await binding.controller.recoverPendingReceipt();
       if(!recovered?.ok)throw new Error(recovered?.error||'该图片类型的回执暂不能安全恢复，原回执仍保留。');
@@ -295,7 +365,8 @@
     if(fromController){const key=owner.controller.snapshot().accountKey;if(key&&key!==account)throw new Error('任务所属账号与草稿不一致，已停止保存。');}
     else await ensureAccount();
     if(startupFailed)return;
-    const key=draftKey(owner.scope), value={draft:clone(owner.draft),snapshot:owner.controller.snapshot(),savedAt:new Date().toISOString()};
+    const key=owner.storageKey||draftKey(owner.scope), value={draft:clone(owner.draft),snapshot:owner.controller.snapshot(),savedAt:new Date().toISOString()};
+    if(owner.legacyBackupKey)value.draft.legacyBackupKey=owner.legacyBackupKey;
     saveQueue=saveQueue.catch(()=>{}).then(async()=>{
       if(startupFailed)return;
       // A failed transaction applies to callbacks already queued in this run.
@@ -728,7 +799,7 @@
     if(startupFailed||!draft)return;
     displayRenderVersion++;
     document.documentElement?.classList.toggle('sg-replica',true);
-    root.innerHTML=isBatch?renderBatch():renderSingle();renderMessage();
+    root.innerHTML=legacyBanner()+(isBatch?renderBatch():renderSingle());renderMessage();
     bridge.setApiBusy('studio-genesis',locked());
     renderCredits();
     refreshLocalOriginals();
@@ -841,8 +912,9 @@
     try {
       await persist();
       await ensureAccount();const key=`${account}:saved-project:${uid()}`;await dbPut(key,{draft:clone(draft),snapshot:controller.snapshot()});await ensureAccount();
-      const cfg=clone(draft.settings), userModules=library(), userModuleGroups=groups();draft={settings:cfg,tasks:[task(1)],userModules,userModuleGroups,previousProjectKey:key};
-      const binding=createWorkspace(draft,workspaceScope,workspaceBinding.expectedDraftToken);binding.restoring=false;installWorkspace(binding);
+      const prior=workspaceBinding,cfg=clone(draft.settings), userModules=library(), userModuleGroups=groups();draft={settings:cfg,tasks:[task(1)],userModules,userModuleGroups,previousProjectKey:key};
+      if(prior.legacyBackupKey)draft.legacyBackupKey=prior.legacyBackupKey;
+      const binding=createWorkspace(draft,workspaceScope,prior.storageKey,prior.legacy,prior.expectedDraftToken);binding.restoring=false;installWorkspace(binding);
       selectedResults.clear();showPlan=true;await persist();message('已新建项目，上一项目已保留，可恢复。');
     } finally { busy=false;render(); }
   }
@@ -870,6 +942,7 @@
   }
   async function action(button) {
     const name=button.dataset.action,id=button.dataset.id,entry=draft.tasks.find(item=>item.id===id);
+    if(name==='legacy-tasks'){await ensureAccount();showLegacyTasks();return;}
     if(button.disabled)return;
     const submitsImage=['generate','retry','retry-slot'].includes(name);
     if((submitsImage?generationLocked():locked())&&!['stop','history','download','download-all','close-dialog','close-preview'].includes(name))return;
@@ -982,6 +1055,8 @@
     modal.innerHTML=`<div class="sg-modal-content" role="dialog" aria-modal="true" aria-label="${esc(title)}预览"><div class="sg-card-head"><h2>${esc(title)}</h2><button type="button" class="sg-button" data-action="close-preview">关闭</button></div><img src="${esc(image)}" alt="${esc(alt)}"></div>`;modal.hidden=false;modal.querySelector('button').focus();
   }
   function bind() {
+    if(bound)return;
+    bound=true;
     document.addEventListener('cu-import-state',event=>{
       if(!root||!draft||!controller)return;
       const detail=event.detail||{};
@@ -1021,7 +1096,9 @@
     window.addEventListener('sz-bound-api-changed',()=>{if(startupFailed)return;refreshModels().then(()=>{if(startupFailed)return;draft.settings.model=modelInfo.model;draft.tasks.forEach(invalidate);render();scheduleSave();}).catch(showError);});
   }
   async function boot() {
-    root=document.createElement('section');root.id='studioGenesisRoot';document.querySelector('.app').prepend(root);
+    document.documentElement?.setAttribute('data-lab-startup','pending');
+    document.documentElement?.setAttribute('data-studio-startup','pending');
+    if(!root){root=document.createElement('section');root.id='studioGenesisRoot';document.querySelector('.app').prepend(root);}
     root.innerHTML='<div class="sg-hero"><p>正在读取创作工作台…</p></div>';
     bridge=window.SZ_CREATIVE_TOOLS_BRIDGE;engine=window.SZ_STUDIO_GENESIS;
     if(!bridge||!engine)throw new Error('创作模块未完整加载，请重新打开页面。');
@@ -1030,20 +1107,14 @@
     account=String(refreshed.accountKey);
     draft={settings:engine.defaults(mode),tasks:Array.from({length:isBatch?3:1},(_,i)=>task(i+1))};
     if(initialAd)Object.assign(draft.settings,{imageType:'ad',adType:'电商广告',adTemplate:engine.adTemplates[0].id});
-    installWorkspace(createWorkspace(draft,workspaceScope));
-    const saved=await dbGet(draftKey());
-    workspaceBinding.expectedDraftToken=draftToken(saved);
+    const loaded=await loadWorkspace(initialAd?'ad':mode,workspaceScope),saved=loaded.saved;
+    installWorkspace(createWorkspace(draft,workspaceScope,loaded.storageKey,loaded.legacy,draftToken(saved)));
     if(saved&&saved.draft){
-      const requestedType=initialAd?'ad':mode;
-      if(saved.snapshot?.accountKey&&saved.snapshot.accountKey!==account)validateWorkspace(saved,requestedType);
-      const mixed=workspaceType(saved.draft.settings||{})!==requestedType||saved.snapshot?.tasks?.some(entry=>workspaceType(entry.plan?.settings||{})!==requestedType);
-      // Retain contaminated legacy records in full; never relabel their tasks or
-      // unknown receipts as another mode or overwrite them with an empty draft.
-      if(mixed)await dbPut(`${draftKey()}:before-explicit-mode:${saved.savedAt||new Date().toISOString()}:${uid()}`,saved);
-      validateWorkspace(saved,requestedType);
+      validateWorkspace(saved,initialAd?'ad':mode);
       restoring=true;
       try { draft=clone(saved.draft);
       workspaceBinding.draft=draft;
+      workspaceBinding.legacyBackupKey=draft.legacyBackupKey;
       if(saved.snapshot){const restored=await controller.restore(saved.snapshot);if(restored.ok===false)throw new Error(restored.error||'草稿任务无法安全恢复，请先核对本机历史。');}
       } finally { restoring=false; }
     }
@@ -1066,8 +1137,21 @@
     // loading may continue after first paint, with all mutations still locked.
     try { await refreshModels(refreshed);if(!draft.settings.model)draft.settings.model=modelInfo.model||''; }
     catch(error) { showError(error); }
-    finally { initializing=false;render(); }
+    finally { initializing=false;render();document.documentElement?.setAttribute('data-lab-startup','ready');document.documentElement?.setAttribute('data-studio-startup','ready'); }
   }
-  const start=()=>boot().catch(error=>{startupFailed=true;if(root)root.innerHTML=`<section class="sg-card" style="margin-top:30px"><h2>创作工作台暂未就绪</h2><p class="sg-message is-error" role="alert">${esc(error.message||error)}</p><p class="sg-note">请检查当前登录状态，然后重新打开页面。素材和原有配置会保留。</p></section>`;window.SZ_LAB_FIRST_PAINT?.complete('error');});
+  const start=()=>boot().catch(error=>{
+    startupFailed=true;document.documentElement?.setAttribute('data-lab-startup','error');
+    document.documentElement?.setAttribute('data-studio-startup','error');
+    if(root){
+      root.innerHTML=`<section class="sg-card" style="margin-top:30px"><h2>创作工作台暂未就绪</h2><p class="sg-message is-error" role="alert">${esc(error.message||error)}</p><p class="sg-note">原素材、草稿和任务记录仍保留。可以重试读取，或通过左侧菜单打开其他创作入口。</p><button type="button" class="sg-button" data-action="retry-startup">重试读取工作台</button></section>`;
+      root.onclick=event=>{if(!event.target.closest('[data-action="retry-startup"]'))return;root.onclick=null;startupFailed=false;initializing=true;restoring=false;notice='';noticeError=false;start();};
+    }
+    window.SZ_LAB_FIRST_PAINT?.complete('error');
+    // First-paint completion can clear a previous timeout marker. Restore the
+    // host's failure signal, while retaining the existing reload screen for
+    // missing scripts or styles that an in-place draft retry cannot repair.
+    if(document.documentElement?.dataset.labFirstPaintFailure==='fatal'||document.documentElement?.dataset.labStyles==='error')document.documentElement?.setAttribute('data-studio-startup','resource-error');
+    document.documentElement?.setAttribute('data-lab-startup','error');
+  });
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();

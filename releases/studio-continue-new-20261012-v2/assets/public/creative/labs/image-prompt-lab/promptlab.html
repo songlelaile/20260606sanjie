@@ -26,6 +26,14 @@
     #labStartupStatus button { padding: 8px 18px; border: 1px solid var(--border, #424b24);
       border-radius: 8px; background: var(--panel, #19200f); color: var(--text, #eeeedd); cursor: pointer; }
   </style>
+  <style id="studioStartupRecoveryStyle">
+    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] body > .app:not(#labStartupStatus) {
+      display: block !important;
+    }
+    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] #labStartupStatus {
+      display: none !important;
+    }
+  </style>
   <style id="labFirstPaintStyle">
     #labFirstPaintShell { display:none; }
     html[data-lab-first-paint] body > .app,

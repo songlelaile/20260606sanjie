@@ -13,9 +13,9 @@
     {
       "path": "assets/public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
       "productionPath": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
-      "beforeSha256": "a737deae1676ee0ea944337511c796f5dcf6532a5a4a2fd09ece6ec786ec204e",
-      "afterSha256": "38f3c3ad5e3cf9a126f98f545024b6bf7b7b2bbdd6fb7e8b21908a10f4a535c4",
-      "afterBytes": 108267
+      "beforeSha256": "efc0c69a20f14bb2d655ea5cd79f54c6a6529ac9584f8a343367be0f8cf68c0f",
+      "afterSha256": "3dfb95a352c5de48911434934a143b070047da0cd6b7ece95bafd40ddf68ad4b",
+      "afterBytes": 116339
     },
     {
       "path": "assets/public/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js",
@@ -27,16 +27,16 @@
     {
       "path": "assets/public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
       "productionPath": "public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
-      "beforeSha256": "0468cf15dd306a5dc270329152407c22b4158c3a365f9c55f51c43b0d5d7bb1c",
-      "afterSha256": "e9d17bc2216a1a05c7504131d2c1174d767a43a385556d20a36e54b8651ec340",
-      "afterBytes": 246919
+      "beforeSha256": "dd810deb2e4b490b724d67c1c6c780de5895b12c13e7d1eadc49b878fa36e873",
+      "afterSha256": "3a494b301866a66a3eef60911255b91ef1ec6987b2e150bc110fe11b6786cae9",
+      "afterBytes": 254991
     },
     {
       "path": "assets/public/creative/labs/image-prompt-lab/promptlab.html",
       "productionPath": "public/creative/labs/image-prompt-lab/promptlab.html",
-      "beforeSha256": "d536d3df0382c7b362160089525ea86c227f8bd2952860a51d510361d6b9438c",
-      "afterSha256": "e8ed3fb909f8d30d6b9c01ee7864380ab3624100c7e65585a7bda1fbadb15be7",
-      "afterBytes": 136039
+      "beforeSha256": "e208117bfc3b9a048e1dfef70ea3197aab32fe115992d7792f121406a7203570",
+      "afterSha256": "558d1040729ee8b571953333bd737a40e9b70425d8394969e3a7f058ee2cbc1f",
+      "afterBytes": 136394
     }
   ],
   "auxiliaryFixtures": [
@@ -53,16 +53,21 @@
     "tests/studio-genesis-plan-copy.test.ts",
     "tests/studio-genesis-concurrent-receipt-isolation.test.ts",
     "tests/studio-genesis-late-receipt.test.ts",
-    "tests/studio-storage-lifecycle.test.ts"
+    "tests/studio-storage-lifecycle.test.ts",
+    "tests/studio-draft-recovery-parent.test.ts",
+    "tests/studio-recovery-row-cas.test.ts"
   ],
-  "baselineRelease": "studio-continue-new-20261012-v1",
+  "baselineRelease": "studio-draft-recovery-20261012-v3",
   "providerRequestsPerformed": 0,
   "offlineValidation": {
-    "suiteCount": 6,
-    "testsPassed": 93,
+    "suiteCount": 8,
+    "testsPassed": 119,
     "vitestVersion": "4.1.8",
     "syntheticInputsOnly": true,
     "providerRequestsPerformed": 0,
-    "storageLifecycleSource": "included frozen views bundle"
-  }
+    "storageLifecycleSource": "included frozen views bundle",
+    "parentRecoveryTests": 24,
+    "recoveryRowCasTests": 2
+  },
+  "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99"
 }
