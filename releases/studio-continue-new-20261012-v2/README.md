@@ -38,3 +38,5 @@ The 24 inherited recovery cases retain their full assertions; checkpoint compari
 The tests cover repeated clicks, edited pending plans, late replies, refreshed tasks, mixed batches, saved image-type plans, account/storage errors, concurrent browser tabs, and project/workspace changes. Passing them verifies local behavior only. Publication was verified separately by the readback and HTTP smoke checks in the deployment receipt. No real supplier generation or billing action was performed; paid generation remains unverified. Nothing in this directory automatically publishes the website.
 
 Additional release checks: **43/43** deployment and drift-protection tests. The broader local repository quality gate passed TypeScript, lint, **2,957 tests** with **62 configured skips**, and the Next.js build; that gate covers more code than this component capsule.
+
+Read-only browser acceptance after publication confirmed restored main-image inputs, an enabled explicit new-generation button with quantity and charge notice, and retained completed detail results. The original pending request remained visible. No generation button was activated.

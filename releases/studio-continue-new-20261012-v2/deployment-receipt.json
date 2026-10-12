@@ -3,7 +3,7 @@
   "published": true,
   "publishedAtUTC": "2026-10-12T01:50:51.589763+00:00",
   "frozenOverlayManifestSha256": "64975336d83ae9b22e79aa8d7bccd792ce16156db103c45e1253d419fbfebb99",
-  "verificationScope": "Published static asset fingerprints and HTTP smoke checks. Browser workflow acceptance and paid generation are separate checks.",
+  "verificationScope": "Published static asset fingerprints, HTTP smoke checks, and read-only browser workflow acceptance. Paid generation was not performed.",
   "productionChecks": {
     "authenticatedAssets": {
       "checked": 5,
@@ -64,5 +64,14 @@
   "providerRequestsPerformed": 0,
   "billingActionsPerformed": 0,
   "paidGenerationVerified": false,
-  "rollbackReady": true
+  "rollbackReady": true,
+  "browserAcceptance": {
+    "mainDraftRestored": true,
+    "explicitNewGenerationActionEnabled": true,
+    "quantityAndChargeNoticeVisible": true,
+    "pendingOriginalRequestRetained": true,
+    "completedDetailPlanPreserved": true,
+    "completedPlanDoesNotOfferNewGenerationForHistoricalPendingReceipt": true,
+    "generationActionsPerformed": 0
+  }
 }
