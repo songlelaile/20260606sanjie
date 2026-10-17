@@ -8,8 +8,7 @@
   "productionProcessesRestarted": false,
   "paidGenerationSucceeded": false,
   "trustedPortraitMaterialVerified": false,
-  "pending": "The receiver account still has zero authorized real-person groups after refresh. Awaiting the actor upload/authorization result or a usable Asset ID; no retained-person generation success is claimed.",
-  "liveAuthorizedPortraitGroupCount": 0,
+  "pending": "The newly created real-person group exists but its detail page has zero assets. Desktop management is open at this group. No usable Asset ID exists yet; await completed upload/authorization before provider generation.",
   "authorizationInvitationCreated": true,
   "authorizationValidFrom": "2026-10-18",
   "authorizationValidThrough": "2026-10-25",
@@ -18,5 +17,11 @@
   "liveAssociationPromptOpenedAndCancelled": true,
   "originalDraftImageCount": 3,
   "originalDraftAudioCount": 1,
-  "originalProductionHistoryRetained": true
+  "originalProductionHistoryRetained": true,
+  "liveSharedPortraitGroupCount": 0,
+  "liveOwnedPortraitGroupCount": 1,
+  "selectedOwnedGroupId": "group-20261018010540-lqzg6",
+  "selectedOwnedGroupName": "ai生成虚拟人物",
+  "selectedOwnedGroupAssetCount": 0,
+  "desktopPortraitManagementOpened": true
 }
