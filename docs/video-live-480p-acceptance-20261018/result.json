@@ -1,0 +1,65 @@
+{
+  "id": "production-c72ec77d-ee5d-47e8-83d0-2756b4ad256f",
+  "status": "succeeded",
+  "resolution": "480p",
+  "estimateYuan": 6.93,
+  "reservedEstimateYuan": 7.65,
+  "requestResolutions": [
+    "480p",
+    "480p",
+    "480p"
+  ],
+  "providerTasks": [
+    "cgt-20261018022034-n5hs7",
+    "cgt-20261018022506-xgn5r",
+    "cgt-20261018022810-h56tn"
+  ],
+  "media": {
+    "width": 480,
+    "height": 854,
+    "duration": 15,
+    "currentTime": 0,
+    "paused": false,
+    "readyState": 4,
+    "error": null,
+    "bytes": 3202925,
+    "mimeType": "video/webm;codecs=vp9,opus"
+  },
+  "audioMix": {
+    "version": 1,
+    "totalDurationSeconds": 15,
+    "sourceAudioVolume": 0,
+    "outputAudioTracks": 1,
+    "narrationComplete": true,
+    "tracks": [
+      {
+        "role": "narration",
+        "volume": 1,
+        "startSeconds": 0,
+        "loop": false,
+        "durationSeconds": 14.445708333333334,
+        "outputDurationSeconds": 14.445708333333334
+      }
+    ]
+  },
+  "acceptedAt": "2026-10-17T18:30:53.695Z",
+  "playbackCompleted": {
+    "duration": 15,
+    "currentTime": 15,
+    "ended": true,
+    "error": null
+  },
+  "download": {
+    "name": "video_production-c72ec77d-ee5d-47e8-83d0-2756b4ad256f.webm",
+    "bytes": 3202925
+  },
+  "testScope": {
+    "model": "seedance-2.0",
+    "mode": "quality",
+    "ratio": "9:16",
+    "aiShots": 3,
+    "secondsPerShot": 5,
+    "attemptCap": 1,
+    "usesPortraitReference": false
+  }
+}
