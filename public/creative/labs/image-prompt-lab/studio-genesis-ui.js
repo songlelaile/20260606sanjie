@@ -11,11 +11,7 @@
     image:'<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m4 18 5-5 4 3 4-6 4 5"/>',
     upload:'<path d="M12 16V3m-5 5 5-5 5 5M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/>',
     history:'<path d="M3 11a9 9 0 1 1 2 7M3 4v7h7m2-4v5l3 2"/>',
-    plus:'<path d="M12 5v14M5 12h14"/>', settings:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>',
-    clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-    check:'<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
-    alert:'<path d="m12 3 10 18H2Z"/><path d="M12 9v4m0 4h.01"/>',
-    return:'<path d="m9 7-5 5 5 5M4 12h11a5 5 0 0 1 5 5"/>'
+    plus:'<path d="M12 5v14M5 12h14"/>', settings:'<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="9" cy="18" r="2"/>'
   };
   const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.spark}</svg>`;
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -26,31 +22,13 @@
   const draftStorageTimeoutMs = 15 * 1000;
   let saveError = '';
   let startupFailed = false, receiptRecovery = null, bound = false;
-  let taskDetailsOpen = false, taskElapsedTimer = null, analysisStartedAt = 0, lastTaskAnnouncement = '';
-  let pendingRender = null, elapsedRows = new Map(), previewReturnFocus = null;
+  let pendingRender = null, taskElapsedTimer = null, lastTaskAnnouncement = '', previewReturnFocus = null;
   let deactivating = false, deactivationPromise = null;
   let moduleTab = 'official', moduleGroup = '', managingModules = false, selectedResults = new Set(), showPlan = true, briefCandidate = '';
   const displayedPlanChecks = new WeakMap();
   const retainedWorkspaces = new Set();
-  const taskPageSize = 20, batchPageSize = 6, resultPageSize = 12;
-  const workspaceViews = new WeakMap();
-  function workspaceView() {
-    if(!workspaceViews.has(workspaceBinding))workspaceViews.set(workspaceBinding,{taskPage:0,batchPage:0,hiddenTasks:new Set(),hiddenRows:new Set(),resultPages:new Map(),collapsedResults:new Set()});
-    return workspaceViews.get(workspaceBinding);
-  }
-  function pageControls(action,page,total,size,scope='') {
-    if(total<=size)return '';
-    const pages=Math.ceil(total/size);
-    return `<nav class="sg-list-controls" aria-label="列表分页"><button type="button" class="sg-button sg-small" data-action="${action}" data-page="${page-1}" data-scope="${esc(scope)}"${page===0?' disabled':''}>上一页</button><span class="sg-meta">第 ${page+1}/${pages} 页 · 共 ${total} 项</span><button type="button" class="sg-button sg-small" data-action="${action}" data-page="${page+1}" data-scope="${esc(scope)}"${page+1>=pages?' disabled':''}>下一页</button></nav>`;
-  }
-  function completedTask(entry) {
-    const slots=matchingSlots(entry);
-    return !saveFault&&!taskNeedsAttention(entry)&&!!slots.length&&slots.every(slot=>slot.status==='done'&&slot.item&&slot.archiveOk===true&&!slot.archiveSaving&&!pendingImage(entry.id,slot.shot.id));
-  }
-  function taskNeedsAttention(entry) {
-    const state=current(), slots=(state.tasks||[]).filter(record=>record.id===entry.id).flatMap(record=>record.slots||[]).concat((state.previousResults||[]).filter(slot=>slot.item?.studioTaskId===entry.id));
-    return slots.some(slot=>['queued','generating','uncertain'].includes(slot.status)||slot.archiveSaving||slot.item&&slot.archiveOk!==true)||(state.pendingReceipts||[]).concat(state.uncertain||[]).some(receipt=>receipt.taskId===entry.id);
-  }
+  const localOriginals = new Map(), displayFrame = window.frameElement;
+  let displayRenderVersion = 0;
   const environment = window.__SANJIE_ENVIRONMENT ? `:${window.__SANJIE_ENVIRONMENT}` : '';
   const task = index => ({ id:uid(), name:`商品任务 ${index}`, requirements:'', products:[], overrides:null, plan:null, confirmed:false, collapsed:false });
   function current() { return controller ? controller.state : { tasks:[],previousResults:[],busy:false,uncertain:null }; }
@@ -66,7 +44,6 @@
   function locked() { return navigationLocked() || deactivating; }
   window.SanjieStudioGenesisBridge = {
     getTaskState,
-    revealTask,
     async activate() {
       if(startupFailed)return {ok:false,error:'创作工作台暂未就绪，请重试读取。'};
       if(initializing||!bridge||!account)return {ok:false,error:'创作工作台正在读取，请稍后再切换。'};
@@ -76,7 +53,7 @@
     async canDeactivate() {
       if(deactivationPromise)return deactivationPromise;
       const activeReason='当前创作任务正在处理，请等待完成或停止后续生成，再切换入口。';
-      if([...retainedWorkspaces].some(retainedUnsaved))return {allowed:false,reason:'历史任务的原件或草稿尚未保存，请恢复保留任务并补存；其他工作台可继续使用。'};
+      if([...retainedWorkspaces].some(retainedUnsaved))return {allowed:false,reason:'历史任务的原件或草稿尚未保存，请在任务进度中恢复该项目并补存；其他工作台可继续使用。'};
       if(unloadLocked())return {allowed:false,reason:activeReason};
       // Failed startup never exposes editing. Keep its original stored draft
       // intact instead of persisting a partly restored workspace on the way out.
@@ -244,6 +221,7 @@
     return binding;
   }
   function installWorkspace(binding) {
+    if(workspaceBinding!==binding)releaseLocalOriginals();
     workspaceBinding=binding;workspaceScope=binding.scope;draft=binding.draft;controller=binding.controller;
     saveFault=!!binding.saveFault;saveError=binding.saveError||'';
   }
@@ -337,17 +315,60 @@
     finally {busy=false;render();}
   }
   // Shared browser slots cap all studio surfaces at 100 live provider requests.
+  function stopQueuedSubmissions() {
+    const pacer=window.SZCreativeRequestPacer;
+    if(!pacer||pacer.version!==1||typeof pacer.cancelQueued!=='function'||current().accountKey!==account)return;
+    for(const task of current().tasks||[])for(const slot of task.slots||[]) {
+      const r=slot.pendingReceipt;
+      if(slot.status!=='generating'||!r||r.receiptVersion!==1||r.accountKey!==account||r.workspaceKey!==workspaceScope||r.taskId!==task.id||r.shotId!==slot.shot.id)continue;
+      pacer.cancelQueued({version:1,receiptId:r.receiptId,jobId:r.jobId,accountKey:r.accountKey,workspaceKey:r.workspaceKey,taskId:r.taskId,shotId:r.shotId,batchId:r.batchId,planSignatureHash:r.planSignatureHash});
+    }
+  }
   async function withGenerationSlot(owner,send,cancelled) {
-    const locks=navigator.locks;
+    const locks=navigator.locks,prefix=`sz-studio-image-slot${environment}:${owner}:`;
+    const notSubmitted=()=>({ok:false,definitiveFailure:true,providerSubmitted:false,error:'已停止排队，尚未提交此图。'});
+    // This catch owns only the account check before send, never the provider reply.
+    const runInSlot=async()=>{
+      if(cancelled())return notSubmitted();
+      try {await ensureAccount();} catch(error) {return {ok:false,definitiveFailure:true,providerSubmitted:false,error:error?.message||'登录状态暂不能核对，本图尚未提交。'};}
+      if(cancelled())return notSubmitted();
+      return send();
+    };
+    let useQuery=typeof locks.query==='function';
     for(;;){
-      if(cancelled())return {ok:false,definitiveFailure:true,providerSubmitted:false,error:'已停止排队，尚未提交此图。'};
+      if(cancelled())return notSubmitted();
+      if(useQuery){
+        let admission;
+        try {admission=await locks.request(`sz-studio-image-admission${environment}:${owner}`,async()=>{
+          if(cancelled())return {cancelled:true};
+          let snapshot,timer;
+          try {snapshot=await Promise.race([locks.query(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('slot query timeout')),250);})]);}
+          catch(_){return {fallback:true};}finally{clearTimeout(timer);}
+          if(!snapshot||!Array.isArray(snapshot.held)||snapshot.held.some(lock=>!lock||typeof lock.name!=='string'))return {fallback:true};
+          const held=new Set(snapshot.held.map(lock=>lock.name));let index=0;
+          while(index<100&&held.has(prefix+index))index++;
+          if(index===100)return {wait:true};
+          let notify;const handshake=new Promise(resolve=>{notify=resolve;});
+          const reply=locks.request(prefix+index,{ifAvailable:true},async lock=>{
+            notify(!!lock);if(!lock)return;
+            return runInSlot();
+          });
+          // Handshake ends the FIFO gate once the native slot is held. The slot
+          // and its provider promise remain attached until the original settles.
+          reply.catch(()=>notify(false));
+          return await handshake?{reply}:{fallback:true};
+        });} catch(_){admission={fallback:true};}
+        if(admission.cancelled)return notSubmitted();
+        if(admission.reply)return admission.reply;
+        if(admission.fallback)useQuery=false;
+        else {if(admission.wait)await new Promise(resolve=>setTimeout(resolve,100));continue;}
+      }
+      // Older Web Locks implementations keep the existing conservative scan.
       for(let index=0;index<100;index++){
         let acquired=false;
-        const result=await locks.request(`sz-studio-image-slot${environment}:${owner}:${index}`,{ifAvailable:true},async lock=>{
+        const result=await locks.request(prefix+index,{ifAvailable:true},async lock=>{
           if(!lock)return;
-          acquired=true;
-          if(cancelled())return {ok:false,definitiveFailure:true,providerSubmitted:false,error:'已停止排队，尚未提交此图。'};
-          await ensureAccount();return send();
+          acquired=true;return runInSlot();
         });
         if(acquired)return result;
       }
@@ -388,6 +409,10 @@
   }
   const options = (values,value) => values.map(entry=>{const [key,label]=Array.isArray(entry)?entry:[entry,entry];return `<option value="${esc(key)}"${String(value)===String(key)?' selected':''}>${esc(label)}</option>`;}).join('');
   const settings = entry => engine.resolveSettings(draft.settings,entry);
+  // Display checks may reuse an unchanged input version. Copy objects without
+  // serializing image strings, and compare every nested value to catch in-place
+  // edits from imports as well as ordinary UI edits. Execution still uses the
+  // contract's complete validation independently of this render-only cache.
   function validationSnapshot(value) {
     if(!value||typeof value!=='object')return value;
     if(Array.isArray(value))return value.map(validationSnapshot);
@@ -488,15 +513,13 @@
     const ratioNames={'1:1':'方图','3:4':'竖版','4:3':'横版','9:16':'竖屏','16:9':'横屏'};
     return `<div class="sg-form sg-main-form">
       ${config.imageType==='ad'?field('广告类型','adType',['电商广告','品牌广告','活动广告','社交广告'],config,target,true):field('目标平台','platform',engine.platforms,config,target,true)}
-      <p class="sg-note sg-wide sg-mode-note">${config.mode==='detail'?'连续详情屏：按阅读顺序展开卖点、细节和规格，整组保持统一风格。':config.imageType==='ad'?'广告图：围绕广告诉求选择视觉模板。':'独立主图：每张完整展示商品，可分别用于商品封面、角度或场景展示。'}</p>
-      ${entry&&!isBatch?`<div class="sg-wide sg-brief-field"><div class="sg-field-heading"><label for="sgBrief">${config.mode==='detail'?'详情内容与阅读顺序':config.imageType==='ad'?'广告诉求':'主图要求'}</label><button type="button" class="sg-text-button" data-action="write-brief" data-id="${entry.id}"${locked()||!entry.products.length||!modelInfo.ready?' disabled':''}>${icon('spark')}AI帮写</button></div><textarea id="sgBrief" data-task-field="requirements" data-id="${entry.id}" maxlength="6000" placeholder="${config.mode==='detail'?'例如：首屏展示商品，随后介绍已确认卖点、材质细节和尺寸；整组统一配色。':'输入产品卖点、目标人群、使用场景和图片风格'}"${locked()?' disabled':''}>${esc(entry.requirements)}</textarea></div>`:''}
+      ${entry&&!isBatch?`<div class="sg-wide sg-brief-field"><div class="sg-field-heading"><label for="sgBrief">${config.mode==='detail'?'详情图要求':config.imageType==='ad'?'广告诉求':'主图要求'}</label><button type="button" class="sg-text-button" data-action="write-brief" data-id="${entry.id}"${locked()||!entry.products.length||!modelInfo.ready?' disabled':''}>${icon('spark')}AI帮写</button></div><textarea id="sgBrief" data-task-field="requirements" data-id="${entry.id}" maxlength="6000" placeholder="输入产品卖点、目标人群、使用场景和图片风格"${locked()?' disabled':''}>${esc(entry.requirements)}</textarea></div>`:''}
       ${field('目标语言','language',engine.languages.map(value=>[value,value==='无文字纯视觉'?'无文字(纯视觉)':value]),config,target,true)}
       ${field('模型','model',models.length?models:[['','请先配置 API']],config,target,true)}
       ${field('尺寸比例','ratio',engine.ratios.map(value=>[value,`${value}${ratioNames[value]?' '+ratioNames[value]:''}`]),config,target)}
       ${field('清晰度','resolution',engine.resolutions.map(value=>[value,`${value} ${{'0.5K':'标准','1K':'标清','2K':'高清','4K':'超清'}[value]}`]),config,target)}
       ${config.moduleMode!=='custom'||config.imageType==='ad'?field(config.mode==='detail'?'详情屏数':'生成数量','count',Array.from({length:16},(_,i)=>[i+1,`${i+1} ${config.mode==='detail'?'屏':'张'}`]),config,target):''}
       ${config.imageType==='ad'?adQualityForm(config,target)+adTemplatesForm(config,target):moduleForm(config,target)}
-      ${config.mode==='detail'&&config.moduleMode==='custom'&&(config.modules||[]).length?`<section class="sg-wide sg-screen-order"><span class="sg-field-label">详情屏顺序</span><ol>${config.modules.map((label,index)=>`<li><span>第 ${index+1} 屏 · ${esc(label)}</span><div><button type="button" class="sg-text-button" data-action="module-move" data-target="${target}" data-index="${index}" data-delta="-1" aria-label="上移第 ${index+1} 屏"${locked()||index===0?' disabled':''}>↑</button><button type="button" class="sg-text-button" data-action="module-move" data-target="${target}" data-index="${index}" data-delta="1" aria-label="下移第 ${index+1} 屏"${locked()||index===config.modules.length-1?' disabled':''}>↓</button></div></li>`).join('')}</ol></section>`:''}
     </div>`;
   }
   function adQualityForm(config,target) {
@@ -515,7 +538,7 @@
     config.moduleSkills=Object.fromEntries(library().filter(item=>(item.type||'main')===type&&(config.modules||[]).includes(item.name)).map(item=>[item.name,item.skill]));
     if(config.moduleMode==='custom')config.count=Math.max(1,(config.modules||[]).length);
   }
-  function eachConfig(callback) { [...new Set([draft.settings,...Object.values(draft.typeSettings||{}),...draft.tasks.flatMap(entry=>[entry.overrides,...Object.values(entry.typeDrafts||{}).map(saved=>saved.overrides)]).filter(Boolean)])].forEach(callback); }
+  function eachConfig(callback) { [...new Set([draft.settings,...Object.values(draft.typeSettings||{}),...draft.tasks.map(entry=>entry.overrides).filter(Boolean)])].forEach(callback); }
   function moduleEditor(id) {
     const item=library().find(module=>module.id===id)||{name:'',description:'',skill:'',group:''};
     const type=item.type||(draft.settings.mode==='detail'?'detail':draft.settings.imageType==='ad'?'ad':'main');
@@ -531,44 +554,41 @@
   }
   function products(entry) {
     return `${window.SZ_IMAGE_UPLOAD.markup({title:'产品图',subtitle:'上传清晰的产品图片',count:entry.products.length,max:6,hint:'白底产品图最佳 · 最多 6 张同款商品图',note:'多图用于补充同一商品的必要视角，原图会保留。',input:`<input type="file" accept="image/png,image/jpeg,image/webp" multiple data-files="${entry.id}" aria-label="${esc(entry.name)}产品图"${locked()?' disabled':''}>`,zoneAttributes:`data-drop="${entry.id}"`})}
-      <div class="sg-assets">${entry.products.map((asset,index)=>`<div class="sg-asset"><img loading="lazy" decoding="async" src="${esc(asset.image)}" alt="${esc(asset.name)}" role="button" tabindex="0" aria-label="预览产品图 ${index+1}" data-product-preview="${entry.id}" data-index="${index}"><button type="button" aria-label="移除产品图 ${index+1}" data-action="remove-image" data-id="${entry.id}" data-index="${index}"${locked()?' disabled':''}>×</button><small>${esc(asset.name)}</small></div>`).join('')}</div><a class="sg-refinement-link" href="/dashboards/operating-network?surface=refinement" target="_top">没有白底图？ 去精修获得白底图</a>`;
+      <div class="sg-assets">${entry.products.map((asset,index)=>`<div class="sg-asset"><img src="${esc(asset.image)}" alt="${esc(asset.name)}" role="button" tabindex="0" aria-label="预览产品图 ${index+1}" data-product-preview="${entry.id}" data-index="${index}"><button type="button" aria-label="移除产品图 ${index+1}" data-action="remove-image" data-id="${entry.id}" data-index="${index}"${locked()?' disabled':''}>×</button><small>${esc(asset.name)}</small></div>`).join('')}</div><a class="sg-refinement-link" href="/dashboards/operating-network?surface=refinement" target="_top">没有白底图？ 去精修获得白底图</a>`;
   }
   function taskFields(entry) {
     return `<div class="sg-form"><label class="sg-wide">商品名称<input data-task-field="name" data-id="${entry.id}" value="${esc(entry.name)}" maxlength="100" placeholder="为商品任务命名"${locked()?' disabled':''}></label><label class="sg-wide">图片要求<textarea data-task-field="requirements" data-id="${entry.id}" maxlength="6000" placeholder="输入产品卖点、目标人群、使用场景和图片风格"${locked()?' disabled':''}>${esc(entry.requirements)}</textarea></label></div>`;
   }
   function plans(entry) {
     if(!entry.plan)return '';
-    return `<div class="sg-plan-list">${entry.plan.shots.map(shot=>`<article class="sg-shot"><h3>${entry.plan.settings.mode==='detail'?`第 ${esc(shot.index)} 屏 · `:`第 ${esc(shot.index)} 张 · `}${esc(shot.label)}</h3><textarea data-shot="${shot.id}" data-id="${entry.id}" aria-label="${esc(entry.name)} ${esc(shot.label)}方案"${locked()?' disabled':''}>${esc(shot.prompt)}</textarea></article>`).join('')}</div><label class="sg-confirm"><input type="checkbox" data-confirm="${entry.id}"${entry.confirmed?' checked':''}${locked()?' disabled':''}><span>${entry.plan.settings.mode==='detail'?'我已核对每屏内容、阅读顺序与统一风格，按此详情方案生成。':'我已核对商品、内容与画面方案，按此方案生成。'}</span></label>`;
+    return `<div class="sg-plan-list">${entry.plan.shots.map(shot=>`<article class="sg-shot"><h3>${esc(shot.index||'')} ${esc(shot.label)}</h3><textarea data-shot="${shot.id}" data-id="${entry.id}" aria-label="${esc(entry.name)} ${esc(shot.label)}方案"${locked()?' disabled':''}>${esc(shot.prompt)}</textarea></article>`).join('')}</div><label class="sg-confirm"><input type="checkbox" data-confirm="${entry.id}"${entry.confirmed?' checked':''}${locked()?' disabled':''}><span>我已核对商品、内容与画面方案，按此方案生成。</span></label>`;
   }
-  function slotsFor(id) { return allSlots().filter(slot=>slot.taskId===id); }
+  function slotsFor(id) { const record=current().tasks.find(entry=>entry.id===id);return (record?.slots||[]).map(slot=>({...slot,taskId:id,taskName:record.name})); }
   function allSlots() {
     const type=draft?.settings.imageType==='ad'?'ad':draft?.settings.mode;
     const sameType=config=>(config.imageType==='ad'?'ad':config.mode)===type;
     return (current().tasks||[]).filter(entry=>entry.plan&&sameType(entry.plan.settings)).flatMap(entry=>{
       const planned=draft.tasks.find(item=>item.id===entry.id)?.plan;
       return (entry.slots||[]).map(slot=>({...slot,taskName:entry.name,taskId:entry.id,previous:!planned||planned.signature!==entry.plan.signature}));
-    }).concat((current().previousResults||[]).filter(slot=>slot.item?.studioGenesisPlan?.settings&&sameType(slot.item.studioGenesisPlan.settings)).map(slot=>{
-      const entry=draft.tasks.find(item=>item.id===slot.item.studioTaskId);
-      return {...slot,taskId:slot.item.studioTaskId,previous:!entry||!matchingSlots(entry).some(active=>active.item?.resultId===slot.item.resultId),taskName:slot.item.productName||''};
-    }));
-  }
-  function matchingSlots(entry) {
-    if(!entry.plan)return [];
-    const record=current().tasks.find(item=>item.id===entry.id&&item.plan.signature===entry.plan.signature);
-    if(record)return record.slots;
-    return entry.plan.shots.map(shot=>[...(current().previousResults||[])].reverse().find(slot=>slot.status==='done'&&slot.item?.studioTaskId===entry.id&&slot.item?.studioGenesisPlan?.signature===entry.plan.signature&&JSON.stringify(slot.shot)===JSON.stringify(shot)&&engine.validatePlan(slot.item.studioGenesisPlan).ok)||{shot,status:'ready',item:null});
+    }).concat((current().previousResults||[]).filter(slot=>slot.item?.studioGenesisPlan?.settings&&sameType(slot.item.studioGenesisPlan.settings)).map(slot=>({...slot,previous:true,taskName:slot.item&&slot.item.productName||''})));
   }
   function activeSlots() {
-    return draft.tasks.flatMap(matchingSlots);
+    return (current().tasks||[]).filter(entry=>{
+      const planned=draft.tasks.find(item=>item.id===entry.id)?.plan;
+      return planned&&entry.plan&&planned.signature===entry.plan.signature;
+    }).flatMap(entry=>entry.slots||[]);
   }
-  function completedStep() { const slots=activeSlots();return slots.length&&slots.every(slot=>slot.status==='done')?4:3; }
   function pendingImage(taskId,shotId) {
     const state=current();
     return (state.pendingReceipts||[]).concat(state.uncertain||[]).some(receipt=>receipt.accountKey===account&&receipt.taskId===taskId&&receipt.shotId===shotId)||
       (state.tasks||[]).some(entry=>entry.id===taskId&&(entry.slots||[]).some(slot=>slot.shot.id===shotId&&!slot.item&&slot.status==='uncertain'));
   }
   function eligibleShots(entry,retry=false) {
-    return matchingSlots(entry).filter(slot=>(retry?slot.status==='failed':['ready','queued'].includes(slot.status))&&!pendingImage(entry.id,slot.shot.id));
+    if(!entry.plan)return [];
+    const record=current().tasks.find(item=>item.id===entry.id), compatible=record&&record.plan.signature===entry.plan.signature;
+    if(retry)return compatible?record.slots.filter(slot=>slot.status==='failed'&&!pendingImage(entry.id,slot.shot.id)):[];
+    return compatible?record.slots.filter(slot=>['ready','queued'].includes(slot.status)&&!pendingImage(entry.id,slot.shot.id)):
+      entry.plan.shots.filter(shot=>!pendingImage(entry.id,shot.id));
   }
   function newGenerationTasks() {
     // A revised plan must not replace the plan needed to recover an older
@@ -600,113 +620,54 @@
     // Keep the original controller records and journals for receipt recovery.
     draft.tasks=draft.tasks.map(entry=>copies.get(entry)||entry);
   }
-  const taskStatusLabels = {ready:'草稿',queued:'排队中',generating:'生成中',analyzing:'分析中',submitting:'提交中',saving:'已生成待保存',unsaved:'已生成待补存',done:'已完成',failed:'失败',uncertain:'待确认'};
-  function planProgress(slots,total=slots.length) {
-    const generated=slots.filter(slot=>!!slot.item).length;
-    return {completedCount:generated,plannedCount:total,failedCount:slots.filter(slot=>!slot.item&&slot.status==='failed').length,pendingReceiptCount:slots.filter(slot=>!slot.item&&slot.status==='uncertain').length,savingCount:slots.filter(slot=>slot.archiveSaving).length,unsavedCount:slots.filter(slot=>slot.item&&!slot.archiveSaving&&slot.archiveOk===false).length};
-  }
-  function progressText(stats) {
-    return `${stats.completedCount}/${stats.plannedCount} 已生成${stats.failedCount?` · ${stats.failedCount} 失败`:''}${stats.pendingReceiptCount?` · ${stats.pendingReceiptCount} 待确认`:''}${stats.savingCount?` · ${stats.savingCount} 保存中`:''}${stats.unsavedCount?` · ${stats.unsavedCount} 原件待补存`:''}`;
-  }
+  function statusLabel(status) { return ({ready:'待生成',queued:'排队中',generating:'生成中',done:'已完成',failed:'生成失败',uncertain:'生成结果确认中'})[status]||status; }
   function taskRows() {
     const rows=[], seen=new Set();
     const bindings=[...retainedWorkspaces,workspaceBinding].filter(Boolean);
     bindings.forEach(binding=>{
       const state=binding.controller.state;
       if(state.accountKey&&state.accountKey!==account)return;
-      const projectKey=binding!==workspaceBinding&&binding.storageKey.includes(':saved-project:')?binding.storageKey:'';
-      const entries=(state.tasks||[]).concat((state.previousResults||[]).filter(slot=>slot.archiveSaving||slot.item&&slot.archiveOk===false).map(slot=>({id:slot.item?.studioTaskId||'',name:slot.item?.productName,plan:slot.item?.studioGenesisPlan||{settings:binding.draft.settings},slots:[slot],historical:true})));
-      entries.forEach(entry=>{
-        const stats=planProgress(entry.slots||[],entry.plan?.shots?.length||entry.slots?.length||0);
-        (entry.slots||[]).forEach(slot=>{
-          if(!slot.item&&!['queued','generating','uncertain','failed'].includes(slot.status))return;
-          const receipt=slot.pendingReceipt||slot.generationReceipt||(state.pendingReceipts||[]).find(value=>value.taskId===entry.id&&value.shotId===slot.shot.id)||{};
-          const jobId=receipt.jobId||slot.receiptJobId||slot.item?.jobId||'';
-          const key=jobId||`${entry.id}:${slot.shot.id}`;
-          if(seen.has(key))return;seen.add(key);
-          const status=slot.archiveSaving?'saving':slot.item&&slot.archiveOk===false?'unsaved':slot.item?'done':slot.status;
-          const currentPlan=binding.draft.tasks.find(value=>value.id===entry.id)?.plan;
-          rows.push({key,jobId,taskId:entry.id,taskName:entry.name||binding.draft.tasks.find(value=>value.id===entry.id)?.name||'商品任务',label:slot.shot?.label||'生成图片',status,statusLabel:taskStatusLabels[status]||'待确认',type:workspaceType(entry.plan.settings),createdAt:receipt.createdAt||0,endedAt:slot.item?.createdAt||0,previous:binding!==workspaceBinding||entry.historical||!currentPlan||currentPlan.signature!==entry.plan.signature,error:slot.error?historicalSlotError(slot):'',unsaved:binding.saveFault||slot.item&&slot.archiveOk===false,projectKey,planSignature:entry.plan.signature||'',...stats});
-        });
-      });
+      (state.tasks||[]).forEach(entry=>(entry.slots||[]).forEach(slot=>{
+        if(!slot.item&&!['queued','generating','uncertain','failed'].includes(slot.status))return;
+        const receipt=slot.pendingReceipt||slot.generationReceipt||(state.pendingReceipts||[]).find(value=>value.taskId===entry.id&&value.shotId===slot.shot.id)||{};
+        const jobId=receipt.jobId||slot.receiptJobId||slot.item?.jobId||'';
+        const key=jobId||`${entry.id}:${slot.shot.id}`;
+        if(seen.has(key))return;seen.add(key);
+        rows.push({key,jobId,taskId:entry.id,label:`${entry.name} · ${slot.shot.label}`,status:slot.status,type:workspaceType(entry.plan.settings),createdAt:receipt.createdAt||slot.item?.createdAt||0,previous:binding!==workspaceBinding||!draft?.tasks.some(value=>value.id===entry.id),error:slot.error?historicalSlotError(slot):'',unsaved:binding.saveFault||slot.item&&slot.archiveOk===false,projectKey:binding!==workspaceBinding&&binding.storageKey.includes(':saved-project:')?binding.storageKey:''});
+      }));
       (state.pendingReceipts||[]).concat(state.uncertain||[]).forEach(receipt=>{
         if(receipt.accountKey&&receipt.accountKey!==account)return;
         const key=receipt.jobId||`${receipt.taskId}:${receipt.shotId}`;
         if(seen.has(key))return;seen.add(key);
-        const entry=binding.draft.tasks.find(value=>value.id===receipt.taskId);
-        rows.push({key,jobId:receipt.jobId||'',taskId:receipt.taskId||'',taskName:entry?.name||'保留的原任务',label:'原图片回执',status:'uncertain',statusLabel:'待确认',type:workspaceType(binding.draft.settings),createdAt:receipt.createdAt||0,previous:true,error:'',projectKey,completedCount:null,plannedCount:null,failedCount:0,pendingReceiptCount:1});
+        rows.push({key,jobId:receipt.jobId||'',taskId:receipt.taskId||'',label:'旧图片任务',status:'uncertain',type:workspaceType(binding.draft.settings),createdAt:receipt.createdAt||0,previous:true,error:''});
       });
     });
-    if(analyzing){const entry=draft.tasks[0];rows.push({key:`analysis:${entry.id}`,jobId:'',taskId:entry.id,taskName:entry.name,label:'产品分析',status:'analyzing',statusLabel:'分析中',type:workspaceType(draft.settings),createdAt:analysisStartedAt,previous:false,error:'',projectKey:'',completedCount:null,plannedCount:null,failedCount:0,pendingReceiptCount:0});}
-    return rows.sort((a,b)=>Number(a.status==='done')-Number(b.status==='done')||b.createdAt-a.createdAt);
+    return rows.sort((a,b)=>b.createdAt-a.createdAt);
   }
-  function getTaskState() {
-    const rows=taskRows(), count=status=>rows.filter(row=>row.status===status).length;
-    const generating=count('generating'), queued=count('queued'), saving=count('saving'), pendingReceiptCount=count('uncertain'), failed=count('failed'), completed=count('done'), unsaved=count('unsaved');
+  function getTaskState(rows=taskRows()) {
+    const count=status=>rows.filter(row=>row.status===status).length;
+    const generating=count('generating'), queued=count('queued'), pendingReceiptCount=count('uncertain'), failed=count('failed'), completed=count('done');
     const retainedSaving=[...retainedWorkspaces].some(binding=>binding.controller.state.busy||(binding.controller.state.tasks||[]).some(entry=>(entry.slots||[]).some(slot=>slot.archiveSaving)));
-    const preparing=(workspaceBusy()||retainedSaving)&&!generating&&!queued&&!saving&&!analyzing;
-    const activeCount=generating+queued+saving+count('analyzing')+(preparing?1:0);
-    const summary=`进行中 ${activeCount} · 待确认 ${pendingReceiptCount} · 失败 ${failed}${unsaved?` · 待补存 ${unsaved}`:''}`;
-    const groups=new Map();rows.forEach(row=>{const groupKey=`${row.projectKey}:${row.taskId}:${row.planSignature||''}`;if(!groups.has(groupKey))groups.set(groupKey,{key:groupKey,taskId:row.taskId,taskName:row.taskName,type:row.type,previous:row.previous,completedCount:row.completedCount,plannedCount:row.plannedCount,failedCount:row.failedCount,pendingReceiptCount:row.pendingReceiptCount});});
-    return {ready:!initializing&&!restoring&&!startupFailed,busy:activeCount>0,activeCount,pendingReceiptCount,failedCount:failed,completedCount:completed,unsavedCount:unsaved,summary,rows,taskGroups:[...groups.values()],currentPlan:draft?planProgress(activeSlots()):null};
+    const preparing=(workspaceBusy()||retainedSaving)&&!generating&&!queued;
+    const activeCount=generating+queued+(preparing?1:0);
+    const summary=`${activeCount} 项进行中 · ${pendingReceiptCount} 项结果待确认 · ${failed} 项失败 · ${completed} 项完成`;
+    return {ready:!initializing&&!restoring&&!startupFailed,busy:activeCount>0,activeCount,pendingReceiptCount,failedCount:failed,completedCount:completed,summary};
   }
-  function resultPhase(view) {
-    const slots=activeSlots(), stats=planProgress(slots);
-    const running=current().busy||slots.some(slot=>['queued','generating'].includes(slot.status));
-    if(analyzing)return {title:'分析中…',desc:'正在分析产品并生成设计规范'};
-    if(running&&stats.completedCount!==stats.plannedCount)return {title:'生成中…',desc:slots.length?progressText(stats):'正在提交本次请求，请稍候。'};
-    if(stats.savingCount)return {title:'已生成待保存',desc:progressText(stats)};
-    if(stats.completedCount&&stats.completedCount<stats.plannedCount)return {title:'部分完成',desc:progressText(stats)+'。已成功的原件可预览和下载。'};
-    if(stats.plannedCount&&stats.completedCount===stats.plannedCount)return {title:'生成完成',desc:progressText(stats)};
-    if(stats.pendingReceiptCount)return {title:'结果待确认',desc:progressText(stats)+'。原请求回执仍保留，其他任务可继续。'};
-    if(stats.failedCount)return {title:'生成失败',desc:progressText(stats)+'。可查看失败原因，只重试失败项。'};
-    if(view===2)return {title:'设计规划预览',desc:'请确认设计规范和图片规划'};
-    if(view===1)return {title:'产品分析',desc:'分析内容已保留，可继续核对创作方案。'};
-    if(view===4)return {title:'生成结果',desc:'已保留的图片原件可预览和下载。'};
-    return {title:'生成结果',desc:'上传产品图并点击分析开始'};
-  }
-  function elapsedText(row,now=Date.now()) {
-    if(!Number.isFinite(row.createdAt)||row.createdAt<=0)return '耗时未记录';
-    const live=['queued','generating','analyzing','saving','uncertain'].includes(row.status);
-    const end=live?now:row.endedAt;
-    if(!Number.isFinite(end)||end<row.createdAt)return '耗时未记录';
-    const seconds=Math.max(0,Math.floor((end-row.createdAt)/1000)), minutes=Math.floor(seconds/60), hours=Math.floor(minutes/60);
-    return `${live?'已等待':'生成用时'} ${hours?`${hours} 小时 ${minutes%60} 分钟`:minutes?`${minutes} 分钟 ${seconds%60} 秒`:`${seconds} 秒`}`;
+  function taskElapsed(createdAt,now=Date.now()) {
+    if(!createdAt)return '开始时间未记录';
+    const seconds=Math.max(0,Math.floor((now-createdAt)/1000));
+    return seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
   }
   function taskProgressMarkup() {
-    const state=getTaskState(), view=workspaceView();
-    state.rows.forEach(row=>{if(row.status!=='done'||row.unsaved)view.hiddenRows.delete(row.key);});
-    const rows=state.rows.filter(row=>!(row.status==='done'&&!row.unsaved&&view.hiddenRows.has(row.key)));
-    const hidden=state.rows.length-rows.length;
-    view.taskPage=Math.min(view.taskPage,Math.max(0,Math.ceil(rows.length/taskPageSize)-1));
-    const cleanup=`<div class="sg-list-controls">${state.rows.some(row=>row.status==='done'&&!row.unsaved&&!view.hiddenRows.has(row.key))?'<button type="button" class="sg-button sg-small" data-action="clear-completed">清理已完成任务</button>':''}${hidden?`<button type="button" class="sg-button sg-small" data-action="restore-completed">恢复已清理任务 (${hidden})</button>`:''}<span class="sg-meta">清理仅收起列表，原件和生成记录保留。</span></div>`;
-    if(!state.rows.length&&!state.busy)return retainedRecoveryMarkup();
-    return `<details class="sg-task-progress" data-task-progress${taskDetailsOpen?' open':''}><summary class="sg-task-summary"><span>${icon(state.pendingReceiptCount||state.failedCount?'alert':'clock')}任务状态</span><strong data-task-status-summary>${esc(state.summary)}</strong><span class="sg-note">展开任务详情</span></summary><div class="sg-task-list" aria-label="图片任务详情">${cleanup}${rows.slice(view.taskPage*taskPageSize,(view.taskPage+1)*taskPageSize).map(row=>`<article class="sg-task-row" data-task-row="${esc(row.key)}"><div class="sg-task-identity"><strong>${esc(row.taskName)} · ${esc(row.label)}</strong><span class="sg-task-row-meta">${esc(typeLabel(row.type))}${row.previous?' · 保留的原任务':''}</span><span class="sg-task-row-meta">任务号：${esc(row.taskId||'未记录')}${row.jobId?` · 请求号：${esc(row.jobId)}`:''}</span></div><div class="sg-task-counts"><span class="sg-task-state" data-state="${esc(row.status)}">${icon(['done'].includes(row.status)?'check':['failed','uncertain','unsaved'].includes(row.status)?'alert':'clock')}${esc(row.statusLabel)}</span>${row.plannedCount!==null?`<span>${esc(progressText(row))}</span>`:''}<span data-task-elapsed="${esc(row.key)}">${esc(elapsedText(row))}</span></div><button type="button" class="sg-button sg-small" data-action="return-task" data-task-key="${esc(row.key)}"${row.projectKey&&locked()?' disabled':''}>${icon('return')}返回原任务</button>${row.error?`<p class="sg-task-alert">${esc(row.error)}</p>`:''}${row.status==='unsaved'?'<p class="sg-task-alert">原件仍保留。返回原任务补存，无需重新生图。</p>':''}${row.status==='uncertain'?'<p class="sg-task-alert">原回执保留；查看生成记录或返回原任务核对，不会自动重新提交。</p>':''}</article>`).join('')}${pageControls('task-page',view.taskPage,rows.length,taskPageSize)}${!rows.length?`<p class="sg-note">${hidden?'已完成任务已收起，可随时恢复。':'正在提交本次请求，任务号将在回执建立后显示。'}</p>`:''}</div></details>${retainedRecoveryMarkup()}`;
-  }
-  async function revealTask(key) {
-    await ensureAccount();const row=taskRows().find(value=>value.key===key);
-    if(!row)return {ok:false,error:'任务状态已变化，请重新打开任务详情。'};
-    if(row.type!==workspaceType(draft.settings)){if(locked())return {ok:false,error:'当前工作区正在处理，请稍后返回原工作区。'};await switchWorkspace(row.type);}
-    if(row.projectKey){if(locked())return {ok:false,error:'当前工作区正在处理，请稍后返回保留任务。'};await restoreProject(row.projectKey);}
-    if(!draft.tasks.some(entry=>entry.id===row.taskId)&&!current().tasks.some(entry=>entry.id===row.taskId)){
-      if(typeof bridge.openHistory==='function'){await bridge.openHistory();message('原任务回执仍保留，可在任务详情与生成记录中核对。');return {ok:true};}
-      return {ok:false,error:'原任务回执仍保留，请在任务详情中核对任务号。'};
-    }
-    if(isBatch){const view=workspaceView();view.hiddenTasks.delete(row.taskId);const entries=draft.tasks.filter(entry=>!view.hiddenTasks.has(entry.id)||!completedTask(entry));view.batchPage=Math.max(0,Math.floor(entries.findIndex(entry=>entry.id===row.taskId)/batchPageSize));const entry=draft.tasks.find(value=>value.id===row.taskId);if(entry)entry.collapsed=false;view.collapsedResults.delete(row.taskId);render();}
-    else if(!locked()&&stepAvailable(draft.tasks[0],3)){draft.viewStep=3;render();}
-    const target=[...root.querySelectorAll('[data-task]')].find(element=>element.dataset.task===row.taskId)||root.querySelector('[data-workspace-step]')||root;
-    target.setAttribute?.('tabindex','-1');target.focus();target.scrollIntoView?.({block:'center',behavior:'auto'});
-    return {ok:true};
-  }
-  function retainedRecoveryMarkup() {
-    const bindings=[...retainedWorkspaces].filter(binding=>binding.storageKey.includes(':saved-project:')&&workspaceType(binding.draft.settings)===workspaceType(draft.settings));
-    if(!bindings.length)return '';
-    return `<div data-retained-recovery>${bindings.map(binding=>`<div class="sg-actions">${retainedUnsaved(binding)?'<p class="sg-note">原件或草稿待补存。</p>':''}<button type="button" class="sg-button sg-small" data-action="restore-retained" data-project-key="${esc(binding.storageKey)}"${locked()?' disabled':''}>恢复保留任务</button></div>`).join('')}</div>`;
+    const rows=taskRows(), state=getTaskState(rows);
+    const phase=initializing||restoring?'正在读取任务':uploading?'正在导入产品图':analyzing?'正在分析产品':state.activeCount&&!rows.some(row=>['generating','queued'].includes(row.status))?'正在保存任务或成果':'';
+    return `<section class="sg-card sg-task-progress" data-task-progress aria-label="任务进度"><div class="sg-card-head"><div><h2>任务进度</h2><p class="sg-note" data-task-summary>${esc(state.summary)}</p></div>${current().busy?'<button type="button" class="sg-button sg-small" data-action="end-wait">结束本次等待</button>':''}</div>${phase?`<p class="sg-note">${esc(phase)}</p>`:''}${rows.length?`<details${state.activeCount||state.pendingReceiptCount?' open':''}><summary>查看 ${rows.length} 张图片的任务状态</summary><div class="sg-task-list">${rows.map(row=>`<article class="sg-task-row" data-task-row="${esc(row.key)}"><div><strong>${esc(row.label)}</strong><span class="sg-meta">${esc(typeLabel(row.type))}${row.previous?' · 历史任务':''}</span></div><p class="sg-task-state">${row.status==='uncertain'?'结果待确认 · 本次等待已结束':statusLabel(row.status)}</p><p class="sg-meta">${row.createdAt?`提交于 ${esc(new Date(row.createdAt).toLocaleString('zh-CN'))} · 已过 <span data-task-elapsed="${row.createdAt}">${taskElapsed(row.createdAt)}</span>`:'开始时间未记录'}</p><details><summary>任务编号</summary><code>${esc(row.jobId||row.taskId||'旧记录未保存编号')}</code></details>${row.status==='uncertain'?'<p class="sg-note">原请求和结果继续保留，可创建新任务。新生成按新任务计费。</p>':row.status==='failed'&&row.error?`<p class="sg-note">${esc(row.error)}</p>`:''}${row.unsaved?'<p class="sg-note">原件或草稿待补存，请保留本页面。</p>':''}${row.projectKey&&row.type===workspaceType(draft.settings)?`<button type="button" class="sg-button sg-small" data-action="restore-retained" data-project-key="${esc(row.projectKey)}"${locked()?' disabled':''}>恢复此项目</button>`:''}</article>`).join('')}</div></details>`:'<p class="sg-note">当前没有正在执行的图片任务。</p>'}</section>`;
   }
   function refreshTaskProgress() {
-    const element=root?.querySelector('[data-task-progress-host]');
+    const element=root?.querySelector('[data-task-progress]');
     if(!element)return;
-    element.innerHTML=taskProgressMarkup();syncTaskProgress();
+    const markup=taskProgressMarkup();element.innerHTML=markup.slice(markup.indexOf('>')+1,-'</section>'.length);
+    syncTaskProgress();
   }
   function stopTaskElapsedTimer() {
     if(!taskElapsedTimer)return;
@@ -717,23 +678,23 @@
     if(document.visibilityState==='hidden')return;
     const now=Date.now();
     root?.querySelectorAll('[data-task-elapsed]').forEach(element=>{
-      const row=elapsedRows.get(element.dataset.taskElapsed);
-      if(row){const text=elapsedText(row,now);if(element.textContent!==text)element.textContent=text;}
+      const text=taskElapsed(Number(element.dataset.taskElapsed),now);
+      if(element.textContent!==text)element.textContent=text;
     });
   }
   function syncTaskProgress() {
-    const state=getTaskState();
-    elapsedRows=new Map(state.rows.map(row=>[row.key,row]));
-    // Keep the live region outside the replaced workspace. Time ticks only
-    // update elapsed text, so assistive technology hears actual state changes.
+    const rows=taskRows(), state=getTaskState(rows);
+    // Keep announcements outside the replaced workspace. Elapsed ticks only
+    // update their own labels and never announce the entire task list again.
     let announcer=document.getElementById('sgTaskAnnouncement');
-    if(!announcer){announcer=document.createElement('div');announcer.id='sgTaskAnnouncement';announcer.className='sg-visually-hidden';announcer.innerHTML='<span role="status" aria-live="polite" aria-atomic="true"></span>';document.body.appendChild(announcer);}
-    const signature=JSON.stringify([state.summary,state.rows.map(row=>[row.key,row.status])]);
-    if(signature!==lastTaskAnnouncement){lastTaskAnnouncement=signature;announcer.querySelector('span').textContent=state.rows.length||state.busy?state.summary:'';}
-    const ticking=document.visibilityState!=='hidden'&&state.rows.some(row=>row.createdAt>0&&['queued','generating','analyzing','saving','uncertain'].includes(row.status));
+    if(!announcer){announcer=document.createElement('div');announcer.id='sgTaskAnnouncement';announcer.className='sg-visually-hidden';announcer.style.cssText='position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap';announcer.innerHTML='<span role="status" aria-live="polite" aria-atomic="true"></span>';document.body.appendChild(announcer);}
+    const signature=JSON.stringify([state.summary,rows.map(row=>[row.key,row.status])]);
+    if(signature!==lastTaskAnnouncement){lastTaskAnnouncement=signature;announcer.querySelector('span').textContent=rows.length||state.busy?state.summary:'';}
+    const ticking=document.visibilityState!=='hidden'&&rows.some(row=>row.createdAt>0&&['queued','generating','uncertain'].includes(row.status));
     if(ticking&&!taskElapsedTimer)taskElapsedTimer={id:setInterval(updateTaskElapsed,1000)};
     else if(!ticking)stopTaskElapsedTimer();
   }
+  // Display legacy snapshots safely without changing their task or receipt state.
   function historicalSlotError(slot) {
     const original=slot.error, stored=original&&typeof original==='object'&&!Array.isArray(original)?original:null;
     const meta=slot.errorMeta&&typeof slot.errorMeta==='object'&&!Array.isArray(slot.errorMeta)?slot.errorMeta:null;
@@ -759,10 +720,28 @@
     const service='生成服务暂时繁忙。'+(notSubmitted?'请稍后再试。':check);
     const balance='可用积分不足，请补充积分。'+(notSubmitted?'补充后可继续。':check);
     const login='请恢复原账号登录后查看任务记录，避免重复提交。';
+    const modelAuth='自有生图接口鉴权失败，请重新核对并保存 API 配置。'+check;
+    const legacyAuth='接口鉴权未通过，请核对登录状态和 API 配置。'+check;
     const limited='请求较多，服务暂时繁忙。'+(notSubmitted?'请稍后再试。':check);
     if(/^(?:POOL_|CREDIT_POOL_|SHARED_SOURCE_|SOURCE_|FX_RATE_|INVALID_FX_|INSUFFICIENT_POOL_|CREATIVE_SUPPLY_|CREATIVE_CREDIT_SERVICE_|CREDIT_SERVICE_)/.test(code))return service;
     if(/^(?:INSUFFICIENT_BALANCE|INSUFFICIENT_CREDITS)$/.test(code))return balance;
+    if(code==='CREATIVE_REQUEST_NOT_SUBMITTED'&&notSubmitted&&(receipt.httpStatus||receipt.status)===401)return login;
+    // Only persisted non-submission proof for this same current slot may invite manual retry.
+    const failure=slot.generationFailure, failedReceipt=failure&&failure.receipt;
+    const currentReceipt=slot.pendingReceipt||failedReceipt;
+    const receiptFields=['receiptId','jobId','accountKey','workspaceKey','taskId','shotId','batchId','planSignatureHash'];
+    const sameFailedReceipt=meta&&meta.providerAttempted!==true&&meta.upstreamRejected!==true&&failure&&failure.providerSubmitted===false&&failure.definitiveFailure===true&&
+      failedReceipt&&currentReceipt&&failedReceipt.receiptVersion===1&&currentReceipt.receiptVersion===1&&
+      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(currentReceipt.receiptId||'')&&
+      /^[a-f0-9]{64}$/.test(currentReceipt.planSignatureHash||'')&&currentReceipt.accountKey===account&&
+      currentReceipt.jobId===slot.receiptJobId&&currentReceipt.shotId===slot.shot?.id&&
+      receiptFields.every(key=>typeof failedReceipt[key]==='string'&&(key==='batchId'||!!failedReceipt[key])&&failedReceipt[key]===currentReceipt[key]);
+    if(code==='CREATIVE_REQUEST_NOT_SUBMITTED'&&notSubmitted&&sameFailedReceipt&&slot.status==='failed'&&!slot.generationReceipt)return '本次尚未提交生图，可重试此图。';
     if(/^(?:AUTH_REQUIRED|ACCOUNT_UNAVAILABLE|CREATIVE_ACCOUNT_(?:CHANGED|UNAVAILABLE)|STUDIO_ACCOUNT_(?:CHANGED|REQUIRED))$/.test(code))return login;
+    if(code==='MODEL_AUTH_FAILED')return modelAuth;
+    // Older snapshots stored the safe auth wording with an ambiguous code.
+    if(code==='UNAUTHORIZED')return /模型服务鉴权失败|自有生图接口鉴权失败/.test(hint)?modelAuth:legacyAuth;
+    if(/模型服务鉴权失败|自有生图接口鉴权失败/.test(hint))return modelAuth;
     if(/^(?:RATE_LIMITED|TOO_MANY_REQUESTS)$/.test(code))return limited;
     if(/^(?:IMAGE_MODEL_INVALID|MODEL_INVALID|INVALID_MODEL|IMAGE_MODEL_REQUIRED|MODEL_TYPE_MISMATCH)$/.test(code)||/images?\s+endpoint\s+(?:requires?|expects?)\s+(?:an?\s+)?image\s+model/i.test(hint))return '所选模型不适用于生图，请重新选择模型并核对设置。'+check;
     if(/^(?:IMAGE_)?MODEL_NOT_FOUND$/.test(code))return '所选生图模型暂时不可用，请重新选择模型并核对设置。'+check;
@@ -774,65 +753,110 @@
     if(/(?:产品图|商品主体图)(?:读取失败|解码失败)|(?:无法读取|读取失败).{0,12}(?:产品图|商品主体图)|(?:图片格式不支持|图片解码失败)/i.test(hint))return '产品图或素材暂时无法读取，请检查素材。'+check;
     return '这张图片暂时未完成。'+check;
   }
-  function resultsMarkup(slots,scope='single') {
-    const view=workspaceView(), results=slots.filter(slot=>slot.item||['failed','generating','uncertain'].includes(slot.status));
-    if(!results.length)return '';
-    const collapsed=view.collapsedResults.has(scope), page=Math.min(view.resultPages.get(scope)||0,Math.max(0,Math.ceil(results.length/resultPageSize)-1));
-    view.resultPages.set(scope,page);
-    const toolbar=`<div class="sg-list-controls"><span class="sg-meta">${results.length} 项结果</span><button type="button" class="sg-button sg-small" data-action="toggle-results" data-scope="${esc(scope)}" aria-expanded="${!collapsed}">${collapsed?'展开结果':'收起结果'}</button></div>`;
-    if(collapsed)return toolbar;
-    return `${toolbar}<div class="sg-results">${results.slice(page*resultPageSize,(page+1)*resultPageSize).map(slot=>{
-      const image=slot.item&&slot.item.url;
+  // Presentation-only cache. Canonical URLs, receipts and drafts stay intact.
+  function releaseLocalOriginals() {
+    for(const entry of localOriginals.values())if(entry.url)try{URL.revokeObjectURL(entry.url);}catch(_){}
+    localOriginals.clear();
+  }
+  function localDisplayOwner(binding=workspaceBinding) {
+    try{return !!account&&binding===workspaceBinding&&!!root&&root.isConnected!==false&&(!displayFrame||displayFrame.isConnected)&&bridge.archiveContext?.().accountKey===account;}catch(_){return false;}
+  }
+  function localOriginalDescriptor(slot) {
+    try {
+      const item=slot?.item,r=slot?.generationReceipt;
+      if(slot.status!=='done'||!slot.archiveOk||!item||!r||!item.archiveAssetId||item.accountKey!==account||r.accountKey!==account||r.taskId!==item.studioTaskId||r.shotId!==slot.shot?.id||r.jobId!==item.jobId||r.batchId!==item.batchId||item.resultId!==r.jobId+':studio:'+r.shotId)return null;
+      if(['accountKey','taskId','shotId','jobId','batchId'].some(key=>typeof r[key]!=='string'||!r[key].trim())||!Number.isFinite(r.createdAt)||r.createdAt<=0)return null;
+      const plan=slot.previous?item.studioGenesisPlan:current().tasks.find(task=>task.id===r.taskId)?.plan;
+      if(!plan||engine.validatePlan(plan)?.ok!==true||JSON.stringify(plan)!==JSON.stringify(item.studioGenesisPlan)||JSON.stringify(plan.shots.find(shot=>shot.id===r.shotId))!==JSON.stringify(slot.shot))return null;
+      let identity;
+      if(r.receiptVersion===1){
+        identity={version:1,receiptId:r.receiptId,jobId:r.jobId,accountKey:r.accountKey,workspaceKey:r.workspaceKey,taskId:r.taskId,shotId:r.shotId,batchId:r.batchId,planSignatureHash:r.planSignatureHash};
+        if(r.workspaceKey!==workspaceScope||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(identity.receiptId||'')||!/^[a-f0-9]{64}$/.test(identity.planSignatureHash||''))return null;
+        const url=new URL(item.url,location.origin),query=JSON.parse(url.searchParams.get('identity'));
+        if(url.origin!==location.origin||url.username||url.password||url.hash||!new RegExp('^/api/creative/image-receipts/'+identity.receiptId+'/content/(?:0|[1-9][0-9]{0,2})$').test(url.pathname)||Array.from(url.searchParams.keys()).length!==1||Object.keys(query||{}).length!==9||!Object.keys(identity).every(key=>query[key]===identity[key]))return null;
+      }else{
+        if(['receiptVersion','receiptId','workspaceKey','planSignatureHash'].some(key=>Object.prototype.hasOwnProperty.call(r,key))||!engine.validImage(item.url))return null;
+        if(!/^data:image\/(?:png|jpeg|webp|gif);base64,/i.test(item.url)){
+          const url=new URL(item.url);if(url.protocol!=='https:'||url.username||url.password||url.hash||url.pathname.startsWith('/api/creative/image-receipts/'))return null;
+        }
+        identity={accountKey:r.accountKey,taskId:r.taskId,shotId:r.shotId,jobId:r.jobId,batchId:r.batchId,createdAt:r.createdAt};
+      }
+      const expected={archiveAssetId:item.archiveAssetId,resultId:item.resultId,jobId:item.jobId,providerTaskId:String(item.taskId||'')};
+      return {key:JSON.stringify({account,scope:workspaceScope,previous:!!slot.previous,expected,identity,createdAt:r.createdAt,url:item.url}),identity,expected,signature:plan.signature,url:item.url};
+    }catch(_){return null;}
+  }
+  function currentLocalDescriptor(descriptor) {
+    return allSlots().map(localOriginalDescriptor).find(value=>value?.key===descriptor.key);
+  }
+  function localResultUrl(slot) {
+    const descriptor=localOriginalDescriptor(slot),entry=descriptor&&localOriginals.get(descriptor.key);
+    return localDisplayOwner()&&entry?.url||slot.item?.url||'';
+  }
+  function applyLocalOriginals(version) {
+    if(version!==displayRenderVersion||!localDisplayOwner())return;
+    for(const slot of allSlots()){
+      const descriptor=localOriginalDescriptor(slot),entry=descriptor&&localOriginals.get(descriptor.key);if(!entry?.url)continue;
+      root.querySelectorAll('[data-preview]').forEach(image=>{if(image.dataset.preview===slot.item.resultId)image.src=entry.url;});
+      const modal=document.getElementById('sgPreview');if(modal&&!modal.hidden&&modal.dataset.localResult===slot.item.resultId){const image=modal.querySelector('img');if(image)image.src=entry.url;}
+    }
+  }
+  function readLocalOriginal(slot,explicit=false) {
+    const descriptor=localOriginalDescriptor(slot),binding=workspaceBinding,archive=window.SZ_IMAGE_ARCHIVE;
+    if(!descriptor||!localDisplayOwner(binding)||deactivating||typeof archive?.readCommittedResult!=='function')return Promise.resolve(null);
+    let entry=localOriginals.get(descriptor.key);
+    if(entry?.url)return Promise.resolve(entry.url);
+    if(entry?.promise)return entry.promise;
+    if(entry&&!explicit)return Promise.resolve(null);
+    entry={url:'',promise:null};localOriginals.set(descriptor.key,entry);
+    entry.promise=(async()=>{
+      const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(descriptor.signature));
+      const hash=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+      if(descriptor.identity.version===1&&hash!==descriptor.identity.planSignatureHash||!localDisplayOwner(binding)||deactivating||localOriginals.get(descriptor.key)!==entry||!currentLocalDescriptor(descriptor))return null;
+      const result=await archive.readCommittedResult(account,descriptor.expected);
+      if(!result?.ok||result.accountKey!==account||!Object.keys(descriptor.expected).every(key=>result[key]===descriptor.expected[key])||!(result.blob instanceof Blob)||!localDisplayOwner(binding)||deactivating||localOriginals.get(descriptor.key)!==entry||!currentLocalDescriptor(descriptor))return null;
+      const url=URL.createObjectURL(result.blob);
+      if(!localDisplayOwner(binding)||localOriginals.get(descriptor.key)!==entry||!currentLocalDescriptor(descriptor)){URL.revokeObjectURL(url);return null;}
+      entry.url=url;applyLocalOriginals(displayRenderVersion);return url;
+    })().catch(()=>null).finally(()=>{entry.promise=null;});
+    return entry.promise;
+  }
+  function refreshLocalOriginals() {
+    if(!localDisplayOwner()){releaseLocalOriginals();return;}
+    const slots=allSlots(),keys=new Set(slots.map(localOriginalDescriptor).filter(Boolean).map(value=>value.key));
+    for(const[key,entry]of localOriginals)if(!keys.has(key)){if(entry.url)try{URL.revokeObjectURL(entry.url);}catch(_){}localOriginals.delete(key);}
+    if(!deactivating)for(const slot of slots)void readLocalOriginal(slot);
+    applyLocalOriginals(displayRenderVersion);
+  }
+  window.addEventListener('pagehide',releaseLocalOriginals);
+  function resultsMarkup(slots) {
+    return `<div class="sg-results">${slots.filter(slot=>slot.item||['failed','generating','uncertain'].includes(slot.status)).map(slot=>{
+      const image=slot.item&&localResultUrl(slot);
       const taskId=slot.taskId||slot.item?.studioTaskId;
-      const liveLabel=slot.status==='queued'?'等待中':slot.status==='generating'?'生成中':slot.status==='failed'?'生成失败':'';
-      return `<article class="sg-result${slot.status==='failed'?' sg-failed':''}">${image?`<label class="sg-result-select"><input type="checkbox" aria-label="选择${esc(slot.shot&&slot.shot.label||'结果图片')}" data-result-select="${esc(slot.item.resultId)}"${selectedResults.has(slot.item.resultId)?' checked':''}></label><img loading="lazy" decoding="async" src="${esc(image)}" alt="${esc(slot.shot&&slot.shot.label||'生成图片')}" data-preview="${esc(slot.item.resultId)}" role="button" tabindex="0" aria-label="预览${esc(slot.shot&&slot.shot.label||'生成图片')}">`:''}<div><h3>${esc(slot.taskName||'')} ${esc(slot.shot&&slot.shot.label||'')}${slot.previous?' · 历史版本':''}</h3>${liveLabel?`<p>${liveLabel}</p>`:''}${slot.error?`<p>${esc(historicalSlotError(slot))}</p>`:''}${image?`<p>${slot.archiveSaving?'已生成，正在保存原件':slot.archiveOk?'已存入本机历史':'原件待补存'}</p><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="download" data-result="${esc(slot.item.resultId)}">下载</button><button type="button" class="sg-button sg-small" data-action="edit-result" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>编辑图片</button>${!slot.archiveOk?`<button type="button" class="sg-button sg-small" data-action="archive" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>补存原件</button>`:''}</div>`:''}${!slot.previous&&taskId&&!pendingImage(taskId,slot.shot.id)&&['done','failed'].includes(slot.status)?`<button type="button" class="sg-text-button" data-action="retry-slot" data-task-id="${esc(taskId)}" data-shot-id="${esc(slot.shot.id)}"${generationLocked()||!modelInfo.ready?' disabled':''}>${slot.status==='done'?'重新生成此图':'重试此图'}</button>`:''}</div></article>`;
-    }).join('')}</div>${pageControls('result-page',page,results.length,resultPageSize,scope)}`;
+      return `<article class="sg-result${slot.status==='failed'?' sg-failed':''}">${image?`<label class="sg-result-select"><input type="checkbox" aria-label="选择${esc(slot.shot&&slot.shot.label||'结果图片')}" data-result-select="${esc(slot.item.resultId)}"${selectedResults.has(slot.item.resultId)?' checked':''}></label><img loading="lazy" decoding="async" src="${esc(image)}" alt="${esc(slot.shot&&slot.shot.label||'生成图片')}" data-preview="${esc(slot.item.resultId)}" role="button" tabindex="0" aria-label="预览${esc(slot.shot&&slot.shot.label||'生成图片')}">`:''}<div><h3>${esc(slot.taskName||'')} ${esc(slot.shot&&slot.shot.label||'')}${slot.previous?' · 历史版本':''}</h3><p>${statusLabel(slot.status)}</p>${slot.error?`<p>${esc(historicalSlotError(slot))}</p>`:''}${image?`<p>${slot.archiveOk?'已存入本机历史':'原件待补存'}</p><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="download" data-result="${esc(slot.item.resultId)}">下载</button><button type="button" class="sg-button sg-small" data-action="edit-result" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>编辑图片</button>${!slot.archiveOk?`<button type="button" class="sg-button sg-small" data-action="archive" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>补存原件</button>`:''}</div>`:''}${!slot.previous&&taskId&&!pendingImage(taskId,slot.shot.id)&&['done','failed'].includes(slot.status)?`<button type="button" class="sg-text-button" data-action="retry-slot" data-task-id="${esc(taskId)}" data-shot-id="${esc(slot.shot.id)}"${generationLocked()||!modelInfo.ready?' disabled':''}>${slot.status==='done'?'重新生成此图':'重试此图'}</button>`:''}</div></article>`;
+    }).join('')}</div>`;
   }
   function runSummary() {
-    const slots=activeSlots(), stats=planProgress(slots);
-    if(!slots.length||!slots.some(slot=>slot.status!=='ready'||slot.item))return '';
-    return `<div class="sg-run-summary" data-run-progress><span>当前方案</span><strong>${esc(progressText(stats))}</strong><progress aria-label="当前方案已生成图片数量" value="${stats.completedCount}" max="${stats.plannedCount}"></progress></div>`;
+    const slots=activeSlots(), done=slots.filter(slot=>slot.status==='done').length;
+    if(!slots.length)return '';
+    return `<div class="sg-run-summary"><span>${done}/${slots.length} 已完成</span><progress value="${done}" max="${slots.length}"></progress><span>${slots.filter(slot=>slot.status==='failed').length} 项失败</span></div>`;
   }
   function renderSingle() {
     const entry=draft.tasks[0];
     const ad=draft.settings.imageType==='ad', kind=ad?'广告图':draft.settings.mode==='detail'?'详情图':'主图';
-    const view=activeStep(entry);
-    return `<div class="sg-hero"><span class="sg-eyebrow">${icon('spark')} AI ${kind}创作</span><h1>${ad?'超现实广告图实验室':draft.settings.mode==='detail'?'详情生图实验室':'主图生图实验室'}</h1><p>${draft.settings.mode==='detail'?'上传产品图，按阅读顺序规划连续详情屏，统一卖点、细节与规格展示。':ad?'上传产品图，围绕广告诉求规划视觉创意。':'上传产品图，规划可独立使用的商品封面、角度与场景主图。'}</p></div>
+    return `<div class="sg-hero"><span class="sg-eyebrow">${icon('spark')} AI 主图 · 详情页 · 广告图</span><h1>${ad?'超现实广告图实验室':draft.settings.mode==='detail'?'详情生图实验室':'主图生图实验室'}</h1><p>上传产品图，AI 智能分析并帮写拍摄需求，生成多角度、多场景的电商图片</p></div>
       <div class="sg-top-actions"><div class="sg-actions">${commonActions()}</div></div>${stepper(entry)}
-      <div data-message class="sg-message" role="status" aria-live="polite" hidden></div><div data-task-progress-host>${taskProgressMarkup()}</div>
+      <div data-message class="sg-message" role="status" aria-live="polite" hidden></div>${taskProgressMarkup()}
       <div class="sg-workspace"><div class="sg-inputs"><section class="sg-card">${products(entry)}</section>
       <section class="sg-card sg-settings-card">${tabs()}${settingsForm(draft.settings,'global')}<details class="sg-advanced"><summary>商品信息</summary><div class="sg-form"><label class="sg-wide">商品名称<input data-task-field="name" data-id="${entry.id}" value="${esc(entry.name)}" maxlength="100"${locked()?' disabled':''}></label></div></details></section><div class="sg-expert"><span>开启后分析更深入，规划质量更高</span><label>专家模式 <input type="checkbox" role="switch" aria-label="专家模式" data-setting="expertMode" data-target="global"${draft.settings.expertMode?' checked':''}${locked()?' disabled':''}></label></div><button class="sg-button sg-primary sg-analyze-submit" type="button" data-action="analyze" data-id="${entry.id}"${!entry.products.length||locked()||!modelInfo.ready?' disabled':''}>${icon('spark')}${analyzing?'正在分析…':'分析产品'}</button><button class="sg-button sg-primary sg-local-plan" type="button" data-action="plan"${!entry.products.length||locked()?' disabled':''}>${icon('settings')}整理创作方案</button><p class="sg-note">核对整理后的画面方案，再点击继续生成。整理方案不调用模型；AI 分析和生成使用已配置 API。</p></div>
-      <section class="sg-card sg-result-panel" data-workspace-step="${view}" tabindex="-1"><div class="sg-card-head"><div class="sg-card-title">${icon('spark')}<div><h2 data-result-phase>${esc(resultPhase(view).title)}</h2><p>${esc(resultPhase(view).desc)}</p></div></div></div><div data-result-body>${singleResultBody(entry)}</div></section></div>`;
+      <section class="sg-card sg-result-panel"><div class="sg-card-head"><div class="sg-card-title">${icon('spark')}<div><h2>${entry.plan?'确认规划与生成结果':'生成结果'}</h2><p>${entry.plan?`核对每张${kind}的画面方案后生成`:'上传产品图并点击分析开始'}</p></div></div></div><div data-result-body>${singleResultBody(entry)}</div></section></div>`;
   }
   function singleResultBody(entry) {
-    const view=activeStep(entry), slots=allSlots();
-    const toolbar=`<div class="sg-plan-toolbar">${view?`<button class="sg-text-button" type="button" data-action="back-input"${locked()?' disabled':''}>← 返回输入</button>`:''}${entry.plan&&view!==2?`<button class="sg-text-button" type="button" data-action="navigate-step" data-step="2"${locked()?' disabled':''}>查看已整理方案</button>`:''}${stepAvailable(entry,4)&&view!==4?`<button class="sg-text-button" type="button" data-action="navigate-step" data-step="4"${locked()?' disabled':''}>查看生成结果</button>`:''}<button class="sg-text-button" type="button" data-action="new-project"${locked()?' disabled':''}>新建项目</button></div>`;
-    let content='';
-    if(view===0)content=`<div class="sg-empty">${icon('spark')}<p>${entry.plan?'已整理方案已保留，可继续修改输入或返回确认规划。':'上传产品图并填写要求后，点击「分析产品」或「整理创作方案」。'}</p></div>`;
-    else if(view===1)content=`<section class="sg-analysis-details"><h3>产品分析</h3><pre>${esc(entry.analysis||'正在分析产品…')}</pre></section>`;
-    else if(view===2&&entry.plan)content=`<details class="sg-design-specs"><summary>整体设计要求</summary><textarea aria-label="整体设计要求" data-task-field="requirements" data-id="${entry.id}"${locked()?' disabled':''}>${esc(entry.requirements)}</textarea><p class="sg-note">修改后重新整理方案，再核对确认。</p></details>${plans(entry)}`;
-    return `${toolbar}${content}${generateActions()}${runSummary()}${slots.some(slot=>slot.item)?`<div class="sg-actions"><button class="sg-button sg-small" type="button" data-action="select-results">全选结果</button><button class="sg-button sg-small" type="button" data-action="download-selected"${!selectedResults.size?' disabled':''}>下载已选 (${selectedResults.size})</button></div>`:''}${resultsMarkup(slots)}${draft.previousProjectKey?'<button class="sg-text-button" type="button" data-action="restore-project">恢复上一项目</button>':''}`;
-  }
-  function stepAvailable(entry,index) {
-    const slots=allSlots();
-    return index===0||index===1&&!!entry.analysis||index===2&&!!entry.plan||index===3&&(!!current().uncertain||slots.some(slot=>slot.status!=='ready'))||index===4&&slots.some(slot=>slot.item);
-  }
-  function activeStep(entry) {
-    if(analyzing)return 1;
-    if(current().busy||current().uncertain)return 3;
-    if(Number.isInteger(draft.viewStep)&&stepAvailable(entry,draft.viewStep))return draft.viewStep;
-    const slots=activeSlots();
-    return slots.length&&slots.every(slot=>slot.status==='done')?4:slots.some(slot=>slot.status!=='ready')?3:entry.plan?2:0;
-  }
-  function navigateStep(index) {
-    if(locked()||!stepAvailable(draft.tasks[0],index))return;
-    draft.viewStep=index;showPlan=index===2;render();scheduleSave();
-    const target=index===0?root.querySelector('#sgBrief'):root.querySelector('[data-workspace-step]');
-    target?.focus();target?.scrollIntoView?.({block:'center',behavior:'smooth'});
+    if(!entry.plan&&!allSlots().length&&!current().tasks.length)return `<div class="sg-empty">${icon('spark')}<p>上传产品图并填写要求后<br>点击「分析产品」开始</p>${draft.previousProjectKey?'<button class="sg-text-button" type="button" data-action="restore-project">恢复上一项目</button>':''}</div>${pendingReceiptMarkup(current().uncertain)}`;
+    return `${entry.plan?`<div class="sg-plan-toolbar"><button class="sg-text-button" type="button" data-action="back-input"${locked()?' disabled':''}>← 返回输入</button><button class="sg-text-button" type="button" data-action="toggle-plan"${locked()?' disabled':''}>${showPlan?'收起规划':'查看规划'}</button><button class="sg-text-button" type="button" data-action="new-project"${locked()?' disabled':''}>新建项目</button></div>${showPlan?`<details class="sg-design-specs"><summary>整体设计要求</summary><textarea aria-label="整体设计要求" data-task-field="requirements" data-id="${entry.id}"${locked()?' disabled':''}>${esc(entry.requirements)}</textarea><p class="sg-note">修改后重新整理方案，再核对确认。</p></details>${entry.analysis?`<details class="sg-analysis-details"><summary>查看产品分析</summary><pre>${esc(entry.analysis)}</pre></details>`:''}${plans(entry)}`:''}`:''}${generateActions()}${runSummary()}${allSlots().some(slot=>slot.item)?`<div class="sg-actions"><button class="sg-button sg-small" type="button" data-action="select-results">全选结果</button><button class="sg-button sg-small" type="button" data-action="download-selected"${!selectedResults.size?' disabled':''}>下载已选 (${selectedResults.size})</button></div>`:''}${resultsMarkup(allSlots())}${draft.previousProjectKey?'<button class="sg-text-button" type="button" data-action="restore-project">恢复上一项目</button>':''}`;
   }
   function stepper(entry) {
-    const active=activeStep(entry);
-    return `<ol class="sg-steps" aria-label="创作进度">${['输入','产品分析','确认规划','生成任务','结果'].map((label,index)=>`<li class="${index===active?'is-active':stepAvailable(entry,index)?'is-complete':''}"${index===active?' aria-current="step"':''}><button type="button" data-action="navigate-step" data-step="${index}"${locked()||!stepAvailable(entry,index)?' disabled':''}${index===active?' aria-current="step"':''}><b>${index+1}</b><span><small>STEP 0${index+1}</small>${label}</span></button></li>`).join('')}</ol>`;
+    const slots=activeSlots(), active=analyzing?1:current().busy?3:slots.length&&slots.every(slot=>slot.status==='done')?4:entry.plan?2:0;
+    return `<ol class="sg-steps" aria-label="创作进度">${['输入','分析中','确认规划','生成中','完成'].map((label,index)=>`<li class="${index===active?'is-active':index<active?'is-complete':''}"${index===active?' aria-current="step"':''}><b>${index+1}</b><div><small>STEP 0${index+1}</small>${label}</div></li>`).join('')}</ol>`;
   }
   function commonActions() {
     return `<button type="button" class="sg-button" data-action="history">${icon('history')}生成记录</button><button type="button" class="sg-button" data-action="config"${locked()?' disabled':''}>${icon('settings')}配置 API</button>`;
@@ -841,13 +865,19 @@
     if(!receipt)return '';
     if(current().accountKey!==account||receipt.accountKey&&receipt.accountKey!==account)return '<div class="sg-message is-error" role="alert">任务回执所属账号不一致，请重新打开工作台；原账号素材和回执仍保留。</div>';
     const pending=allSlots().filter(slot=>slot.status==='uncertain'&&!slot.item), count=pending.length||1;
-    return `<p class="sg-note sg-pending-receipt" data-pending-receipt role="status" aria-live="polite">${count} 张图片的结果待确认，本次等待已结束。可查看生成记录，其他图片可继续生成，无需手动解除。</p>`;
+    return `<p class="sg-note sg-pending-receipt" data-pending-receipt role="status" aria-live="polite">${count} 张图片的结果待确认，本次等待已结束。可查看上方任务进度，其他图片可继续生成，无需手动解除。</p>`;
   }
   // Recovery uses the original request's stored success or trusted notSubmitted
   // outcome to update its exact image; there is no supplier polling here.
   async function refreshReceipts() {
     if(startupFailed||!controller||!draft||initializing||restoring||deactivating||navigationLocked()||controller.hasInFlightRequest?.())return;
     if(receiptRecovery)return receiptRecovery;
+    // A file picker's focus event must not lock an empty workspace's upload.
+    // Unreadable journals still enter the full existing recovery/account checks.
+    try {
+      const state=current();
+      if(state.accountKey===account&&!state.uncertain&&Array.isArray(state.pendingReceipts)&&!state.pendingReceipts.length&&!journal(workspaceScope).readAll().length)return;
+    } catch(_) {}
     receiptRecovery=(async()=>{
       const before=JSON.stringify(controller.snapshot());
       await ensureAccount();
@@ -860,26 +890,19 @@
   }
   function generateActions() {
     const slots=allSlots(), uncertain=current().uncertain;
-    const ready=(isBatch||activeStep(draft.tasks[0])>=2)&&draft.tasks.length&&draft.tasks.every(entry=>entry.plan&&entry.confirmed&&displayedPlanCheck(entry).ok!==false);
+    const ready=draft.tasks.length&&draft.tasks.every(entry=>entry.plan&&entry.confirmed&&displayedPlanCheck(entry).ok!==false);
     const hasPending=draft.tasks.some(entry=>eligibleShots(entry).length), hasFailed=draft.tasks.some(entry=>eligibleShots(entry,true).length);
     const freshTasks=newGenerationTasks(), freshCount=freshTasks.reduce((sum,entry)=>sum+entry.plan.shots.length,0);
     const imageApiUnavailable=!modelInfo.ready||modelInfo.supportsReference===false;
     const apiReason=!initializing&&imageApiUnavailable?(!modelInfo.ready?'当前自有 API 尚未配置完整，请选择平台积分模式或配置并保存自有 API，再生成已确认的方案。':'当前 API 的生图模型不支持产品参考图。请配置支持产品参考图的生图 API。'):'';
-    return `<div class="sg-actions"><button type="button" class="sg-button sg-primary" data-action="generate"${freshCount?' data-new-generation':''}${!ready||generationLocked()||imageApiUnavailable||saveFault||(!hasPending&&!freshCount)?' disabled':''}>${icon('spark')}${current().busy?'正在生成…':freshCount?'按当前方案生成新图':slots.length?'继续未完成任务':isBatch?'提交批量生成':'确认并生成'}</button>${current().busy?'<button type="button" class="sg-button" data-action="stop">停止后续生成</button><button type="button" class="sg-button" data-action="end-wait">结束本次等待</button>':''}${hasFailed?`<button type="button" class="sg-button" data-action="retry"${generationLocked()||imageApiUnavailable?' disabled':''}>只重试失败项</button>`:''}${slots.some(slot=>slot.item)?'<button type="button" class="sg-button" data-action="download-all">下载已完成图片</button>':''}</div>${freshCount?`<p class="sg-note" data-new-generation-note>原请求仍在等待结果。点击将按当前商品方案另生成 ${freshCount} 张新图，按新任务计费；原任务和已有图片继续保留。</p>`:''}<p class="sg-note" data-generation-concurrency>最多 100 张同时生成，超出部分排队</p>${apiReason?`<div class="sg-note" data-generation-api-required role="status"><p>${esc(apiReason)}</p><button type="button" class="sg-button sg-small" data-action="config"${locked()?' disabled':''}>配置 API</button></div>`:''}${current().busy?'<p class="sg-note" data-end-wait-note>结束本次等待：本页不再继续等待，原任务仍可能返回结果，回执会保留。</p>':''}${pendingReceiptMarkup(uncertain)}`;
+    return `<div class="sg-actions"><button type="button" class="sg-button sg-primary" data-action="generate"${freshCount?' data-new-generation':''}${!ready||generationLocked()||imageApiUnavailable||saveFault||(!hasPending&&!freshCount)?' disabled':''}>${icon('spark')}${current().busy?'正在生成…':freshCount?'按当前方案生成新图':slots.length?'继续未完成任务':isBatch?'提交批量生成':'确认并生成'}</button>${current().busy?'<button type="button" class="sg-button" data-action="stop">停止后续生成</button>':''}${hasFailed?`<button type="button" class="sg-button" data-action="retry"${generationLocked()||imageApiUnavailable?' disabled':''}>只重试失败项</button>`:''}${slots.some(slot=>slot.item)?'<button type="button" class="sg-button" data-action="download-all">下载已完成图片</button>':''}</div>${freshCount?`<p class="sg-note" data-new-generation-note>原请求仍在等待结果。点击将按当前商品方案另生成 ${freshCount} 张新图，按新任务计费；原任务和已有图片继续保留。</p>`:''}<p class="sg-note" data-generation-concurrency>最多 100 张同时生成，超出部分排队</p>${apiReason?`<div class="sg-note" data-generation-api-required role="status"><p>${esc(apiReason)}</p><button type="button" class="sg-button sg-small" data-action="config"${locked()?' disabled':''}>配置 API</button></div>`:''}${pendingReceiptMarkup(uncertain)}`;
   }
   function renderBatch() {
-    const total=draft.tasks.reduce((sum,entry)=>sum+Number(settings(entry).count),0), view=workspaceView();
-    // A cleanup applies to the completion the user saw, never a later plan or
-    // regenerated result that reuses the same product task identity.
-    draft.tasks.forEach(entry=>{if(view.hiddenTasks.has(entry.id)&&!completedTask(entry))view.hiddenTasks.delete(entry.id);});
-    const entries=draft.tasks.filter(entry=>!view.hiddenTasks.has(entry.id)||!completedTask(entry)), hidden=draft.tasks.length-entries.length;
-    view.batchPage=Math.min(view.batchPage,Math.max(0,Math.ceil(entries.length/batchPageSize)-1));
-    const grouped=new Map();allSlots().forEach(slot=>{if(!grouped.has(slot.taskId))grouped.set(slot.taskId,[]);grouped.get(slot.taskId).push(slot);});
-    return `<div class="sg-batch"><div class="sg-header"><div><h1>批量任务</h1><p>一次创建多个商品任务，按各自方案生成。</p></div><div class="sg-actions">${commonActions()}</div></div><div data-message class="sg-message" role="status" aria-live="polite" hidden></div><div data-task-progress-host>${taskProgressMarkup()}</div>${tabs()}
+    const total=draft.tasks.reduce((sum,entry)=>sum+Number(settings(entry).count),0);
+    return `<div class="sg-batch"><div class="sg-header"><div><h1>批量任务</h1><p>一次创建多个商品任务，按各自方案生成。</p></div><div class="sg-actions">${commonActions()}</div></div><div data-message class="sg-message" role="status" aria-live="polite" hidden></div>${taskProgressMarkup()}${tabs()}
       <section class="sg-card"><div class="sg-card-head"><div><h2>全局批量设置</h2><p>未单独设置的商品任务会继承这些参数。</p></div><span class="sg-meta" data-save-state>本机草稿</span></div>${settingsForm(draft.settings,'global')}</section>
-      <div class="sg-list-controls"><button type="button" class="sg-button sg-small" data-action="collapse-all">收起全部详情</button>${draft.tasks.some(entry=>completedTask(entry)&&!view.hiddenTasks.has(entry.id))?'<button type="button" class="sg-button sg-small" data-action="clear-completed">清理已完成任务</button>':''}${hidden?`<button type="button" class="sg-button sg-small" data-action="restore-completed">恢复已清理任务 (${hidden})</button>`:''}<span class="sg-meta">仅收起任务列表，原件和生成记录保留。</span></div>
-      ${entries.slice(view.batchPage*batchPageSize,(view.batchPage+1)*batchPageSize).map((entry,index)=>`<article class="sg-card" data-task="${entry.id}"><div class="sg-task-header"><div class="sg-task-name"><span class="sg-number">${view.batchPage*batchPageSize+index+1}</span><div><h3>${esc(entry.name)}</h3><span class="sg-meta">${entry.overrides?`${esc(settings(entry).ratio)} · ${esc(settings(entry).resolution)} · ${settings(entry).count} 张`:'跟随全局'}</span></div></div><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="collapse" data-id="${entry.id}" aria-expanded="${!entry.collapsed}">${entry.collapsed?'展开':'收起'}</button><button type="button" class="sg-button sg-small sg-danger" data-action="remove-task" data-id="${entry.id}"${locked()||draft.tasks.length===1||taskNeedsAttention(entry)?' disabled':''}>删除</button></div></div>
-      ${entry.collapsed?'':`<div><div class="sg-task-content"><div>${products(entry)}</div><div>${taskFields(entry)}<button type="button" class="sg-button sg-small" style="margin-top:10px" data-action="analyze" data-id="${entry.id}"${locked()||!entry.products.length||!modelInfo.ready?' disabled':''}>${icon('spark')}AI 分析产品</button></div></div><div class="sg-override"><span>${entry.overrides?'已启用单独参数':'覆盖全局参数'}</span><button type="button" class="sg-button sg-small" data-action="override" data-id="${entry.id}"${locked()?' disabled':''}>${entry.overrides?'跟随全局':'单独设置'}</button></div>${entry.overrides?`<div class="sg-overrides">${settingsForm(settings(entry),entry.id)}</div>`:''}${entry.plan?`<section class="sg-batch-plan"><div class="sg-card-head"><h2>商品方案</h2><button type="button" class="sg-button sg-small" data-action="plan-task" data-id="${entry.id}"${locked()?' disabled':''}>重新整理</button></div>${plans(entry)}</section>`:''}${resultsMarkup(grouped.get(entry.id)||[],entry.id)}</div>`}</article>`).join('')}${!entries.length?'<p class="sg-note">已完成任务已收起，可恢复列表或新建商品任务。</p>':''}${pageControls('batch-page',view.batchPage,entries.length,batchPageSize)}
+      ${draft.tasks.map((entry,index)=>`<article class="sg-card" data-task="${entry.id}"><div class="sg-task-header"><div class="sg-task-name"><span class="sg-number">${index+1}</span><div><h3>${esc(entry.name)}</h3><span class="sg-meta">${entry.overrides?`${esc(settings(entry).ratio)} · ${esc(settings(entry).resolution)} · ${settings(entry).count} 张`:'跟随全局'}</span></div></div><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="collapse" data-id="${entry.id}" aria-expanded="${!entry.collapsed}">${entry.collapsed?'展开':'收起'}</button><button type="button" class="sg-button sg-small sg-danger" data-action="remove-task" data-id="${entry.id}"${locked()||draft.tasks.length===1?' disabled':''}>删除</button></div></div>
+      <div${entry.collapsed?' hidden':''}><div class="sg-task-content"><div>${products(entry)}</div><div>${taskFields(entry)}<button type="button" class="sg-button sg-small" style="margin-top:10px" data-action="analyze" data-id="${entry.id}"${locked()||!entry.products.length||!modelInfo.ready?' disabled':''}>${icon('spark')}AI 分析产品</button></div></div><div class="sg-override"><span>${entry.overrides?'已启用单独参数':'覆盖全局参数'}</span><button type="button" class="sg-button sg-small" data-action="override" data-id="${entry.id}"${locked()?' disabled':''}>${entry.overrides?'跟随全局':'单独设置'}</button></div>${entry.overrides?`<div class="sg-overrides">${settingsForm(settings(entry),entry.id)}</div>`:''}${entry.plan?`<section class="sg-batch-plan"><div class="sg-card-head"><h2>商品方案</h2><button type="button" class="sg-button sg-small" data-action="plan-task" data-id="${entry.id}"${locked()?' disabled':''}>重新整理</button></div>${plans(entry)}</section>`:''}${resultsMarkup(slotsFor(entry.id))}</div></article>`).join('')}
       <button type="button" class="sg-button sg-add" data-action="add-task"${locked()||draft.tasks.length>=30?' disabled':''}>${icon('plus')}新建商品任务</button>
       <footer class="sg-footer"><div><strong>${draft.tasks.length} 项商品任务 · ${total} 张图片</strong><p>生成费用由所配置服务商计收</p></div><div class="sg-actions"><button type="button" class="sg-button" data-action="plan"${locked()?' disabled':''}>整理全部方案</button>${generateActions()}</div></footer>${runSummary()}</div>`;
   }
@@ -905,10 +928,12 @@
   function render() {
     if(pendingRender){pendingRender.cancel(pendingRender.id);pendingRender=null;}
     if(startupFailed||!draft)return;
+    displayRenderVersion++;
     document.documentElement?.classList.toggle('sg-replica',true);
     root.innerHTML=legacyBanner()+(isBatch?renderBatch():renderSingle());renderMessage();syncTaskProgress();
     bridge.setApiBusy('studio-genesis',locked());
     renderCredits();
+    refreshLocalOriginals();
   }
   function syncResultSelection() {
     root.querySelectorAll('[data-result-select]').forEach(input=>{input.checked=selectedResults.has(input.dataset.resultSelect);});
@@ -924,7 +949,7 @@
     root.querySelectorAll('[data-action="retry-slot"]').forEach(button=>{
       const record=current().tasks.find(item=>item.id===button.dataset.taskId);
       const entry=draft.tasks.find(item=>item.id===button.dataset.taskId);
-      hints.image(button,(entry?.plan&&record?.plan?.signature===entry.plan.signature?record.plan.settings.model:entry?.plan?.settings?.model)||config.imageModel||modelInfo.model||'',[1],'本次只重新生成此图 1 张；原结果保留');
+      hints.image(button,record?.plan?.settings?.model||entry?.plan?.settings?.model||config.imageModel||modelInfo.model||'',[1],'本次只重新生成此图 1 张；原结果保留');
     });
     function quote(action,retry) {
       let count=0;const models=new Set();
@@ -939,11 +964,7 @@
     quote('generate',false);quote('retry',true);
   }
   window.SZCreativeCreditHints?.register('studio-genesis',renderCredits);
-  function invalidate(entry) { displayedPlanChecks.delete(entry);entry.plan=null;entry.confirmed=false;draft.viewStep=0; }
-  function invalidateProduct(entry) {
-    entry.analysis='';invalidate(entry);
-    Object.values(entry.typeDrafts||{}).forEach(saved=>{saved.analysis='';saved.plan=null;saved.confirmed=false;});
-  }
+  function invalidate(entry) { displayedPlanChecks.delete(entry);entry.plan=null;entry.confirmed=false; }
   async function refreshModels(refreshed) {
     if(startupFailed)return;
     modelInfo = {};
@@ -974,7 +995,7 @@
       const images=await Promise.all(files.map(decode));await ensureAccount();
       if(draft!==sourceDraft||!draft.tasks.includes(entry))throw new Error('商品任务已切换，本次图片导入已停止。');
       const unique=images.filter((image,index)=>!entry.products.some(asset=>asset.image===image.image)&&!images.slice(0,index).some(asset=>asset.image===image.image));
-      if(unique.length){entry.products.push(...unique);invalidateProduct(entry);await persist();}
+      if(unique.length){entry.products.push(...unique);entry.analysis='';invalidate(entry);await persist();}
       message(`已添加 ${unique.length} 张产品图。${unique.length<images.length?'重复图片已跳过。':''}`);
     }
     finally { uploading=false;render(); }
@@ -982,11 +1003,11 @@
   function buildPlan(entry) {
     const output=engine.createPlan(entry,settings(entry),{analysis:entry.analysis||''});
     if(output.ok===false)throw new Error(`${entry.name}：${output.error}`);
-    entry.plan=output;entry.confirmed=false;entry.collapsed=false;draft.viewStep=2;
+    entry.plan=output;entry.confirmed=false;entry.collapsed=false;
   }
   async function analyze(entry) {
     if(locked())throw new Error('请等待当前任务结束。');
-    analyzing=true;analysisStartedAt=Date.now();render();
+    analyzing=true;render();
     try {
       await ensureAccount();
       const result=await bridge.analyze({products:entry.products,tool:'product',requirements:entry.requirements,settings:settings(entry),purpose:'plan'});
@@ -999,7 +1020,7 @@
   }
   async function writeBrief(entry) {
     if(locked()||!entry.products.length)throw new Error('请先上传产品图，并等待当前任务结束。');
-    analyzing=true;analysisStartedAt=Date.now();render();
+    analyzing=true;render();
     try {
       await ensureAccount();const result=await bridge.analyze({products:entry.products,tool:'product',requirements:entry.requirements,settings:settings(entry),purpose:'brief'});
       if(!result||result.ok===false)throw new Error(result&&result.error||'AI 帮写未返回可用内容。');await ensureAccount();
@@ -1073,34 +1094,18 @@
   async function download(resultId) {
     await ensureAccount();const slot=allSlots().find(entry=>entry.item&&entry.item.resultId===resultId);
     if(!slot)throw new Error('结果图片不存在。');
+    const binding=workspaceBinding,descriptor=localOriginalDescriptor(slot),url=await readLocalOriginal(slot,true)||slot.item.url;
+    await ensureAccount();
+    const fresh=allSlots().find(entry=>entry.item?.resultId===resultId);
+    if(!localDisplayOwner(binding)||deactivating||!fresh||fresh.item.url!==slot.item.url||descriptor&&localOriginalDescriptor(fresh)?.key!==descriptor.key)throw new Error('结果所属任务已变化，请从当前结果重新下载。');
     const filename=`少壮创作/${String(slot.taskName||slot.item.productName||'商品').replace(/[\\/:*?"<>|]/g,'_')}_${String(slot.shot&&slot.shot.index||1).padStart(2,'0')}.png`;
-    await new Promise((resolve,reject)=>chrome.downloads.download({url:slot.item.url,filename,saveAs:false},()=>{const error=chrome.runtime.lastError;if(error)reject(new Error(error.message));else resolve();}));
+    await new Promise((resolve,reject)=>chrome.downloads.download({url,filename,saveAs:false},()=>{const error=chrome.runtime.lastError;if(error)reject(new Error(error.message));else resolve();}));
   }
   async function action(button) {
     const name=button.dataset.action,id=button.dataset.id,entry=draft.tasks.find(item=>item.id===id);
     if(name==='legacy-tasks'){await ensureAccount();showLegacyTasks();return;}
     if(button.disabled)return;
-    // List controls change presentation only. Live requests and receipt recovery
-    // continue on their original controllers even while their details are closed.
-    if(['clear-completed','restore-completed','task-page','batch-page','result-page','toggle-results','collapse-all','collapse'].includes(name)) {
-      const binding=workspaceBinding;await ensureAccount();if(binding!==workspaceBinding)return;
-      const view=workspaceView(), page=Math.max(0,Number.parseInt(button.dataset.page,10)||0);
-      if(name==='clear-completed') {
-        taskRows().filter(row=>row.status==='done'&&!row.unsaved).forEach(row=>view.hiddenRows.add(row.key));
-        if(isBatch)draft.tasks.filter(completedTask).forEach(entry=>view.hiddenTasks.add(entry.id));
-        view.taskPage=0;view.batchPage=0;
-        message('已清理列表中的已完成任务，原件和生成记录保留，可随时恢复。');
-      } else if(name==='restore-completed'){view.hiddenRows.clear();view.hiddenTasks.clear();view.taskPage=0;view.batchPage=0;}
-      else if(name==='task-page')view.taskPage=page;
-      else if(name==='batch-page')view.batchPage=page;
-      else if(name==='result-page')view.resultPages.set(button.dataset.scope,page);
-      else if(name==='toggle-results'){const scope=button.dataset.scope;view.collapsedResults.has(scope)?view.collapsedResults.delete(scope):view.collapsedResults.add(scope);}
-      else if(name==='collapse-all'){draft.tasks.forEach(entry=>{entry.collapsed=true;});scheduleSave();}
-      else if(entry){entry.collapsed=!entry.collapsed;scheduleSave();}
-      render();return;
-    }
-    if(name==='return-task'){const result=await revealTask(button.dataset.taskKey);if(result.ok===false)throw new Error(result.error);return;}
-    if(name==='end-wait') { const ending=controller.endWait();if(typeof stopQueuedSubmissions==='function')stopQueuedSubmissions();await ending;message('本页不再继续等待，原任务仍可能返回结果，回执会保留。可新建任务或打开其他工作台。');render();return; }
+    if(name==='end-wait') { const ending=controller.endWait();if(typeof stopQueuedSubmissions==='function')stopQueuedSubmissions();await ending;message('本次等待已结束，原请求和迟到结果继续保留；可新建任务或打开其他工作台。');render();return; }
     const submitsImage=['generate','retry','retry-slot'].includes(name);
     if((submitsImage?generationLocked():locked())&&!['stop','history','download','download-all','close-dialog','close-preview'].includes(name))return;
     if(name==='close-dialog') { document.getElementById('sgDialog').hidden=true;return; }
@@ -1120,11 +1125,6 @@
       const config=targetConfig(button.dataset.target), label=button.dataset.label, quantity=moduleCount(config,label)+Number(button.dataset.delta), total=(config.modules||[]).length+Number(button.dataset.delta);
       if(quantity<1||quantity>5||total>16)return;const first=config.modules.indexOf(label);config.modules=config.modules.filter(value=>value!==label);config.modules.splice(first,0,...Array(quantity).fill(label));syncModules(config);changedConfig(button.dataset.target);return;
     }
-    if(name==='module-move') {
-      const config=targetConfig(button.dataset.target), index=Number(button.dataset.index), next=index+Number(button.dataset.delta);
-      if(config.mode!=='detail'||!Number.isInteger(index)||!Number.isInteger(next)||index<0||next<0||index>=config.modules.length||next>=config.modules.length)return;
-      [config.modules[index],config.modules[next]]=[config.modules[next],config.modules[index]];changedConfig(button.dataset.target);return;
-    }
     if(name==='ad-template') { const config=targetConfig(button.dataset.target);config.adTemplate=button.dataset.value;changedConfig(button.dataset.target);return; }
     if(name==='generation-speed') { const config=targetConfig(button.dataset.target);config.generationSpeed='standard';changedConfig(button.dataset.target);return; }
     if(name==='delete-module'||name==='restore-module') {
@@ -1134,24 +1134,23 @@
     }
     if(name==='write-brief') { await writeBrief(entry);return; }
     if(name==='apply-brief') { entry.requirements=document.querySelector('[data-brief-candidate]').value.slice(0,6000);invalidate(entry);document.getElementById('sgDialog').hidden=true;await persist();render();return; }
-    if(name==='back-input') { navigateStep(0);return; }
-    if(name==='navigate-step') { navigateStep(Number(button.dataset.step));return; }
-    if(name==='toggle-plan') { navigateStep(activeStep(draft.tasks[0])===2?0:2);return; }
+    if(name==='back-input') { showPlan=false;render();root.querySelector('#sgBrief')?.focus();return; }
+    if(name==='toggle-plan') { showPlan=!showPlan;render();return; }
     if(name==='new-project') { await newProject();return; }
     if(name==='restore-project') { await restoreProject();return; }
     if(name==='restore-retained') { const key=button.dataset.projectKey;if(![...retainedWorkspaces].some(binding=>binding.storageKey===key))throw new Error('历史项目暂不可读取，请查看生成记录。');await restoreProject(key);return; }
     if(name==='select-results') { const ids=allSlots().filter(slot=>slot.item).map(slot=>slot.item.resultId);selectedResults=ids.every(value=>selectedResults.has(value))?new Set():new Set(ids);syncResultSelection();return; }
     if(name==='download-selected') { for(const resultId of selectedResults)await download(resultId);return; }
     if(name==='edit-result') { const slot=allSlots().find(item=>item.item?.resultId===button.dataset.result);if(slot){const result=await bridge.openResultAction('edit',slot.item);if(result?.ok===false)throw new Error(result.error);}return; }
-    if(name==='retry-slot') { draft.viewStep=3;busy=true;render();try{await persist();const result=await controller.retrySlot(button.dataset.taskId,button.dataset.shotId,draft.tasks,draft.settings);if(!result||result.ok===false)throw new Error(result&&typeof result.error==='string'&&result.error.trim()?result.error:'本次图片重试未完成，请查看此图结果。');}finally{busy=false;draft.viewStep=completedStep();try{await persist();}finally{render();}}return; }
+    if(name==='retry-slot') { busy=true;render();try{await persist();const result=await controller.retrySlot(button.dataset.taskId,button.dataset.shotId,draft.tasks,draft.settings);if(!result||result.ok===false)throw new Error(result&&typeof result.error==='string'&&result.error.trim()?result.error:'本次图片重试未完成，请查看此图结果。');}finally{busy=false;try{await persist();}finally{render();}}return; }
     if(name==='history') { await ensureAccount();await bridge.openHistory(button); }
     else if(name==='config') { const result=bridge.openConfig();if(result&&result.ok===false)throw new Error(result.error); }
     else if(name==='mode') {
-      if(locked())return;
       await switchWorkspace(button.dataset.mode);
-    } else if(name==='add-task') { draft.tasks.push(task(draft.tasks.length+1));workspaceView().batchPage=Math.floor((draft.tasks.filter(item=>!workspaceView().hiddenTasks.has(item.id)||!completedTask(item)).length-1)/batchPageSize);render();await persist(); }
-    else if(name==='remove-task') { if(!entry||draft.tasks.length===1||taskNeedsAttention(entry))return;draft.tasks=draft.tasks.filter(item=>item.id!==id);render();await persist(); }
-    else if(name==='remove-image') { entry.products.splice(Number(button.dataset.index),1);invalidateProduct(entry);render();await persist(); }
+    } else if(name==='add-task') { draft.tasks.push(task(draft.tasks.length+1));render();await persist(); }
+    else if(name==='remove-task') { draft.tasks=draft.tasks.filter(item=>item.id!==id);render();await persist(); }
+    else if(name==='remove-image') { entry.products.splice(Number(button.dataset.index),1);entry.analysis='';invalidate(entry);render();await persist(); }
+    else if(name==='collapse') { entry.collapsed=!entry.collapsed;render();scheduleSave(); }
     else if(name==='override') { entry.overrides=entry.overrides?null:clone(draft.settings);invalidate(entry);render();await persist(); }
     else if(name==='plan'||name==='plan-task') {
       const entries=name==='plan-task'?[entry]:draft.tasks;
@@ -1164,10 +1163,10 @@
       if(!draft.tasks.every(item=>item.confirmed&&item.plan))throw new Error('请先整理并确认每个商品的方案。');
       const freshTasks=name==='generate'&&button.hasAttribute('data-new-generation')?newGenerationTasks():[];
       if(button.hasAttribute('data-new-generation')&&!freshTasks.length){render();return;}
-      busy=true;message('正在准备生成任务…');render();
-      try { await ensureAccount();if(freshTasks.length)copyGenerationTasks(freshTasks);await persist();draft.viewStep=3;render();const selected=draft.tasks.filter(item=>eligibleShots(item,name==='retry').length);const result=await(name==='retry'?controller.retryFailed(selected,draft.settings):controller.run(selected,draft.settings));if(result&&result.uncertain)message('本轮等待已结束，有图片结果待确认。原请求保留，其他任务可继续；再次生成按新任务计费。');else if(result&&result.ok===false)throw new Error(result.error||'任务未全部完成，请查看商品结果。');else message(result?.completed?`图片已生成。${progressText(planProgress(activeSlots()))}`:'本轮任务已结束。'); }
-      finally { busy=false;draft.viewStep=completedStep();try{await persist();}finally{render();} }
-    } else if(name==='stop') { controller.stop();message('已停止排队任务；当前请求返回后会保留结果。');render(); }
+      busy=true;render();
+      try { await ensureAccount();if(freshTasks.length)copyGenerationTasks(freshTasks);await persist();const selected=draft.tasks.filter(item=>eligibleShots(item,name==='retry').length);const result=await(name==='retry'?controller.retryFailed(selected,draft.settings):controller.run(selected,draft.settings));if(result&&result.uncertain)message('本轮等待已结束，有图片结果待确认。原请求保留，其他任务可继续；再次生成按新任务计费。');else if(result&&result.ok===false)throw new Error(result.error||'任务未全部完成，请查看商品结果。');else message(result?.completed?`本轮已完成 ${result.completed} 张图片。`:'本轮任务已结束。'); }
+      finally { busy=false;try{await persist();}finally{render();} }
+    } else if(name==='stop') { controller.stop();stopQueuedSubmissions();message('已停止排队任务；当前请求返回后会保留结果。');render(); }
     else if(name==='archive') { await controller.retryArchive(button.dataset.result);await persist();render(); }
     else if(name==='download')await download(button.dataset.result);
     else if(name==='download-all') { for(const slot of allSlots().filter(item=>item.item))await download(slot.item.resultId); }
@@ -1192,8 +1191,7 @@
       (entry?[entry]:draft.tasks.filter(item=>!item.overrides)).forEach(invalidate);
       if(event.type==='change')render();scheduleSave();
     } else if(element.dataset.taskField) {
-      const entry=draft.tasks.find(item=>item.id===element.dataset.id);entry[element.dataset.taskField]=element.value;
-      if(element.dataset.taskField==='name')invalidateProduct(entry);else invalidate(entry);scheduleSave();
+      const entry=draft.tasks.find(item=>item.id===element.dataset.id);entry[element.dataset.taskField]=element.value;invalidate(entry);scheduleSave();
       const generate=root.querySelector('[data-action=generate]');if(generate)generate.disabled=true;
       root.querySelectorAll('[data-confirm]').forEach(control=>{control.checked=false;control.disabled=true;});
     } else if(element.dataset.shot) {
@@ -1202,17 +1200,21 @@
       const generate=root.querySelector('[data-action=generate]');if(generate)generate.disabled=true;root.querySelectorAll('[data-confirm]').forEach(control=>{control.checked=false;});
     } else if(element.dataset.confirm) { draft.tasks.find(item=>item.id===element.dataset.confirm).confirmed=element.checked;render();scheduleSave(); }
   }
-  function preview(resultId,trigger) {
+  async function preview(resultId,trigger) {
     const slot=allSlots().find(item=>item.item&&item.item.resultId===resultId);if(!slot)return;
-    openPreview(slot.item.url,slot.shot&&slot.shot.label||'生成图片','生成图片原件',trigger);
+    const binding=workspaceBinding,descriptor=localOriginalDescriptor(slot),url=await readLocalOriginal(slot,true)||slot.item.url;
+    const fresh=allSlots().find(entry=>entry.item?.resultId===resultId);
+    if(!localDisplayOwner(binding)||!fresh||fresh.item.url!==slot.item.url||descriptor&&localOriginalDescriptor(fresh)?.key!==descriptor.key)return;
+    openPreview(url,slot.shot&&slot.shot.label||'生成图片','生成图片原件',resultId,trigger);
   }
   function productPreview(element) {
     const entry=draft.tasks.find(item=>item.id===element.dataset.productPreview),asset=entry&&entry.products[Number(element.dataset.index)];
-    if(asset)openPreview(asset.image,asset.name||'产品图','产品图原件',element);
+    if(asset)openPreview(asset.image,asset.name||'产品图','产品图原件','',element);
   }
-  function openPreview(image,title,alt,trigger) {
+  function openPreview(image,title,alt,resultId='',trigger) {
     let modal=document.getElementById('sgPreview');
     if(!modal){modal=document.createElement('div');modal.id='sgPreview';modal.className='sg-modal';document.body.appendChild(modal);modal.addEventListener('click',event=>{if(event.target===modal||event.target.closest('[data-action=close-preview]'))closeModal(modal);});}
+    modal.dataset.localResult=resultId;
     previewReturnFocus=trigger||document.activeElement;
     modal.innerHTML=`<div class="sg-modal-content" role="dialog" aria-modal="true" aria-label="${esc(title)}预览"><div class="sg-card-head"><h2>${esc(title)}</h2><button type="button" class="sg-button" data-action="close-preview">关闭</button></div><img src="${esc(image)}" alt="${esc(alt)}"></div>`;modal.hidden=false;modal.querySelector('button').focus();
   }
@@ -1220,7 +1222,7 @@
     if(!modal)return;
     modal.hidden=true;
     if(modal.id==='sgPreview'){
-      modal.innerHTML='';
+      modal.innerHTML='';modal.dataset.localResult='';
       const origin=previewReturnFocus;previewReturnFocus=null;
       if(origin){
         const candidates=Array.from(root.querySelectorAll('[data-preview],[data-product-preview]'));
@@ -1239,14 +1241,13 @@
       const detail=event.detail||{};
       if(detail.pending&&detail.scope==='studio'){
         const entry=draft.tasks.find(item=>item.id===detail.inputKey);
-        if(entry){invalidateProduct(entry);scheduleSave();}
+        if(entry){invalidate(entry);scheduleSave();}
       }
       render();
     });
-    root.addEventListener('toggle',event=>{if(event.target.matches('[data-task-progress]'))taskDetailsOpen=event.target.open;},true);
     root.addEventListener('click',event=>{
       const button=event.target.closest('[data-action]');if(button)action(button).catch(showError);
-      const image=event.target.closest('[data-preview]');if(image)preview(image.dataset.preview,image);
+      const image=event.target.closest('[data-preview]');if(image)preview(image.dataset.preview,image).catch(showError);
       const product=event.target.closest('[data-product-preview]');if(product)productPreview(product);
     });
     root.addEventListener('input',event=>{if(event.target.type!=='checkbox')change(event);});
@@ -1258,13 +1259,13 @@
       }
       // Text input already updated on input; only selections and checkboxes need change handling.
       if(event.target.tagName==='SELECT'||event.target.type==='checkbox')change(event);
-      else if(event.target.dataset.taskField||event.target.dataset.shot||event.target.dataset.setting)render();
+      else if(event.target.dataset.setting||event.target.dataset.taskField)render();
     });
     root.addEventListener('dragover',event=>{const drop=event.target.closest('[data-drop]');if(drop){event.preventDefault();drop.classList.add('is-dragging');}});
     root.addEventListener('dragleave',event=>{const drop=event.target.closest('[data-drop]');if(drop)drop.classList.remove('is-dragging');});
     root.addEventListener('drop',event=>{const drop=event.target.closest('[data-drop]');if(drop){event.preventDefault();drop.classList.remove('is-dragging');upload(drop.dataset.drop,Array.from(event.dataTransfer.files||[])).catch(showError);}});
     root.addEventListener('paste',event=>{if(event.defaultPrevented)return;const files=Array.from(event.clipboardData&&event.clipboardData.items||[]).filter(item=>item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(!files.length)return;const block=event.target.closest('[data-task],[data-drop]');const id=block&&(block.dataset.task||block.dataset.drop)||(!isBatch&&draft.tasks[0].id);if(!id){showError(new Error('请先选中要添加产品图的商品任务。'));return;}event.preventDefault();upload(id,files).catch(showError);});
-    document.addEventListener('keydown',event=>{if(event.defaultPrevented)return;const modal=[document.getElementById('sgDialog'),document.getElementById('sgPreview')].find(value=>value&&!value.hidden);if(event.key==='Escape'&&modal){event.preventDefault();event.stopImmediatePropagation();closeModal(modal);}if((event.key==='Enter'||event.key===' ')&&event.target.matches('[data-product-preview],[data-preview]')){event.preventDefault();if(event.target.hasAttribute('data-preview'))preview(event.target.dataset.preview,event.target);else productPreview(event.target);}});
+    document.addEventListener('keydown',event=>{if(event.defaultPrevented)return;const modal=[document.getElementById('sgDialog'),document.getElementById('sgPreview')].find(value=>value&&!value.hidden);if(event.key==='Escape'&&modal){event.preventDefault();event.stopImmediatePropagation();closeModal(modal);}if((event.key==='Enter'||event.key===' ')&&event.target.matches('[data-product-preview],[data-preview]')){event.preventDefault();if(event.target.hasAttribute('data-preview'))preview(event.target.dataset.preview,event.target).catch(showError);else productPreview(event.target);}});
     window.addEventListener('beforeunload',event=>{if(unloadLocked()||!startupFailed&&(deactivating||saveFault)){event.preventDefault();event.returnValue='任务尚未结束或草稿尚未保存';}if(!startupFailed)persist().catch(()=>{});});
     document.addEventListener('visibilitychange',()=>{if(startupFailed)return;if(document.visibilityState==='hidden'){stopTaskElapsedTimer();persist().catch(()=>{});}else{syncTaskProgress();if(!locked())refreshReceipts().then(()=>bridge.refresh()).then(refreshModels).then(()=>{render();}).catch(showError);}});
     window.addEventListener('focus',()=>{refreshReceipts().catch(showError);});
@@ -1304,12 +1305,12 @@
       const recovered=await controller.recoverPendingReceipt();
       if(!recovered||recovered.ok!==true)throw new Error(recovered&&recovered.error||'任务回执无法安全恢复，请核对已有请求后重新打开工作台。');
       if(controller.state.accountKey!==account)throw new Error('登录账号已变化，请重新打开工作台；原账号素材和回执仍保留。');
-    } finally { restoring=false; }
+    } finally { restoring=false;workspaceBinding.restoring=false; }
     try { const savedModules=JSON.parse(localStorage.getItem(libraryKey())||'null');if(Array.isArray(savedModules))draft.userModules=savedModules; } catch (_) { showError(new Error('自建模块库未能读取，当前草稿模块仍保留。')); }
     try { const savedGroups=JSON.parse(localStorage.getItem(groupKey())||'null');if(Array.isArray(savedGroups))draft.userModuleGroups=savedGroups; } catch (_) { showError(new Error('模块分组未能读取，当前草稿分组仍保留。')); }
     if(groups().length||Array.isArray(draft.userModuleGroups))draft.userModuleGroups=groups();
-    workspaceBinding.restoring=false;
     bind();render();
+    // Reveal only this account's restored workspace; config mutations stay locked.
     window.SZ_LAB_FIRST_PAINT?.complete();
     // Restore this account's draft before showing editable controls. API catalog
     // loading may continue after first paint, with all mutations still locked.

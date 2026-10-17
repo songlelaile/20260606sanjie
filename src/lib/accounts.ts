@@ -195,6 +195,7 @@ export async function isSessionAccountValid(
   return user.tenantId === session.tenantId && role === session.role;
 }
 
+/** 校验待注册账号的基本字段（长度、是否重名）。 */
 type RegistrationFields = {
   username: string;
   password: string;
@@ -255,7 +256,6 @@ function registrationFieldError(input: RegistrationFields): string | null {
   return null;
 }
 
-/** 校验待注册账号的基本字段（长度、是否重名）。 */
 export async function validateRegistration(input: RegistrationFields): Promise<string | null> {
   const fieldError = registrationFieldError(input);
   if (fieldError) return fieldError;
@@ -267,29 +267,6 @@ export async function validateRegistration(input: RegistrationFields): Promise<s
   return null;
 }
 
-/** 并发手机号注册的唯一键冲突只在事务回滚后映射，避免遗留孤立租户或消耗邀请码。 */
-async function registrationTransaction(
-  callback: (tx: Prisma.TransactionClient) => Promise<RegistrationResult>
-): Promise<RegistrationResult> {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
-      return await prisma.$transaction(callback);
-    } catch (error) {
-      const prismaError = error as { code?: string; meta?: { target?: unknown } } | null;
-      const target = prismaError?.meta?.target;
-      const usernameConflict = Array.isArray(target)
-        ? target.length === 1 && target[0] === "username"
-        : typeof target === "string" && /(?:^|_)username(?:_|$)/.test(target);
-      if (prismaError?.code === "P2002" && usernameConflict) {
-        return { ok: false, error: "该手机号已注册" };
-      }
-      // PostgreSQL 死锁 / 写入竞争由 Prisma 报 P2034；每次重跑整个事务。
-      if (prismaError?.code === "P2034" && attempt < 2) continue;
-      throw error;
-    }
-  }
-}
-
 /**
  * 自主注册：不消耗邀请码，为每个账号创建独立租户（空白默认店铺）。
  * 与邀请注册共用同一 User / Tenant 表，管理员可在用户列表中统一管理。
@@ -299,16 +276,14 @@ export async function createTenantOperator(input: {
   password: string;
   name: string;
   shopName?: string;
-}): Promise<RegistrationResult> {
-  const fieldError = registrationFieldError(input);
-  if (fieldError) return { ok: false, error: fieldError };
+}): Promise<{ ok: true; account: AuthAccount } | { ok: false; error: string }> {
   const username = input.username.trim();
   const password = normalizePassword(input.password);
-  const name = (input.name ?? "").trim() || username;
+  const name = input.name.trim() || username;
   const rawShopName = (input.shopName ?? "").trim();
   const shopName = rawShopName && rawShopName !== "未备注" ? rawShopName : name;
 
-  return registrationTransaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     const existingUser = await tx.user.findUnique({ where: { username } });
     if (existingUser) {
       return { ok: false, error: "该手机号已注册" };
@@ -336,15 +311,6 @@ export async function createTenantOperator(input: {
         shopName
       }
     });
-    await tx.toolEntitlement.create({
-      data: {
-        userId: user.id,
-        toolCode: "registration_source",
-        status: "active",
-        note: "self",
-        grantedBy: "self"
-      }
-    });
     return {
       ok: true,
       account: {
@@ -363,18 +329,16 @@ export async function createTenantOperatorByInvite(input: {
   password: string;
   name: string;
   inviteCode: string;
-}): Promise<RegistrationResult> {
-  const fieldError = registrationFieldError(input);
-  if (fieldError) return { ok: false, error: fieldError };
+}): Promise<{ ok: true; account: AuthAccount } | { ok: false; error: string }> {
   const username = input.username.trim();
   const password = normalizePassword(input.password);
-  const name = (input.name ?? "").trim() || username;
-  const code = (input.inviteCode ?? "").trim().toUpperCase();
+  const name = input.name.trim() || username;
+  const code = input.inviteCode.trim().toUpperCase();
   if (!code) {
     return { ok: false, error: "请输入邀请码" };
   }
 
-  return registrationTransaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     const existingUser = await tx.user.findUnique({ where: { username } });
     if (existingUser) {
       return { ok: false, error: "该手机号已注册" };
@@ -389,25 +353,11 @@ export async function createTenantOperatorByInvite(input: {
     }
 
     const consumed = await tx.inviteCode.updateMany({
-      where: {
-        id: invite.id,
-        code,
-        maxUses: invite.maxUses,
-        usedCount: { lt: invite.maxUses }
-      },
+      where: { id: invite.id, usedCount: { lt: invite.maxUses } },
       data: { usedCount: { increment: 1 } }
     });
     if (consumed.count === 0) {
-      const currentInvite = await tx.inviteCode.findUnique({ where: { id: invite.id } });
-      if (!currentInvite || currentInvite.code !== code) {
-        return { ok: false, error: "邀请码无效或已失效" };
-      }
-      return {
-        ok: false,
-        error: currentInvite.usedCount >= currentInvite.maxUses
-          ? "邀请码使用次数已用尽"
-          : "邀请码已更新，请重新提交"
-      };
+      return { ok: false, error: "邀请码使用次数已用尽" };
     }
 
     const rawShopName = invite.note.trim();
@@ -432,26 +382,6 @@ export async function createTenantOperatorByInvite(input: {
         authRole: "tenant",
         role: "operator",
         shopName
-      }
-    });
-    const grantedBy = invite.createdBy || "invite";
-    await tx.toolEntitlement.create({
-      data: {
-        userId: user.id,
-        toolCode: "registration_source",
-        status: "active",
-        note: `invite:${invite.id}`,
-        grantedBy
-      }
-    });
-    await tx.toolEntitlement.create({
-      data: {
-        userId: user.id,
-        toolCode: "creative_studio",
-        status: "active",
-        expiresAt: null,
-        note: `invite:${invite.id}`,
-        grantedBy
       }
     });
     return {

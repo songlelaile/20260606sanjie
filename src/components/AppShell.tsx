@@ -17,11 +17,10 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "@/lib/auth";
 import type { ShopSummary } from "@/lib/types/domain";
+import { AccountMenu } from "@/components/AccountMenu";
 import { ShopSwitcher } from "@/components/ShopSwitcher";
 import { SanjieReportWorkspace } from "@/components/reports/SanjieReportWorkspace";
 import { isSanjieReportPath } from "@/lib/sanjie-report-navigation";
-import { AccountMenu } from "@/components/AccountMenu";
-import { BrandIdentity } from "@/components/BrandIdentity";
 
 const TENANT_NAV = [
   { href: "/dashboards/operating-network", label: "图像创作", icon: ImageIcon, exact: true },
@@ -31,28 +30,20 @@ const TENANT_NAV = [
   { href: "/models", label: "购买积分", icon: Network }
 ];
 
-// Sower Work 网页版先向管理账号开放，置于图像创作之前。
-const ADMIN_NAV = [
-  { href: "/sower-work", label: "Sower Work", icon: Brain },
-  ...TENANT_NAV,
-  { href: "/management", label: "管理", icon: Brain }
-];
+// 管理版 = 租户版全部功能 + 多一个「管理」入口
+const ADMIN_NAV = [{ href: "/sower-work", label: "Sower Work", icon: Brain }, ...TENANT_NAV, { href: "/management", label: "管理", icon: Brain }];
 
 export function AppShell({
   children,
   role,
   userName,
   userEmail,
-  shopSwitcher,
-  testLabel,
-  testExitUrl
+  shopSwitcher
 }: {
   children: ReactNode;
   role: Role;
   userName: string;
   userEmail?: string;
-  testLabel?: string;
-  testExitUrl?: string;
   shopSwitcher: {
     shops: ShopSummary[];
     activeShopId: string;
@@ -125,16 +116,18 @@ export function AppShell({
           href={home}
           prefetch={false}
           className="brand"
-          aria-label="少壮AI自动化 · 智篆联合开发"
+          aria-label="三阶引擎"
           onClick={() => setSidebarOpen(false)}
         >
-          <BrandIdentity subtitle={role === "admin" ? "管理版 · 作图视频" : "作图 · 视频"} />
+          <span className="brand-mark">
+            <ImageIcon size={23} />
+          </span>
+          <span>
+            <strong>三阶引擎</strong>
+            <small>{role === "admin" ? "管理版 · 作图视频" : "作图 · 视频"}</small>
+          </span>
         </Link>
         <ShopSwitcher {...shopSwitcher} />
-        {testLabel ? <div style={{ padding: "12px 16px", fontSize: 12, color: "#fbbf24" }}>
-          <strong>{testLabel}</strong>
-          {testExitUrl ? <p><a href={testExitUrl} style={{ color: "inherit" }}>退出测试版</a></p> : null}
-        </div> : null}
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -180,7 +173,7 @@ export function AppShell({
             <Menu size={19} />
             菜单
           </button>
-          <BrandIdentity variant="compact" />
+          <span>三阶引擎</span>
         </div>
         <AccountMenu key={userEmail || userName} userName={userName} email={userEmail} onLogout={logout} />
         {reportPage ? <SanjieReportWorkspace role={role}>{children}</SanjieReportWorkspace> : children}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowRight, BookOpen, CheckCircle2, Coins, CreditCard, History, ImageIcon, RefreshCw, UserRound, Wallet } from "lucide-react";
 import { centsToPoints } from "@/lib/model-gateway/billing-contract";
+import { AWAITING_CREDIT_ALLOCATION_LABEL, gatewayOrderDisplayStatus, isGatewayOrderAwaitingCapacity } from "@/lib/model-gateway/scan-payment-contract";
 import type { CreativeCreditsData, CreativeCreditLedgerData } from "@/lib/creative-credit-contract";
 import styles from "./ProfileCenter.module.css";
 
@@ -18,7 +19,7 @@ export type ProfileAccount = {
 };
 type ProfileOrder = {
   id: string; planName: string; amountCents: number; creditCents: number;
-  status: string; paymentProvider: string; createdAt: string; paidAt: string | null;
+  status: string; creditAllocationState?: string; paymentProvider: string; createdAt: string; paidAt: string | null;
 };
 type OrderPage = { items: ProfileOrder[]; total: number; page: number; pageSize: number };
 const HISTORY_URL = "/dashboards/operating-network?history=1";
@@ -30,7 +31,7 @@ const TABS = [
 ] as const;
 const kindLabels: Record<string, string> = { opening: "期初余额", recharge: "积分充值", gift: "管理员赠送", debit: "模型消费", error: "请求异常" };
 const ledgerStatuses: Record<string, string> = { ok: "已完成", error: "失败", preflight_rejected: "余额不足，未提交", settlement_rejected: "结算拒绝", settlement_failed: "结算异常" };
-const orderStatuses: Record<string, string> = { paid: "已支付 · 已到账", pending: "待支付确认", expired: "已过期", closed: "已关闭", failed: "支付失败" };
+const orderStatuses: Record<string, string> = { paid: "已支付 · 已到账", pending: "待支付确认", awaiting_capacity: AWAITING_CREDIT_ALLOCATION_LABEL, expired: "已过期", closed: "已关闭", failed: "支付失败" };
 const points = (cents: number) => Number.isSafeInteger(cents) ? centsToPoints(cents).toLocaleString("zh-CN", { maximumFractionDigits: 1 }) : "—";
 const time = (value: string) => {
   const date = new Date(value);
@@ -54,6 +55,15 @@ function Pagination({ data, loading, onPage }: {
     <button type="button" disabled={loading || data.page <= 1} onClick={() => onPage(data.page - 1)}>上一页</button>
     <button type="button" disabled={loading || data.page * data.pageSize >= data.total} onClick={() => onPage(data.page + 1)}>下一页</button>
   </div>;
+}
+
+export function ProfileRechargeOrder({ order }: { order: ProfileOrder }) {
+  const awaiting = isGatewayOrderAwaitingCapacity(order);
+  return <article className={styles.order}>
+    <div className={styles.orderTop}><div><h3>{order.planName}</h3><span className={`${styles.orderStatus} ${order.status === "paid" && !awaiting ? styles.paid : ""}`}>{orderStatuses[gatewayOrderDisplayStatus(order)] || order.status}</span></div><strong>¥{(order.amountCents / 100).toFixed(2)}</strong></div>
+    <div className={styles.orderMeta}><span>{points(order.creditCents)} 积分</span><span>{({ alipay: "支付宝", wechat: "微信支付", manual: "人工充值" } as Record<string, string>)[order.paymentProvider] || "其他支付方式"}</span><span>{time(order.createdAt)}</span></div>
+    <div className={styles.orderBottom}><span>订单号：{order.id}{order.paidAt && !awaiting ? <small>到账时间：{time(order.paidAt)}</small> : null}</span>{["alipay", "wechat"].includes(order.paymentProvider) && (order.status === "pending" || awaiting) ? <Link href={`/models?recharge=1&orderId=${encodeURIComponent(order.id)}`}>{awaiting ? "查看分配状态" : "继续付款"} <ArrowRight size={14} aria-hidden="true" /></Link> : null}</div>
+  </article>;
 }
 
 export function ProfileCenter({ account, initialTab = "account", initialCredits }: {
@@ -174,11 +184,7 @@ export function ProfileCenter({ account, initialTab = "account", initialCredits 
             <Pagination data={ledger} loading={recordLoading} onPage={setLedgerPage} />
             <p className={styles.footnote}>使用自有 API 的费用由对应服务商计收；图片作品请前往<Link href={HISTORY_URL}>生图历史</Link>查看。</p>
           </> : <>
-            {orders?.items.length ? <div className={styles.records}>{orders.items.map(order => <article key={order.id} className={styles.order}>
-              <div className={styles.orderTop}><div><h3>{order.planName}</h3><span className={`${styles.orderStatus} ${order.status === "paid" ? styles.paid : ""}`}>{orderStatuses[order.status] || order.status}</span></div><strong>¥{(order.amountCents / 100).toFixed(2)}</strong></div>
-              <div className={styles.orderMeta}><span>{points(order.creditCents)} 积分</span><span>{({ alipay: "支付宝", wechat: "微信支付", manual: "人工充值" } as Record<string, string>)[order.paymentProvider] || "其他支付方式"}</span><span>{time(order.createdAt)}</span></div>
-              <div className={styles.orderBottom}><span>订单号：{order.id}{order.paidAt ? <small>到账时间：{time(order.paidAt)}</small> : null}</span>{order.status === "pending" && ["alipay", "wechat"].includes(order.paymentProvider) ? <Link href={`/models?recharge=1&orderId=${encodeURIComponent(order.id)}`}>继续付款 <ArrowRight size={14} aria-hidden="true" /></Link> : null}</div>
-            </article>)}</div> : <div className={styles.empty}><CreditCard size={28} aria-hidden="true" /><h3>暂无充值订单</h3><p>选择适合你的积分套餐，开启下一次创作。</p><Link className={styles.buyButton} href="/models">购买积分</Link></div>}
+            {orders?.items.length ? <div className={styles.records}>{orders.items.map(order => <ProfileRechargeOrder key={order.id} order={order} />)}</div> : <div className={styles.empty}><CreditCard size={28} aria-hidden="true" /><h3>暂无充值订单</h3><p>选择适合你的积分套餐，开启下一次创作。</p><Link className={styles.buyButton} href="/models">购买积分</Link></div>}
             <Pagination data={orders} loading={recordLoading} onPage={setOrderPage} />
           </>}
     </section> : null}

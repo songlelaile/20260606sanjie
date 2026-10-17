@@ -1,4 +1,5 @@
 import "server-only";
+import { automaticExchangeRateEnabled, readEffectiveExchangeRate, type ExchangeRateView } from "./exchange-rate";
 import { mkdir, readFile, rename, chmod, unlink, open } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -29,6 +30,7 @@ export type RelaySettingsView = {
   models: RelayModel[];
   shopKeys: RelayShopKeyView[];
   usdCnyRate: number | null;
+  exchangeRate?: ExchangeRateView;
   updatedAt: string | null;
 };
 
@@ -46,6 +48,7 @@ type RelayFile = {
 export class RelayConfigError extends Error {
   constructor(message: string, readonly status = 400) { super(message); this.name = "RelayConfigError"; }
 }
+
 
 const DEFAULT_BASE_URL = "https://sub.shaozhuangai.com/v1";
 const RATE_FIELDS = ["promptCentsPer1K", "completionCentsPer1K", "imageCents", "videoCents"] as const;
@@ -221,20 +224,22 @@ function effective(config: RelayFile | null) {
   };
 }
 
-function settingsView(config: RelayFile | null): RelaySettingsView {
+async function settingsView(config: RelayFile | null): Promise<RelaySettingsView> {
   const runtime = effective(config);
+  const fx = await readEffectiveExchangeRate(runtime.usdCnyRate);
   return {
     baseUrl: runtime.baseUrl, keyConfigured: !!runtime.apiKey, keySource: runtime.keySource, models: runtime.models,
     shopKeys: runtime.shopKeys.map(({ shopName, purpose }) => ({ shopName, purpose })),
-    usdCnyRate: runtime.usdCnyRate, updatedAt: runtime.updatedAt
+    usdCnyRate: fx.rate, exchangeRate: fx.view, updatedAt: runtime.updatedAt
   };
 }
 
 export async function getRelaySettings(): Promise<RelaySettingsView> { return settingsView(await readConfig()); }
 
-export async function getRelayRuntime(): Promise<{ baseUrl: string; apiKey: string; models: RelayModel[]; shopKeys: RelayShopKey[]; usdCnyRate: number | null }> {
+export async function getRelayRuntime(): Promise<{ baseUrl: string; apiKey: string; models: RelayModel[]; shopKeys: RelayShopKey[]; usdCnyRate: number | null; exchangeRate?: ExchangeRateView }> {
   const current = effective(await readConfig());
-  return { baseUrl: current.baseUrl, apiKey: current.apiKey, models: current.models, shopKeys: current.shopKeys, usdCnyRate: current.usdCnyRate };
+  const fx = await readEffectiveExchangeRate(current.usdCnyRate);
+  return { baseUrl: current.baseUrl, apiKey: current.apiKey, models: current.models, shopKeys: current.shopKeys, usdCnyRate: fx.rate, exchangeRate: fx.view };
 }
 
 async function writeConfig(config: RelayFile) {
@@ -283,7 +288,11 @@ export async function saveRelaySettings(input: unknown): Promise<RelaySettingsVi
     await assertPublicRelayUrl(baseUrl);
     const models = raw.models === undefined ? runtime.models : validateModels(raw.models);
     const shopKeys = raw.shopKeys === undefined ? (current?.shopKeys || []) : mergeShopKeyUpdate(current?.shopKeys || [], raw.shopKeys);
-    const usdCnyRate = raw.usdCnyRate === undefined ? (current?.usdCnyRate ?? null) : parseUsdCnyRate(raw.usdCnyRate);
+    if (automaticExchangeRateEnabled() && raw.usdCnyRate !== undefined) {
+      const fx = await readEffectiveExchangeRate(current?.usdCnyRate ?? null);
+      if (raw.usdCnyRate !== fx.rate) throw new RelayConfigError("自动汇率模式不接受手动覆盖，请省略汇率字段");
+    }
+    const usdCnyRate = automaticExchangeRateEnabled() || raw.usdCnyRate === undefined ? (current?.usdCnyRate ?? null) : parseUsdCnyRate(raw.usdCnyRate);
     const config: RelayFile = { version: 1, baseUrl, apiKey, keyCleared, models, shopKeys, usdCnyRate, updatedAt: new Date().toISOString() };
     await writeConfig(config);
     return settingsView(config);
@@ -362,7 +371,7 @@ export async function syncRelayModels(): Promise<RelaySettingsView & { syncedCou
       updatedAt: new Date().toISOString()
     };
     await writeConfig(config);
-    return { ...settingsView(config), syncedCount: ids.length };
+    return { ...await settingsView(config), syncedCount: ids.length };
   });
 }
 

@@ -1,4 +1,3 @@
-import { shaozhuangRelayUpstream } from "@/lib/shaozhuang-relay-models";
 import type { AiProvider } from "@/lib/types/domain";
 
 export type AiProviderAdapter = "openai-chat";
@@ -120,21 +119,9 @@ export function resolveAiProviderModel(
 
   const hostedAliases: Record<string, string> = {
     "gpt-5.5": "chatGPT5.5",
-    "gpt-5.6-sol": "chatGPT5.5",
     "chatgpt5.6": "chatGPT5.5"
   };
   return hostedAliases[model.toLowerCase()] ?? model;
-}
-
-/** Catalog name stays chatGPT5.5. Only the official relay receives its live model id. */
-export function resolveHostedUpstreamModel(
-  provider: AiProvider,
-  value: unknown,
-  baseUrl: string
-): string {
-  const model = resolveAiProviderModel(provider, value, baseUrl);
-  if (!isOfficialShaozhuangTextEndpoint(provider, baseUrl)) return model;
-  return shaozhuangRelayUpstream(model) ?? model;
 }
 
 export function isOfficialShaozhuangTextEndpoint(provider: AiProvider, baseUrl: string): boolean {

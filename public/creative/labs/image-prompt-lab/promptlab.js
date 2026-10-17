@@ -367,6 +367,7 @@ var state = {
   archiveRefreshTimer: 0,
   archiveRefreshInFlight: null,
   archiveChangeVersion: 0,
+  archiveIdentityVersion: 0,
   archivePendingDeleteIds: [],
   archiveObjectUrls: [],
   archiveAssetUrls: {},
@@ -491,6 +492,7 @@ function setArchiveAccountKey(value, options) {
   Object.keys(promptTaskFlights).forEach(function (id) { promptTaskEnd(id); });
   state.archiveAccountKey = next;
   promptTaskRender();
+  state.archiveIdentityVersion++;
   state.archiveRefreshToken++;
   state.archiveChangeVersion++;
   state.archiveBatches = [];
@@ -699,6 +701,72 @@ function scheduleArchiveRefresh() {
   state.archiveRefreshTimer = setTimeout(function () { refreshArchiveHistory({ silent: true }); }, 220);
 }
 
+function archivePrefetchError() {
+  var error=new Error('原件所属任务或账号已变化，请从原任务核对补存。');error.code='ARCHIVE_CONTEXT_CHANGED';return error;
+}
+
+function prepareArchiveOriginal(item, input, provisional) {
+  if (provisional || !IMAGE_ARCHIVE || typeof IMAGE_ARCHIVE.sourceToBlob!=='function' || typeof IMAGE_ARCHIVE.readCommittedResult!=='function') return null;
+  var parsed,identity,fields=['version','receiptId','jobId','accountKey','workspaceKey','taskId','shotId','batchId','planSignatureHash'];
+  try {
+    parsed=new URL(input.url);
+    var names=[];parsed.searchParams.forEach(function (_,name) { names.push(name); });
+    if (parsed.origin!==window.location.origin || parsed.username || parsed.password || parsed.hash || !/^\/api\/creative\/image-receipts\/[a-f0-9-]{36}\/content\/(0|[1-9]\d*)$/.test(parsed.pathname) || names.length!==1 || names[0]!=='identity') return null;
+    identity=JSON.parse(parsed.searchParams.get('identity'));
+    if (!identity || Array.isArray(identity) || Object.keys(identity).length!==9 || fields.some(function (name) { return !Object.prototype.hasOwnProperty.call(identity,name); }) || identity.version!==1 || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(identity.receiptId||'') || !parsed.pathname.startsWith('/api/creative/image-receipts/'+identity.receiptId+'/content/') || !/^[a-f0-9]{64}$/.test(identity.planSignatureHash||'') || fields.slice(2).some(function (name) { return typeof identity[name]!=='string' || name!=='batchId'&&!identity[name] || identity[name].length>256; })) return null;
+  } catch (_) { return null; }
+  var owner=input.accountKey,epoch=state.archiveIdentityVersion,frame=window.frameElement,origin=window.location.origin;
+  function anchor() { return JSON.stringify([item.url,item.resultId,item.jobId,item.accountKey,item.studioTaskId,item.batchId,item.studioGenesisPlan&&item.studioGenesisPlan.signature]); }
+  var pinned=anchor();
+  function current() {
+    return state.archiveAccountKey===owner && state.archiveIdentityVersion===epoch && window.location.origin===origin && (!frame || window.frameElement===frame&&frame.isConnected) && anchor()===pinned && identity.accountKey===owner && identity.jobId===item.jobId && identity.batchId===item.batchId && (!item.accountKey || item.accountKey===owner) && (!item.studioTaskId || item.studioTaskId===identity.taskId);
+  }
+  if (!current()) { var rejected=Promise.reject(archivePrefetchError());rejected.catch(function () {});return {ready:rejected,current:current,release:function () {}}; }
+  var key=JSON.stringify(fields.map(function (name) { return identity[name]; }))+':'+parsed.pathname.split('/').pop();
+  var pool=state.archiveOriginalFetchPool;
+  if (!pool) pool=state.archiveOriginalFetchPool={active:0,waiting:[],flights:new Map()};
+  var flight=pool.flights.get(key);
+  if (flight) {
+    var duplicate=flight.done.then(function (committed) { if (!committed || !current() || flight.anchor!==pinned) throw archivePrefetchError();return {blob:null,existing:true}; });
+    duplicate.catch(function () {});return {ready:duplicate,current:current,release:function () {}};
+  }
+  if (!flight) {
+    var resolve,reject,done;
+    flight={users:0,started:false,settled:false,key:key,anchor:pinned,done:new Promise(function (a) { done=a; }),ready:new Promise(function (a,b) { resolve=a;reject=b; })};
+    flight.finish=done;
+    flight.ready.catch(function () {});pool.flights.set(key,flight);
+    flight.start=function () {
+      Promise.resolve().then(function () {
+        if (!current()) throw archivePrefetchError();
+        var safe=IMAGE_ARCHIVE.sanitizeArchiveInput(input);
+        return IMAGE_ARCHIVE.readCommittedResult(owner,{archiveAssetId:safe.archiveAssetId,resultId:safe.resultId,jobId:safe.jobId,providerTaskId:safe.taskId||''});
+      }).then(function (existing) {
+        if (!current()) throw archivePrefetchError();
+        if (existing&&existing.ok&&existing.blob) return {blob:existing.blob,existing:true};
+        if (!existing || ['missing','unavailable'].indexOf(existing.reason)<0) throw archivePrefetchError();
+        return IMAGE_ARCHIVE.sourceToBlob(input.url).then(function (blob) { if (!current()) throw archivePrefetchError();return {blob:blob,existing:false}; });
+      }).then(resolve,reject).finally(function () { flight.settled=true;releaseSettled(); });
+    };
+    pool.waiting.push(flight);
+  }
+  flight.users++;
+  function drain() {
+    while (pool.active<6&&pool.waiting.length) {
+      var next=pool.waiting.shift();if (!next.users) { pool.flights.delete(next.key);continue; }
+      next.started=true;pool.active++;next.start();
+    }
+  }
+  function releaseSettled() {
+    if (flight.users || flight.started&&!flight.settled) return;
+    if (pool.flights.get(key)===flight) pool.flights.delete(key);
+    if (flight.started) { flight.started=false;pool.active--; }
+    flight.ready=null;flight.start=null;
+    drain();
+  }
+  drain();var released=false;
+  return {ready:flight.ready,current:current,release:function (committed) { if (released) return;released=true;flight.finish(committed===true);flight.users--;releaseSettled(); }};
+}
+
 function queueArchiveResult(item, options) {
   options = options || {};
   if (!archiveAvailable() || !item || !item.url) return Promise.resolve({ ok: false, skipped: true });
@@ -719,73 +787,80 @@ function queueArchiveResult(item, options) {
   var writtenArchive = null;
   item.archiveSurfaceMode = surface;
   Object.keys(business).forEach(function (key) { item[key] = business[key]; });
+  var save = provisional ? IMAGE_ARCHIVE.saveProvisionalResult : IMAGE_ARCHIVE.saveResult;
+  var archiveInput = {
+    accountKey: accountKey,
+    surfaceMode: surface,
+    creativeRoute: item.creativeRoute || '',
+    detailMode: item.detailMode || '',
+    sourceBatchId: sourceBatchId,
+    technicalSourceBatchId: technicalSourceBatchId,
+    archiveBatchId: options.archiveBatchId || '',
+    archiveProjectId: business.archiveProjectId,
+    archiveAssetId: item.archiveAssetId || '',
+    batchId: sourceBatchId,
+    resultId: item.resultId || '',
+    jobId: item.jobId || '',
+    url: item.url,
+    batchTitle: business.businessBatchTitle,
+    businessBatchTitle: business.businessBatchTitle,
+    businessType: business.businessType,
+    productName: business.productName,
+    styleName: business.styleName,
+    strengthName: business.strengthName,
+    copyModeName: business.copyModeName,
+    businessRoleKey: business.businessRoleKey,
+    businessRoleName: business.businessRoleName,
+    businessSummary: business.businessSummary,
+    businessTags: business.businessTags,
+    generationKind: business.generationKind,
+    linkId: item.linkId || '',
+    skuId: item.skuId || '',
+    skuCode: item.skuCode || '',
+    skuTitle: surface === 'sku' ? skuBusinessTitle(item) : '',
+    variant: item.variant || '',
+    variantName: item.variantName || '',
+    imageIndex: archiveImageIndex(item),
+    ratio: item.ratio || options.ratio || '',
+    resolution: item.resolution || options.resolution || '',
+    provider: config.provider,
+    imageModel: config.imageModel,
+    prompt: item.prompt || '',
+    negativePrompt: item.negativePrompt || '',
+    promptBatchId: item.promptBatchId || '',
+    parentResultId: item.parentResultId || '',
+    parentBatchId: item.parentBatchId || '',
+    guideOriginBatchId: item.guideOriginBatchId || '',
+    taskId: item.taskId || '',
+    blueprintId: item.blueprintId || '',
+    screenIndex: item.screenIndex,
+    logicalJobId: item.logicalJobId || '',
+    generation: item.generation,
+    attempt: item.attempt,
+    inputFingerprint: item.inputFingerprint || '',
+    createdAt: item.createdAt || Date.now()
+  };
+  // 旧 SKU 结果可以完全没有尺寸身份；一旦出现任一新字段，就把完整六元组交给
+  // archive store 严格校验。非 SKU 路线不透传这些同名字段，避免跨路线污染。
+  var skuOutputIdentityFields = [
+    'outputSize', 'outputWidth', 'outputHeight',
+    'providerSize', 'providerRatio', 'providerResolution'
+  ];
+  var hasSkuOutputIdentity = surface === 'sku' && skuOutputIdentityFields.some(function (key) {
+    return Object.prototype.hasOwnProperty.call(item, key);
+  });
+  if (hasSkuOutputIdentity) {
+    skuOutputIdentityFields.forEach(function (key) { archiveInput[key] = item[key]; });
+  }
+  var prefetch=prepareArchiveOriginal(item,archiveInput,provisional);
   state.archiveWriteQueue = state.archiveWriteQueue.catch(function () {}).then(function () {
-    var save = provisional ? IMAGE_ARCHIVE.saveProvisionalResult : IMAGE_ARCHIVE.saveResult;
-    var archiveInput = {
-      accountKey: accountKey,
-      surfaceMode: surface,
-      creativeRoute: item.creativeRoute || '',
-      detailMode: item.detailMode || '',
-      sourceBatchId: sourceBatchId,
-      technicalSourceBatchId: technicalSourceBatchId,
-      archiveBatchId: options.archiveBatchId || '',
-      archiveProjectId: business.archiveProjectId,
-      archiveAssetId: item.archiveAssetId || '',
-      batchId: sourceBatchId,
-      resultId: item.resultId || '',
-      jobId: item.jobId || '',
-      url: item.url,
-      batchTitle: business.businessBatchTitle,
-      businessBatchTitle: business.businessBatchTitle,
-      businessType: business.businessType,
-      productName: business.productName,
-      styleName: business.styleName,
-      strengthName: business.strengthName,
-      copyModeName: business.copyModeName,
-      businessRoleKey: business.businessRoleKey,
-      businessRoleName: business.businessRoleName,
-      businessSummary: business.businessSummary,
-      businessTags: business.businessTags,
-      generationKind: business.generationKind,
-      linkId: item.linkId || '',
-      skuId: item.skuId || '',
-      skuCode: item.skuCode || '',
-      skuTitle: surface === 'sku' ? skuBusinessTitle(item) : '',
-      variant: item.variant || '',
-      variantName: item.variantName || '',
-      imageIndex: archiveImageIndex(item),
-      ratio: item.ratio || options.ratio || '',
-      resolution: item.resolution || options.resolution || '',
-      provider: config.provider,
-      imageModel: config.imageModel,
-      prompt: item.prompt || '',
-      negativePrompt: item.negativePrompt || '',
-      promptBatchId: item.promptBatchId || '',
-      parentResultId: item.parentResultId || '',
-      parentBatchId: item.parentBatchId || '',
-      guideOriginBatchId: item.guideOriginBatchId || '',
-      taskId: item.taskId || '',
-      blueprintId: item.blueprintId || '',
-      screenIndex: item.screenIndex,
-      logicalJobId: item.logicalJobId || '',
-      generation: item.generation,
-      attempt: item.attempt,
-      inputFingerprint: item.inputFingerprint || '',
-      createdAt: item.createdAt || Date.now()
-    };
-    // 旧 SKU 结果可以完全没有尺寸身份；一旦出现任一新字段，就把完整六元组交给
-    // archive store 严格校验。非 SKU 路线不透传这些同名字段，避免跨路线污染。
-    var skuOutputIdentityFields = [
-      'outputSize', 'outputWidth', 'outputHeight',
-      'providerSize', 'providerRatio', 'providerResolution'
-    ];
-    var hasSkuOutputIdentity = surface === 'sku' && skuOutputIdentityFields.some(function (key) {
-      return Object.prototype.hasOwnProperty.call(item, key);
-    });
-    if (hasSkuOutputIdentity) {
-      skuOutputIdentityFields.forEach(function (key) { archiveInput[key] = item[key]; });
-    }
-    return save.call(IMAGE_ARCHIVE, archiveInput).then(function (saved) {
+    return (prefetch ? prefetch.ready : Promise.resolve(null)).then(function (prepared) {
+      if (prefetch && !prefetch.current()) throw archivePrefetchError();
+      if (prepared && prepared.blob) archiveInput.blob=prepared.blob;
+      var saveOptions=prefetch ? {beforeCommit:prefetch.current,prefetchedExisting:!!(prepared&&prepared.existing),fetch:function () { return Promise.reject(archivePrefetchError()); }} : undefined;
+      return save.call(IMAGE_ARCHIVE,archiveInput,saveOptions);
+    }).then(function (saved) {
+      if (prefetch && !prefetch.current()) throw archivePrefetchError();
       writtenArchive = saved;
       item.archiveAssetId = saved.archiveAssetId;
       item.archiveBatchId = saved.archiveBatchId;
@@ -803,6 +878,7 @@ function queueArchiveResult(item, options) {
       receipt: provisional ? writtenArchive : null
     };
   });
+  if (prefetch) state.archiveWriteQueue=state.archiveWriteQueue.then(function (outcome) { prefetch.release(outcome&&outcome.ok===true);return outcome; },function (error) { prefetch.release(false);throw error; });
   return state.archiveWriteQueue;
 }
 
@@ -2284,6 +2360,7 @@ function skuWebsiteDurableRequest(request) {
   return !!(request && request.payload && request.payload.labMode === 'sku' && request.payload.detailMode === 'sku' &&
     globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id === 'shaozhuang-web-studio');
 }
+
 function skuDurableResponse(response, entry, key) {
   return Object.assign({}, response, {
     jobId: entry.identity.jobId, recoveredDelivery: true, skuProviderGeometry: entry.plan.geometry,
@@ -2293,6 +2370,7 @@ function skuDurableResponse(response, entry, key) {
     _skuReceipt: { key: key, jobId: entry.identity.jobId, owner: entry.owner, receiptId: entry.identity.receiptId }
   });
 }
+
 function skuSaveReturnedDelivery(owner, key, pending, request, response, durableEntry) {
   if (durableEntry && (!response.receipt || Object.keys(response.receipt).length !== 9 || Object.keys(response.receipt).some(function (field) { return !Object.prototype.hasOwnProperty.call(durableEntry.identity,field); }) || Object.keys(durableEntry.identity).some(function (field) { return response.receipt[field] !== durableEntry.identity[field]; }))) {
     return Promise.resolve(Object.assign(legacyImageUnknownResponse({jobId:pending.jobId,error:'原 SKU 返回回执身份不匹配，请保留原任务。'}),
@@ -2317,6 +2395,7 @@ function skuSaveReturnedDelivery(owner, key, pending, request, response, durable
     localStorage.setItem(key,JSON.stringify(marker));return result;
   }).catch(function (error) { return Object.assign({},result,{deliveryStorageError:error.message || String(error)}); });
 }
+
 function skuGetOriginalReceipt(owner, key, marker, request) {
   var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
   if (!api || !marker || !marker.receiptId) return Promise.resolve(legacyImageUnknownResponse({jobId:marker && marker.jobId || ''}));
@@ -2339,6 +2418,7 @@ function skuGetOriginalReceipt(owner, key, marker, request) {
   }).catch(function (error) { return Object.assign(legacyImageUnknownResponse({jobId:marker.jobId,error:error.message || String(error)}),
     {_skuRecovery:{owner:owner,key:key,receiptId:marker.receiptId,jobId:marker.jobId}}); });
 }
+
 function skuResolvePaidWorkspaceRequest(owner, request) {
   return legacyImageReceiptKey(owner,request).then(function (baseKey) {
     var clean = Object.assign({},request,{_skuPaidWorkspace:null,_skuPaidParentKey:null});
@@ -2352,6 +2432,7 @@ function skuResolvePaidWorkspaceRequest(owner, request) {
     });
   });
 }
+
 function skuSendAuthorizedImage(request, owner, runtimeOptions) {
   if (!request._skuPaidWorkspace) return sendRuntime('GENERATE_IMAGE',request,runtimeOptions);
   return globalThis.SZ_SKU_DURABLE_RECEIPT.verifyPaidWorkspaceDispatch(owner,request._skuPaidWorkspace,request._skuPaidParentKey).then(function () {
@@ -2362,6 +2443,7 @@ function skuSendAuthorizedImage(request, owner, runtimeOptions) {
     return globalThis.SZ_SKU_DURABLE_RECEIPT.verifyPaidWorkspaceDispatch(owner,request._skuPaidWorkspace,request._skuPaidParentKey);
   }).then(function () { return sendRuntime('GENERATE_IMAGE',request,runtimeOptions); });
 }
+
 function skuPaidTaskDescriptor(task, settings) {
   var item = task.item || {}, owner = String(state.archiveAccountKey || 'local');
   var baseSource = skuReplicaBaseImage(task,settings), subjectSource = item.sourceInputUrl || item.url;
@@ -2402,6 +2484,7 @@ function skuPaidTaskDescriptor(task, settings) {
     });
   });
 }
+
 function skuPaidSemanticScope(value) {
   var copy = cloneGuideValue(value);delete copy.metadata;
   if (copy.contract) delete copy.contract.batchLockId;
@@ -2412,6 +2495,7 @@ function skuPaidSemanticScope(value) {
   }
   return JSON.stringify(stable(copy));
 }
+
 function skuCheckPaidTaskForGeneration(task,settings) {
   var owner = String(state.archiveAccountKey || 'local'), item = task.item, api = globalThis.SZ_SKU_DURABLE_RECEIPT;
   if (!api || !item._skuDurableReceiptKey) return Promise.reject(new Error('新付费任务授权缺失。'));
@@ -2425,6 +2509,7 @@ function skuCheckPaidTaskForGeneration(task,settings) {
     });
   });
 }
+
 function authorizeNewPaidSkuBatch(event) {
   var api = globalThis.SZ_SKU_DURABLE_RECEIPT, owner = String(state.archiveAccountKey || 'local'), intent;
   if (!api || !api.beginPaidWorkspaceIntent || state.skuActive || state._skuPaidAuthorizing || legacyImageUploadBusy() ||
@@ -2460,6 +2545,7 @@ function authorizeNewPaidSkuBatch(event) {
     return {ok:false,error:error.message || String(error)};
   }).finally(function () { state._skuPaidAuthorizing = false;renderSkuPaidWorkspaceControls(); });
 }
+
 function renderSkuPaidWorkspaceControls() {
   var button = $('skuNewPaidBatchBtn'), info = $('skuPaidBatchInfo'), exportButton = $('skuExportPaidReceiptBtn');
   if (!button) return;
@@ -2484,6 +2570,7 @@ function renderSkuPaidWorkspaceControls() {
     }
   });
 }
+
 function restoreSkuPaidWorkspaceProducts(auth) {
   var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
   if (!auth || !api || auth.owner !== String(state.archiveAccountKey || 'local') || state.skuActive || state._skuPaidProductsRestoring) return Promise.resolve(false);
@@ -2530,6 +2617,7 @@ function restoreSkuPaidWorkspaceProducts(auth) {
     if (auth.owner === String(state.archiveAccountKey || 'local')) setPill('skuState','新付费任务恢复失败，原回执仍保留：'+(error.message || String(error)),'warn');return false;
   }).finally(function () { state._skuPaidProductsRestoring = false; });
 }
+
 function exportSkuPaidWorkspaceMetadata() {
   var owner = String(state.archiveAccountKey || 'local'), api = globalThis.SZ_SKU_DURABLE_RECEIPT;
   if (!api || !api.exportPaidWorkspaceMetadata || owner === 'local') return Promise.resolve({ok:false});
@@ -2559,6 +2647,8 @@ function skuPrepareDurableRequest(owner, key, request) {
     return api.prepare(Object.assign({},request._skuDurablePreparation,{owner:owner,legacyKey:key},paid));
   });
 }
+
+
 function legacySavedDeliveryResponse(owner, key, delivery) {
   legacyImageForgetRestart(owner,key);
   return { ok: true, images: delivery.images.slice(), taskId: delivery.taskId || '', jobId: delivery.jobId,
@@ -2772,6 +2862,7 @@ function sendLegacyImage(request) {
       if (previous !== null) {
         var receipt;
         try { receipt = JSON.parse(previous); } catch (_) {}
+        promptTaskAdoptLegacyReceipt(owner,key,receipt,request,false);
         if (skuDelivery && receipt && receipt.version === 1 && receipt.jobId) {
           var storedDelivery = receipt.state === 'delivered' && Array.isArray(receipt.images) && receipt.images.length
             ? Promise.resolve(receipt)
@@ -2801,7 +2892,7 @@ function sendLegacyImage(request) {
         if (!skuDelivery && receipt && receipt.jobId && globalThis.SZ_SKU_DELIVERY_STORE) {
           return globalThis.SZ_SKU_DELIVERY_STORE.read(owner, key).then(function (delivery) {
             if (owner !== promptTaskOwner()) return legacyImageUnknownResponse({ jobId: receipt.jobId });
-            if (delivery && delivery.jobId === receipt.jobId && delivery.images && delivery.images.length) return legacySavedDeliveryResponse(owner, key, delivery);
+            if (delivery && delivery.jobId === receipt.jobId && delivery.images && delivery.images.length) { promptTaskAdoptLegacyReceipt(owner,key,receipt,request,true);return legacySavedDeliveryResponse(owner, key, delivery); }
             return legacyImageUnknownResponse({ jobId: receipt.jobId, taskId: receipt.taskId || '' });
           }).catch(function () { return legacyImageUnknownResponse({ jobId: receipt.jobId, error: '原任务图片暂未恢复，回执继续保留。' }); });
         }
@@ -2897,6 +2988,7 @@ function sendLegacyImage(request) {
       code: skuWebsiteDurableRequest(request) && error && error.code || 'IMAGE_RECEIPT_STORAGE_UNAVAILABLE', error: error && error.message || String(error) };
   });
 }
+
 function acknowledgeSkuDelivery(response) {
   var receipt = response && response._skuReceipt;
   if (!receipt || response.receiptEvidenceStorageError || receipt.owner !== String(state.archiveAccountKey || 'local')) return Promise.resolve(false);
@@ -2944,6 +3036,53 @@ function send(type, payload) {
   }
   return sendRuntime(type, payload);
 }
+// Candidate-only additions: metadata recovery never dispatches or releases a receipt.
+function promptTaskBoundConfigRead(action) {
+  return new Promise(function (resolve) {
+    var settled = false;
+    var timer = setTimeout(function () { done({ok:false,code:'CONFIG_READ_TIMEOUT',error:'账号和 API 配置读取超时，请稍后重新打开工作台。'}); },15000);
+    function done(value) { if (settled) return;settled = true;clearTimeout(timer);resolve(value); }
+    try { Promise.resolve(action()).then(done,function () { done({ok:false,code:'CONFIG_READ_FAILED',error:'账号和 API 配置读取失败，请稍后重试。'}); }); }
+    catch (_) { done({ok:false,code:'CONFIG_READ_FAILED',error:'账号和 API 配置读取失败，请稍后重试。'}); }
+  });
+}
+function promptTaskOldJournal(owner) {
+  var query = new URLSearchParams(location.search), mode = query.get('mode') || 'main';
+  var allowed = mode === 'main' ? ['ANALYZE_IMAGE','BUILD_LINK_PROMPT'] : mode === 'detail' ? ['BUILD_DETAIL_PROMPT'] : [];
+  try {
+    var old = JSON.parse(localStorage.getItem('sz.prompt-task-journal.v1:' + encodeURIComponent(owner)) || '[]');
+    return Array.isArray(old) ? old.filter(function (task) { return task && allowed.indexOf(task.type) >= 0; }).slice(-40) : [];
+  } catch (_) { return []; }
+}
+function promptTaskHistoricalReceiptCount(owner) {
+  if (owner === 'local') return 0;
+  var prefix = LEGACY_IMAGE_RECEIPT_PREFIX + encodeURIComponent(owner) + ':', journalPrefix = 'sz.prompt-task-journal.v1:' + encodeURIComponent(owner), known = Object.create(null), keys = [], count = 0;
+  try {
+    for (var index = 0; index < localStorage.length && index < 2000; index++) {
+      var key = localStorage.key(index); if (!key) continue;
+      if (key.indexOf(prefix) === 0) keys.push(key);
+      if (key === journalPrefix || key.indexOf(journalPrefix + ':') === 0) {
+        var records; try { records = JSON.parse(localStorage.getItem(key) || '[]'); } catch (_) {}
+        if (Array.isArray(records)) records.forEach(function (task) { if (task && typeof task.receiptKey === 'string' && task.receiptKey.indexOf(prefix) === 0) known[task.receiptKey] = true; });
+      }
+    }
+    keys.forEach(function (key) { if (known[key]) return;var marker;try { marker = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}if (marker && marker.version === 1 && typeof marker.jobId === 'string' && ['pending','uncertain','delivered'].indexOf(marker.state) >= 0) count++; });
+  } catch (_) {}
+  return count;
+}
+function promptTaskAdoptLegacyReceipt(owner, key, marker, request, delivered) {
+  if (owner !== promptTaskOwner() || !marker || marker.version !== 1 || !marker.jobId ||
+      key.indexOf(LEGACY_IMAGE_RECEIPT_PREFIX + encodeURIComponent(owner) + ':') !== 0) return false;
+  // Caller already computed this exact key from the current frozen provider inputs.
+  var records = promptTaskJournal(owner), existing = records.find(function (task) { return task.receiptKey === key && task.jobId === marker.jobId; });
+  if (existing) { if (delivered) { existing.status = 'recovered';existing.receiptState = 'received'; }promptTaskPersist(owner);promptTaskRender();return true; }
+  var payload = request && request.payload || {}, target = String(payload.linkId || payload.skuId || payload.link && payload.link['链接编号'] || '').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,60);
+  if (payload.detailScreenIndex || payload.mainImageIndex) target += ' 第' + (Number(payload.detailScreenIndex || payload.mainImageIndex) || 1) + '张';
+  records.push({id:'history_' + key.slice(-100).replace(/[^A-Za-z0-9_-]/g,'_'),jobId:String(marker.jobId).slice(0,180),type:'GENERATE_IMAGE',label:'图片生成',targetLabel:target,
+    receiptKey:key,status:delivered?'recovered':'uncertain',startedAt:Number.isFinite(marker.createdAt)?marker.createdAt:Date.now(),endedAt:Date.now(),receiptState:delivered?'received':'pending',code:'LEGACY_RECEIPT_ADOPTED'});
+  promptTaskPersist(owner);promptTaskRender();return true;
+}
+
 // PROMPT_TASK_LIFECYCLE_V1: local waiting and provider settlement are separate.
 var promptTaskRecords = Object.create(null);
 var promptTaskFlights = Object.create(null);
@@ -2959,15 +3098,79 @@ function promptTaskStorageKey(owner) {
   var query = new URLSearchParams(location.search), scope = [query.get('mode') || 'main', query.get('detailMode') || '', query.get('creativeRoute') || ''].join(':');
   return 'sz.prompt-task-journal.v1:' + encodeURIComponent(owner) + ':' + encodeURIComponent(scope);
 }
+function promptTaskSafeIdentifier(value, maxLength) {
+  if (typeof value !== 'string' || !value || value.length > (maxLength || 180) || !/^[A-Za-z0-9_.:-]+$/.test(value) ||
+      /(?:^|[_.:])(?:(?:sk|pk|rk|ak|sess)[-_]|gh[pousr]_|AIza)|^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\./i.test(value)) return '';
+  return value;
+}
+function promptTaskSafeDetail(value) {
+  if (typeof value !== 'string') return '';
+  var text = value.slice(0, 4096).trim();
+  if (!text) return '';
+  if (/^\s*(?:<!doctype|<html|<head|<body)/i.test(text)) return '服务返回了无法解析的页面，请查看错误码和请求编号。';
+  if (/^\s*[\[{]/.test(text)) {
+    try {
+      var data = JSON.parse(text), error = data && data.error;
+      text = typeof error === 'string' ? error : error && typeof error.message === 'string' ? error.message
+        : data && typeof data.message === 'string' ? data.message : '';
+    } catch (_) { return '服务回执暂时无法读取，请查看错误码和请求编号。'; }
+  }
+  return text.replace(/<[^>]*>/g, ' ')
+    .replace(/data:[^,\s]*,[A-Za-z0-9+/=\s]+/gi, '[图片数据已隐藏]')
+    .replace(/(?:https?:\/\/|blob:)[^\s"'<>]+/gi, '[地址已隐藏]')
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [已隐藏]')
+    .replace(/\b(?:(?:sk|pk|rk|ak|sess)[-_]|gh[pousr]_)[A-Za-z0-9_-]+|\bAIza[A-Za-z0-9_-]+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gi, '[已隐藏]')
+    .replace(/(["']?(?:api[_ -]?key|authorization|access[_ -]?token|token|secret|password|credential|access[_ -]?key|cookie|密钥|令牌|密码)["']?\s*(?:[:=：]\s*|\s+))(?:"[^"]*(?:"|$)|'[^']*(?:'|$)|[^\s,，;；]+)/gi, '$1[已隐藏]')
+    .replace(/\b[A-Za-z0-9+/_=-]{32,}\b/g, '[已隐藏]')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
+}
+function promptTaskDiagnostic(response) {
+  response = response && typeof response === 'object' ? response : {};
+  var meta = response.errorMeta && typeof response.errorMeta === 'object' ? response.errorMeta : {};
+  var status = Number(response.httpStatus || response.status || meta.httpStatus || meta.status);
+  var out = {
+    httpStatus: Number.isInteger(status) && status >= 100 && status <= 599 ? status : 0,
+    requestId: promptTaskSafeIdentifier(response.requestId || meta.requestId),
+    billingEventId: promptTaskSafeIdentifier(response.billingEventId || meta.billingEventId),
+    reasonCode: promptTaskSafeIdentifier(response.reasonCode || meta.reasonCode, 100),
+    errorDetail: promptTaskSafeDetail(response.errorDetail || meta.errorDetail || response.error)
+  };
+  ['providerSubmitted', 'definitiveFailure', 'stateUncertain'].forEach(function (key) {
+    var value = response[key] !== undefined ? response[key] : meta[key];
+    if (typeof value === 'boolean') out[key] = value;
+  });
+  return out;
+}
+function promptTaskCaptureDiagnostic(task, response) {
+  var diagnostic = promptTaskDiagnostic(response);
+  ['httpStatus', 'requestId', 'billingEventId', 'reasonCode', 'errorDetail'].forEach(function (key) {
+    if (diagnostic[key]) task[key] = diagnostic[key];
+  });
+  ['providerSubmitted', 'definitiveFailure', 'stateUncertain'].forEach(function (key) {
+    if (typeof diagnostic[key] === 'boolean') task[key] = diagnostic[key];
+  });
+}
+function promptTaskDiagnosticLabel(task) {
+  var diagnostic = promptTaskDiagnostic(task), parts = [];
+  if (diagnostic.errorDetail) parts.push(diagnostic.errorDetail);
+  var code = promptTaskSafeIdentifier(task.code, 100);
+  if (code) parts.push('错误码 ' + code);
+  if (diagnostic.httpStatus) parts.push('HTTP ' + diagnostic.httpStatus);
+  if (diagnostic.reasonCode && diagnostic.reasonCode !== code) parts.push('原因 ' + diagnostic.reasonCode);
+  var requestId = diagnostic.billingEventId || diagnostic.requestId || promptTaskSafeIdentifier(task.jobId);
+  if (requestId) parts.push((diagnostic.billingEventId ? '账务编号 ' : '请求编号 ') + requestId);
+  return parts.join(' · ');
+}
 function promptTaskSafeRecord(task) {
-  return { id: task.id, jobId: task.jobId, type: task.type, label: task.label, targetLabel: task.targetLabel || '', receiptKey: task.receiptKey || '', status: task.status,
-    startedAt: task.startedAt, endedAt: task.endedAt || 0, receiptState: task.receiptState || '', code: task.code || '' };
+  return Object.assign({ id: task.id, jobId: task.jobId, type: task.type, label: task.label, targetLabel: task.targetLabel || '', receiptKey: task.receiptKey || '', status: task.status,
+    startedAt: task.startedAt, endedAt: task.endedAt || 0, receiptState: task.receiptState || '', code: promptTaskSafeIdentifier(task.code, 100) }, promptTaskDiagnostic(task));
 }
 function promptTaskJournal(owner) {
   if (promptTaskRecords[owner]) return promptTaskRecords[owner];
   var records = [];
   try {
-    var saved = JSON.parse(localStorage.getItem(promptTaskStorageKey(owner)) || '[]');
+    var scopedRaw = localStorage.getItem(promptTaskStorageKey(owner));
+    var saved = scopedRaw === null ? promptTaskOldJournal(owner) : JSON.parse(scopedRaw || '[]');
     if (Array.isArray(saved)) saved.slice(-1040).forEach(function (task) {
       if (!task || !PROMPT_TASK_TYPES[task.type] || typeof task.id !== 'string' || typeof task.jobId !== 'string' ||
           !Number.isFinite(task.startedAt) || task.id.length > 180 || task.jobId.length > 180) return;
@@ -3026,12 +3229,13 @@ function promptTaskState() {
   var tasks = records.map(function (task) { return Object.assign(promptTaskSafeRecord(task), { elapsedMs: Math.max(0, (task.endedAt || now) - task.startedAt) }); });
   var activeCount = tasks.filter(function (task) { return task.status === 'running'; }).length;
   var pendingReceiptCount = promptTaskReceiptCount(owner);
+  var historicalReceiptCount = promptTaskHistoricalReceiptCount(owner);
   var busy = activeCount > 0 || promptTaskBusy();
   var localSummary = state.referenceDetail && (state.referenceDetail.activeJobId || state.referenceDetail.buildPhase === 'building') ? '正在分析详情结构'
     : state.referenceDetail && state.referenceDetail.confirmationPromise ? '正在保存并确认详情结构'
     : state.skuPersistInFlight || state._skuPaidAuthorizing ? '正在保存 SKU 任务' : '正在整理任务或素材';
-  return { ready: owner !== 'local', accountKey: owner, activeCount: activeCount, pendingReceiptCount: pendingReceiptCount,
-    busy: busy, tasks: tasks, summary: activeCount ? activeCount + ' 个任务进行中' : busy ? localSummary : pendingReceiptCount ? pendingReceiptCount + ' 个原任务回执已保留' : '当前没有进行中的任务' };
+  return { ready: owner !== 'local', accountKey: owner, activeCount: activeCount, pendingReceiptCount: pendingReceiptCount, historicalReceiptCount: historicalReceiptCount,
+    busy: busy, tasks: tasks, summary: activeCount ? activeCount + ' 个任务进行中' : busy ? localSummary : pendingReceiptCount ? pendingReceiptCount + ' 个原任务回执已保留' : historicalReceiptCount ? historicalReceiptCount + ' 个旧图片回执待核对（当前账号）' : '当前没有进行中的任务' };
 }
 function promptTaskEscape(value) { return String(value || '').replace(/[&<>"']/g, function (char) { return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]; }); }
 function promptTaskOpenDetails() {
@@ -3062,7 +3266,7 @@ function promptTaskRender() {
   if (!panel || typeof panel.querySelector !== 'function') return;
   var snapshot = promptTaskState(), tasks = snapshot.tasks;
   if (panel.__taskOwner !== snapshot.accountKey) { promptTaskCloseDetails(); var recovery = $('promptTaskRecovery'); if (recovery) { recovery.hidden = true; recovery.textContent = ''; } panel.__taskOwner = snapshot.accountKey; }
-  panel.hidden = !tasks.length && !snapshot.pendingReceiptCount && !snapshot.busy;
+  panel.hidden = !tasks.length && !snapshot.pendingReceiptCount && !snapshot.historicalReceiptCount && !snapshot.busy;
   var summary = $('promptTaskSummary'), list = $('promptTaskList'), note = $('promptTaskNote'), detailSummary = $('promptTaskDetailSummary');
   var current = $('promptTaskCurrent'), currentElapsed = $('promptTaskCurrentElapsed');
   var running = tasks.filter(function (task) { return promptTaskDisplayState(task) === 'running'; });
@@ -3078,9 +3282,10 @@ function promptTaskRender() {
   if (uncertainCount) counts.push('待确认 ' + uncertainCount);
   if (endedCount) counts.push('已结束 ' + endedCount);
   if (completed.length) counts.push('最近完成 ' + completed.length);
-  if (!counts.length && snapshot.pendingReceiptCount) counts.push('回执已保留 ' + snapshot.pendingReceiptCount);
+  if (!uncertainCount && snapshot.pendingReceiptCount) counts.push('回执已保留 ' + snapshot.pendingReceiptCount);
+  if (!uncertainCount && snapshot.historicalReceiptCount) counts.push('旧回执待核对 ' + snapshot.historicalReceiptCount);
   var compactSummary = counts.join(' · ') || '暂无任务';
-  panel.setAttribute('data-state', snapshot.busy ? 'running' : attention.length || snapshot.pendingReceiptCount ? 'attention' : 'complete');
+  panel.setAttribute('data-state', snapshot.busy ? 'running' : attention.length || snapshot.pendingReceiptCount || snapshot.historicalReceiptCount ? 'attention' : 'complete');
   if (summary && summary.textContent !== compactSummary) summary.textContent = compactSummary;
   if (detailSummary) detailSummary.textContent = compactSummary;
   var currentText = running.length ? running[0].label + (running[0].targetLabel ? ' · ' + running[0].targetLabel : '') + (running.length > 1 ? ' 等 ' + running.length + ' 项' : '') : snapshot.busy ? snapshot.summary : '';
@@ -3102,7 +3307,7 @@ function promptTaskRender() {
         promptRetryHint ? '<small>点击原分析按钮或“只重试失败编号”重新跑</small>' :
         '') +
       (imageRetry ? '<small>重新跑按新任务计费，原任务记录保留。</small>' : '') +
-      '<details class="prompt-task-technical" data-task-detail="' + promptTaskEscape(task.id) + '"><summary>请求详情</summary><dl><dt>请求编号</dt><dd><code>' + promptTaskEscape(task.jobId) + '</code></dd>' + (task.code ? '<dt>错误码</dt><dd><code>' + promptTaskEscape(task.code) + '</code></dd>' : '') + '</dl></details></div>' +
+      '<details class="prompt-task-technical" data-task-detail="' + promptTaskEscape(task.id) + '"><summary>请求详情</summary><dl><dt>请求编号</dt><dd><code>' + promptTaskEscape(task.jobId) + '</code></dd>' + (task.code ? '<dt>错误码</dt><dd><code>' + promptTaskEscape(task.code) + '</code></dd>' : '') + '<dt>诊断信息</dt><dd>' + promptTaskEscape(promptTaskDiagnosticLabel(task)) + '</dd></dl></details></div>' +
       (task.status === 'running' ? '<button type="button" class="btn ghost" data-task-end="' + promptTaskEscape(task.id) + '" aria-label="结束等待 ' + promptTaskEscape(task.label + ' ' + task.targetLabel) + '">结束等待</button>' :
         task.receiptState === 'received' && task.receiptKey ? '<button type="button" class="btn ghost" data-task-recover="' + promptTaskEscape(task.id) + '">查看原图</button>' :
         imageRetry ? '<button type="button" class="btn ghost" data-task-restart="' + promptTaskEscape(task.id) + '">重新跑（新任务）</button>' : '') + '</li>';
@@ -3115,7 +3320,7 @@ function promptTaskRender() {
   }
   var markup = groupMarkup('running', '进行中', running, snapshot.busy && !running.length ? '<li class="prompt-task-local">' + promptTaskEscape(snapshot.summary) + '</li>' : '') +
     groupMarkup('attention', '需处理', attention) + groupMarkup('completed', '最近完成', completed);
-  if (!markup && snapshot.pendingReceiptCount) markup = '<li class="prompt-task-local">原任务回执已保留，请从原任务核对结果。</li>';
+  if (!markup && (snapshot.pendingReceiptCount || snapshot.historicalReceiptCount)) markup = '<li class="prompt-task-local">原任务回执已保留，请从原任务核对结果。</li>';
   // Elapsed-time ticks must not replace a button the user is about to press.
   if (list) {
     if (list.__taskMarkup !== markup) {
@@ -3219,6 +3424,10 @@ function promptTaskRecover(id) {
   }).catch(function () { if (owner === promptTaskOwner()) { host.hidden = false; host.textContent = '原图暂未读取成功，回执继续保留，请稍后重试。'; } return { ok: false }; });
 }
 function promptTaskLateResult(task, owner, response, options) {
+  // Preserve receipt identifiers on the original task without reviving an ended wait.
+  promptTaskCaptureDiagnostic(task, response);
+  promptTaskPersist(owner);
+  if (owner === promptTaskOwner()) promptTaskRender();
   if (!options || typeof options.onLate !== 'function') return;
   Promise.resolve().then(function () { return options.onLate(response); }).then(function (saved) {
     if (!saved || !saved.ok) return;
@@ -3229,10 +3438,13 @@ function promptTaskLateResult(task, owner, response, options) {
 }
 function promptTaskCancel(jobId) {
   // Cancellation acknowledgement is not evidence that a paid request was not submitted.
-  try { chrome.runtime.sendMessage({ type: 'CANCEL_GENERATION', jobId: jobId }, function () { try { void chrome.runtime.lastError; } catch (_) {} }); } catch (_) {}
+  try { chrome.runtime.sendMessage({ type: 'CANCEL_GENERATION', jobId: jobId, waitOnly: true }, function () { try { void chrome.runtime.lastError; } catch (_) {} }); } catch (_) {}
 }
 function promptTaskPromptFailure(response) {
   if (!response || response.ok) return response;
+  response = Object.assign({}, response, promptTaskDiagnostic(response), {
+    error: promptTaskSafeDetail(response.error) || '本次任务失败，请查看错误码和请求编号。'
+  });
   var code = String(response.code || response.errorCode || '').toLowerCase();
   var errorMeta = response.errorMeta && typeof response.errorMeta === 'object' ? response.errorMeta : {};
   if (/^(?:task_account_changed|account_changed|input_changed|link_identity_mismatch|auth_failed|session_expired|unauthenticated|unauthorized|forbidden|invalid_api_key|missing_api_key|config_missing|config_not_found|model_not_found|http_401|http_403)$/.test(code) ||
@@ -3268,7 +3480,7 @@ function promptTaskRun(type, payload, options, dispatch) {
   }
   var targetLabel = String(data.linkId || data.link && data.link['链接编号'] || data.skuId || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 60);
   if (data.detailScreenIndex || data.mainImageIndex) targetLabel += ' 第' + (Number(data.detailScreenIndex || data.mainImageIndex) || 1) + '张';
-  var task = { id: newJobId(), jobId: jobId, type: type, label: spec[0], targetLabel: targetLabel, receiptKey: options && options.receiptKey || '', status: 'running', startedAt: Date.now(), endedAt: 0, receiptState: '' };
+  var task = { id: newJobId(), jobId: jobId, requestId: promptTaskSafeIdentifier(request.payload.requestId || jobId), type: type, label: spec[0], targetLabel: targetLabel, receiptKey: options && options.receiptKey || '', status: 'running', startedAt: Date.now(), endedAt: 0, receiptState: '' };
   var flight = { owner: owner, task: task, identity: identity, promise: null, end: null };
   promptTaskJournal(owner).push(task); promptTaskFlights[task.id] = flight;
   flight.promise = new Promise(function (resolve) {
@@ -3277,9 +3489,10 @@ function promptTaskRun(type, payload, options, dispatch) {
       if (settled) { promptTaskLateResult(task, owner, response, options); return; }
       settled = true; clearTimeout(timer); delete promptTaskFlights[task.id];
       var result = response || { ok: false, code: 'TASK_RESPONSE_MISSING', error: '任务未返回结果，已结束等待。' };
+      promptTaskCaptureDiagnostic(task, result);
       if (owner !== promptTaskOwner()) { promptTaskLateResult(task, owner, response, options); result = { ok: false, code: 'TASK_ACCOUNT_CHANGED', ended: true, error: '账号已变化，原任务结果已保留在原账号。', stateUncertain: type === 'GENERATE_IMAGE' }; }
       if (type !== 'GENERATE_IMAGE' && result.code !== 'TASK_ACCOUNT_CHANGED') result = promptTaskPromptFailure(result);
-      task.endedAt = Date.now(); task.code = /^[A-Za-z0-9_.:-]{0,100}$/.test(String(result.code || '')) ? String(result.code || '') : '';
+      task.endedAt = Date.now(); task.code = promptTaskSafeIdentifier(result.code || result.errorCode, 100);
       task.status = result.ok ? 'success' : result.timedOut ? 'timed_out' : result.code === 'cancelled' || result.code === 'TASK_WAIT_ENDED' || result.code === 'TASK_ACCOUNT_CHANGED' ? 'ended' : type === 'GENERATE_IMAGE' && result.stateUncertain ? 'uncertain' : 'failed';
       task.receiptState = type === 'GENERATE_IMAGE' && result.stateUncertain ? 'pending' : '';
       promptTaskPersist(owner); promptTaskRender(); resolve(result);
@@ -3302,7 +3515,6 @@ function promptTaskRun(type, payload, options, dispatch) {
   return flight.promise;
 }
 // END_PROMPT_TASK_LIFECYCLE_V1
-
 function sendRuntime(type, payload, options) {
   var accountAtDispatch = promptTaskOwner();
   function finish(resp) {
@@ -3330,6 +3542,7 @@ function sendRuntime(type, payload, options) {
   var tracked = PROMPT_TASK_TYPES[type] && !image.studioGenesisVersion && !image.creativeContractVersion &&
     !image.sceneExtensionContractVersion && !image.linkImageContractVersion && !image.referenceDetailBatch;
   if (tracked) return promptTaskRun(type, payload, options, dispatch).then(finish);
+  if (['GET_CONFIG_PROFILE','GET_STUDIO_CONFIG_SNAPSHOT','GET_BOUND_IMAGE_APIS'].indexOf(type) >= 0) return promptTaskBoundConfigRead(function () { return dispatch(payload); }).then(finish);
   return dispatch(payload).then(finish);
 }
 
@@ -3672,7 +3885,7 @@ function cfgFromForm() {
   var cfg = normalizeCfg({
     provider: provider,
     imageAdapter: $('imageAdapter').value || preset.imageAdapter,
-    apiKey: $('apiKey').value.trim(),
+    apiKey: acceptedConfigApiKey(provider),
     visionBaseUrl: $('visionBaseUrl').value.trim() || preset.visionBaseUrl || DEFAULT_CFG.visionBaseUrl,
     visionModel: $('visionModel').value.trim() || preset.visionModel || DEFAULT_CFG.visionModel,
     textModel: $('textModel').value.trim() || preset.textModel || DEFAULT_CFG.textModel,
@@ -3772,6 +3985,92 @@ var configReadEpoch = 0;
 var pendingProviderSelection = 0;
 var pendingProviderProfile = 0;
 var configFormDirty = false;
+// The password field is a display/editor, not a credential source. Only an
+// accepted profile or an explicit manual edit may replace this in-memory key.
+var configApiKey = { provider: '', value: '', editing: false, editAccount: '', editProvider: '', pendingInput: '', history: [], historyIndex: 0 };
+function acceptedConfigApiKey(provider) {
+  return configApiKey.provider === provider ? configApiKey.value : '';
+}
+function apiKeyAutofilled(input) {
+  if (!input || typeof input.matches !== 'function') return false;
+  try { if (input.matches(':autofill')) return true; } catch (_) {}
+  try { return input.matches(':-webkit-autofill'); } catch (_) { return false; }
+}
+function manualApiKeyEvent(event, input) {
+  var modal = $('configModal');
+  return !!(event && event.isTrusted && configApiKey.editing && !input.readOnly && !input.disabled &&
+    !creativeWebIsBusy() && !configWalletSwitchPending &&
+    configApiKey.editAccount === String(state.archiveAccountKey || '') &&
+    configApiKey.editProvider === $('provider').value && configApiKey.provider === configApiKey.editProvider &&
+    modal && !modal.hidden && document.activeElement === input && !apiKeyAutofilled(input));
+}
+function acceptManualApiKey(value, remember) {
+  configApiKey.value = String(value || '').trim();
+  if (remember) {
+    configApiKey.history = configApiKey.history.slice(0, configApiKey.historyIndex + 1);
+    configApiKey.history.push(configApiKey.value);
+    configApiKey.historyIndex = configApiKey.history.length - 1;
+  }
+  ++configApplySeq;
+  configFormDirty = true;
+  if (!pendingProviderProfile) updateConfigSummary(cfgFromForm());
+  setPill('configState', configApiKey.value ? '待保存' : '未配置', configApiKey.value ? '' : 'warn');
+}
+function bindApiKeyEditor(input) {
+  var edit = $('editApiKeyBtn');
+  if (edit) edit.addEventListener('click', function (event) {
+    var modal = $('configModal');
+    if (!event || !event.isTrusted || !modal || modal.hidden || input.disabled || creativeWebIsBusy() ||
+        configWalletSwitchPending || configApiKey.provider !== $('provider').value) return;
+    input.value = configApiKey.value;
+    input.readOnly = false;
+    configApiKey.editing = true;
+    configApiKey.editAccount = String(state.archiveAccountKey || '');
+    configApiKey.editProvider = $('provider').value;
+    configApiKey.pendingInput = '';
+    configApiKey.history = [configApiKey.value];
+    configApiKey.historyIndex = 0;
+    ++configApplySeq;
+    configFormDirty = true;
+    input.focus();
+    input.select();
+  });
+  input.addEventListener('beforeinput', function (event) {
+    configApiKey.pendingInput = '';
+    if (!manualApiKeyEvent(event, input) || input.value.trim() !== configApiKey.value) {
+      if (event && event.preventDefault) event.preventDefault();
+      input.value = configApiKey.value;
+      return;
+    }
+    var type = String(event.inputType || '');
+    if (type === 'historyUndo' || type === 'historyRedo') {
+      event.preventDefault();
+      var next = configApiKey.historyIndex + (type === 'historyUndo' ? -1 : 1);
+      if (next >= 0 && next < configApiKey.history.length) {
+        configApiKey.historyIndex = next;
+        input.value = configApiKey.history[next];
+        acceptManualApiKey(input.value, false);
+      }
+      return;
+    }
+    if (/^(?:insertText|insertFromPaste|insertFromDrop|insertCompositionText|insertFromComposition|deleteCompositionText|deleteContentBackward|deleteContentForward|deleteWordBackward|deleteWordForward|deleteSoftLineBackward|deleteSoftLineForward|deleteHardLineBackward|deleteHardLineForward|deleteByCut|deleteByDrag)$/.test(type)) {
+      configApiKey.pendingInput = type;
+    } else {
+      event.preventDefault();
+    }
+  });
+  input.addEventListener('input', function (event) {
+    var expectedType = configApiKey.pendingInput;
+    configApiKey.pendingInput = '';
+    if (!manualApiKeyEvent(event, input) || !expectedType || String(event.inputType || '') !== expectedType) {
+      input.value = configApiKey.value;
+      return;
+    }
+    acceptManualApiKey(input.value, true);
+  });
+  input.addEventListener('change', function () { input.value = configApiKey.value; });
+  input.addEventListener('blur', function () { configApiKey.pendingInput = ''; input.value = configApiKey.value; });
+}
 function configReadIsCurrent(seq, accountKey, epoch) {
   return seq === configApplySeq && String(state.archiveAccountKey) === String(accountKey) && (epoch === undefined || epoch === configReadEpoch);
 }
@@ -3783,9 +4082,18 @@ function applyCfg(cfg) {
   ++configApplySeq;
   configFormDirty = false;
   cfg = normalizeCfg(cfg);
+  configApiKey.provider = cfg.provider;
+  configApiKey.value = cfg.apiKey || '';
+  configApiKey.editing = false;
+  configApiKey.editAccount = '';
+  configApiKey.editProvider = '';
+  configApiKey.pendingInput = '';
+  configApiKey.history = [configApiKey.value];
+  configApiKey.historyIndex = 0;
   $('provider').value = cfg.provider || 'dashscope';
   $('imageAdapter').value = cfg.imageAdapter || 'dashscope-wan';
   $('apiKey').value = cfg.apiKey || '';
+  $('apiKey').readOnly = true;
   $('visionBaseUrl').value = cfg.visionBaseUrl || DEFAULT_CFG.visionBaseUrl;
   $('visionModel').value = cfg.visionModel || DEFAULT_CFG.visionModel;
   $('textModel').value = cfg.textModel || DEFAULT_CFG.textModel;
@@ -4623,7 +4931,7 @@ function promptErrorAction(entry) {
   if (action === 'open_api_settings' || /^(missing_api_key|unauthorized|forbidden|invalid_api_key|model_not_found|vision_model_required|config_missing|config_not_found|account_changed|http_401|http_403)$/.test(code)) {
     return { label: label || '检查统一 API', run: openUnifiedApiSettings };
   }
-  if (/^(check_knowledge|reconnect_knowledge)$/.test(action) || /knowledge/.test(code)) {
+  if (/^(check_knowledge|reconnect_knowledge)$/.test(action) || /knowledge|missing_key/.test(code)) {
     return { label: label || '检查知识库', run: openBusinessKnowledge };
   }
   // 结构化动作优先于错误文案猜测。网关错误摘要会说明“主体图已保留”，
@@ -11848,6 +12156,16 @@ function syncReferenceAnalysisControl() {
   if (button) button.disabled = !!referenceAnalysisInFlight || linkWorkflowBusyDepth > 0 || imageUploadReads > 0;
 }
 
+function referenceAnalysisReturnToPromptStep(request) {
+  if (!request.failed || !referenceAnalysisRequestIsCurrent(request) || currentLabMode() !== 'main' || promptTaskState().busy) return;
+  var steps = $('studioLegacySteps');
+  if (!steps || typeof steps.querySelectorAll !== 'function') return;
+  // This is the editable prompt stage, not a provider progress or payment claim.
+  Array.prototype.forEach.call(steps.querySelectorAll('li'), function (step, index) {
+    step.classList.toggle('is-active', index === 1);
+  });
+}
+
 function referenceAnalysisImportPending() {
   var response = { ok: false, code: 'IMAGE_IMPORT_PENDING', error: '请等待图片导入完成，再反推提示词。' };
   setPill('runState', response.error, 'warn');
@@ -11891,7 +12209,7 @@ function analyzeCurrentImage() {
   var requestId = 'reference_prompt_' + Date.now() + '_' + Math.random().toString(16).slice(2);
   setPill('runState', '正在分析 ' + images.length + ' 张通用参考图...', '');
   var inputSnapshot = capturePromptInputSnapshot('reference', 'main', null);
-  var request = { inputSnapshot: inputSnapshot, accountKey: String(state.archiveAccountKey || 'local'), configKey: JSON.stringify(cfg), promise: null };
+  var request = { inputSnapshot: inputSnapshot, accountKey: String(state.archiveAccountKey || 'local'), configKey: JSON.stringify(cfg), promise: null, failed: false };
   var evidence = productImageEvidence();
   referenceAnalysisInFlight = request;
   syncReferenceAnalysisControl();
@@ -11924,17 +12242,21 @@ function analyzeCurrentImage() {
       resp.promptRecord = record;
       setPill('runState', '提词完成', 'ok');
     } else {
-      setPill('runState', (resp && resp.error) || '提词失败', 'warn');
+      request.failed = true;
+      setPill('runState', promptTaskSafeDetail(resp && resp.error) || '提词失败', 'warn');
     }
     return resp;
   }).catch(function (error) {
     if (!referenceAnalysisRequestIsCurrent(request)) return referenceAnalysisStaleResponse(request);
-    var resp = { ok: false, code: error && error.code || 'request_failed', error: error && error.message || String(error) };
+    var resp = { ok: false, code: error && error.code || 'request_failed', error: promptTaskSafeDetail(error && error.message || String(error)) || '提词失败' };
+    request.failed = true;
     setPill('runState', resp.error || '提词失败', 'warn');
     return resp;
   }).finally(function () {
     if (referenceAnalysisInFlight === request) referenceAnalysisInFlight = null;
     syncReferenceAnalysisControl();
+    promptTaskRender();
+    referenceAnalysisReturnToPromptStep(request);
   });
   return request.promise;
 }
@@ -15701,6 +16023,20 @@ function guideImageDataUrl(source) {
   source = String(source || '');
   if (!source) return Promise.reject(new Error('缺少局部回贴图片'));
   if (/^data:image\//i.test(source)) return Promise.resolve(source);
+  if (/^blob:/i.test(source)) {
+    try {
+      if (new URL(source).origin !== window.location.origin) throw new Error('本机图片不属于当前页面，请从原历史记录重新打开');
+    } catch (error) { return Promise.reject(error); }
+    // Object URLs belong to this page. Preserve their original bytes locally;
+    // the background fetcher deliberately accepts only data/http(s) sources.
+    return fetch(source, { credentials: 'omit', referrerPolicy: 'no-referrer' }).then(function (response) {
+      if (!response || !response.ok) throw new Error('本机图片已失效，请从原历史记录重新打开');
+      return response.blob();
+    }).then(function (blob) {
+      if (!blob || !blob.size || blob.size > 20 * 1024 * 1024 || !/^image\/(?:png|jpeg|webp)$/i.test(blob.type || '')) throw new Error('本机图片须为20MB以内的PNG、JPEG或WebP原图');
+      return fileToDataUrl(blob);
+    });
+  }
   return send('FETCH_IMAGE', { url: source }).then(function (resp) {
     if (!resp || !resp.ok || !resp.dataUrl) throw new Error((resp && resp.error) || '无法读取局部回贴图片');
     return resp.dataUrl;
@@ -15772,9 +16108,20 @@ function loadGuideAnnotationBase(url) {
   guideCanvasPlaceholder('将当前结果固定为本次编辑底图，不会污染全局参考图。', false);
   if ($('guideRunBtn')) $('guideRunBtn').disabled = true;
   var token = ann.loadToken;
-  var sourcePromise = /^data:image\//i.test(url || '') ? Promise.resolve({ ok: true, dataUrl: url }) : send('FETCH_IMAGE', { url: url });
+  var draft = state.guideDraft, guideItem = state.guideItem;
+  var accountKey = state.archiveAccountKey, accountVersion = state.archiveIdentityVersion;
+  var draftItem = draft && draft.item, parentResultId = draft && draft.parentResultId;
+  function current() {
+    return state.guideAnnotation === ann && ann.loadToken === token && state.guideDraft === draft && state.guideItem === guideItem &&
+      state.archiveAccountKey === accountKey && state.archiveIdentityVersion === accountVersion &&
+      (!draft || draft.item === draftItem && draft.parentResultId === parentResultId && draftItem && draftItem.url === url);
+  }
+  var sourcePromise = Promise.resolve().then(function () {
+    if (!current()) return { ok: false, error: '已取消' };
+    return guideImageDataUrl(url).then(function (dataUrl) { return { ok: true, dataUrl: dataUrl }; });
+  });
   return sourcePromise.then(function (resp) {
-    if (state.guideAnnotation.loadToken !== token) return { ok: false, error: '已取消' };
+    if (!current()) return { ok: false, error: '已取消' };
     if (!resp || !resp.ok || !resp.dataUrl) throw new Error((resp && resp.error) || '无法读取当前结果图');
     return new Promise(function (resolve, reject) {
       var img = new Image();
@@ -15783,7 +16130,7 @@ function loadGuideAnnotationBase(url) {
       img.src = resp.dataUrl;
     });
   }).then(function (loaded) {
-    if (!loaded || state.guideAnnotation.loadToken !== token) return { ok: false, error: '已取消' };
+    if (!loaded || !current()) return { ok: false, error: '已取消' };
     ann.loading = false;
     ann.ready = true;
     ann.sourceDataUrl = loaded.dataUrl;
@@ -15798,6 +16145,7 @@ function loadGuideAnnotationBase(url) {
     renderGuidePlanSummary();
     return { ok: true };
   }).catch(function (error) {
+    if (!current()) return { ok: false, error: '已取消' };
     ann.loading = false;
     ann.ready = false;
     guideCanvasPlaceholder((error && error.message) || '请重新生成结果图后再试', true);
@@ -16336,7 +16684,7 @@ function runSkuGuideRegenerate(item, draft, contract, artifacts) {
           guideOutsidePixelsRestored: !!(guideContractUsesLocalMask(contract) && contract.strictOutsideMask)
         };
         stampSkuResultVisualIdentity(generatedItem);
-        if (!state.skuResults.some(function (result) { return result.resultId === generatedItem.resultId; })) state.skuResults.push(generatedItem);
+        state.skuResults.push(generatedItem);
         queueArchiveResult(generatedItem, { surfaceMode: 'sku', batchTitle: '主体替换引导重生 · ' + frozenSkuTitle });
       });
       renderSkuWorkspace();
@@ -21803,6 +22151,33 @@ function generateSkuOne(task, token, settings) {
   });
 }
 
+function retrySkuReturnedImages(skuId) {
+  if (state.skuActive || legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待当前 SKU 操作完成。' });
+  var recovery = skuTaskStatusFor(skuId).recovery;
+  var current = skuTaskBlueprints().filter(function (task) { return task.skuId === skuId; })[0];
+  if (!recovery || !current || recovery.owner !== String(state.archiveAccountKey || 'local') ||
+      current.item.url !== (recovery.task.item.sourceInputUrl || recovery.task.item.url) ||
+      skuReplicaBaseImage(current, { replicaBaseImage: state.skuTemplate, templateImage: state.skuTemplate }) !==
+        (recovery.task.replicaBaseSourceUrl || recovery.settings.replicaBaseImage) || current.attr !== recovery.task.attr) {
+    setPill('skuState', '原任务的账号、素材或标题已变化，请恢复原任务后重新处理返回图片。', 'warn');
+    return Promise.resolve({ ok: false, code: 'sku_recovery_input_changed' });
+  }
+  state.stopRequested = false;
+  var token = ++state.skuBatchToken;
+  setSkuBusy(true);
+  var task = Object.assign({}, recovery.task, { _skuReturnedResponse: recovery.response, _skuReturnedJobId: recovery.jobId });
+  return generateSkuOne(task, token, recovery.settings).then(function (response) {
+    if (token === state.skuBatchToken && recovery.owner === String(state.archiveAccountKey || 'local')) {
+      setPill('skuState', response && response.ok ? '返回图片处理完成，已保留 SKU 结果。' : '返回图片仍未通过校验，可查看原图与错误原因。', response && response.ok ? 'ok' : 'warn');
+    }
+    return response;
+  }).finally(function () {
+    if (token === state.skuBatchToken || state.stopRequested && state.skuActive) setSkuBusy(false);
+    delete state.skuActiveJobIds[recovery.jobId];
+    renderSkuWorkspace();
+  });
+}
+
 function skuSettingsFromDurableEntry(entry) {
   var snap = entry.snapshot, spec = snap.output;
   var output = skuOutputSizeValidation({resolution:spec.resolution,ratio:spec.ratio,width:spec.width,height:spec.height});
@@ -21822,6 +22197,7 @@ function skuSettingsFromDurableEntry(entry) {
     modelWidth:providerParts.width,modelHeight:providerParts.height,
     archiveBatchId:entry.identity.batchId,archiveBatchTitle:snap.metadata.archiveBatchTitle || '',userPrompt:snap.prompt};
 }
+
 function restoreSkuDurableReceipts() {
   var api = globalThis.SZ_SKU_DURABLE_RECEIPT, owner = String(state.archiveAccountKey || 'local');
   if (!api || state.skuActive || state._skuDurableRestoring || !globalThis.chrome || !globalThis.chrome.runtime ||
@@ -21868,6 +22244,7 @@ function restoreSkuDurableReceipts() {
     state._skuDurableRestoring = false;if (changed && owner === String(state.archiveAccountKey || 'local')) renderSkuWorkspace();return changed;
   });
 }
+
 function recoverSkuDurableReceipt(skuId) {
   if (state.skuActive || legacyImageUploadBusy()) return Promise.resolve({ok:false,error:'请等待当前 SKU 操作完成。'});
   var pointer = skuTaskStatusFor(skuId)._skuRecovery, api = globalThis.SZ_SKU_DURABLE_RECEIPT;
@@ -21896,32 +22273,6 @@ function recoverSkuDurableReceipt(skuId) {
     var response = Object.assign(legacyImageUnknownResponse({jobId:pointer.jobId,error:error.message || String(error)}),{_skuRecovery:pointer});
     if (pointer.owner === String(state.archiveAccountKey || 'local')) state.skuTaskStatus[skuId] = Object.assign({},response,{state:'uncertain'});return response;
   }).finally(function () { if (token === state.skuBatchToken || state.stopRequested && state.skuActive) setSkuBusy(false);renderSkuWorkspace(); });
-}
-function retrySkuReturnedImages(skuId) {
-  if (state.skuActive || legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待当前 SKU 操作完成。' });
-  var recovery = skuTaskStatusFor(skuId).recovery;
-  var current = skuTaskBlueprints().filter(function (task) { return task.skuId === skuId; })[0];
-  if (!recovery || !current || recovery.owner !== String(state.archiveAccountKey || 'local') ||
-      current.item.url !== (recovery.task.item.sourceInputUrl || recovery.task.item.url) ||
-      skuReplicaBaseImage(current, { replicaBaseImage: state.skuTemplate, templateImage: state.skuTemplate }) !==
-        (recovery.task.replicaBaseSourceUrl || recovery.settings.replicaBaseImage) || current.attr !== recovery.task.attr) {
-    setPill('skuState', '原任务的账号、素材或标题已变化，请恢复原任务后重新处理返回图片。', 'warn');
-    return Promise.resolve({ ok: false, code: 'sku_recovery_input_changed' });
-  }
-  state.stopRequested = false;
-  var token = ++state.skuBatchToken;
-  setSkuBusy(true);
-  var task = Object.assign({}, recovery.task, { _skuReturnedResponse: recovery.response, _skuReturnedJobId: recovery.jobId });
-  return generateSkuOne(task, token, recovery.settings).then(function (response) {
-    if (token === state.skuBatchToken && recovery.owner === String(state.archiveAccountKey || 'local')) {
-      setPill('skuState', response && response.ok ? '返回图片处理完成，已保留 SKU 结果。' : '返回图片仍未通过校验，可查看原图与错误原因。', response && response.ok ? 'ok' : 'warn');
-    }
-    return response;
-  }).finally(function () {
-    if (token === state.skuBatchToken || state.stopRequested && state.skuActive) setSkuBusy(false);
-    delete state.skuActiveJobIds[recovery.jobId];
-    renderSkuWorkspace();
-  });
 }
 
 function generateSkuBatch(onlyFailed) {
@@ -23335,6 +23686,7 @@ function bind() {
   ['apiKey', 'imageAdapter', 'visionModel', 'textModel', 'imageModel', 'visionBaseUrl', 'imageEndpoint'].forEach(function (id) {
     var el = $(id);
     if (!el) return;
+    if (id === 'apiKey') { bindApiKeyEditor(el); return; }
     var eventName = el.tagName === 'SELECT' ? 'change' : 'input';
     el.addEventListener(eventName, function () {
       ++configApplySeq;
@@ -24029,7 +24381,52 @@ function creativeWebProfile(provider, includeBoundApis, preferActiveWallet) {
     return profile;
   });
 }
-function creativeWebAccountKey() { return creativeWebProfile('').then(function (profile) { return String(profile.accountKey); }); }
+function creativeWebAccountKey() {
+  var website = typeof window !== 'undefined' && window.chrome && window.chrome.runtime && window.chrome.runtime.id === 'shaozhuang-web-studio';
+  if (!website) return creativeWebProfile('').then(function (profile) { return String(profile.accountKey); });
+  // Identity checks must not wait behind the profile mutation/migration queue.
+  // Read the live website session for each call; never reuse a cached account.
+  var owner = String(state.archiveAccountKey || 'local'), version = state.archiveIdentityVersion, origin = window.location.origin, frame = window.frameElement;
+  return new Promise(function (resolve, reject) {
+    var settled = false, aborter = typeof window.AbortController === 'function' ? new window.AbortController() : null;
+    function fail(code, message) { var error = new Error(message); error.code = code; finish(null, error); }
+    function finish(value, error) {
+      if (settled) return;
+      settled = true;clearTimeout(timer);
+      if (error) reject(error);else resolve(value);
+    }
+    function current() {
+      return window.location.origin === origin && String(state.archiveAccountKey || 'local') === owner &&
+        state.archiveIdentityVersion === version && (!frame || window.frameElement === frame && frame.isConnected);
+    }
+    var timer = setTimeout(function () {
+      fail('CREATIVE_ACCOUNT_UNAVAILABLE', '登录身份读取超时，请稍后重试；原任务和素材仍保留。');
+      if (aborter) aborter.abort();
+    }, 15000);
+    if (!aborter || typeof window.fetch !== 'function') { fail('CREATIVE_ACCOUNT_UNAVAILABLE', '无法核对当前登录账号，请重新打开工作台。'); return; }
+    Promise.resolve().then(function () {
+      if (!current()) throw new Error('account changed');
+      return window.fetch('/api/auth/me', { method: 'GET', credentials: 'same-origin', cache: 'no-store', signal: aborter.signal });
+    }).then(function (response) {
+      if (settled) return null;
+      if (!response || !response.ok) { fail('CREATIVE_ACCOUNT_UNAVAILABLE', '无法核对当前登录账号，请恢复原账号登录后继续。'); return null; }
+      return response.json();
+    }).then(function (body) {
+      if (settled) return;
+      var data = body && body.data;
+      if (!current()) { fail('CREATIVE_ACCOUNT_CHANGED', '登录账号已变化，请重新打开工作台；原账号任务和素材仍保留。'); return; }
+      if (!data || typeof data.tenantId !== 'string' || !data.tenantId || typeof data.username !== 'string' || !data.username) {
+        fail('CREATIVE_ACCOUNT_UNAVAILABLE', '无法核对当前登录账号，请恢复原账号登录后继续。'); return;
+      }
+      // Match the website authCheck -> configAccountKeyFromAuth encoding.
+      var key = 'user:' + (data.tenantId + ':' + data.username).replace(/[^\w@.+:-]/g, '_').slice(0, 120);
+      if (owner !== 'local' && key !== owner) { fail('CREATIVE_ACCOUNT_CHANGED', '登录账号已变化，请重新打开工作台；原账号任务和素材仍保留。'); return; }
+      finish(key, null);
+    }).catch(function () {
+      if (!settled) fail(current() ? 'CREATIVE_ACCOUNT_UNAVAILABLE' : 'CREATIVE_ACCOUNT_CHANGED', '无法核对当前登录账号，请稍后重试；原任务和素材仍保留。');
+    });
+  });
+}
 function creativeWebRefresh(options) {
   options = options || {};
   if (creativeWebIsBusy() || pendingProviderSelection || pendingProviderProfile) return Promise.resolve({ ok: false, code: 'CONFIG_BUSY' });
@@ -24503,10 +24900,6 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) 
     downloadSkuResults: downloadSkuResults,
     selectedSkuTasks: selectedSkuTasks,
     generateSkuBatch: generateSkuBatch,
-    retrySkuReturnedImages: retrySkuReturnedImages,
-    recoverSkuDurableReceipt: recoverSkuDurableReceipt,
-    restoreSkuDurableReceipts: restoreSkuDurableReceipts,
-    skuSettingsFromDurableEntry: skuSettingsFromDurableEntry,
     retryFailedSkuTasks: retryFailedSkuTasks,
     runSkuGuideRegenerate: runSkuGuideRegenerate,
     stopSkuGeneration: stopSkuGeneration,
@@ -24743,13 +25136,25 @@ window.SZCreativeCreditHints?.register('legacy-image-workbench', refreshLegacyCr
       return { allowed: !snapshot.busy, reason: snapshot.busy ? '当前任务仍在处理；可切换图片入口继续工作，离开整个工作台前请结束等待。' : '' };
     },
     activate: function () {
-      var owner = promptTaskOwner();
-      return creativeWebAccountKey().then(function (current) {
-        if (current !== owner || owner !== promptTaskOwner()) return { ok: false, error: '当前账号已变化，请回到原账号后查看原任务。' };
-        promptTaskRender();
-        if (promptTaskState().busy || configFormDirty) return { ok: true, accountKey: owner };
-        return creativeWebRefresh();
-      }).catch(function () { return { ok: false, error: '当前账号暂未就绪，请恢复登录后再试。' }; });
+      // Pin known identity now; only first local binding waits for startup.
+      // A later config refresh can recover without replaying old inputs.
+      var owner = promptTaskOwner(), known = owner !== 'local', version = state.archiveIdentityVersion;
+      var origin = window.location.origin, frame = window.frameElement;
+      var ready = known ? Promise.resolve() : sceneReady;
+      return ready.then(function () {
+        if (window.location.origin !== origin || frame && (window.frameElement !== frame || !frame.isConnected) || known && (owner !== promptTaskOwner() || version !== state.archiveIdentityVersion)) return { ok: false, code: 'CREATIVE_ACCOUNT_CHANGED', error: '当前账号已变化，请回到原账号后查看原任务。' };
+        if (!known) { owner = promptTaskOwner(); version = state.archiveIdentityVersion; }
+        if (owner === 'local') return { ok: false, code: 'WORKSPACE_NOT_READY', error: '工作台账号和配置尚未载入，请稍后重试；原任务和素材仍保留。' };
+        return creativeWebAccountKey().then(function (current) {
+          if (current !== owner || owner !== promptTaskOwner() || version !== state.archiveIdentityVersion || window.location.origin !== origin || frame && (window.frameElement !== frame || !frame.isConnected)) return { ok: false, code: 'CREATIVE_ACCOUNT_CHANGED', error: '当前账号已变化，请回到原账号后查看原任务。' };
+          promptTaskRender();
+          if (promptTaskState().busy || configFormDirty) return { ok: true, accountKey: owner };
+          return creativeWebRefresh();
+        });
+      }).catch(function (error) {
+        var code = error && error.code === 'CREATIVE_ACCOUNT_CHANGED' ? 'CREATIVE_ACCOUNT_CHANGED' : 'WORKSPACE_NOT_READY';
+        return { ok: false, code: code, error: code === 'CREATIVE_ACCOUNT_CHANGED' ? '当前账号已变化，请回到原账号后查看原任务。' : '工作台账号与 API 配置暂未就绪，请稍后重试；原任务和素材仍保留。' };
+      });
     }
   };
   window.SanjiePromptLabTaskBridge = bridge;

@@ -56,18 +56,15 @@
   var MODEL_DISPLAY_NAMES = freeze({
     'seedance-2.0': 'Seedance 2.0',
     'seedance-2.5': 'Seedance 2.5',
-    'seedance-2.0-mini': 'Seedance 2.0 Mini',
-    'seedance-2.0-fast': 'Seedance 2.0 Fast'
+    'seedance-2.0-mini': 'Seedance 2.0 Mini'
   });
   var DEFAULT_PROVIDER_MODELS = freeze({
     'seedance-2.0-mini': 'doubao-seedance-2-0-mini-260615',
-    'seedance-2.0-fast': 'doubao-seedance-2-0-fast-260128',
     'seedance-2.0': 'doubao-seedance-2-0-260128',
     'seedance-2.5': 'doubao-seedance-2-5-260628'
   });
   var MODEL_ALIASES = freeze({
     'seedance-2.0-mini': 'seedance-2.0-mini', 'seedance_2_0_mini': 'seedance-2.0-mini',
-    'seedance-2.0-fast': 'seedance-2.0-fast', 'seedance_2_0_fast': 'seedance-2.0-fast',
     'seedance-2.0': 'seedance-2.0', 'seedance_2_0': 'seedance-2.0', '2.0': 'seedance-2.0',
     'seedance-2.5': 'seedance-2.5', 'seedance_2_5': 'seedance-2.5', '2.5': 'seedance-2.5'
   });
@@ -146,13 +143,6 @@
     }
   });
   var MODEL_CAPABILITIES = freeze({
-    'seedance-2.0-fast': {
-      productKey: 'seedance-2.0-fast', providerModel: 'doubao-seedance-2-0-fast-260128',
-      minDuration: 4, maxDuration: 15, resolutions: ['480p', '720p'],
-      ratios: ['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', 'adaptive'],
-      imageMax: 9, videoMax: 3, audioMax: 3, maxAssets: 15,
-      maxVideoDuration: 15, maxAudioDuration: 15
-    },
     'seedance-2.0-mini': {
       productKey: 'seedance-2.0-mini', providerModel: 'doubao-seedance-2-0-mini-260615',
       minDuration: 4, maxDuration: 15, resolutions: ['480p', '720p'],
@@ -659,14 +649,7 @@
     var script = text(raw.script || raw.confirmedScript, 30000);
     var goal = text(raw.goal || raw.creativeGoal, 5000);
     var confirmed = raw.scriptConfirmed === true || raw.confirmed === true;
-    var productionTimelineSeconds = 0;
-    if (stage === 'draft' && raw.productionTimelineSeconds != null) {
-      productionTimelineSeconds = safeInteger(raw.productionTimelineSeconds, 15, 60, 0);
-      if (!productionTimelineSeconds || productionTimelineSeconds % 5 !== 0) {
-        throw contractError('PRODUCTION_TIMELINE_INVALID', '动态成片分析时长必须为 15–60 秒，按 5 秒设置。');
-      }
-    }
-    var storyboard = normalizeStoryboard(raw.storyboard, { durationSeconds: productionTimelineSeconds || durationSeconds });
+    var storyboard = normalizeStoryboard(raw.storyboard, { durationSeconds: durationSeconds });
     var reviewFingerprint = text(raw.reviewFingerprint, 120);
     var reviewConfirmedAt = text(raw.reviewConfirmedAt, 80);
 
@@ -749,7 +732,7 @@
       rights.confirmedAt = new Date(rightsTime).toISOString();
     }
 
-    var normalized = {
+    return freeze({
       contractVersion: CONTRACT_VERSION,
       mode: mode,
       creativeRoute: creativeRoute,
@@ -778,9 +761,7 @@
         ? (raw.referenceRightsConfirmed === true || referenceVideo.rightsConfirmed === true)
         : false,
       rights: freeze(rights)
-    };
-    if (productionTimelineSeconds) normalized.productionTimelineSeconds = productionTimelineSeconds;
-    return freeze(normalized);
+    });
   }
 
   function transitionAllowed(from, to, context) {
@@ -841,7 +822,7 @@
       'schemaVersion', 'contractVersion', 'taskId', 'mode', 'accountKey', 'generation', 'attempt',
       'status', 'phase', 'creativeRoute', 'styleProfile', 'productKey', 'displayName', 'providerModel', 'adapter', 'provider',
       'requestFingerprint', 'idempotencyFingerprint', 'providerTaskId', 'providerState', 'progress', 'message',
-      'errorCode', 'error', 'errorDetails', 'createdAt', 'updatedAt', 'submittedAt', 'finishedAt', 'cancelledAt',
+      'errorCode', 'error', 'createdAt', 'updatedAt', 'submittedAt', 'finishedAt', 'cancelledAt',
       'resultUrls', 'scriptConfirmed', 'cancelPending', 'stateUncertain', 'production'
     ];
     var output = {};

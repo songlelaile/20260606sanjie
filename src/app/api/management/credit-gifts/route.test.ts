@@ -70,6 +70,27 @@ describe("administrator credit gift API", () => {
     expect(await response.json()).toEqual({ data: overview });
   });
 
+  it.each(["uninitialized", "pending", "invalid", "ready"])("passes the explicit %s GET state through without a financial write", async (state) => {
+    const ready = state === "ready";
+    const overview = { pool: { state, ready, balanceCents: ready ? 0 : null, balancePoints: ready ? 0 : null }, gifts: [] };
+    mocks.overview.mockResolvedValueOnce(overview);
+    const response = await GET();
+    expect(response.status).toBe(200); expectPrivate(response);
+    expect(await response.json()).toEqual({ data: overview });
+    expect(mocks.gift).not.toHaveBeenCalled();
+  });
+
+  it("returns a safe failed-read response instead of claiming the pool is uninitialized", async () => {
+    mocks.overview.mockRejectedValueOnce(new Error("private isolated database address"));
+    const response = await GET();
+    expect(response.status).toBe(503); expectPrivate(response);
+    const body = await response.json();
+    expect(body.code).toBe("BILLING_SERVICE_UNAVAILABLE");
+    expect(body).not.toHaveProperty("data");
+    expect(JSON.stringify(body)).not.toContain("private isolated database address");
+    expect(mocks.gift).not.toHaveBeenCalled();
+  });
+
   it("writes with the current authenticated admin, normalized points and the supplied idempotency key", async () => {
     const response = await POST(request({
       ...validInput,

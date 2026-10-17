@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
+import { vi, describe, expect, it } from "vitest";
 import { runThreeStageCalculation } from "@/lib/algorithm/three-stage";
 import { getGoldenScenario } from "@/lib/fixtures/golden-scenario";
 import type { PrefillItem } from "@/lib/types/domain";

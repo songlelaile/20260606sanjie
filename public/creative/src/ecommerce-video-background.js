@@ -46,7 +46,6 @@
     cancelEndpoint: 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{taskId}',
     uploadEndpoint: '',
     providerModels: C ? C.DEFAULT_PROVIDER_MODELS : {
-      'seedance-2.0-mini': 'doubao-seedance-2-0-mini-260615', 'seedance-2.0-fast': 'doubao-seedance-2-0-fast-260128',
       'seedance-2.0': 'doubao-seedance-2-0-260128', 'seedance-2.5': 'doubao-seedance-2-5-260628'
     }
   });
@@ -127,11 +126,11 @@
   function nativeConfig(creds, base) {
     var cfg = creds && creds.config;
     if (!cfg || cfg.platformVideo !== true || cfg.provider !== 'shaozhuang-native' || !Array.isArray(cfg.platformModels)) return base;
-    var mappings = { 'seedance-2.0-mini': '', 'seedance-2.0-fast': '', 'seedance-2.0': '', 'seedance-2.5': '' };
+    var mappings = { 'seedance-2.0-mini': '', 'seedance-2.0': '', 'seedance-2.5': '' };
     cfg.platformModels.forEach(function (model) { if (model && Object.prototype.hasOwnProperty.call(mappings, model.id)) mappings[model.id] = model.id; });
     return Object.assign({}, base, { adapter: 'ark', provider: 'shaozhuang-native', createEndpoint: nativeEndpoint(''),
       statusEndpoint: nativeEndpoint('/{taskId}'), cancelEndpoint: '', uploadEndpoint: '', providerModels: mappings,
-      _platformVideo: true, _platformModels: clone(cfg.platformModels), _maxBodyBytes: cfg.maxBodyBytes });
+      _platformVideo: true, _platformModels: clone(cfg.platformModels), _billingMode: cfg.billingMode === 'prepaid_quote' ? 'prepaid_quote' : cfg.billingMode === 'direct_usage' ? 'direct_usage' : '', _maxBodyBytes: cfg.maxBodyBytes });
   }
   function nativeTaskConfig(task) {
     if (!task || task._platformVideo !== true) return null;
@@ -182,67 +181,6 @@
     if (!value) throw error('IDEMPOTENCY_KEY_REQUIRED', '启动或重试任务必须提供 idempotencyKey。');
     return value;
   }
-  // Keep a small diagnostic receipt, never the provider's raw response/request.
-  // Providers sometimes echo authorization headers or signed material URLs in
-  // validation errors, so redact before either displaying or persisting them.
-  function diagnosticText(value, max, secrets) {
-    if (value == null || typeof value === 'object') return '';
-    var output = String(value).slice(0, 40000);
-    (secrets || []).forEach(function (secret) {
-      if (typeof secret === 'string' && secret.length >= 4) {
-        output = output.split(secret).join('[凭据已隐藏]').split(encodeURIComponent(secret)).join('[凭据已隐藏]');
-      }
-    });
-    output = output.replace(/\\\//g, '/').replace(/data:[^\s"'<>]+/gi, '[素材数据已隐藏]')
-      .replace(/(?:[a-z][a-z0-9+.-]*:\/\/|blob:)[^\s"'<>]+/gi, '[链接已隐藏]')
-      .replace(/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, 'Bearer [凭据已隐藏]')
-      .replace(/((?:api[-_ ]?key|authorization|cookie|access[-_ ]?token|token|secret|password)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s"'<>;,]+/gi, '$1[凭据已隐藏]')
-      .replace(/\b(?:sk|rk|pk|ak)-[A-Za-z0-9_-]{8,}/g, '[凭据已隐藏]')
-      .replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
-    return output.slice(0, max || 800);
-  }
-  function safeErrorDetails(details) {
-    details = plain(details) ? details : {};
-    var safe = {};
-    ['providerCode', 'providerMessage', 'providerParam', 'providerRequestId', 'reason', 'reasonCode'].forEach(function (key) {
-      var value = diagnosticText(details[key], key === 'providerMessage' ? 800 : 160);
-      if (value) safe[key] = value;
-    });
-    var status = Number(details.status);
-    if (Number.isInteger(status) && status >= 100 && status <= 599) safe.status = status;
-    var timeoutMs = Number(details.timeoutMs);
-    if (Number.isFinite(timeoutMs) && timeoutMs > 0 && timeoutMs <= 3600000) safe.timeoutMs = timeoutMs;
-    ['stateUncertain', 'providerSubmitted', 'definitiveFailure'].forEach(function (key) {
-      if (typeof details[key] === 'boolean') safe[key] = details[key];
-    });
-    return safe;
-  }
-  function providerDiagnostics(response, body, secrets) {
-    body = plain(body) ? body : {};
-    var nested = plain(body.error) ? body.error : plain(body.data) && plain(body.data.error) ? body.data.error : {};
-    var details = plain(body.details) ? body.details : {};
-    function header(name) {
-      try { return response && response.headers && response.headers.get(name); } catch (_) { return ''; }
-    }
-    return safeErrorDetails({
-      status: response && response.status,
-      providerCode: diagnosticText(nested.code || nested.type || body.error_code || body.errorCode || body.code || details.providerCode, 160, secrets),
-      providerMessage: diagnosticText(nested.message || nested.msg || (typeof body.error === 'string' ? body.error : '') ||
-        body.message || body.data && body.data.message || details.providerMessage, 800, secrets),
-      providerParam: diagnosticText(nested.param || nested.parameter || body.param || body.parameter || details.providerParam, 160, secrets),
-      providerRequestId: diagnosticText(nested.request_id || nested.requestId || body.request_id || body.requestId ||
-        body.data && (body.data.request_id || body.data.requestId) || details.providerRequestId ||
-        header('x-request-id') || header('request-id') || header('x-tt-logid'), 160, secrets)
-    });
-  }
-  function providerFailureMessage(prefix, details) {
-    var parts = [prefix];
-    if (details.providerMessage) parts.push(details.providerMessage);
-    if (details.providerCode) parts.push('错误码：' + details.providerCode);
-    if (details.providerParam) parts.push('参数：' + details.providerParam);
-    if (details.providerRequestId) parts.push('请求 ID：' + details.providerRequestId);
-    return parts.join('；').slice(0, 1600);
-  }
   function responseError(cause, type, requestId) {
     return {
       ok: false,
@@ -250,7 +188,7 @@
       payload: {
         schemaVersion: 1,
         requestId: requestId || '',
-        error: { code: diagnosticText(cause && cause.code || 'VIDEO_STUDIO_ERROR', 160), message: diagnosticText(cause && cause.message || cause, 1600), details: cause && cause.details }
+        error: { code: cause && cause.code || 'VIDEO_STUDIO_ERROR', message: text(cause && cause.message || cause, 800), details: cause && cause.details }
       }
     };
   }
@@ -287,12 +225,12 @@
         !Number.isInteger(attempt) || attempt < 1 || attempt > maxAttempts) {
       throw error('PRODUCTION_INVALID', '预算必须为正数，每镜最多提交两次。');
     }
-    if (request.durationSeconds !== 5 || request.videos.length || request.audios.length) {
-      throw error('PRODUCTION_QUOTE_UNSUPPORTED', '分镜预算目前仅支持 5 秒且无音视频参考的镜头。');
+    if (request.durationSeconds !== 5 || ['16:9', '9:16'].indexOf(request.ratio) < 0 ||
+        request.videos.length || request.audios.length) {
+      throw error('PRODUCTION_QUOTE_UNSUPPORTED', '分镜预算目前仅支持横竖屏 5 秒且无音视频参考的镜头。');
     }
     var rates = {
       'seedance-2.0-mini': { '480p': 1.16, '720p': 2.48 },
-      'seedance-2.0-fast': { '480p': 1.86, '720p': 4.00 },
       'seedance-2.0': { '480p': 2.31, '720p': 4.97, '1080p': 12.39, '4k': 25.27 },
       'seedance-2.5': { '480p': 3.36, '720p': 7.56, '1080p': 18.71 }
     };
@@ -300,8 +238,7 @@
     if (!quote) throw error('PRODUCTION_QUOTE_UNSUPPORTED', '该模型或分辨率尚无已核验的镜头预算。');
     return { planId: planId, shotId: shotId, attempt: attempt, maxAttempts: maxAttempts,
       budgetYuan: Math.round(budget * 100) / 100, estimatedYuan: quote,
-      reservedYuan: Math.ceil(quote * 110) / 100,
-      priceVersion: request.productKey === 'seedance-2.0-fast' ? 'volcengine-list-2026-10-10-fast-no-ref-' + request.resolution : 'ark-list-20261009' };
+      reservedYuan: Math.ceil(quote * 110) / 100, priceVersion: 'ark-list-20261009' };
   }
   function assertProductionBudget(b, production) {
     if (!production) return;
@@ -337,19 +274,13 @@
     return !!task && (task._submissionUncertain === true || task.errorCode === 'PROVIDER_CREATE_UNCERTAIN' ||
       task.errorCode === 'PROVIDER_CREATE_TIMEOUT' || task.errorCode === 'RUNTIME_TIMEOUT');
   }
-  async function parseResponse(response, creating, nativeLocal, secrets) {
+  async function parseResponse(response, creating, nativeLocal) {
     var body = null;
-    var textResponse = response;
-    try { if (typeof response.clone === 'function') textResponse = response.clone(); } catch (_) {}
     try { body = await response.json(); } catch (_) {
-      try { body = { message: diagnosticText(await textResponse.text(), 800, secrets) }; } catch (_) { body = {}; }
-      if (creating) {
-        var invalidDetails = Object.assign(providerDiagnostics(response, body, secrets), { reason: 'invalid_json' });
-        throw uncertainCreate(providerFailureMessage('视频创建返回了无法核验的回执（HTTP ' + response.status + '）。', invalidDetails), invalidDetails);
-      }
+      if (creating) throw uncertainCreate('视频创建返回了无法核验的回执。', { status: response.status, reason: 'invalid_json' });
+      try { body = { message: text(await response.text(), 500) }; } catch (_) { body = {}; }
     }
     if (!response.ok) {
-      var diagnostic = providerDiagnostics(response, body, secrets);
       var nativeNotSubmitted = nativeLocal === true && response.headers &&
         response.headers.get('X-Sanjie-Provider-Submission') === 'not-submitted' && body &&
         ((response.status === 503 && ['NATIVE_VIDEO_NOT_CONFIGURED', 'NATIVE_VIDEO_MODEL_UNAVAILABLE'].indexOf(body.code) >= 0) ||
@@ -367,16 +298,18 @@
           try { root.SZ_WEB_SUPPLY.showCreditPurchasePrompt(); } catch (_) {}
         }
         throw error(body.code, body.code === 'CREATIVE_ACCOUNT_CHANGED' ? '登录账号已变更，本次未提交，请回到原账号后重试。' :
-          providerFailureMessage('平台视频本次未提交（HTTP ' + response.status + '），请处理提示后重试。', diagnostic), Object.assign({}, diagnostic, {
-          status: response.status, reasonCode: diagnosticText(body.reasonCode, 100, secrets), providerSubmitted: false, definitiveFailure: true, stateUncertain: false
-        }));
+          (text(typeof body.error === 'string' ? body.error : body.message, 500) || '平台视频供应暂不可用') + '。本次未提交，请处理提示后重试。', {
+          status: response.status, reasonCode: text(body.reasonCode, 100), providerSubmitted: false, definitiveFailure: true, stateUncertain: false
+        });
       }
       if (creating && (nativeLocal === true || response.status === 408 || response.status === 409 || response.status >= 500)) {
-        throw uncertainCreate(providerFailureMessage('视频创建回执仍需核对（HTTP ' + response.status + '）。', diagnostic), Object.assign({}, diagnostic, {
+        throw uncertainCreate('视频创建回执仍需核对（HTTP ' + response.status + '）。', {
           status: response.status, reason: response.status === 408 ? 'request_timeout' : response.status === 409 ? 'unverified_conflict' : 'server_error'
-        }));
+        });
       }
-      throw error('PROVIDER_HTTP_ERROR', providerFailureMessage('视频供应商请求失败（HTTP ' + response.status + '）。', diagnostic), diagnostic);
+      throw error('PROVIDER_HTTP_ERROR', '视频供应商请求失败（HTTP ' + response.status + '）。', {
+        status: response.status, providerCode: text(body && (body.code || body.error && body.error.code), 100)
+      });
     }
     return body || {};
   }
@@ -442,14 +375,14 @@
     var number = Number(value);
     return Number.isFinite(number) && number >= 0 && number <= 100 ? Math.round(number * 100) / 100 : null;
   }
-  function providerErrorCode(body, secrets) {
-    return diagnosticText(body && (body.error_code || body.errorCode || body.code
+  function providerErrorCode(body) {
+    return text(body && (body.error_code || body.errorCode || body.code
       || body.error && (body.error.code || body.error.type)
-      || body.data && (body.data.error_code || body.data.errorCode || body.data.code)), 160, secrets);
+      || body.data && (body.data.error_code || body.data.errorCode || body.data.code)), 160);
   }
-  function providerMessage(body, secrets) {
-    return diagnosticText(body && (body.message || (typeof body.error === 'string' ? body.error : body.error && (body.error.message || body.error.msg))
-      || body.data && (body.data.message || body.data.error && (body.data.error.message || body.data.error.msg))), 800, secrets);
+  function providerMessage(body) {
+    return text(body && (body.message || body.error && (body.error.message || body.error.msg)
+      || body.data && (body.data.message || body.data.error && (body.data.error.message || body.data.error.msg))), 500);
   }
   function collectResultUrls(body) {
     var candidates = [];
@@ -709,18 +642,16 @@
       return 'data:' + (blob.type || 'application/octet-stream') + ';base64,' + encoded;
     }
     function analysisPrompt(request) {
-      var timelineSeconds = request.productionTimelineSeconds || request.durationSeconds;
       return [
-        '你是生成视频编导。请根据用户需求与获授权素材，输出可编辑的 ' + timelineSeconds + ' 秒分镜脚本。',
+        '你是生成视频编导。请根据用户需求与获授权素材，输出可编辑的 ' + request.durationSeconds + ' 秒分镜脚本。',
         '模式：' + request.mode + '；创作目标：' + (request.goal || '无') + '；补充要求：' + (request.supplementalRequirements || '无') + '。',
         creativeContext(request, true),
         request.mode === 'remix' ? '参考视频只用于节奏与结构重构，不得复制第三方品牌、人脸、受保护表达或未授权素材。' : '',
         request.audioMode === 'narration'
           ? '需要口播；把所有可发声的对话/口播句用中文双引号标出。'
-          : (request.audioMode === 'sound_only' ? '只需音效/BGM，各分镜 narration 保持为空。' : '静音模式：各分镜 narration 保持为空，画面脚本可保留台词上下文，成片不加入声音。'),
-        request.productionTimelineSeconds ? '这是完整成片的确认时间轴；不得把时间轴缩短为单次供应商视频任务的时长。画面必须执行连续动作，上传音频仅作参考，最终口播按确认台词重新配音。' : '',
+          : (request.audioMode === 'sound_only' ? '只需音效/BGM，脚本不得包含口播或对话。' : '全程无声，脚本不得包含口播或对话。'),
         '只输出 JSON 对象：{"creativeSummary":"...","script":"...","storyboard":[{"id":"shot-1","order":1,"startSecond":0,"endSecond":1,"durationSeconds":1,"visual":"...","narration":"","composition":"...","camera":"...","motion":"...","rhythm":"...","audioRole":"...","reconstructionIntent":"..."}]}。',
-        'storyboard 编辑时间轴之和必须等于 ' + timelineSeconds + '；script 必须是可直接确认修改的完整生成提示。时间轴是编排目标，不得承诺供应商逐秒或帧级复现。参考重构只能依据按时间排序的关键帧重构静态视觉结构与镜头顺序；运镜、连续动作和声音必须为目标商品重新设计，不能声称从关键帧提取，也不能照抄参考内容。'
+        'storyboard 编辑时间轴之和必须等于 ' + request.durationSeconds + '；script 必须是可直接确认修改的完整生成提示。时间轴是编排目标，不得承诺供应商逐秒或帧级复现。参考重构只能依据按时间排序的关键帧重构静态视觉结构与镜头顺序；运镜、连续动作和声音必须为目标商品重新设计，不能声称从关键帧提取，也不能照抄参考内容。'
       ].filter(Boolean).join('\n');
     }
     function parseAnalysisJson(value, durationSeconds) {
@@ -748,6 +679,17 @@
       if (!base || !model) throw error('ANALYZER_CONFIG_INVALID', '当前账号的统一 API 配置缺少视觉/文本端点或模型。');
       var chatEndpoint = /\/chat\/completions$/.test(base) ? base : base + '/chat/completions';
       endpoint(chatEndpoint, 'analysisEndpoint', false);
+      function checkAnalysisBinding(current) {
+        var currentCfg = current.config || {};
+        var currentBase = text(currentCfg.visionBaseUrl || currentCfg.baseURL, 2048).replace(/\/+$/, '');
+        if (current.accountKey !== creds.accountKey || current.apiKey !== creds.apiKey ||
+            text(currentCfg.provider, 80) !== text(cfg.provider, 80) || currentBase !== base ||
+            text(currentCfg.visionModel || currentCfg.textModel, 220) !== model) {
+          throw error('ANALYSIS_CONFIG_CHANGED', '分析 API 配置已变化，本次未提交，请重新核对配置。', {
+            providerSubmitted: false, definitiveFailure: true, stateUncertain: false
+          });
+        }
+      }
       var parts = [{ type: 'text', text: analysisPrompt(request) }];
       parts.push({ type: 'text', text: '下面 ' + request.images.length + ' 张是目标商品图，只能从中提取目标商品事实、外观与卖点。' });
       for (var asset of request.images) {
@@ -775,17 +717,17 @@
       }, async function analyzeRequest(signal) {
         // Material reads can outlive the signed-in account that selected them.
         // Re-check before sending their bytes and before returning the result.
-        await credentials(accountKey, provider, 'analysis');
+        checkAnalysisBinding(await credentials(accountKey, provider, 'analysis'));
         var response = await env.fetch(chatEndpoint, {
           method: 'POST', headers: jsonHeaders(creds.apiKey), cache: 'no-store', signal: signal, szExpectedAccount: accountKey,
           body: JSON.stringify({ model: model, messages: [{ role: 'system', content: '只输出符合要求的合法 JSON。' }, { role: 'user', content: parts }], temperature: 0.2 })
         });
-        var parsed = await parseResponse(response, false, false, [creds.apiKey]);
+        var parsed = await parseResponse(response);
         await credentials(accountKey, provider, 'analysis');
         return parsed;
       });
       var content = body && body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
-      return parseAnalysisJson(content, request.productionTimelineSeconds || request.durationSeconds);
+      return parseAnalysisJson(content, request.durationSeconds);
     }
     async function resolveAssets(request, adapter, platformVideo) {
       var groups = { images: [], videos: [], audios: [] };
@@ -838,6 +780,16 @@
             throw error('PLATFORM_VIDEO_PARAMETERS_UNAVAILABLE', '平台视频供应不支持当前模型、时长、尺寸或声音组合，请重新选择。');
           }
           body.model = request.productKey; body.expectedAccount = creds.accountKey;
+          var quote = await requestWithDeadline(env, {
+            fallbackMs: 20000, code: 'NATIVE_VIDEO_QUOTE_TIMEOUT', message: '报价请求超时，本次尚未提交。', stateUncertain: false
+          }, async function quoteRequest(signal) {
+            var quoteResponse = await env.fetch(nativeEndpoint('/quote'), { method: 'POST', cache: 'no-store', credentials: 'same-origin', signal: signal,
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!quoteResponse.ok) throw error('NATIVE_VIDEO_QUOTE_REJECTED', '当前平台报价无法确认，本次尚未提交。', { providerSubmitted: false, definitiveFailure: true });
+            return quoteResponse.json();
+          });
+          if (quote.billingMode !== 'prepaid_quote' || !Number.isSafeInteger(quote.quoteCents) || quote.quoteCents <= 0 || typeof quote.quoteToken !== 'string') throw error('NATIVE_VIDEO_QUOTE_INVALID', '当前平台报价无效，本次尚未提交。', { providerSubmitted: false, definitiveFailure: true });
+          body.quoteToken = quote.quoteToken;
         }
         var serializedArkBody = JSON.stringify(body);
         var arkBytes = typeof TextEncoder !== 'undefined'
@@ -886,15 +838,14 @@
         var response;
         try { response = await env.fetch(config.createEndpoint, requestInit); }
         catch (_) { throw uncertainCreate('视频创建连接中断，未收到可核验回执。', { reason: 'network_error' }); }
-        return parseResponse(response, true, isNativeConfig(config), [creds.apiKey]);
+        return parseResponse(response, true, isNativeConfig(config));
       });
       var remoteId = providerTaskId(body);
       if (!remoteId) throw uncertainCreate('供应商未返回稳定任务 ID。', { reason: 'task_id_missing' });
       if (await resolveAccount() !== creds.accountKey) throw uncertainCreate('视频提交后登录账号已变化，请回到原账号核对任务。', { reason: 'account_changed_after_submission' });
-      return { providerTaskId: remoteId, body: body, message: providerMessage(body, [creds.apiKey]), errorCode: providerErrorCode(body, [creds.apiKey]) };
+      return { providerTaskId: remoteId, body: body };
     }
     async function adapterStatus(config, creds, task) {
-      var diagnostics = {};
       var body = await requestWithDeadline(env, {
         envKey: 'statusTimeoutMs',
         fallbackMs: REQUEST_TIMEOUT_MS.status,
@@ -902,12 +853,9 @@
         message: '视频供应商状态查询超时，任务状态保持不变。'
       }, async function statusRequest(signal) {
         var headers = isNativeConfig(config) ? { 'X-Sanjie-Expected-Account': task.accountKey } : jsonHeaders(creds.apiKey);
-        var response = await env.fetch(statusUrl(config, task.providerTaskId), {
+        return parseResponse(await env.fetch(statusUrl(config, task.providerTaskId), {
           method: 'GET', headers: headers, cache: 'no-store', signal: signal, credentials: isNativeConfig(config) ? 'same-origin' : undefined
-        });
-        var parsed = await parseResponse(response, false, false, [creds.apiKey]);
-        diagnostics = providerDiagnostics(response, parsed, [creds.apiKey]);
-        return parsed;
+        }));
       });
       var protectedNativeUrl = '';
       if (isNativeConfig(config)) {
@@ -926,9 +874,8 @@
         status: state,
         providerState: providerState,
         resultUrls: urls,
-        message: state === 'failed' ? providerFailureMessage('视频供应商任务失败。', diagnostics) : providerMessage(body, [creds.apiKey]),
-        errorCode: providerErrorCode(body, [creds.apiKey]),
-        errorDetails: diagnostics,
+        message: providerMessage(body),
+        errorCode: providerErrorCode(body),
         progress: providerProgress(body)
       };
     }
@@ -944,14 +891,14 @@
         return parseResponse(await env.fetch(cancelUrl(config, task.providerTaskId), {
           method: config.adapter === 'ark' ? 'DELETE' : 'POST', headers: jsonHeaders(creds.apiKey),
           body: config.adapter === 'ark' ? undefined : '{}', cache: 'no-store', signal: signal
-        }), false, false, [creds.apiKey]);
+        }));
       });
       return true;
     }
     async function submitExisting(accountKey, localTaskId, idemKey, config, model) {
       var capture = await mutateTask(accountKey, localTaskId, function (task) {
         task = C.transitionTask(task, 'submitting', { now: nowFrom(env) });
-        task.phase = 'provider_create'; task.error = ''; task.errorCode = ''; task.errorDetails = {}; return task;
+        task.phase = 'provider_create'; task.error = ''; task.errorCode = ''; return task;
       });
       var accepted = null;
       try {
@@ -965,8 +912,8 @@
           task.providerState = statusValue(created.body);
           var createdProgress = providerProgress(created.body);
           if (createdProgress !== null) task.progress = createdProgress;
-          task.message = created.message;
-          task.errorCode = created.errorCode;
+          task.message = providerMessage(created.body);
+          task.errorCode = providerErrorCode(created.body);
           if (created.body && created.body.stateUncertain === true) {
             task._submissionUncertain = true; task.phase = 'provider_create_unknown';
             task.message = '视频提交状态待核对，正在保留原任务查询；请勿重复生成。';
@@ -986,15 +933,13 @@
             task = C.transitionTask(task, 'unknown', { now: nowFrom(env) });
             task.stateUncertain = true;
             if (accepted && accepted.providerTaskId) task.providerTaskId = accepted.providerTaskId;
-            task.errorCode = diagnosticText(cause.code || 'PROVIDER_CREATE_UNCERTAIN', 160); task.error = diagnosticText(cause.message, 1600);
-            task.errorDetails = safeErrorDetails(cause.details);
+            task.errorCode = cause.code || 'PROVIDER_CREATE_UNCERTAIN'; task.error = text(cause.message, 500);
             task.phase = 'provider_create_unknown'; task.message = task.error; task.updatedAt = nowFrom(env);
             return task;
           }
           task = C.transitionTask(task, 'failed', { now: nowFrom(env) });
           if (task.production) task.production.reservationReleased = true;
-          task.errorCode = diagnosticText(cause && cause.code || 'PROVIDER_CREATE_FAILED', 160); task.error = diagnosticText(cause && cause.message, 1600);
-          task.errorDetails = safeErrorDetails(cause && cause.details);
+          task.errorCode = cause && cause.code || 'PROVIDER_CREATE_FAILED'; task.error = text(cause && cause.message, 500);
           task.phase = 'failed'; task.finishedAt = nowFrom(env); return task;
         }).catch(function () { return null; });
         notifyNativeVideoCreditsChanged(failedTask);
@@ -1103,13 +1048,11 @@
         var remote;
         try { remote = await adapterStatus(config, creds, task); }
         catch (cause) {
-          if (cause && ['PROVIDER_RESULT_MISSING', 'PROVIDER_HTTP_ERROR', 'PROVIDER_STATUS_TIMEOUT'].indexOf(cause.code) >= 0) {
+          if (cause && cause.code === 'PROVIDER_RESULT_MISSING') {
             await mutateTask(accountKey, requestedTaskId, function (current) {
               if (current.generation !== captureGeneration || C.isTerminal(current.status)) return current;
-              current.errorCode = diagnosticText(cause.code, 160); current.error = diagnosticText(cause.message, 1600);
-              current.errorDetails = safeErrorDetails(cause.details);
-              if (cause.code === 'PROVIDER_RESULT_MISSING') current.phase = 'provider_result_pending';
-              current.updatedAt = nowFrom(env); return current;
+              current.errorCode = cause.code; current.error = cause.message;
+              current.phase = 'provider_result_pending'; current.updatedAt = nowFrom(env); return current;
             });
           }
           throw cause;
@@ -1123,14 +1066,11 @@
           current.message = remote.message; current.resultUrls = remote.resultUrls;
           if (remote.status !== 'processing') current._submissionUncertain = false;
           if (remote.status !== 'processing') current.stateUncertain = false;
-          if (['PROVIDER_RESULT_MISSING', 'PROVIDER_HTTP_ERROR', 'PROVIDER_STATUS_TIMEOUT'].indexOf(current.errorCode) >= 0) {
-            current.errorCode = ''; current.error = ''; current.errorDetails = {};
-          }
+          if (current.errorCode === 'PROVIDER_RESULT_MISSING') { current.errorCode = ''; current.error = ''; }
           if (remote.progress !== null) current.progress = remote.progress;
           if (remote.status === 'failed') {
             current.errorCode = remote.errorCode || 'PROVIDER_FAILED';
             current.error = remote.message || '视频供应商任务失败。';
-            current.errorDetails = remote.errorDetails;
           }
           if (remote.status === 'succeeded') { current.progress = 100; current.finishedAt = nowFrom(env); }
           if (remote.status === 'failed' || remote.status === 'cancelled') current.finishedAt = nowFrom(env);
@@ -1150,7 +1090,25 @@
       var promise = (async function () {
         var task = await readTask(accountKey, requestedTaskId);
         if (C.isTerminal(task.status)) return { task: C.publicTask(task), idempotent: true };
-        if (task._platformVideo === true) throw error('CANCEL_UNSUPPORTED', '平台视频尚不支持可核验的取消，任务会继续保留并查询。');
+        if (task._platformVideo === true) {
+          if (!task._nativeIdempotencyKey) throw error('CANCEL_IDENTITY_MISSING', '原任务请求标识缺失，不能确认取消。');
+          var cancellation = await env.fetch('/api/creative/billing/cancel', { method: 'POST', cache: 'no-store', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idempotencyKey: 'native-video:' + task._nativeIdempotencyKey, expectedAccount: accountKey }) });
+          if (!cancellation.ok) throw error('CANCEL_RECORD_UNAVAILABLE', '取消记录尚未确认，请重试；已扣积分保留。');
+          var cancelReceipt = await cancellation.json();
+          if (cancelReceipt.cancelled !== true && !(Number.isSafeInteger(cancelReceipt.refundedCents) && cancelReceipt.refundedCents > 0)) throw error('CANCEL_RECORD_UNAVAILABLE', '取消记录尚未确认，请核对原任务。');
+          var retained = await mutateTask(accountKey, requestedTaskId, function (current) {
+            if (C.isTerminal(current.status)) return current;
+            if (cancelReceipt.cancelled !== true) {
+              current = C.transitionTask(current, 'failed', { now: nowFrom(env), error: { code: 'NATIVE_VIDEO_FAILED_REFUNDED', message: '该任务已失败并退回积分。' } });
+              current.phase = 'failed'; current.error = { code: 'NATIVE_VIDEO_FAILED_REFUNDED', message: '该任务已失败并退回积分。' };
+              current.generation += 1; return current;
+            }
+            current = C.transitionTask(current, 'cancelled', { now: nowFrom(env) });
+            current.generation += 1; current.cancelledAt = nowFrom(env); current.phase = 'cancelled'; current.providerCancelled = false; return current;
+          });
+          return { task: C.publicTask(retained), providerCancelled: false, refundOnCancel: false, message: cancelReceipt.cancelled === true ? '已停止等待，取消不退积分；供应任务可能继续执行。' : '该任务已失败并退回积分，本次取消未改变退款。' };
+        }
         if (!task.providerTaskId) {
           if (task.status === 'queued') {
             var local = await mutateTask(accountKey, requestedTaskId, function (current) {
@@ -1206,7 +1164,9 @@
         var base = text(cfg.visionBaseUrl || cfg.baseURL, 2048).replace(/\/+$/, '');
         if (!base || !text(cfg.visionModel || cfg.textModel, 220)) throw error('ANALYZER_CONFIG_INVALID', '脚本分析配置缺少端点或模型。');
         endpoint(/\/chat\/completions$/.test(base) ? base : base + '/chat/completions', 'analysisEndpoint', false);
-        return { analysisAvailable: true, analysisStatus: { state: 'ready', code: 'READY', message: '脚本分析配置已就绪，调用时仍需核对平台额度。' } };
+        return { analysisAvailable: true, analysisBillingChannel: creds.apiKey ? 'external_key' : 'platform_wallet', analysisModel: text(cfg.visionModel || cfg.textModel, 220), analysisStatus: { state: 'ready', code: 'READY', message: creds.apiKey
+          ? '已读取当前账号的个人视觉 API；模型权限由供应商验证，失败不会改用平台积分。'
+          : '脚本分析配置已就绪，将使用当前账号积分；积分不足请购买套餐。' } };
       } catch (cause) {
         return { analysisAvailable: false, analysisStatus: { state: 'unavailable', code: text(cause && cause.code, 100) || 'ANALYZER_CONFIG_UNAVAILABLE', message: text(cause && cause.message, 500) || '脚本分析配置不可用。' } };
       }
@@ -1222,7 +1182,9 @@
         credentialStatus = {
           state: 'ready',
           code: 'READY',
-          message: checkedCredentials.config.platformVideo === true ? '平台视频供应已就绪，将使用当前账号积分生成。' : '已读取当前账号的豆包 / 火山方舟 API 配置；Seedance 模型权限将在提交时由供应商验证。'
+          message: checkedCredentials.config.platformVideo === true
+            ? (['prepaid_quote', 'direct_usage'].indexOf(config._billingMode) >= 0 ? '平台视频供应已就绪，提交时扣报价积分；失败退回，取消不退。' : '平台视频供应已就绪，将使用当前账号积分生成。')
+            : '已读取当前账号的豆包 / 火山方舟 API 配置；Seedance 模型权限将在提交时由供应商验证。'
         };
       } catch (cause) {
         var code = text(cause && cause.code, 100).toLowerCase();
@@ -1239,16 +1201,21 @@
         resolutions: clone(C.RESOLUTIONS), ratios: clone(C.RATIOS), adapters: clone(C.ADAPTERS),
         modelCapabilities: clone(C.MODEL_CAPABILITIES),
         provider: config.provider, adapter: config.adapter,
+        billingMode: isNativeConfig(config) ? config._billingMode : '',
         credentialAvailable: credentialAvailable,
         credentialStatus: credentialStatus,
-        analysisAvailable: analysis.analysisAvailable,
+        analysisAvailable: analysis.analysisAvailable, analysisBillingChannel: analysis.analysisBillingChannel, analysisModel: analysis.analysisModel,
         analysisStatus: analysis.analysisStatus,
         models: C.modelCatalog(config.providerModels, { credentialAvailable: credentialAvailable }).map(function (model) {
           if (!isNativeConfig(config)) return model;
           var limits = (config._platformModels || []).find(function (item) { return item.id === model.productKey; });
           if (!limits) return model;
+          var billingMode = limits.billingMode === 'prepaid_quote' ? 'prepaid_quote' : limits.billingMode === 'direct_usage' ? 'direct_usage' : config._billingMode;
           return Object.assign({}, model, { nativePlatform: true,
-            reservationCents: Number.isSafeInteger(limits.reservationCents) && limits.reservationCents > 0 ? limits.reservationCents : null,
+            billingMode: billingMode,
+            submissionQuotes: Array.isArray(limits.submissionQuotes) ? limits.submissionQuotes.slice() : [],
+            reservationCents: ['prepaid_quote', 'direct_usage'].indexOf(billingMode) >= 0 ? 0 : Number.isSafeInteger(limits.reservationCents) && limits.reservationCents > 0 ? limits.reservationCents : null,
+            estimateCents: Number.isSafeInteger(limits.estimateCents) && limits.estimateCents > 0 ? limits.estimateCents : null,
             limits: Object.assign({}, model.limits, { durations: limits.durations.slice(), generateAudio: limits.generateAudio === true, minDuration: Math.min.apply(Math, limits.durations),
             maxDuration: Math.max.apply(Math, limits.durations), resolutions: limits.resolutions, ratios: limits.ratios }) });
         }),
@@ -1258,8 +1225,8 @@
           analysisOnlyReferenceVideo: true,
           soundOnlyVoiceSuppression: 'prompt_soft_constraint',
           arkLimits: config.adapter === 'ark' ? clone(ARK_LIMITS) : null,
-          cancelStates: config.adapter === 'ark' && config.cancelEndpoint ? ['queued'] : [],
-          cancel: config.adapter === 'ark' && !!config.cancelEndpoint
+          cancelStates: isNativeConfig(config) ? ['queued', 'submitting', 'processing', 'unknown'] : config.adapter === 'ark' && config.cancelEndpoint ? ['queued'] : [],
+          cancel: isNativeConfig(config) || config.adapter === 'ark' && !!config.cancelEndpoint
         }
       };
     }

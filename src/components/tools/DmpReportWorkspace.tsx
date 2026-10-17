@@ -13,54 +13,18 @@ import {
   Store,
   Trash2
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { dmpReportIdentity } from "@/lib/dmp-report-library";
-import type {
-  DmpBusinessReportRecord,
-  DmpBusinessReportSummary,
-  DmpMarketScope,
-  DmpReportKind,
-  DmpReportShop
-} from "@/lib/dmp-report-types";
+import { useMemo, useState } from "react";
+import {
+  dmpReportGroupIdsByShopAndIdentity,
+  dmpReportIdentity,
+  dmpReportSubjectThumbnail,
+  groupDmpBusinessReportsByShop,
+  mergeDmpReportGroupDaily
+} from "@/lib/dmp-report-library";
+import type { DmpBusinessReportRecord, DmpReportShop } from "@/lib/dmp-report-types";
 import { DmpReportViewer } from "@/components/tools/DmpReportViewer";
 import { dmpMarketCategoryLabel } from "@/components/tools/DmpMarketReportViewModel";
 import styles from "./DmpReportWorkspace.module.css";
-
-const REPORT_PAGE_SIZE = 24;
-
-export interface DmpReportSummaryPagination {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-  hasNext: boolean;
-}
-
-interface DmpSummaryGroup {
-  key: string;
-  reportType: DmpReportKind;
-  subjectItemId: string;
-  competitorItemId: string;
-  subjectThumbnail: DmpBusinessReportSummary["subjectThumbnail"];
-  marketScope?: DmpMarketScope;
-  records: DmpBusinessReportSummary[];
-}
-
-interface DmpSummaryShopGroup {
-  key: string;
-  shopId: string;
-  shopName: string;
-  reportCount: number;
-  groups: DmpSummaryGroup[];
-}
-
-type DmpReportListResponse = {
-  data?: {
-    reports?: DmpBusinessReportSummary[];
-    pagination?: Partial<DmpReportSummaryPagination>;
-  };
-  error?: string;
-};
 
 function createdAtLabel(value: string) {
   const date = new Date(value);
@@ -76,39 +40,53 @@ function createdAtLabel(value: string) {
       }).format(date);
 }
 
-function reportTypeLabel(record: Pick<DmpBusinessReportSummary, "reportType">) {
-  return record.reportType === "market" ? "类目大盘" : record.reportType === "competition" ? "竞争态势" : "打爆路径";
+function isCompetitionReport(record: DmpBusinessReportRecord | null) {
+  return record?.reportType === "competition" || record?.report.report_type === "competition";
 }
 
-function objectLabels(record: Pick<DmpBusinessReportSummary, "reportType">) {
-  if (record.reportType === "market") return { subject: "类目", competitor: "" };
-  return record.reportType === "competition"
+function isMarketReport(record: DmpBusinessReportRecord | null) {
+  return record?.reportType === "market" || record?.report.report_type === "market";
+}
+
+function reportTypeLabel(record: DmpBusinessReportRecord) {
+  return isMarketReport(record) ? "类目大盘" : isCompetitionReport(record) ? "竞争态势" : "打爆路径";
+}
+
+function objectLabels(record: DmpBusinessReportRecord) {
+  if (isMarketReport(record)) return { subject: "类目", competitor: "" };
+  return isCompetitionReport(record)
     ? { subject: "本店", competitor: "竞店" }
     : { subject: "主体商品", competitor: "成功品" };
 }
 
-function marketScopeLabel(record: Pick<DmpBusinessReportSummary, "marketScope" | "subjectItemId">) {
-  return dmpMarketCategoryLabel(record.marketScope, record.subjectItemId);
+function marketScopeLabel(record: DmpBusinessReportRecord) {
+  return dmpMarketCategoryLabel(record.report.market_scope, record.subjectItemId);
 }
 
-function primarySummaryLabel(record: DmpBusinessReportSummary) {
-  return record.reportType === "market"
+function primaryReportLabel(record: DmpBusinessReportRecord) {
+  return isMarketReport(record)
     ? marketScopeLabel(record)
-    : `${objectLabels(record).subject} ${record.subjectItemId}`;
+    : `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`;
 }
 
-function primaryDetailLabel(record: DmpBusinessReportRecord) {
-  const identity = dmpReportIdentity(record);
-  return identity.reportType === "market"
-    ? dmpMarketCategoryLabel(identity.marketScope, identity.subjectItemId)
-    : `${identity.reportType === "competition" ? "本店" : "主体商品"} ${identity.subjectItemId}`;
-}
-
-function mergedGroupDateRange(records: DmpBusinessReportSummary[]) {
+function mergedGroupDateRange(records: DmpBusinessReportRecord[]) {
+  const merged = mergeDmpReportGroupDaily(records);
   const dates = new Set<string>();
-  for (const record of records) {
-    for (const value of [record.coverageStart, record.coverageEnd, record.period]) {
-      for (const date of String(value ?? "").match(/\d{4}-\d{2}-\d{2}/g) ?? []) dates.add(date);
+  if (merged) {
+    for (const table of merged.report.tables) {
+      const dateIndex = table.columns.findIndex((column) => /^(?:日期|请求截止日|截止日)$/.test(String(column).trim()));
+      if (dateIndex < 0) continue;
+      for (const row of table.rows) {
+        const date = String(row.cells[dateIndex] ?? "").trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(date)) dates.add(date);
+      }
+    }
+  }
+  if (!dates.size) {
+    for (const record of records) {
+      for (const value of [record.period, record.report.period]) {
+        for (const date of String(value ?? "").match(/\d{4}-\d{2}-\d{2}/g) ?? []) dates.add(date);
+      }
     }
   }
   const ordered = [...dates].sort();
@@ -118,190 +96,77 @@ function mergedGroupDateRange(records: DmpBusinessReportSummary[]) {
   return start === end ? start : `${start} — ${end}`;
 }
 
-function summaryGroupKey(record: DmpBusinessReportSummary) {
-  return record.reportType === "market"
-    ? [record.reportType, record.marketScope?.category_path.join("/"), record.subjectItemId].join(":")
-    : [record.reportType, record.subjectItemId, record.competitorItemId].join(":");
-}
-
-function groupDmpBusinessReportSummariesByShop(reports: DmpBusinessReportSummary[]): DmpSummaryShopGroup[] {
-  const partitions = new Map<string, { shopId: string; shopName: string; records: DmpBusinessReportSummary[] }>();
-  const ordered = [...reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  for (const record of ordered) {
-    const shopId = record.shopId.trim();
-    const key = `shop:${shopId}`;
-    const current = partitions.get(key);
-    if (current) {
-      current.records.push(record);
-      if (!current.shopName && record.shopName.trim()) current.shopName = record.shopName.trim();
-    } else {
-      partitions.set(key, { shopId, shopName: record.shopName.trim(), records: [record] });
-    }
-  }
-
-  return [...partitions].map(([key, partition]) => {
-    const grouped = new Map<string, DmpSummaryGroup>();
-    for (const record of partition.records) {
-      const groupKey = summaryGroupKey(record);
-      const current = grouped.get(groupKey);
-      if (current) {
-        current.records.push(record);
-        if (!current.subjectThumbnail.url && record.subjectThumbnail.url) current.subjectThumbnail = record.subjectThumbnail;
-      } else {
-        grouped.set(groupKey, {
-          key: groupKey,
-          reportType: record.reportType,
-          subjectItemId: record.subjectItemId,
-          competitorItemId: record.competitorItemId,
-          subjectThumbnail: record.subjectThumbnail,
-          ...(record.marketScope ? { marketScope: record.marketScope } : {}),
-          records: [record]
-        });
-      }
-    }
-    return {
-      key,
-      shopId: partition.shopId,
-      shopName: partition.shopName || "未命名店铺",
-      reportCount: partition.records.length,
-      groups: [...grouped.values()]
-    };
-  });
-}
-
-function normalizedPagination(
-  value: Partial<DmpReportSummaryPagination> | undefined,
-  fallback: DmpReportSummaryPagination
-): DmpReportSummaryPagination {
-  return {
-    page: Number.isFinite(value?.page) ? Math.max(1, Number(value?.page)) : fallback.page,
-    pageSize: Number.isFinite(value?.pageSize) ? Math.max(1, Number(value?.pageSize)) : fallback.pageSize,
-    total: Number.isFinite(value?.total) ? Math.max(0, Number(value?.total)) : fallback.total,
-    totalPages: Number.isFinite(value?.totalPages) ? Math.max(0, Number(value?.totalPages)) : fallback.totalPages,
-    hasNext: typeof value?.hasNext === "boolean" ? value.hasNext : fallback.hasNext
-  };
-}
-
 export function DmpReportWorkspace({
   initialReports,
-  initialPagination,
   initialShops,
-  activeShopId,
   canCreateShop,
-  initialSelectedReport = null,
-  focusReport = false,
-  initialNotice = ""
+  initialSelectedId = "",
+  focusReport = false
 }: {
-  initialReports: DmpBusinessReportSummary[];
-  initialPagination: DmpReportSummaryPagination;
+  initialReports: DmpBusinessReportRecord[];
   initialShops: DmpReportShop[];
-  activeShopId: string;
   canCreateShop: boolean;
-  initialSelectedReport?: DmpBusinessReportRecord | null;
+  initialSelectedId?: string;
   focusReport?: boolean;
-  initialNotice?: string;
 }) {
-  const activeShop = initialShops.find((shop) => shop.id === activeShopId) ?? null;
+  const requestedInitialId = initialSelectedId.trim();
+  const initialId = requestedInitialId
+    ? initialReports.some((record) => record.id === requestedInitialId) ? requestedInitialId : ""
+    : initialReports[0]?.id ?? "";
   const [reports, setReports] = useState(initialReports);
-  const [pagination, setPagination] = useState(initialPagination);
   const [shops, setShops] = useState(initialShops);
-  const [shopEditorId, setShopEditorId] = useState(activeShop?.id ?? "");
-  const [shopNameDraft, setShopNameDraft] = useState(activeShop?.name ?? "");
-  const [selectedId, setSelectedId] = useState(initialSelectedReport?.id ?? "");
-  const [selectedRecord, setSelectedRecord] = useState<DmpBusinessReportRecord | null>(initialSelectedReport);
-  const [loadingReportId, setLoadingReportId] = useState("");
+  const [shopEditorId, setShopEditorId] = useState(initialShops[0]?.id ?? "");
+  const [shopNameDraft, setShopNameDraft] = useState(initialShops[0]?.name ?? "");
+  const [selectedId, setSelectedId] = useState(initialId);
   const [busy, setBusy] = useState(false);
-  const [listBusy, setListBusy] = useState(false);
   const [sharingId, setSharingId] = useState("");
   const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState(initialNotice);
-  const detailRequestSequence = useRef(0);
-  const detailAbortController = useRef<AbortController | null>(null);
-  const detailCache = useRef(new Map<string, DmpBusinessReportRecord>(
-    initialSelectedReport ? [[initialSelectedReport.id, initialSelectedReport]] : []
-  ));
+  const [notice, setNotice] = useState("");
 
-  useEffect(() => () => detailAbortController.current?.abort(), []);
-
+  const selectedRecord = useMemo(
+    () => reports.find((record) => record.id === selectedId) ?? null,
+    [reports, selectedId]
+  );
   const visibleReports = useMemo(() => {
     const keyword = query.trim().toLocaleLowerCase("zh-CN");
     if (!keyword) return reports;
-    return reports.filter((record) => [
-      reportTypeLabel(record),
-      record.title,
-      record.subjectItemId,
-      record.competitorItemId,
-      marketScopeLabel(record),
-      record.shopName,
-      record.period,
-      createdAtLabel(record.createdAt),
-      record.createdAt
-    ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword)));
+    return reports.filter((record) => {
+      const identity = dmpReportIdentity(record);
+      return [
+        reportTypeLabel(record),
+        identity.subjectItemId,
+        identity.competitorItemId,
+        marketScopeLabel(record),
+        record.shopName ?? "",
+        record.period,
+        createdAtLabel(record.createdAt),
+        record.createdAt
+      ].some((value) => value.toLocaleLowerCase("zh-CN").includes(keyword));
+    });
   }, [query, reports]);
-  const visibleShopGroups = useMemo(() => groupDmpBusinessReportSummariesByShop(visibleReports), [visibleReports]);
+  const visibleShopGroups = useMemo(() => groupDmpBusinessReportsByShop(visibleReports), [visibleReports]);
+  const reportShopGroups = useMemo(() => groupDmpBusinessReportsByShop(reports), [reports]);
   const visibleGroupCount = visibleShopGroups.reduce((total, shopGroup) => total + shopGroup.groups.length, 0);
-  const activeSummary = reports.find((record) => record.id === selectedId) ?? null;
+  const activeRecord = query.trim()
+    ? visibleReports.find((record) => record.id === selectedRecord?.id) ?? visibleReports[0] ?? null
+    : selectedRecord;
+  const selectedViewRecord = useMemo(() => {
+    const group = reportShopGroups
+      .flatMap((shopGroup) => shopGroup.groups)
+      .find((candidate) => candidate.records.some((record) => record.id === activeRecord?.id));
+    return group ? mergeDmpReportGroupDaily(group.records, activeRecord?.id) : activeRecord;
+  }, [activeRecord, reportShopGroups]);
 
-  async function selectReport(record: DmpBusinessReportSummary) {
-    const requestSequence = detailRequestSequence.current + 1;
-    detailRequestSequence.current = requestSequence;
-    detailAbortController.current?.abort();
+  function selectReport(record: DmpBusinessReportRecord) {
     setSelectedId(record.id);
-    const cached = detailCache.current.get(record.id);
-    if (cached) {
-      setSelectedRecord(cached);
-      setLoadingReportId("");
-      setNotice("");
-      return;
-    }
-    if (!activeShopId) {
-      setSelectedRecord(null);
-      setNotice("请先选择当前店铺后再预览报告");
-      return;
-    }
-
-    const controller = new AbortController();
-    detailAbortController.current = controller;
-    setSelectedRecord(null);
-    setLoadingReportId(record.id);
-    setNotice("正在加载报告正文…");
-    try {
-      const response = await fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`, {
-        cache: "no-store",
-        headers: { "x-sanjie-shop": activeShopId },
-        signal: controller.signal
-      });
-      const result = await response.json().catch(() => null) as {
-        data?: { report?: DmpBusinessReportRecord };
-        error?: string;
-      } | null;
-      if (!response.ok || !result?.data?.report) throw new Error(result?.error ?? "报告正文加载失败");
-      if (requestSequence !== detailRequestSequence.current || controller.signal.aborted) return;
-      if (result.data.report.id !== record.id || result.data.report.shopId !== activeShopId) {
-        throw new Error("报告不属于当前店铺，已停止加载");
-      }
-      detailCache.current.set(record.id, result.data.report);
-      setSelectedRecord(result.data.report);
-      setNotice("");
-    } catch (error) {
-      if (controller.signal.aborted || requestSequence !== detailRequestSequence.current) return;
-      setSelectedRecord(null);
-      setNotice(error instanceof Error ? error.message : "报告正文加载失败");
-    } finally {
-      if (requestSequence === detailRequestSequence.current) setLoadingReportId("");
-    }
   }
 
-  async function createShare(record: Pick<DmpBusinessReportRecord, "id">) {
-    if (!activeShopId) {
-      setNotice("请先选择当前店铺后再生成分享链接");
-      return;
-    }
+  async function createShare(record: DmpBusinessReportRecord) {
     setSharingId(record.id);
     try {
       const response = await fetch("/api/dmp-report-shares", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-sanjie-shop": activeShopId },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reportId: record.id })
       });
       const result = await response.json().catch(() => null) as { data?: { share?: { url?: string } }; error?: string } | null;
@@ -328,15 +193,11 @@ export function DmpReportWorkspace({
       setNotice("请输入店铺名称");
       return;
     }
-    if (!activeShopId) {
-      setNotice("当前店铺未明确，不能保存店铺资料");
-      return;
-    }
     setBusy(true);
     try {
       const response = await fetch(shopEditorId ? `/api/shops/${encodeURIComponent(shopEditorId)}` : "/api/shops", {
         method: shopEditorId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json", "x-sanjie-shop": activeShopId },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name })
       });
       const result = await response.json().catch(() => null) as { data?: { shop?: DmpReportShop }; error?: string } | null;
@@ -358,47 +219,28 @@ export function DmpReportWorkspace({
     }
   }
 
-  async function assignGroupToShop(group: DmpSummaryGroup, targetShopId: string) {
-    if (!activeShopId) {
-      setNotice("当前店铺未明确，不能修改报告归属");
-      return;
-    }
+  async function assignGroupToShop(reportIds: string[], shopId: string) {
     setBusy(true);
     try {
       const response = await fetch("/api/dmp-reports", {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-sanjie-shop": activeShopId },
-        body: JSON.stringify({
-          sourceShopId: activeShopId,
-          targetShopId,
-          reportType: group.reportType,
-          subjectItemId: group.subjectItemId,
-          competitorItemId: group.competitorItemId
-        })
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reportIds, shopId })
       });
       const result = await response.json().catch(() => null) as {
-        data?: { assignment?: { reportIds: string[]; count?: number; shop: DmpReportShop | null } };
+        data?: { assignment?: { reportIds: string[]; shop: DmpReportShop | null } };
         error?: string;
       } | null;
       const assignment = result?.data?.assignment;
       if (!response.ok || !assignment) throw new Error(result?.error ?? "报告归属保存失败");
       const assignedIds = new Set(assignment.reportIds);
-      if (targetShopId === activeShopId) {
-        setReports((current) => current.map((record) => assignedIds.has(record.id)
-          ? { ...record, shopName: assignment.shop?.name ?? record.shopName }
-          : record));
-      } else {
-        setReports((current) => current.filter((record) => summaryGroupKey(record) !== group.key));
-        setPagination((current) => {
-          const movedCount = Number.isFinite(assignment.count)
-            ? Math.max(assignedIds.size, Number(assignment.count))
-            : assignedIds.size;
-          const total = Math.max(0, current.total - movedCount);
-          const totalPages = Math.ceil(total / current.pageSize);
-          return { ...current, total, totalPages, hasNext: current.page < totalPages };
-        });
-        if (activeSummary && summaryGroupKey(activeSummary) === group.key) clearSelectedReport();
-      }
+      setReports((current) => current.map((record) => assignedIds.has(record.id)
+        ? {
+            ...record,
+            shopId: assignment.shop?.id ?? "",
+            shopName: assignment.shop?.name ?? ""
+          }
+        : record));
       setNotice(assignment.shop ? `报告组已归入「${assignment.shop.name}」` : "报告组已移至未归类");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "报告归属保存失败");
@@ -408,39 +250,25 @@ export function DmpReportWorkspace({
   }
 
   async function refreshReports() {
-    if (!activeShopId) {
-      setNotice("请先选择当前店铺后再刷新");
-      return;
-    }
     setBusy(true);
     try {
-      const headers = { "x-sanjie-shop": activeShopId };
       const [reportResponse, shopResponse] = await Promise.all([
-        fetch(`/api/dmp-reports?page=1&pageSize=${REPORT_PAGE_SIZE}`, { cache: "no-store", headers }),
-        fetch("/api/shops", { cache: "no-store", headers })
+        fetch("/api/dmp-reports", { cache: "no-store" }),
+        fetch("/api/shops", { cache: "no-store" })
       ]);
-      const result = await reportResponse.json().catch(() => null) as DmpReportListResponse | null;
+      const result = await reportResponse.json().catch(() => null) as { data?: { reports?: DmpBusinessReportRecord[] }; error?: string } | null;
       const shopResult = await shopResponse.json().catch(() => null) as { data?: { shops?: DmpReportShop[] }; error?: string } | null;
       if (!reportResponse.ok) throw new Error(result?.error ?? "刷新失败");
       if (!shopResponse.ok) throw new Error(shopResult?.error ?? "店铺资料刷新失败");
       const nextReports = result?.data?.reports ?? [];
       const nextShops = shopResult?.data?.shops ?? [];
-      const nextEditor = nextShops.find((shop) => shop.id === shopEditorId)
-        ?? nextShops.find((shop) => shop.id === activeShopId)
-        ?? null;
+      const nextEditor = nextShops.find((shop) => shop.id === shopEditorId) ?? nextShops[0];
       setReports(nextReports);
-      setPagination(normalizedPagination(result?.data?.pagination, {
-        page: 1,
-        pageSize: REPORT_PAGE_SIZE,
-        total: nextReports.length,
-        totalPages: nextReports.length ? 1 : 0,
-        hasNext: false
-      }));
       setShops(nextShops);
       setShopEditorId(nextEditor?.id ?? "");
       setShopNameDraft(nextEditor?.name ?? "");
-      const total = result?.data?.pagination?.total ?? nextReports.length;
-      setNotice(total ? `已同步 ${total} 份历史报告摘要` : "暂时没有历史报告");
+      setSelectedId((current) => nextReports.some((record) => record.id === current) ? current : nextReports[0]?.id ?? "");
+      setNotice(nextReports.length ? `已同步 ${nextReports.length} 份历史报告` : "暂时没有历史报告");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "刷新失败，请稍后重试");
     } finally {
@@ -448,56 +276,23 @@ export function DmpReportWorkspace({
     }
   }
 
-  async function loadMoreReports() {
-    if (!activeShopId || listBusy || !pagination.hasNext) return;
-    setListBusy(true);
-    try {
-      const page = pagination.page + 1;
-      const response = await fetch(`/api/dmp-reports?page=${page}&pageSize=${pagination.pageSize}`, {
-        cache: "no-store",
-        headers: { "x-sanjie-shop": activeShopId }
-      });
-      const result = await response.json().catch(() => null) as DmpReportListResponse | null;
-      if (!response.ok) throw new Error(result?.error ?? "加载更多失败");
-      const nextReports = result?.data?.reports ?? [];
-      setReports((current) => {
-        const known = new Set(current.map((record) => record.id));
-        return [...current, ...nextReports.filter((record) => !known.has(record.id))];
-      });
-      setPagination(normalizedPagination(result?.data?.pagination, { ...pagination, page }));
-      setNotice("");
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "加载更多失败，请稍后重试");
-    } finally {
-      setListBusy(false);
-    }
-  }
-
-  async function deleteReport(record: DmpBusinessReportSummary) {
-    const subject = record.reportType === "market"
+  async function deleteReport(record: DmpBusinessReportRecord) {
+    const labels = objectLabels(record);
+    const identity = dmpReportIdentity(record);
+    const subject = isMarketReport(record)
       ? marketScopeLabel(record)
-      : `${objectLabels(record).subject} ${record.subjectItemId}`;
+      : `${labels.subject} ${identity.subjectItemId}`;
     if (!window.confirm(`确认删除${subject}的这份报告？`)) return;
-    if (!activeShopId) {
-      setNotice("当前店铺未明确，不能删除报告");
-      return;
-    }
     setBusy(true);
     try {
-      const response = await fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`, {
-        method: "DELETE",
-        headers: { "x-sanjie-shop": activeShopId }
-      });
+      const response = await fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`, { method: "DELETE" });
       const result = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(result?.error ?? "删除失败");
-      setReports((current) => current.filter((candidate) => candidate.id !== record.id));
-      setPagination((current) => {
-        const total = Math.max(0, current.total - 1);
-        const totalPages = Math.ceil(total / current.pageSize);
-        return { ...current, total, totalPages, hasNext: current.page < totalPages };
-      });
-      detailCache.current.delete(record.id);
-      if (selectedId === record.id) clearSelectedReport();
+      const nextReports = reports.filter((candidate) => candidate.id !== record.id);
+      setReports(nextReports);
+      setSelectedId((current) => current === record.id || !nextReports.some((candidate) => candidate.id === current)
+        ? nextReports[0]?.id ?? ""
+        : current);
       setNotice("报告已删除");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "删除失败，请稍后重试");
@@ -506,29 +301,18 @@ export function DmpReportWorkspace({
     }
   }
 
-  function clearSelectedReport() {
-    detailRequestSequence.current += 1;
-    detailAbortController.current?.abort();
-    detailAbortController.current = null;
-    setSelectedId("");
-    setSelectedRecord(null);
-    setLoadingReportId("");
-  }
-
-  const countLabel = query.trim()
-    ? `${visibleReports.length} / 已加载 ${reports.length} / 共 ${pagination.total} 份`
-    : `已加载 ${reports.length} / 共 ${pagination.total} 份`;
-
   return (
     <section className={`dmp-workspace ${styles.workspace}`}>
       {focusReport ? (
         <div className={styles.focusToolbar}>
           <div className={styles.focusIdentity}>
             <span>当前报告</span>
-            <strong>{selectedRecord ? primaryDetailLabel(selectedRecord) : "暂无报告"}</strong>
-            {notice ? <p className={styles.loadingNotice} aria-live="polite">{notice}</p> : null}
+            <strong>{selectedRecord ? primaryReportLabel(selectedRecord) : "暂无报告"}</strong>
           </div>
           <div className={styles.toolbar}>
+            <button type="button" onClick={() => void refreshReports()} disabled={busy}>
+              <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新
+            </button>
             <a href="/tools/dmp-report">浏览全部报告</a>
             {selectedRecord ? (
               <button className={styles.primaryAction} type="button" onClick={() => void createShare(selectedRecord)} disabled={Boolean(sharingId) || busy}>
@@ -543,7 +327,7 @@ export function DmpReportWorkspace({
             <div className={styles.headerCopy}>
               <div className={styles.headingRow}>
                 <h2>历史报告</h2>
-                <span className={styles.count}>{countLabel} · {visibleGroupCount} 组</span>
+                <span className={styles.count}>{query ? `${visibleReports.length} / ${reports.length} 份` : `${reports.length} 份`} · {visibleGroupCount} 组</span>
               </div>
               {notice ? <p aria-live="polite">{notice}</p> : null}
             </div>
@@ -558,12 +342,12 @@ export function DmpReportWorkspace({
                   placeholder="搜索商品、类目名称、日期或类型"
                 />
               </label>
-              <button type="button" onClick={() => void refreshReports()} disabled={busy || listBusy}>
+              <button type="button" onClick={() => void refreshReports()} disabled={busy}>
                 <RefreshCw className={busy ? "spin" : ""} size={15} /> 刷新
               </button>
-              {activeSummary ? (
-                <button className={styles.primaryAction} type="button" onClick={() => void createShare(activeSummary)} disabled={Boolean(sharingId) || busy}>
-                  <Share2 size={15} /> {sharingId === activeSummary.id ? "生成中…" : "分享当前报告"}
+              {activeRecord ? (
+                <button className={styles.primaryAction} type="button" onClick={() => void createShare(activeRecord)} disabled={Boolean(sharingId) || busy}>
+                  <Share2 size={15} /> {sharingId === activeRecord.id ? "生成中…" : "分享当前报告"}
                 </button>
               ) : null}
             </div>
@@ -611,6 +395,11 @@ export function DmpReportWorkspace({
                     {shopGroup.groups.map((group) => {
                       const groupFallback = group.subjectThumbnail.title.slice(0, 1) || "品";
                       const mergedDateRange = mergedGroupDateRange(group.records);
+                      const completeReportIds = dmpReportGroupIdsByShopAndIdentity(
+                        reportShopGroups,
+                        shopGroup.key,
+                        group.key
+                      );
                       return (
                         <section className={styles.reportGroup} key={group.key}>
                           <header className={styles.groupHeader}>
@@ -637,8 +426,14 @@ export function DmpReportWorkspace({
                               <span>归属</span>
                               <select
                                 value={shopGroup.shopId}
-                                onChange={(event) => void assignGroupToShop(group, event.target.value)}
-                                disabled={busy}
+                                onChange={(event) => {
+                                  if (!completeReportIds.length) {
+                                    setNotice("报告组加载不完整，请刷新后重试");
+                                    return;
+                                  }
+                                  void assignGroupToShop(completeReportIds, event.target.value);
+                                }}
+                                disabled={busy || !completeReportIds.length}
                                 aria-label={group.reportType === "market"
                                   ? `设置${dmpMarketCategoryLabel(group.marketScope, group.subjectItemId)}报告组的店铺归属`
                                   : `设置主体 ${group.subjectItemId} 报告组的店铺归属`}
@@ -651,12 +446,14 @@ export function DmpReportWorkspace({
                           </header>
                           <div className={styles.reportGrid}>
                             {group.records.map((record) => {
-                              const thumbnail = record.subjectThumbnail;
-                              const cardTitle = record.title || primarySummaryLabel(record);
+                              const thumbnail = dmpReportSubjectThumbnail(record);
+                              const cardTitle = isMarketReport(record)
+                                ? marketScopeLabel(record)
+                                : thumbnail.title || primaryReportLabel(record);
                               const fallback = (cardTitle || objectLabels(record).subject).slice(0, 1) || "品";
                               return (
-                                <article className={`${styles.reportCard}${selectedId === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
-                                  <button className={styles.reportMain} type="button" onClick={() => void selectReport(record)} aria-pressed={selectedId === record.id} disabled={busy}>
+                                <article className={`${styles.reportCard}${activeRecord?.id === record.id ? ` ${styles.active}` : ""}`} key={record.id}>
+                                  <button className={styles.reportMain} type="button" onClick={() => selectReport(record)} aria-pressed={activeRecord?.id === record.id} disabled={busy}>
                                     <span className={styles.reportThumbnail}>
                                       <span aria-hidden="true">{fallback}</span>
                                       {thumbnail.url ? <img src={thumbnail.url} alt={`${thumbnail.title}主图`} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; }} /> : null}
@@ -666,10 +463,10 @@ export function DmpReportWorkspace({
                                         <time>{createdAtLabel(record.createdAt)}</time>
                                       </span>
                                       <strong>{cardTitle}</strong>
-                                      <small>{record.reportType === "market"
+                                      <small>{isMarketReport(record)
                                         ? marketScopeLabel(record)
-                                        : `${objectLabels(record).subject} ${record.subjectItemId}`}</small>
-                                      <span className={styles.period}>{loadingReportId === record.id ? "正在加载报告…" : record.period}</span>
+                                        : `${objectLabels(record).subject} ${dmpReportIdentity(record).subjectItemId}`}</small>
+                                      <span className={styles.period}>{record.period}</span>
                                     </span>
                                   </button>
                                   <div className={styles.cardActions}>
@@ -702,17 +499,10 @@ export function DmpReportWorkspace({
               <span>达摩盘一体化插件完成任一模式取数后，报告会自动保存到当前账号。</span>
             </div>
           )}
-          {pagination.hasNext ? (
-            <div className={styles.loadMoreRow}>
-              <button type="button" onClick={() => void loadMoreReports()} disabled={listBusy || busy}>
-                {listBusy ? "加载中…" : "加载更多"}
-              </button>
-            </div>
-          ) : null}
         </section>
       )}
 
-      {selectedRecord ? <DmpReportViewer key={selectedRecord.id} record={selectedRecord} variant="preview" /> : null}
+      {selectedViewRecord ? <DmpReportViewer key={selectedViewRecord.id} record={selectedViewRecord} variant="preview" /> : null}
     </section>
   );
 }

@@ -33,7 +33,7 @@ describe.skipIf(process.env.CREDIT_GIFT_INTEGRATION !== "1")("isolated PostgreSQ
   }
 
   async function runMigration(path: string) {
-    let sql = await readFile(path, "utf8");
+    let sql = (await readFile(path, "utf8")).replace(/^\s*--[^\n]*$/gm, "");
     const bodies: string[] = [];
     sql = sql.replace(/\$\$[\s\S]*?\$\$/g, (body) => { bodies.push(body); return `__GIFT_SQL_BODY_${bodies.length - 1}__`; });
     for (const part of sql.split(";").map((value) => value.trim()).filter(Boolean)) {
@@ -61,6 +61,16 @@ describe.skipIf(process.env.CREDIT_GIFT_INTEGRATION !== "1")("isolated PostgreSQ
     await client().$executeRawUnsafe('ALTER TABLE "GatewayUsage" DROP COLUMN "billingEventId"');
     await runMigration("prisma/migrations/20261002120000_gateway_billing_ledger/migration.sql");
     await runMigration("prisma/migrations/20261003120000_gateway_credit_gifts/migration.sql");
+    await runMigration("prisma/migrations/20261003043000_gateway_billing_utc_defaults/migration.sql");
+    // db push does not record migrations. The current ledger reader still needs
+    // the standard metadata table, with no invented history in this disposable schema.
+    await client().$executeRawUnsafe(`CREATE TABLE "_prisma_migrations" (
+      "id" VARCHAR(36) PRIMARY KEY, "checksum" VARCHAR(64) NOT NULL,
+      "finished_at" TIMESTAMPTZ, "migration_name" VARCHAR(255) NOT NULL,
+      "logs" TEXT, "rolled_back_at" TIMESTAMPTZ,
+      "started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "applied_steps_count" INTEGER NOT NULL DEFAULT 0
+    )`);
     vi.stubEnv("MODEL_GATEWAY_PAYMENT_PROVIDER", "manual");
     vi.stubEnv("MODEL_GATEWAY_MANUAL_PAY_URL", "");
     gifts = await import("./credit-gifts"); billing = await import("./billing"); store = await import("./store"); creative = await import("../creative-credit");

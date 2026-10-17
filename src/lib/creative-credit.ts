@@ -5,6 +5,7 @@ import { listAvailableGatewayModels } from "@/lib/model-gateway/runtime-catalog"
 import { getGatewayBillingSnapshot, listGatewayBillingLedger, safeGatewayBillingError } from "@/lib/model-gateway/billing";
 import { applyGatewayBillingCost, centsToPoints, GATEWAY_CENTS_PER_POINT, GATEWAY_MAX_COST_CENTS } from "@/lib/model-gateway/billing-contract";
 import type { GatewayModel } from "@/lib/model-gateway/catalog";
+import { getGatewayAvailableBalance } from "@/lib/model-gateway/billing-hold";
 import type { CreativeCreditModel, CreativeCreditPlan, CreativeCreditsData, CreativeCreditLedgerData } from "@/lib/creative-credit-contract";
 
 function validRate(value: number | undefined, integer = false) {
@@ -43,8 +44,11 @@ export async function getCreativeCredits(userId: string): Promise<CreativeCredit
   const account = await prisma.$transaction(async (tx) => {
     const snapshot = await getGatewayBillingSnapshot(userId, tx);
     const wallet = await tx.gatewayWallet.findUnique({ where: { userId }, select: { balanceCents: true } });
+    const available = await getGatewayAvailableBalance(tx, userId);
     return {
-      wallet: { balanceCents: wallet?.balanceCents ?? 0, balancePoints: centsToPoints(wallet?.balanceCents ?? 0), exists: wallet !== null },
+      wallet: { balanceCents: wallet?.balanceCents ?? 0, balancePoints: centsToPoints(wallet?.balanceCents ?? 0), exists: wallet !== null,
+        availableCents: available.availableCents, availablePoints: centsToPoints(available.availableCents),
+        reservedCents: available.reservedCents, reservedPoints: centsToPoints(available.reservedCents) },
       plan: { code: snapshot.planCode, name: snapshot.planCode === "free" ? "未购买套餐" : snapshot.planName, multiplierBps: snapshot.multiplierBps, ruleVersion: snapshot.ruleVersion }
     };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
@@ -56,7 +60,7 @@ export async function getCreativeCredits(userId: string): Promise<CreativeCredit
 }
 
 export async function getCreativeCreditLedger(userId: string, page = 1): Promise<CreativeCreditLedgerData> {
-  const result = await listGatewayBillingLedger({ userId, page, pageSize: 20 });
+  const result = await listGatewayBillingLedger({ userId, page, pageSize: 20, excludeSupplierUsage: true });
   return {
     total: result.total, page: result.page, pageSize: result.pageSize,
     items: result.items.map((row) => ({

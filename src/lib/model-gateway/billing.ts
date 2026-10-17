@@ -1,7 +1,10 @@
+import { validateNativeChargeEvidence } from "./native-credit-coverage";
+import { validateGatewayLocalChargeEvidence } from "./local-pricing";
 import "server-only";
-import type { Prisma, GatewayWallet } from "@prisma/client";
+import { Prisma, type GatewayWallet } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { GATEWAY_PLANS } from "@/lib/model-gateway/catalog";
+import { lockGatewayAccountingIdentities, lockGatewayAccountingPool } from "./accounting-coordination";
 import {
   applyGatewayBillingCost, centsToPoints, GATEWAY_DEFAULT_MULTIPLIER_BPS,
   GatewayBillingError,
@@ -67,9 +70,14 @@ export async function updateGatewayBillingRule(adminId: string, input: UpdateGat
     throw new GatewayBillingError("INVALID_VERSION", "请提交当前规则版本后再保存");
   }
   return prisma.$transaction(async (tx) => {
+    await lockGatewayAccountingIdentities(tx, [adminId]);
     const admin = await tx.user.findUnique({ where: { id: adminId } });
     if (!admin || admin.authRole !== "admin" || admin.status !== "active") {
       throw new GatewayBillingError("ADMIN_REQUIRED", "仅有效管理员可调整扣费规则", 403);
+    }
+    const pool = await lockGatewayAccountingPool(tx);
+    if (pool?.accountingVersion === 1 && pool.status === "ready") {
+      throw new GatewayBillingError("POOL_PRICING_LOCKED", "总池定价已冻结，调整前须重新核验来源与定价", 409);
     }
     await tx.gatewayBillingRule.upsert({
       where: { planCode: plan.code }, update: {},
@@ -96,6 +104,8 @@ export async function updateGatewayBillingRule(adminId: string, input: UpdateGat
 
 /** Serializes all new financial events for a user, including their balance snapshots. */
 export async function lockGatewayBillingWallet(tx: Prisma.TransactionClient, userId: string) {
+  await lockGatewayAccountingIdentities(tx, [userId]);
+  await lockGatewayAccountingPool(tx);
   await tx.gatewayWallet.upsert({
     where: { userId }, update: {},
     create: { userId, balanceCents: 0, monthlyQuotaCents: 0, planCode: "free", planName: "体验版", periodStart: new Date(), periodEnd: new Date() }
@@ -116,17 +126,25 @@ export async function ensureGatewayBillingOpening(tx: Prisma.TransactionClient, 
   } });
 }
 
-const SAFE_METADATA_KEYS = new Set(["upstreamModel", "baseUrl", "credentialId", "size", "quality", "billing", "seconds", "imageAdapter", "mode", "scene", "requestedSize", "effectiveSize", "source", "resolution", "outcome", "responseFormat", "requestedImageCount", "inputImageCount", "tokenSource", "reportedTokenFields", "costSource", "usdCost", "usdCnyRate"]);
+const SAFE_METADATA_KEYS = new Set(["upstreamModel", "baseUrl", "credentialId", "size", "quality", "billing", "seconds", "imageAdapter", "mode", "scene", "requestedSize", "effectiveSize", "source", "resolution", "outcome", "responseFormat", "requestedImageCount", "inputImageCount", "tokenSource", "reportedTokenFields", "costSource", "usdCost", "usdCostLexical", "upstreamCostField", "localChargeEvidence", "nativeChargeEvidence", "nativeVideoJobId", "priceVersion", "usdCnyRate", "fxSource", "fxQuoteId", "fxReferenceDate", "fxFetchedAt"]);
 export function safeGatewayBillingMetadata(value: unknown): Prisma.InputJsonObject {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const safe: Record<string, Prisma.InputJsonValue | null> = {};
   for (const [key, raw] of Object.entries(value)) {
     if (!SAFE_METADATA_KEYS.has(key)) continue;
+    if (key === "nativeChargeEvidence") { try { safe[key] = {...validateNativeChargeEvidence(raw)}; } catch { /* Rejected by native coverage guard. */ } continue; }
+    if ((key === "nativeVideoJobId" || key === "priceVersion") && (typeof raw !== "string" || !/^[A-Za-z0-9_.:-]{1,200}$/.test(raw))) continue;
+    if (key === "localChargeEvidence") { try { safe[key] = {...validateGatewayLocalChargeEvidence(raw)}; } catch { /* Invalid evidence is omitted and rejected by source guard. */ } continue; }
     if (key === "credentialId" && (typeof raw !== "string" || !/^[A-Za-z0-9_-]{1,200}$/.test(raw))) continue;
     if ((key === "requestedImageCount" || key === "inputImageCount") && (!Number.isSafeInteger(raw) || Number(raw) < 0 || Number(raw) > 10_000)) continue;
     if (key === "tokenSource" && !["reported", "estimated", "unreported", "partial"].includes(String(raw))) continue;
     if (key === "costSource" && !["catalog", "upstream_usd"].includes(String(raw))) continue;
-    if ((key === "usdCost" || key === "usdCnyRate") && (typeof raw !== "string" || !/^\d{1,7}(\.\d{1,8})?$/.test(raw))) continue;
+    if (key === "upstreamCostField" && !["usage.actual_cost","actual_cost"].includes(String(raw))) continue;
+    if ((key === "usdCost" || key === "usdCostLexical" || key === "usdCnyRate") && (typeof raw !== "string" || !/^\d{1,7}(\.\d{1,8})?$/.test(raw))) continue;
+    if (key === "fxSource" && !["ecb", "manual"].includes(String(raw))) continue;
+    if (key === "fxQuoteId" && (typeof raw !== "string" || !/^[a-f0-9]{64}$/.test(raw))) continue;
+    if (key === "fxReferenceDate" && (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw) || !Number.isFinite(Date.parse(raw + "T00:00:00.000Z")) || new Date(raw + "T00:00:00.000Z").toISOString().slice(0, 10) !== raw)) continue;
+    if (key === "fxFetchedAt" && (typeof raw !== "string" || !Number.isFinite(Date.parse(raw)) || new Date(raw).toISOString() !== raw)) continue;
     if (key === "reportedTokenFields" && (typeof raw !== "string" || !["", "prompt", "completion", "total", "prompt,completion", "prompt,total", "completion,total", "prompt,completion,total"].includes(raw))) continue;
     if (typeof raw === "number" && Number.isFinite(raw) || typeof raw === "boolean" || raw === null) { safe[key] = raw; continue; }
     if (typeof raw !== "string") continue;
@@ -167,24 +185,57 @@ function queryDate(value: string | undefined) {
   return result;
 }
 
-export async function listGatewayBillingLedger(query: GatewayBillingLedgerQuery = {}) {
+// Only the exact migration-created opening cohort used the server's Asia/Shanghai
+// wall clock. Preserve every stored ledger row and derive its UTC display/read time.
+const FOUNDATION_MIGRATION = "20261002120000_gateway_billing_ledger";
+const FOUNDATION_CHECKSUM = "44c6867ce5ca19a6e7aeac537ca4317b2039a14b09031d7cbdc7609827d8a2b7";
+type LedgerReadClient = Pick<Prisma.TransactionClient, "$queryRaw">;
+type LedgerReadRow = Prisma.GatewayBillingLedgerGetPayload<Record<string, never>> & { effectiveCreatedAt: Date };
+
+export async function listGatewayBillingLedger(query: GatewayBillingLedgerQuery = {}, client: LedgerReadClient = prisma) {
   const { page, pageSize, skip } = pagination(query);
   const from = queryDate(query.from), to = queryDate(query.to);
   if (from && to && from > to) throw new GatewayBillingError("INVALID_QUERY", "开始日期不能晚于结束日期");
-  if (query.kind && !["opening", "recharge", "gift", "debit", "error"].includes(query.kind)) throw new GatewayBillingError("INVALID_QUERY", "账本类型无效");
+  if (query.kind && !["opening", "recharge", "gift", "debit", "error", "generation_charge", "generation_refund", "usage"].includes(query.kind)) throw new GatewayBillingError("INVALID_QUERY", "账本类型无效");
   const search = query.search?.trim().slice(0, 200);
-  const where: Prisma.GatewayBillingLedgerWhereInput = {
-    ...(query.tenantId ? { tenantId: query.tenantId } : {}), ...(query.userId ? { userId: query.userId } : {}),
-    ...(query.planCode ? { planCode: query.planCode } : {}), ...(query.kind ? { kind: query.kind } : {}),
-    ...(query.model ? { model: query.model } : {}), ...(query.endpoint ? { endpoint: query.endpoint } : {}),
-    ...(from || to ? { createdAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
-    ...(search ? { OR: ["username", "userName", "tenantId", "tenantName", "requestId", "billingEventId", "model"].map((field) => ({ [field]: { contains: search, mode: "insensitive" } })) } : {})
-  };
-  const [rows, total] = await Promise.all([
-    prisma.gatewayBillingLedger.findMany({ where, skip, take: pageSize, orderBy: [{ createdAt: "desc" }, { id: "desc" }] }),
-    prisma.gatewayBillingLedger.count({ where })
+  const filters: Prisma.Sql[] = [];
+  if (query.tenantId) filters.push(Prisma.sql`"tenantId" = ${query.tenantId}`);
+  if (query.userId) filters.push(Prisma.sql`"userId" = ${query.userId}`);
+  if (query.planCode) filters.push(Prisma.sql`"planCode" = ${query.planCode}`);
+  if (query.kind) filters.push(Prisma.sql`"kind" = ${query.kind}`);
+  if (query.excludeSupplierUsage) filters.push(Prisma.sql`"kind" <> 'usage'`);
+  if (query.model) filters.push(Prisma.sql`"model" = ${query.model}`);
+  if (query.endpoint) filters.push(Prisma.sql`"endpoint" = ${query.endpoint}`);
+  // Bind an ISO instant and cast explicitly: a raw Date-to-timestamp cast would
+  // otherwise depend on the database session's TimeZone.
+  if (from) filters.push(Prisma.sql`"effectiveCreatedAt" >= (CAST(${from.toISOString()} AS TIMESTAMPTZ) AT TIME ZONE 'UTC')`);
+  if (to) filters.push(Prisma.sql`"effectiveCreatedAt" <= (CAST(${to.toISOString()} AS TIMESTAMPTZ) AT TIME ZONE 'UTC')`);
+  if (search) {
+    const pattern = `%${search.replace(/[\\%_]/g, "\\$&")}%`;
+    filters.push(Prisma.sql`("username" ILIKE ${pattern} ESCAPE '\\' OR "userName" ILIKE ${pattern} ESCAPE '\\' OR "tenantId" ILIKE ${pattern} ESCAPE '\\' OR "tenantName" ILIKE ${pattern} ESCAPE '\\' OR "requestId" ILIKE ${pattern} ESCAPE '\\' OR "billingEventId" ILIKE ${pattern} ESCAPE '\\' OR "model" ILIKE ${pattern} ESCAPE '\\')`);
+  }
+  const where = filters.length ? Prisma.sql`WHERE ${Prisma.join(filters, " AND ")}` : Prisma.empty;
+  const effectiveLedger = Prisma.sql`WITH foundation AS (
+    SELECT "finished_at" FROM "_prisma_migrations"
+    WHERE "migration_name" = ${FOUNDATION_MIGRATION} AND "checksum" = ${FOUNDATION_CHECKSUM}
+      AND "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL
+      AND (SELECT COUNT(*) FROM "_prisma_migrations" WHERE "migration_name" = ${FOUNDATION_MIGRATION}) = 1
+  ), effective_ledger AS (
+    SELECT ledger.*, CASE WHEN ledger."kind" = 'opening'
+      AND ledger."id" = 'opening-' || ledger."userId"
+      AND ledger."billingEventId" = 'opening:' || ledger."userId"
+      AND ledger."createdAt" = (SELECT CAST("finished_at" AT TIME ZONE 'Asia/Shanghai' AS TIMESTAMP(3)) FROM foundation)
+      THEN (ledger."createdAt" AT TIME ZONE 'Asia/Shanghai') AT TIME ZONE 'UTC'
+      ELSE ledger."createdAt" END AS "effectiveCreatedAt"
+    FROM "GatewayBillingLedger" ledger
+  )`;
+  const [rows, totals] = await Promise.all([
+    client.$queryRaw<LedgerReadRow[]>(Prisma.sql`${effectiveLedger} SELECT * FROM effective_ledger ${where}
+      ORDER BY "effectiveCreatedAt" DESC, "id" DESC LIMIT ${pageSize} OFFSET ${skip}`),
+    client.$queryRaw<{ total: bigint }[]>(Prisma.sql`${effectiveLedger} SELECT COUNT(*) AS total FROM effective_ledger ${where}`)
   ]);
-  return { items: rows.map((row) => ({ ...row, createdAt: row.createdAt.toISOString() })), total, page, pageSize };
+  return { items: rows.map(({ effectiveCreatedAt, ...row }) => ({ ...row, createdAt: effectiveCreatedAt.toISOString() })),
+    total: Number(totals[0]?.total ?? 0n), page, pageSize };
 }
 
 export async function listGatewayBillingAccounts(query: GatewayBillingQuery = {}) {

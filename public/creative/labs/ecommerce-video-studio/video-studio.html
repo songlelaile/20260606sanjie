@@ -275,7 +275,7 @@
           </div>
         </section>
         <section id="production-panel" class="panel production-panel" aria-labelledby="production-run-title" hidden>
-          <div class="panel-heading"><div><h2 id="production-run-title">镜头进度与合成</h2><p id="production-run-summary"></p></div><button id="production-resume" type="button" class="button button-primary">继续 / 核对已提交镜头</button><button id="production-new-plan" type="button" class="button button-primary" hidden>新建动态视频计划</button><button id="production-stop" type="button" class="button button-secondary" hidden>停止本地合成</button></div>
+          <div class="panel-heading"><div><h2 id="production-run-title">镜头进度与合成</h2><p id="production-run-summary"></p></div><button id="production-resume" type="button" class="button button-primary">继续 / 核对已提交镜头</button><button id="production-stop" type="button" class="button button-secondary" hidden>停止本地合成</button></div>
           <div id="production-shot-list" class="production-shot-list" aria-live="polite"></div>
           <div id="production-run-notice" class="inline-notice" role="status" hidden></div>
         </section>
@@ -283,33 +283,26 @@
 
       <aside class="settings-rail" aria-label="生成设置">
         <section class="panel production-card" aria-labelledby="production-title">
-          <div class="panel-heading compact"><div><h2 id="production-title">动态视频计划</h2><p>按确认分镜生成连续动作；模型与清晰度使用下方选择。</p></div></div>
+          <div class="panel-heading compact"><div><h2 id="production-title">成片方案</h2><p>每镜 5 秒，合成 15–60 秒成片；已完成镜头可复用。</p></div></div>
           <div id="production-modes" class="production-modes" role="radiogroup" aria-label="视频成本方案">
-            <button type="button" data-production-mode="quality" aria-pressed="true"><strong>按脚本生成动态视频</strong><small>使用当前模型与清晰度</small></button>
-          </div>
-          <div id="production-model-wrap" class="field-group">
-            <label for="production-model">低成本动态模型</label>
-            <select id="production-model" aria-describedby="production-model-help">
-              <option value="seedance-2.0-mini">Seedance 2.0 Mini · 检查中</option>
-              <option value="seedance-2.0-fast">Seedance 2.0 Fast · 检查中</option>
-            </select>
-            <p id="production-model-help" class="field-help">经济方案的 AI 镜头、均衡方案的低成本镜头使用此模型。</p>
+            <button type="button" data-production-mode="economic" aria-pressed="true"><strong>经济</strong><small>已有素材 + 少量 AI</small></button>
+            <button type="button" data-production-mode="balanced" aria-pressed="false"><strong>均衡</strong><small>Mini + 标准模型</small></button>
+            <button type="button" data-production-mode="quality" aria-pressed="false"><strong>质量</strong><small>沿用专业模型</small></button>
           </div>
           <div class="production-fields">
             <label>成片时长<select id="production-duration"><option>15</option><option>20</option><option>25</option><option>30</option><option>35</option><option>40</option><option>45</option><option>50</option><option>55</option><option>60</option></select><small>秒，AI 每镜 5 秒</small></label>
-            <label id="production-ai-wrap" hidden>动态画面<select id="production-ai-seconds"><option value="15">全部镜头生成动态视频</option></select></label>
-            <label>上游估算预算（元）<input id="production-budget" type="number" min="0" max="10000" step="0.01" value="30"></label>
+            <label id="production-ai-wrap">AI 画面时长<select id="production-ai-seconds"><option value="0">0 秒 · 全部用素材</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="15">15 秒</option></select></label>
+            <label>上游估算预算（元）<input id="production-budget" type="number" min="0" max="10000" step="0.01" value="10"></label>
             <label>每镜最多尝试<select id="production-attempts"><option value="1">1 次</option><option value="2">2 次 · 失败后手动重试</option></select></label>
           </div>
           <div id="production-estimate" class="estimate-card" role="status"></div>
-          <p id="production-note" class="field-help">参考图片用于锁定商品与人物，每个镜头都按分镜动作生成视频。</p>
+          <p id="production-note" class="field-help">经济方案需要商品图片或已有视频；上游人民币预算与本站积分分别核算。</p>
           <div id="production-final-audio" class="production-final-audio">
-            <strong>按脚本配音</strong>
-            <p>口播由 AI 按已确认分镜的台词重新配音。上传的声音只作对照参考；配音能力或计费未就绪时会明确提示并保留计划。</p>
-            <p id="production-narration-capability" class="field-help" role="status">配音能力尚未读取；点击“刷新能力”可核对模型、音色和计价。</p>
-            <label for="production-source-volume" hidden>旧计划原声 <output id="production-source-volume-output">0%</output></label>
-            <input id="production-source-volume" type="range" min="0" max="1" step="0.05" value="0" aria-label="旧计划原声音量" hidden>
-            <p id="production-audio-summary" class="field-help">请检查分镜台词。</p>
+            <strong>最终成片声音（可选）</strong>
+            <p>上传 MP3 / WAV 后，在素材卡选择“最终口播”或“背景音乐”并试听。声音在完整成片时间轴合成，不发送给视频供应商；没有音轨时可静音成片。</p>
+            <label for="production-source-volume">已有视频原声 <output id="production-source-volume-output">0%</output></label>
+            <input id="production-source-volume" type="range" min="0" max="1" step="0.05" value="0" aria-label="已有视频原声音量">
+            <p id="production-audio-summary" class="field-help">未选择最终音轨。</p>
           </div>
         </section>
         <section class="panel settings-card">
@@ -323,8 +316,6 @@
           <div class="field-group">
             <label for="model-select">视频模型</label>
             <select id="model-select">
-              <option value="seedance-2.0-mini">Seedance 2.0 Mini · 检查中</option>
-              <option value="seedance-2.0-fast">Seedance 2.0 Fast · 检查中</option>
               <option value="seedance-2.0">Seedance 2.0 · 检查中</option>
               <option value="seedance-2.5">Seedance 2.5 · 检查中</option>
             </select>
@@ -334,7 +325,7 @@
           <fieldset class="field-group">
             <legend>分辨率</legend>
             <div class="segmented-control resolution-control">
-              <label><input type="radio" name="resolution" value="480p"><span>480P · 标清</span></label>
+              <label><input type="radio" name="resolution" value="480p"><span>480P · 流畅</span></label>
               <label><input type="radio" name="resolution" value="720p" checked><span>720P · 高清</span></label>
               <label><input type="radio" name="resolution" value="1080p"><span>1080P · 超清</span></label>
               <label><input type="radio" name="resolution" value="4k"><span>4K · 专业</span></label>
@@ -373,19 +364,19 @@
           </div>
 
           <fieldset id="supplier-audio-fieldset" class="field-group audio-fieldset">
-            <legend>成片声音</legend>
+            <legend>供应商生成声音（原单片设置）</legend>
             <div class="audio-options">
               <label>
                 <input type="radio" name="audio-mode" value="silent">
                 <span><strong>无声音</strong><small>纯画面输出</small></span>
               </label>
-              <label hidden>
-                <input type="radio" name="audio-mode" value="sound_only">
+              <label>
+                <input type="radio" name="audio-mode" value="sound_only" checked>
                 <span><strong>生成声音</strong><small>配乐 / 环境音，尽量无口播</small></span>
               </label>
               <label>
-                <input type="radio" name="audio-mode" value="narration" checked>
-                <span><strong>按脚本口播</strong><small>逐镜台词重新配音</small></span>
+                <input type="radio" name="audio-mode" value="narration">
+                <span><strong>有口播</strong><small>生成声音并合成人声</small></span>
               </label>
             </div>
           </fieldset>
@@ -473,12 +464,11 @@
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/creative/web-chrome.js"></script>
-  <script src="./video-studio-contract.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="./video-studio-contract.js?v=reference-role-20261016-v1"></script>
   <script src="/creative/web-video-host.js?v=20261011-wallet-switch-v1"></script>
-  <script src="/creative/src/ecommerce-video-background.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="/creative/src/ecommerce-video-background.js"></script>
   <script src="./video-studio-store.js"></script>
-  <script src="./video-production.js?v=fish-audio-script-motion-20261016-v3"></script>
-  <script src="./video-narration.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="./video-production.js?v=audio-mix-20261010-v1"></script>
   <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
   <script src="./video-studio.js?v=task-list-cleanup-20261016-v1"></script>
 </body>

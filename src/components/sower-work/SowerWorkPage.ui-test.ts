@@ -2,10 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ getSowerWorkAccess: vi.fn(), redirect: vi.fn(), headers: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getSowerWorkAccess: vi.fn(), redirect: vi.fn() }));
 vi.mock("@/lib/sower-work-access", () => ({ getSowerWorkAccess: mocks.getSowerWorkAccess }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("next/headers", () => ({ headers: mocks.headers }));
 vi.mock("@/components/sower-work/SowerWorkStudio", () => ({
   SowerWorkStudio: () => createElement("div", { "data-sower-work-studio": "true" }, "网页版工作台")
 }));
@@ -16,14 +15,7 @@ describe("Sower Work page database gate", () => {
   beforeEach(() => {
     mocks.getSowerWorkAccess.mockReset();
     mocks.redirect.mockReset();
-    mocks.headers.mockResolvedValue(new Headers({ host: "shaozhuangai.com" }));
     mocks.redirect.mockImplementation((destination: string) => { throw new Error(`redirect:${destination}`); });
-  });
-
-  it("moves the www entrance to the canonical host before rendering its iframe", async () => {
-    mocks.headers.mockResolvedValue(new Headers({ host: "www.shaozhuangai.com" }));
-    await expect(SowerWorkPage()).rejects.toThrow("redirect:https://shaozhuangai.com/sower-work");
-    expect(mocks.getSowerWorkAccess).not.toHaveBeenCalled();
   });
 
   it("renders the web studio for a database-validated administrator", async () => {

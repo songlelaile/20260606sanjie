@@ -1,10 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { ROLE_HOME, SESSION_COOKIE, canAccess, parseSession } from "@/lib/auth";
+import { safeCreativeReturnPath } from "@/lib/auth-return-path";
 import { authRedirectUrl } from "@/lib/auth-redirect-url";
 import { isExtensionApi, isPrivateSourcePath, rejectsCrossSiteMutation } from "@/lib/request-security";
 import { consumeSecurityRateLimit } from "@/lib/security-rate-limit";
 import { securityRateLimitResponse } from "@/lib/security-response";
 import { isActiveSecurityAccount, securityAccountIdentity } from "@/lib/security-web-account";
+import { isProductionSelfAuthenticatedPath, isPublicAiDistributionPath } from "@/lib/production-compatibility-policy";
 
 const AUTH_RESPONSE_HEADERS = { "Cache-Control": "private, no-store" };
 const PUBLIC_DMP_REPORT_HEADERS = {
@@ -14,6 +16,7 @@ const PUBLIC_DMP_REPORT_HEADERS = {
 };
 const PUBLIC_DMP_REPORT_PATH = /^\/shared\/dmp-reports\/[a-f0-9]{64}$/i;
 const PUBLIC_DMP_REPORT_EVENTS_PATH = /^\/api\/shared\/dmp-reports\/[a-f0-9]{64}$/i;
+
 const SIGNED_PAYMENT_NOTIFY_PATHS = new Set(["/api/payments/alipay/notify", "/api/payments/wechat/notify"]);
 
 export async function middleware(request: NextRequest) {
@@ -27,8 +30,18 @@ export async function middleware(request: NextRequest) {
   // Framework runtime scripts and the public tool icon must remain available to the login page.
   if (pathname.startsWith("/_next/static/") || pathname === "/favicon.ico" ||
       /^\/downloads\/[^/]+\.(?:png|jpg|jpeg|webp|svg|ico)$/i.test(pathname)) return NextResponse.next();
-  // Provider notifications use cryptographic signatures in their handlers, not
-  // browser cookies. Only these exact POST routes bypass browser/session checks.
+  // Preserve reviewed existing public updater contracts by exact paths only.
+  // Do not change installed clients' anonymous update protocol in this overlay.
+  if (isPublicAiDistributionPath(pathname)) {
+    if (!["GET", "HEAD"].includes(request.method)) {
+      return new NextResponse(null, { status: 405, headers: { Allow: "GET, HEAD", ...AUTH_RESPONSE_HEADERS } });
+    }
+    return NextResponse.next();
+  }
+  // These precise production routes own signed-session/lease/HMAC, Origin/CORS
+  // and database authorization. Similar prefixes still enter normal protection.
+  if (isProductionSelfAuthenticatedPath(pathname)) return NextResponse.next();
+  // Only these exact provider POST callbacks use handler-side signatures instead of browser sessions.
   if (SIGNED_PAYMENT_NOTIFY_PATHS.has(pathname)) {
     if (request.method !== "POST") return new NextResponse(null, { status: 405, headers: { Allow: "POST", ...AUTH_RESPONSE_HEADERS } });
     return NextResponse.next();
@@ -58,7 +71,23 @@ export async function middleware(request: NextRequest) {
       const namespace = assets ? "web-assets" : api ? (writing ? "web-api-write" : "web-api-read") : "web-pages";
       const rate = await consumeSecurityRateLimit(namespace, securityAccountIdentity(session), assets ? 300 : api ? (writing ? 90 : 180) : 120, 60);
       const denied = securityRateLimitResponse(rate);
-      if (denied) return denied;
+      if (denied) {
+        // This exact response is owned by middleware before the proxy handler
+        // runs. Upstream status/headers can never create this submission proof.
+        if (pathname === "/api/creative/proxy" && request.method === "POST") {
+          const headers = new Headers(denied.headers);
+          headers.set("X-Sanjie-Provider-Submission", "not-submitted");
+          return NextResponse.json({
+            error: rate.reason === "unavailable" ? "安全验证暂不可用，请稍后重试" : "操作过于频繁，请稍后重试",
+            code: "CREATIVE_REQUEST_NOT_SUBMITTED",
+            reasonCode: rate.reason === "unavailable" ? "SECURITY_UNAVAILABLE" : "RATE_LIMITED",
+            providerSubmitted: false,
+            definitiveFailure: true,
+            stateUncertain: false
+          }, { status: denied.status, headers });
+        }
+        return denied;
+      }
     }
   }
 
@@ -128,7 +157,12 @@ export async function middleware(request: NextRequest) {
     }
     const url = authRedirectUrl(request.nextUrl);
     url.pathname = "/login";
-    if (pathname.startsWith("/shared/dmp-reports/")) {
+    if (pathname === "/dashboards/operating-network" || pathname === "/dashboards/operating-network/video") {
+      const returnTo = safeCreativeReturnPath(`${pathname}${request.nextUrl.search}`);
+      // 创作入口只带规范化的模块地址，不把插件令牌、密钥或伪造 returnTo 带到登录页。
+      url.search = "";
+      if (returnTo) url.searchParams.set("returnTo", returnTo);
+    } else if (pathname.startsWith("/shared/dmp-reports/")) {
       url.searchParams.set("returnTo", `${pathname}${request.nextUrl.search}`);
     }
     const response = NextResponse.redirect(url);
@@ -154,7 +188,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.rewrite(url);
   }
 
-  // 安装包保留原下载地址及原文件，但不再允许匿名获取整套功能代码。
+  // 公开精确更新清单已在上方处理；其它安装包交给授权下载路由。
   if (pathname.startsWith("/downloads/")) {
     // With skipMiddlewareUrlNormalize, request.url retains 127.0.0.1 instead of
     // NextURL normalizing it to localhost and turning this into an HTTPS proxy.

@@ -3,6 +3,7 @@
 import { Coins, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import styles from "./CreditGiftPanel.module.css";
+import { CreditGiftPlansPanel } from "./CreditGiftPlansPanel";
 
 type GiftUser = { id: string; status: string; name: string; username: string; shopName: string };
 export type CreditGiftView = {
@@ -12,7 +13,8 @@ export type CreditGiftView = {
   amountCents: number; poolBeforeCents: number; poolAfterCents: number;
   walletBeforeCents: number; walletAfterCents: number; reason: string; createdAt: string;
 };
-type GiftOverview = { pool: { ready: boolean; balanceCents: number | null; balancePoints: number | null }; gifts: CreditGiftView[] };
+type PoolState = "uninitialized" | "pending" | "invalid" | "ready";
+type GiftOverview = { pool: { state?: PoolState; ready: boolean; balanceCents: number | null; balancePoints: number | null; refreshOnSubmitAvailable?: boolean }; gifts: CreditGiftView[] };
 type GiftDraft = { userId: string; points: string; reason: string; requestKey: string };
 const ENDPOINT = "/api/management/credit-gifts";
 const MAX_CENTS = 2_147_483_647;
@@ -39,6 +41,9 @@ function giftView(value: unknown): value is CreditGiftView {
 }
 function overviewView(value: unknown): value is GiftOverview {
   if (!record(value) || !record(value.pool) || typeof value.pool.ready !== "boolean" || !Array.isArray(value.gifts) || !value.gifts.every(giftView)) return false;
+  if (value.pool.state !== undefined && (typeof value.pool.state !== "string" || !["uninitialized", "pending", "invalid", "ready"].includes(value.pool.state) || (value.pool.state === "ready") !== value.pool.ready)) return false;
+  if (value.pool.refreshOnSubmitAvailable !== undefined && (typeof value.pool.refreshOnSubmitAvailable !== "boolean"
+    || value.pool.refreshOnSubmitAvailable && (value.pool.state !== "pending" || value.pool.ready))) return false;
   return value.pool.ready
     ? amount(value.pool.balanceCents) && value.pool.balancePoints === value.pool.balanceCents / 10
     : value.pool.balanceCents === null && value.pool.balancePoints === null;
@@ -79,14 +84,38 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
   const cents = parseCreditGiftPoints(quantity);
   const validReason = reason.trim().length >= 2 && reason.trim().length <= 500 && NO_CONTROLS.test(reason);
   const readOnly = !initialized || busy || !!draft || !!storageError;
-  const ready = overview?.pool.ready === true && !overviewError && !loading;
-  const canSubmit = !readOnly && ready && target?.status === "active" && cents !== null && validReason && cents <= overview!.pool.balanceCents!;
+  const poolReadState = loading ? "loading" : overviewError || !overview ? "error"
+    : overview.pool.state ?? (overview.pool.ready ? "ready" : "uninitialized");
+  const ready = poolReadState === "ready";
+  const refreshOnSubmit = poolReadState === "pending" && overview?.pool.refreshOnSubmitAvailable === true;
+  const canSubmit = !readOnly && target?.status === "active" && cents !== null && validReason
+    && (refreshOnSubmit || ready && cents <= overview!.pool.balanceCents!);
+  const poolLabel = poolReadState === "loading" ? "读取中…" : poolReadState === "error" ? "读取失败"
+    : poolReadState === "uninitialized" ? "未配置" : poolReadState === "pending" ? "待核对"
+      : poolReadState === "invalid" ? "异常" : points(overview!.pool.balanceCents);
+  const poolHint = poolReadState === "loading" ? "正在读取总积分池余额与赠送记录。"
+    : poolReadState === "error" ? "尚未取得有效的总积分池状态，请刷新核对；读取失败不能判断是否已配置。"
+      : poolReadState === "uninitialized" ? "总积分池尚未初始化，无法确认可赠送余额。请先在上方读取来源余额并审阅采用方案；填写赠送表单不会初始化总池。"
+        : poolReadState === "pending" ? refreshOnSubmit
+          ? "总积分池已建立，余额需重新核对。确认赠送时会先读取最新上游余额并核对账本，余额足够且校验通过后才赠送。"
+          : "总积分池已建立，当前暂不可分配。请在上方来源核对中读取最新余额并完成账本核对后刷新。"
+          : poolReadState === "invalid" ? "总积分池状态或余额异常，暂不能赠送。请先核对积分账本，再刷新核对。" : "";
+  const submissionBlocker = busy ? "正在处理赠送，请等待结果。" : !initialized ? "正在恢复浏览器中的赠送记录。"
+    : storageError ? storageError : poolReadState === "loading" ? "正在读取总积分池，请等待核对完成。"
+      : poolReadState === "error" ? "总积分池读取失败，请先刷新核对。"
+        : poolReadState === "uninitialized" ? "总积分池尚未初始化，当前不能赠送。"
+          : poolReadState === "pending" && !refreshOnSubmit ? "来源余额需重新核对，当前不能赠送。"
+            : poolReadState === "invalid" ? "总积分池状态异常，当前不能赠送。"
+              : target?.status !== "active" ? "请选择启用中的赠送账号。"
+                : cents === null ? "请填写大于 0、最多 1 位小数的积分数量。"
+                  : !validReason ? "请填写 2 至 500 字的赠送理由，不能包含换行或控制字符。"
+                    : ready && cents > overview!.pool.balanceCents! ? "总积分池可赠送余额不足，请调整积分数量。" : "";
 
   function finishGift(gift: CreditGiftView) {
     setSuccess(gift);
     setNotice("");
     setOverview((current) => ({
-      pool: { ready: current?.pool.ready ?? true, balanceCents: current?.pool.ready === false ? null : gift.poolAfterCents, balancePoints: current?.pool.ready === false ? null : gift.poolAfterCents / 10 },
+      pool: { state: current?.pool.state ?? (current?.pool.ready === false ? "uninitialized" : "ready"), ready: current?.pool.ready ?? true, balanceCents: current?.pool.ready === false ? null : gift.poolAfterCents, balancePoints: current?.pool.ready === false ? null : gift.poolAfterCents / 10 },
       gifts: [gift, ...(current?.gifts || []).filter((row) => row.id !== gift.id)].slice(0, 50)
     }));
     try { window.sessionStorage.removeItem(storageKey); }
@@ -140,7 +169,9 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
     } catch { setStorageError("浏览器中的待核对赠送记录无法读取，请先核对原赠送结果；当前不能发起新赠送。"); }
     setInitialized(true);
     void refresh(restored);
-    return () => { mounted.current = false; ++refreshVersion.current; };
+    const sourceChanged = () => { if (!pending.current) void refresh(); };
+    window.addEventListener?.("sanjie-credit-pool-updated", sourceChanged);
+    return () => { window.removeEventListener?.("sanjie-credit-pool-updated", sourceChanged); mounted.current = false; ++refreshVersion.current; };
   // Each administrator receives an isolated panel and storage scope from ManagementConsole.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storageKey]);
@@ -169,6 +200,7 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
       const body: unknown = await response.json();
       if (response.ok && record(body) && giftView(body.data) && matchingGift(body.data, payload, adminId)) {
         finishGift(body.data);
+        window.dispatchEvent(new Event("sanjie-credit-pool-updated"));
         await refresh(null);
       } else if (response.status >= 400 && response.status < 500 && record(body) && typeof body.error === "string" && body.error.trim()) {
         if (previouslyUncertain) {
@@ -192,7 +224,10 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
 
   async function submit() {
     if (!canSubmit || pending.current || savedDraft.current || !target || cents === null) return;
-    if (!window.confirm(`向 ${target.name}（${target.username}）赠送 ${points(cents)} 积分？\n总积分池将扣减 ${points(cents)} 积分，预计余额 ${points(overview!.pool.balanceCents! - cents)} 积分。\n理由：${reason.trim()}`)) return;
+    const balanceNotice = refreshOnSubmit
+      ? `服务端会先读取最新上游余额并核对账本，余额足够且校验通过后才赠送，并从总积分池扣减 ${points(cents)} 积分。`
+      : `总积分池将扣减 ${points(cents)} 积分，预计余额 ${points(overview!.pool.balanceCents! - cents)} 积分。`;
+    if (!window.confirm(`向 ${target.name}（${target.username}）赠送 ${points(cents)} 积分？\n${balanceNotice}\n理由：${reason.trim()}`)) return;
     let requestKey: string;
     try { requestKey = crypto.randomUUID(); }
     catch { setNotice("浏览器无法生成赠送编号，本次未提交，请刷新后重试。"); return; }
@@ -202,8 +237,8 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
   return <section className={styles.panel} aria-label="赠送积分管理">
     <header className={styles.header}><div><h2><Coins size={20} />赠送积分</h2><p>向启用中的账号赠送自定义积分，数量从总积分池中扣减。</p></div>
       <button type="button" className={styles.secondary} disabled={loading || busy} onClick={() => refresh()}><RefreshCw size={15} />{loading ? "核对中…" : "刷新核对"}</button></header>
-    <div className={styles.pool}><span>总积分池可赠送余额</span><strong>{points(overview?.pool.ready ? overview.pool.balanceCents : null)}<small> 积分</small></strong></div>
-    {!overview?.pool.ready ? <p className={styles.hint}>积分记账系统完成并接通总积分池后可赠送。</p> : null}
+    <div className={styles.pool}><span>总积分池可赠送余额</span><strong>{poolLabel}{ready ? <small> 积分</small> : null}</strong></div>
+    {poolHint ? <p className={styles.hint} role="status">{poolHint}</p> : null}
     {overviewError ? <p className={styles.error} role="alert">{overviewError}{success ? "已确认的赠送成功记录保留。" : ""}</p> : null}
     {storageError ? <p className={styles.error} role="alert">{storageError}</p> : null}
     {success ? <div className={styles.success} role="status"><strong>赠送成功：{success.userName}（{success.username}）收到 {points(success.amountCents)} 积分</strong>
@@ -216,16 +251,18 @@ export function CreditGiftPanel({ users, initialUserId, adminId }: { users: Gift
         {draft && !activeUsers.some((user) => user.id === draft.userId) ? <option value={draft.userId}>{target?.name || draft.userId} · 原赠送账号（待核对）</option> : null}
         {activeUsers.map((user) => <option key={user.id} value={user.id}>{user.name}（{user.username}）{user.shopName ? ` · ${user.shopName}` : ""}</option>)}</select></label>
       <label className={styles.field}><span>自定义积分</span><input aria-label="自定义积分" type="text" inputMode="decimal" placeholder="如 100 或 100.5" value={quantity} disabled={readOnly} onChange={(event) => { setQuantity(event.target.value); setSuccess(null); }} /></label>
-      <label className={`${styles.field} ${styles.reason}`}><span>赠送理由</span><textarea aria-label="赠送理由" minLength={2} maxLength={500} rows={3} placeholder="填写 2 至 500 字的赠送理由" value={reason} disabled={readOnly} onChange={(event) => { setReason(event.target.value); setSuccess(null); }} /></label>
+      <label className={`${styles.field} ${styles.reason}`}><span>赠送理由（2 至 500 字）</span><textarea aria-label="赠送理由" minLength={2} maxLength={500} rows={3} placeholder="填写 2 至 500 字的赠送理由" value={reason} disabled={readOnly} onChange={(event) => { setReason(event.target.value); setSuccess(null); }} /></label>
     </div>
     {draft ? <div className={styles.pending}><p>{success ? "已确认成功，浏览器记录待恢复" : "待核对"}：{target?.name || draft.userId}（{target?.username || draft.userId}） · {draft.points} 积分 · {draft.reason}</p><small>原赠送编号：{draft.requestKey}</small></div> : <p className={styles.hint}>积分必须大于 0，最多 1 位小数。{cents !== null && ready && cents > overview!.pool.balanceCents! ? "总积分池余额不足。" : ""}</p>}
     {!draft && target && cents !== null ? <p className={styles.preview}>确认向 {target.name}（{target.username}）赠送 <strong>{points(cents)}</strong> 积分；总积分池预计扣减 <strong>{points(cents)}</strong> 积分{ready ? `，预计余额 ${points(overview!.pool.balanceCents! - cents)} 积分` : ""}。</p> : null}
     <div className={styles.actions}>{draft ? <button type="button" className={styles.primary} disabled={!initialized || busy || !!storageError || !!success} onClick={() => sendGift(draft, true)}>{busy ? "核对赠送中…" : "重试同一笔赠送"}</button>
-      : <button type="button" className={styles.primary} disabled={!canSubmit} onClick={submit}>{busy ? "赠送中…" : "确认赠送积分"}</button>}</div>
+      : <button type="button" className={styles.primary} disabled={!canSubmit} aria-describedby={!canSubmit ? "credit-gift-submit-blocker" : undefined} onClick={submit}>{busy ? "赠送中…" : refreshOnSubmit ? "核对最新余额并赠送" : "确认赠送积分"}</button>}</div>
+    {!draft && !canSubmit ? <p id="credit-gift-submit-blocker" className={styles.hint} role="status">{submissionBlocker}</p> : null}
     <section className={styles.history} aria-labelledby="credit-gifts-history"><h3 id="credit-gifts-history">最近 50 笔赠送记录</h3>
       {overview ? overview.gifts.length ? <div className={styles.tableWrap}><table><thead><tr><th>赠送时间</th><th>账号</th><th>赠送积分</th><th>池余额前 → 后</th><th>账号余额前 → 后</th><th>操作人 / 理由</th></tr></thead><tbody>{overview.gifts.map((gift) => <tr key={gift.id}>
         <td>{time(gift.createdAt)}<small>{gift.requestKey}</small></td><td>{gift.userName}<small>{gift.username}</small></td><td>+{points(gift.amountCents)}</td><td>{points(gift.poolBeforeCents)} → {points(gift.poolAfterCents)}</td><td>{points(gift.walletBeforeCents)} → {points(gift.walletAfterCents)}</td><td>{gift.adminName || gift.adminUsername}<small>{gift.reason}</small></td>
       </tr>)}</tbody></table></div> : <p className={styles.hint}>暂无赠送记录。</p> : <p className={styles.hint}>{loading ? "正在读取赠送记录…" : "赠送记录暂不可用。"}</p>}
     </section>
+    <CreditGiftPlansPanel users={users} initialUserId={initialUserId} adminId={adminId} />
   </section>;
 }

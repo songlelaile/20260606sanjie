@@ -1,18 +1,40 @@
 import { readFileSync } from "node:fs";
+import * as fs from "node:fs";
+import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
+import { createRequire } from "node:module";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { loadCreativeEntryBundle } from "./creative-entry-bundle";
 
-const publicRoot = process.env.CREATIVE_PUBLIC_TEST_ROOT
-  ? path.resolve(process.env.CREATIVE_PUBLIC_TEST_ROOT)
-  : fileURLToPath(new URL("../../public", import.meta.url));
+const publicRoot = fileURLToPath(new URL("../../public", import.meta.url));
 const htmlPath = path.join(publicRoot, "creative/labs/image-prompt-lab/promptlab.html");
 const scripts = [...readFileSync(htmlPath, "utf8").matchAll(/<script[^>]+src="([^"]+)"/g)]
   .map((match) => match[1].split("?")[0])
   .map((src) => src.startsWith("/") ? path.join(publicRoot, src) : path.resolve(path.dirname(htmlPath), src));
+
+const expandedScripts = new Map<string, string[]>();
+function scriptSources(file: string): string[] {
+  const cached = expandedScripts.get(file);
+  if (cached) return cached;
+  if (!/^studio-(?:prerequisites|runtime|views)-[A-Za-z0-9_-]+\.js$/.test(path.basename(file))) return [file];
+  const raw = readFileSync(file, "utf8");
+  const markers = [...raw.matchAll(/\n;\n\/\* Frozen source: (public\/creative\/[^\r\n]+\.js) \*\/\n/g)];
+  expect(markers.length, `Missing frozen source segments in ${file}`).toBeGreaterThan(0);
+  const sources = markers.map((marker, index) => {
+    const relative = marker[1].slice("public/".length);
+    const sourceFile = path.resolve(publicRoot, relative);
+    expect(path.relative(publicRoot, sourceFile).startsWith(".."), relative).toBe(false);
+    const start = marker.index! + marker[0].length;
+    const end = index + 1 < markers.length ? markers[index + 1].index! : raw.length;
+    expect(raw.slice(start, end), `Frozen source bytes: ${relative}`).toBe(readFileSync(sourceFile, "utf8"));
+    return sourceFile;
+  });
+  expect(new Set(sources).size, `Duplicate source segment in ${file}`).toBe(sources.length);
+  expandedScripts.set(file, sources);
+  return sources;
+}
 
 function storage() {
   const items = new Map<string, string>();
@@ -35,7 +57,7 @@ function element() {
   };
 }
 
-function imageRuntime(bundledSource?: string) {
+function imageRuntime() {
   const elements = new Map<string, ReturnType<typeof element>>();
   const document = {
     readyState: "loading",
@@ -47,31 +69,27 @@ function imageRuntime(bundledSource?: string) {
     querySelectorAll: () => [],
     addEventListener: vi.fn()
   };
-  const fetch = vi.fn(async (url: string, _options?: RequestInit) => {
+  const fetch = vi.fn(async (url: string) => {
     if (url !== "/api/auth/me") throw new Error("Unexpected upstream call in runtime test");
-    return Response.json({ data: { tenantId: "tenant-a", username: "alice" } });
+    return Response.json({ data: { tenantId: "tenant-a", username: "alice", creativeEntitlement: { allowed: true } } });
   });
   const context = vm.createContext({
     console, URL, URLSearchParams, Headers, Request, Response, FormData, Blob, ArrayBuffer, Uint8Array,
     AbortController, TextEncoder, TextDecoder, Promise, fetch,
+    crypto: webcrypto,
+    navigator: { locks: { request(_key: string, _options: unknown, callback: (lock: object) => unknown) { return Promise.resolve(callback({})); } } },
     // Register background startup hooks without running unrelated scheduled cleanup.
     setTimeout: vi.fn(), clearTimeout: vi.fn(), document,
     localStorage: storage(), sessionStorage: storage(),
     location: { href: "https://shaozhuangai.com/creative/labs/image-prompt-lab/promptlab.html?source=web", origin: "https://shaozhuangai.com", search: "?source=web" },
     __SZ_PROMPTLAB_BACKGROUND_TEST_MODE__: true,
-    __SZ_PROMPTLAB_TEST_MODE__: true,
-    crypto: webcrypto,
-    navigator: { locks: { request(_key: string, _options: unknown, callback: (lock: object) => unknown) {
-      return Promise.resolve(callback({}));
-    } } }
+    __SZ_PROMPTLAB_TEST_MODE__: true
   });
   context.window = context;
   const exportedContracts = new Map<string, unknown>();
-  const runtimeFiles = bundledSource === undefined ? scripts.map(file => ({ file, source: readFileSync(file, "utf8") }))
-    : [{ file: scripts[0], source: readFileSync(scripts[0], "utf8") }, { file: "studio-entry.js", source: bundledSource }];
-  for (const { file, source } of runtimeFiles) {
-    vm.runInContext(source, context, { filename: file, timeout: 2000 });
-    if (file.endsWith("/background.js")) {
+  for (const file of scripts) {
+    vm.runInContext(readFileSync(file, "utf8"), context, { filename: file, timeout: 2000 });
+    if (scriptSources(file).some(sourceFile => sourceFile.endsWith("/background.js"))) {
       expect(context.openUnifiedApiSettings).toBeUndefined();
       expect(context.buildLinkPrompt).toBeUndefined();
       expect(context.configMutationTail).toBeUndefined();
@@ -90,31 +108,30 @@ function send(context: vm.Context, type: string, payload: object = {}) {
 }
 
 describe("image studio background and UI coexistence", () => {
-  it("initializes the real protected tail bundle with the same bridge, contracts and API behavior", async () => {
-    const bundle = await loadCreativeEntryBundle(path.join(publicRoot, "creative"));
-    if (!bundle.bundled) throw new Error("Expected bundled fixture");
-    const individual = imageRuntime(), bundled = imageRuntime(bundle.js);
-    for (const key of ["SZ_REFERENCE_DETAIL_CONTRACT", "SZ_REFERENCE_DETAIL_BLUEPRINT", "SZ_REFERENCE_DETAIL_BATCH", "SZ_IMAGE_ARCHIVE", "SZ_CREATIVE_TOOLS_CONTRACT", "SZ_STUDIO_GENESIS"]) {
-      expect(Object.keys(bundled.context[key])).toEqual(Object.keys(individual.context[key]));
-    }
-    expect(Object.keys(bundled.context.SZ_CREATIVE_TOOLS_BRIDGE)).toEqual(Object.keys(individual.context.SZ_CREATIVE_TOOLS_BRIDGE));
-    expect(bundled.context.SZ_CREATIVE_TOOLS_UI).toBeUndefined();
-    expect(bundled.document.addEventListener).toHaveBeenCalledWith("DOMContentLoaded", expect.any(Function));
-    expect(bundled.context.normalizeCfg).not.toBe(bundled.context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.normalizeCfg);
-    bundled.context.applyCfg({ provider: "openai-compatible", apiKey: "" });
-    expect(bundled.context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ ready: true, supportsReference: true, supplyChannel: "platform_wallet" });
-    expect(await bundled.context.openUnifiedApiSettings()).toMatchObject({ ok: true, centralized: true });
-    expect(bundled.document.getElementById("configModal").hidden).toBe(false);
-    expect(bundled.fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
   it("loads all HTML scripts in order and retains explicit shared exports", () => {
     const { context, document, exportedContracts } = imageRuntime();
-    expect(scripts.map((file) => path.relative(publicRoot, file).split(path.sep).join("/"))).toEqual([
+    expect(scripts.map((file) => path.relative(publicRoot, file).split(path.sep).join("/")
+      .replace(/studio-(prerequisites|runtime|views)-[A-Za-z0-9_-]+\.js$/, "studio-$1.bundle.js"))).toEqual([
+      "creative/web-chrome.js",
+      "creative/labs/image-prompt-lab/studio-prerequisites.bundle.js",
+      "creative/labs/image-prompt-lab/viral-series-contract.js",
+      "creative/labs/image-prompt-lab/studio-runtime.bundle.js",
+      "creative/labs/image-prompt-lab/sku-region-ui.js",
+      "creative/labs/image-prompt-lab/sku-delivery-store.js",
+      "creative/labs/image-prompt-lab/sku-durable-receipt.js",
+      "creative/labs/image-prompt-lab/promptlab.js",
+      "creative/labs/image-prompt-lab/studio-views.bundle.js",
+      "creative/labs/image-prompt-lab/aesthetic-mirror-contract.js",
+      "creative/labs/image-prompt-lab/aesthetic-mirror-ui.js",
+      "creative/labs/image-prompt-lab/link-list-import.js",
+      "creative/labs/image-prompt-lab/link-image-contract.js",
+      "creative/labs/image-prompt-lab/link-image-result-actions.js",
+      "creative/labs/image-prompt-lab/link-image-ui.js"
+    ]);
+    expect(scripts.flatMap(scriptSources).map((file) => path.relative(publicRoot, file).split(path.sep).join("/"))).toEqual([
       "creative/web-chrome.js",
       "creative/src/local-import.js",
       "creative/src/business-knowledge.js",
-      "creative/src/knowledge-output-contract.js",
       "creative/src/subject-orchestration.js",
       "creative/src/subject-assets.js",
       "creative/src/reference-detail-contract.js",
@@ -124,11 +141,7 @@ describe("image studio background and UI coexistence", () => {
       "creative/labs/image-prompt-lab/guide-model-profile.js",
       "creative/labs/image-prompt-lab/viral-series-contract.js",
       "creative/labs/image-prompt-lab/style-refresh-contract.js",
-      "creative/src/reference-detail-interceptor.js",
-      "creative/src/reference-detail-background.js",
-      "creative/src/taobao-sku-background.js",
       "creative/labs/image-prompt-lab/creative-tools-contract.js",
-      "creative/labs/image-prompt-lab/aesthetic-mirror-contract.js",
       "creative/labs/image-prompt-lab/studio-genesis-contract.js",
       "creative/labs/image-prompt-lab/scene-extension-contract.js",
       "creative/labs/image-prompt-lab/background.js",
@@ -139,20 +152,23 @@ describe("image studio background and UI coexistence", () => {
       "creative/labs/image-prompt-lab/sku-delivery-store.js",
       "creative/labs/image-prompt-lab/sku-durable-receipt.js",
       "creative/labs/image-prompt-lab/promptlab.js",
-      "creative/labs/image-prompt-lab/aesthetic-mirror-ui.js",
-      "creative/labs/image-prompt-lab/link-list-import.js",
-      "creative/labs/image-prompt-lab/link-image-contract.js",
-      "creative/labs/image-prompt-lab/link-image-ui.js",
       "creative/labs/image-prompt-lab/creative-tools-ui.js",
       "creative/labs/image-prompt-lab/studio-genesis-ui.js",
       "creative/labs/image-prompt-lab/scene-extension-ui.js",
       "creative/labs/image-prompt-lab/studio-legacy-layout.js",
       "creative/labs/image-prompt-lab/viral-workflow-layout.js",
-      "creative/labs/image-prompt-lab/viral-workflow-bridge.js"
+      "creative/labs/image-prompt-lab/viral-workflow-bridge.js",
+      "creative/labs/image-prompt-lab/aesthetic-mirror-contract.js",
+      "creative/labs/image-prompt-lab/aesthetic-mirror-ui.js",
+      "creative/labs/image-prompt-lab/link-list-import.js",
+      "creative/labs/image-prompt-lab/link-image-contract.js",
+      "creative/labs/image-prompt-lab/link-image-result-actions.js",
+      "creative/labs/image-prompt-lab/link-image-ui.js"
     ]);
     expect(document.addEventListener).toHaveBeenCalledWith("DOMContentLoaded", expect.any(Function));
     expect(typeof context.resolveUnifiedConfigReference).toBe("function");
     expect(context.resolveUnifiedConfigReference).toBe(context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.resolveUnifiedConfigReference);
+    expect(exportedContracts.size).toBe(5);
     for (const [key, value] of exportedContracts) {
       expect(value).toBeTruthy();
       expect(context[key]).toBe(value);
@@ -171,143 +187,14 @@ describe("image studio background and UI coexistence", () => {
     expect(context.loadReferenceDetailBlueprint).not.toBe(context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.loadReferenceDetailBlueprint);
   });
 
-  it("opens website API settings through one message without recursion", async () => {
+  it("opens API settings through one message and the current authenticated UI bridge without recursion", async () => {
     const { context, document, fetch } = imageRuntime();
     const sendMessage = vi.spyOn(context.chrome.runtime, "sendMessage");
     const result = await context.openUnifiedApiSettings();
     expect(result).toMatchObject({ ok: true, centralized: true });
     expect(sendMessage).toHaveBeenCalledOnce();
     expect(document.getElementById("configModal").hidden).toBe(false);
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("allows the website platform image route without a browser API key and identifies credit billing", () => {
-    const { context, document, fetch } = imageRuntime();
-    context.applyCfg({ provider: "openai-compatible", apiKey: "" });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({
-      ready: true, supportsReference: true, supplyChannel: "platform_wallet", model: "image2"
-    });
-    expect(document.getElementById("apiKey").value).toBe("");
-    expect(document.getElementById("configState").textContent).toBe("使用本站积分");
-    expect(document.getElementById("configSummaryText").textContent).toContain("无需填写 API Key");
-    expect(fetch).not.toHaveBeenCalled();
-  });
-
-  it("keeps a direct provider unavailable without its own key and preserves a configured key", () => {
-    const { context, document } = imageRuntime();
-    context.applyCfg({ provider: "openai", apiKey: "" });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ ready: false, supplyChannel: "external_key" });
-    context.applyCfg({ provider: "openai", apiKey: "synthetic-owned-key" });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ ready: true, supplyChannel: "external_key" });
-    expect(document.getElementById("apiKey").value).toBe("synthetic-owned-key");
-  });
-
-  it.each(["openai", "openai-compatible"])("sends the image2 task alias as gpt-image-2 for %s on the hosted image endpoint", async (provider) => {
-    const { context, fetch } = imageRuntime();
-    const submissions: Array<{ url: string; headers: Record<string, string>; bodyText: string }> = [];
-    fetch.mockImplementation(async (url, options) => {
-      if (url === "/api/auth/me") return Response.json({ data: { tenantId: "tenant-a", username: "alice", creativeEntitlement: { allowed: true } } });
-      expect(url).toBe("/api/creative/proxy");
-      submissions.push(JSON.parse(String(options?.body)));
-      return Response.json({ data: [{ url: "https://result.example/offline-image.png" }] });
-    });
-    const config = { provider, apiKey: "synthetic-owned-key", imageModel: "image2", imageEndpoint: "https://sub.shaozhuangai.com/v1/images/generations" };
-    const result = await context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.createOpenAIImage(config, { prompt: "离线回归", size: "1024x1024", count: 1 });
-    expect(result.ok, JSON.stringify({result,calls:fetch.mock.calls.map(([url])=>url)})).toBe(true);
-    expect(submissions).toHaveLength(1);
-    expect(JSON.parse(submissions[0].bodyText)).toMatchObject({ model: "gpt-image-2", n: 1 });
-    expect(submissions[0].headers.Authorization).toBe(provider === "openai" ? "Bearer synthetic-owned-key" : undefined);
-    expect(config.imageModel).toBe("image2");
-    expect(config.apiKey).toBe("synthetic-owned-key");
-  });
-
-  it("leaves custom gateway aliases unchanged and rejects lookalike hosted routes", () => {
-    const { context } = imageRuntime();
-    const translate = context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.hostedImageUpstreamModel;
-    for (const imageEndpoint of ["https://custom.example/v1/images/generations", "https://sub.shaozhuangai.com.evil.example/v1/images/generations", "http://sub.shaozhuangai.com/v1/images/generations", "https://sub.shaozhuangai.com/v1/chat/completions", "https://sub.shaozhuangai.com/v1/images/generations?route=other"]) {
-      expect(translate({ provider: "openai", imageEndpoint }, "image2")).toBe("image2");
-    }
-  });
-
-  it("allows explicit platform analysis without prompting for a user key", async () => {
-    const { context } = imageRuntime();
-    context.applyCfg({ provider: "openai-compatible", apiKey: "" });
-    const dispatch = vi.fn(async () => ({ ok: true, productName: "测试商品" }));
-    context.__SZ_PROMPTLAB_TEST_API__.setTestSend(dispatch);
-    expect(await context.SZ_CREATIVE_TOOLS_BRIDGE.analyze({ tool: "product", products: [] })).toMatchObject({ ok: true });
-    expect(dispatch).toHaveBeenCalledWith("ANALYZE_SUBJECT_ASSET", expect.objectContaining({ provider: "openai-compatible" }));
-  });
-
-  it("selects platform credits while retaining an incomplete custom profile for the same provider", async () => {
-    const { context } = imageRuntime();
-    const owner = "user:tenant-a:alice";
-    const external = context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.normalizeCfg({
-      provider: "openai-compatible", apiKey: "", visionBaseUrl: "https://external.example/v1",
-      imageEndpoint: "https://external.example/v1/images/generations"
-    });
-    const profileKey = "sz_image_prompt_lab_config_profiles_v2";
-    await context.chrome.storage.local.set({ [profileKey]: { accounts: { [owner]: {
-      activeProvider: "openai-compatible", configs: { "openai-compatible": external }
-    } } } });
-    context.__SZ_PROMPTLAB_TEST_API__.state.archiveAccountKey = owner;
-    expect(await context.SZ_CREATIVE_TOOLS_BRIDGE.selectBoundApi("openai-compatible")).toMatchObject({ ok: true, accountKey: owner });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ ready: true, supplyChannel: "platform_wallet" });
-    const stored = await context.chrome.storage.local.get(profileKey);
-    expect(stored[profileKey].accounts[owner].configs["openai-compatible"]).toEqual(external);
-  });
-
-  it("switches the config form to credits, persists it through refresh and retains the saved custom gateway", async () => {
-    const { context, document, fetch } = imageRuntime();
-    const owner = "user:tenant-a:alice", key = "sz_image_prompt_lab_config_profiles_v2";
-    const external = context.normalizeCfg({ provider: "openai-compatible", apiKey: "synthetic-original-key",
-      visionBaseUrl: "https://external.example/v1", imageEndpoint: "https://external.example/v1/images/generations" });
-    await context.chrome.storage.local.set({ [key]: { accounts: { [owner]: {
-      activeProvider: external.provider, configs: { [external.provider]: external }
-    } } } });
-    context.applyCfg(external);
-    context.__SZ_PROMPTLAB_TEST_API__.state.archiveAccountKey = owner;
-    context.CustomEvent = class { constructor(public type: string) {} };
-    context.dispatchEvent = vi.fn(() => {
-      expect(context.creativeWebIsBusy()).toBe(false);
-    });
-    context.openConfigModal();
-    expect(document.getElementById("configWalletRow").hidden).toBe(false);
-    expect(await context.usePlatformWallet()).toMatchObject({ ok: true, accountKey: owner });
-    expect(document.getElementById("configModal").hidden).toBe(true);
-    expect(document.getElementById("apiKey").value).toBe("");
-    expect(context.dispatchEvent).toHaveBeenCalledOnce();
-    expect(await context.SZ_CREATIVE_TOOLS_BRIDGE.refresh()).toMatchObject({ ok: true, accountKey: owner });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ supplyChannel: "platform_wallet", model: "image2" });
-    // Selecting the active credit entry must also retain the preference.
-    expect(await context.SZ_CREATIVE_TOOLS_BRIDGE.selectBoundApi("openai-compatible")).toMatchObject({ ok: true });
-    const stored = await context.chrome.storage.local.get(key);
-    expect(stored[key].accounts[owner]).toMatchObject({ activeSupplyChannel: "platform_wallet", configs: { [external.provider]: external } });
-    document.getElementById("imageModel").value = "image1";
-    expect(await context.saveCfg()).toMatchObject({ ok: true });
-    expect(await context.SZ_CREATIVE_TOOLS_BRIDGE.refresh()).toMatchObject({ ok: true });
-    expect(context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ supplyChannel: "platform_wallet", model: "image1" });
-    const updated = await context.chrome.storage.local.get(key);
-    expect(updated[key].accounts[owner].configs[external.provider]).toEqual(external);
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("does not change the form or notify workflows when switching is busy or the account write is rejected", async () => {
-    const { context, document } = imageRuntime();
-    context.applyCfg({ provider: "openai", apiKey: "synthetic-key" });
-    context.__SZ_PROMPTLAB_TEST_API__.state.archiveAccountKey = "user:tenant-a:alice";
-    context.dispatchEvent = vi.fn();
-    const dispatch = vi.fn(async () => ({ ok: false, error: "登录账号已变化" }));
-    context.__SZ_PROMPTLAB_TEST_API__.setTestSend(dispatch);
-    context.SZ_CREATIVE_TOOLS_BRIDGE.setApiBusy("fixture-task", true);
-    await context.usePlatformWallet();
-    expect(dispatch).not.toHaveBeenCalled();
-    context.SZ_CREATIVE_TOOLS_BRIDGE.setApiBusy("fixture-task", false);
-    expect(await context.usePlatformWallet()).toMatchObject({ ok: false });
-    expect(document.getElementById("provider").value).toBe("openai");
-    expect(document.getElementById("apiKey").value).toBe("synthetic-key");
-    expect(document.getElementById("configState").textContent).toContain("登录账号已变化");
-    expect(context.creativeWebIsBusy()).toBe(false);
-    expect(context.dispatchEvent).not.toHaveBeenCalled();
+    expect(fetch).toHaveBeenCalledExactlyOnceWith("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
   });
 
   it("routes link prompt messages to background validation after the UI is loaded", async () => {
@@ -316,108 +203,8 @@ describe("image studio background and UI coexistence", () => {
     const result = await send(context, "BUILD_LINK_PROMPT");
     expect(result).toMatchObject({ ok: false, code: "missing_link_record" });
     expect(uiPrompt).not.toHaveBeenCalled();
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
   });
-
-  it("ignores legacy connector configuration and permits saved link prompts without a knowledge batch", async () => {
-    const { context, fetch } = imageRuntime();
-    const accountKey = "user:tenant-a:alice";
-    const legacy = { accounts: { [accountKey]: { enabled: true } } };
-    await context.chrome.storage.local.set({
-      sz_obsidian_connection_v1: legacy,
-      sz_obsidian_batch_locks_v1: { blockedBatch: { accountKey, vaultFingerprint: "old-vault" } }
-    });
-    const get = vi.spyOn(context.chrome.storage.local, "get");
-    const api = context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__;
-    expect(context.SZObsidianKnowledge).toBeUndefined();
-    expect(await api.verifyKnowledgeBeforeImage({ labMode: "main", promptSource: "link", linkId: "L001" }))
-      .toMatchObject({ ok: true, knowledgeMeta: { code: "prompt_input_scope" } });
-    const result = await api.readResolvedBusinessKnowledgeContextForAccount(accountKey, "main", 5000, { linkId: "L001" });
-    expect(result).toMatchObject({ ok: true, provider: "none", context: "", sources: [] });
-    expect(get.mock.calls.flat().some((value) => String(value).includes("obsidian"))).toBe(false);
-    const stored = await context.chrome.storage.local.get("sz_obsidian_connection_v1");
-    expect(stored.sz_obsidian_connection_v1).toEqual(legacy);
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("submits a saved list prompt with its product image even when no knowledge batch was recorded", async () => {
-    const { context, fetch } = imageRuntime();
-    const submissions: Array<{ url: string; bodyText: string }> = [];
-    fetch.mockImplementation(async (url, options) => {
-      if (url === "/api/auth/me") return Response.json({ data: { tenantId: "tenant-a", username: "alice", creativeEntitlement: { allowed: true } } });
-      expect(url).toBe("/api/creative/proxy");
-      submissions.push(JSON.parse(String(options?.body)));
-      return Response.json({ data: [{ url: "https://result.example/offline-list-image.png" }] });
-    });
-    const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ";
-    const result = await context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.createImageTask({
-      provider: "openai-compatible", imageAdapter: "generic-json", imageModel: "image2", apiKey: ""
-    }, { promptSource: "link", labMode: "main", linkId: "L001", prompt: "当前商品置于干净背景", productImages: [image], size: "1024x1024", count: 1 });
-    expect(result).toMatchObject({ ok: true, images: ["https://result.example/offline-list-image.png"] });
-    expect(submissions).toHaveLength(1);
-    expect(JSON.parse(submissions[0].bodyText)).toMatchObject({
-      model: "gpt-image-2", product_images: [image], prompt: "当前商品置于干净背景"
-    });
-  });
-
-  it("reads only the current account local knowledge and keeps its output trace", async () => {
-    const { context, fetch } = imageRuntime();
-    const engine = context.SZBusinessKnowledge, api = context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__;
-    let store = engine.setForAccount({}, "user:tenant-a:alice", {
-      updatedAt: 10, fields: { product: "ALICE PRODUCT", tone: "清楚简洁" },
-      sources: [{ id: "alice-source", name: "产品说明", text: "ALICE PRIVATE SOURCE" }]
-    });
-    store = engine.setForAccount(store, "user:tenant-b:bob", { fields: { product: "BOB PRIVATE PRODUCT" } });
-    await context.chrome.storage.local.set({ [engine.KEY]: store });
-    const result = await api.readResolvedBusinessKnowledgeContextForAccount("user:tenant-a:alice", "main", 5000, { linkId: "L001" });
-    expect(result).toMatchObject({ ok: true, provider: "local", summary: { ready: true, sourceCount: 1 } });
-    expect(result.context).toContain("ALICE PRIVATE SOURCE");
-    expect(result.context).not.toContain("BOB PRIVATE PRODUCT");
-    const trace = api.attachPromptKnowledgeTrace({ ok: true, data: { "中文提示词": "明亮背景" } }, {
-      link: { "链接编号": "L001" }, businessKnowledgeMeta: result
-    }, "main", "link");
-    expect(trace.fieldTrace.find((row: { field: string }) => row.field === "中文提示词"))
-      .toMatchObject({ linkId: "L001", decision: "constrained", sourcePaths: ["local:alice-source"] });
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("continues independent prompting without reading knowledge when the account is unavailable", async () => {
-    const { context, fetch } = imageRuntime();
-    fetch.mockImplementation(async () => Response.json({ error: { message: "unauthorized" } }, { status: 401 }));
-    const get = vi.spyOn(context.chrome.storage.local, "get");
-    const result = await context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.attachBusinessKnowledge({
-      promptSource: "reference", productName: "当前商品"
-    }, "main");
-    expect(result).toMatchObject({
-      businessKnowledgeContext: "", businessKnowledgeMeta: { provider: "none", code: "account_unavailable", facts: [] }
-    });
-    expect(get.mock.calls.flat().some((value) => String(value).includes("sz_business_knowledge_v1"))).toBe(false);
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("keeps product binding validation while removing the optional knowledge gate", async () => {
-    const { context, fetch } = imageRuntime();
-    const verify = context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.verifyKnowledgeBeforeImage;
-    expect(await verify({ promptSource: "link", subjectTaskId: "S001" }))
-      .toMatchObject({ ok: false, code: "subject_binding_incomplete" });
-    expect(await verify({ promptSource: "link", subjectTaskId: "S001", orchestrationBatchId: "batch",
-      subjectBatchId: "subjects", subjectBindingId: "binding", subjectFingerprint: "subject",
-      subjectFactsFingerprint: "facts", visualProfileFingerprint: "visual" }))
-      .toMatchObject({ ok: true });
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
-  it("retains standalone fact validation without any connector network dependency", () => {
-    const { context, fetch } = imageRuntime();
-    const contract = context.SZKnowledgeOutputContract;
-    expect(contract.validateGeneratedClaims({ "画面布局": "主体占画面70%" })).toMatchObject({ ok: true });
-    expect(contract.validateGeneratedClaims({ "主图文案": "除菌率99%" })).toMatchObject({ ok: false, code: "generated_claim_unverified" });
-    expect(contract.validateGeneratedClaims({ "主图文案": "深度537mm" }, {
-      facts: [{ factKey: "depth", factValue: "537", unit: "mm", evidenceStatus: "verified" }]
-    })).toMatchObject({ ok: true });
-    expect(fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
-  });
-
 });
 
 
@@ -500,4 +287,285 @@ describe("website guide model dispatch", () => {
     expect(after.config.imageModel).toBe("gpt-image-2.5-sunburst");
     expect(context.SZ_GUIDE_MODEL_PROFILE.resolve(before.config).strategy).not.toBe(context.SZ_GUIDE_MODEL_PROFILE.resolve(after.config).strategy);
   });
+});
+
+
+// Provider calls below are VM mocks; no real provider or account is contacted.
+const test = it;
+const ROOT = path.join(publicRoot, "creative/labs/image-prompt-lab");
+const profiles = createRequire(import.meta.url)(path.join(ROOT, "guide-model-profile.js"));
+const event = () => ({ addListener() {} });
+const clone = (value: unknown) => JSON.parse(JSON.stringify(value));
+
+class FormDataRecorder {
+  items: Array<{ name: string; value: unknown; filename?: string }>;
+  constructor() { this.items = []; }
+  append(name: string, value: unknown, filename?: string) { this.items.push({ name, value, filename }); }
+  values(name: string) { return this.items.filter((item) => item.name === name); }
+  value(name: string) { return this.values(name)[0]?.value; }
+}
+
+function loadBackground() {
+  const requests: Array<{ url: string; options: { body: FormDataRecorder | string } }> = [];
+  const chrome = {
+    runtime: { lastError: null, getManifest: () => ({}), getURL: (p: string) => `chrome-extension://test/${p}`, onInstalled: event(), onMessage: event() },
+    storage: { local: { get(_keys: unknown, cb: (value: object) => void) { cb({}); }, set(_v: unknown, cb?: () => void) { if (cb) cb(); }, remove(_v: unknown, cb?: () => void) { if (cb) cb(); } } },
+    contextMenus: { removeAll(cb: () => void) { cb(); }, create() {}, onClicked: event() },
+    action: { onClicked: event() }, tabs: { create() {}, sendMessage() {} }, scripting: { executeScript() {} }, downloads: { download() {} }
+  };
+  const context: vm.Context = {
+    __SZ_PROMPTLAB_BACKGROUND_TEST_MODE__: true, chrome, console, URL, Date, Promise, AbortController, Blob,
+    FormData: FormDataRecorder, setTimeout, clearTimeout,
+    btoa: (v: string) => Buffer.from(v, 'binary').toString('base64'),
+    atob: (v: string) => Buffer.from(v, 'base64').toString('binary'),
+    fetch: async (url: string, options: { body: FormDataRecorder | string }) => {
+      requests.push({ url, options });
+      return { ok: true, status: 200, text: async () => JSON.stringify({ data: [{ url: 'https://result.test/repaired.png' }] }) };
+    }
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+  for (const file of ['guide-model-profile.js', 'viral-series-contract.js', 'style-refresh-contract.js', 'background.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), context, { filename: file });
+  }
+  return { api: context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__, requests };
+}
+
+function config(model = 'gpt-image-2.5-sunburst', adapter = 'openai-images') {
+  return { provider: 'openai', imageAdapter: adapter, imageModel: model, imageEndpoint: 'https://provider.test/v1/images/generations', apiKey: 'test-only' };
+}
+
+function png(width = 1024, height = 1024, marker = 1, length = 32) {
+  const bytes = Buffer.alloc(length);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes);
+  bytes.writeUInt32BE(width, 16); bytes.writeUInt32BE(height, 20); bytes[24] = 8; bytes[25] = 6; bytes[26] = marker;
+  return `data:image/png;base64,${bytes.toString('base64')}`;
+}
+
+type GuideBackendPayload = {
+  prompt: string; promptSource: string; productImages: string[]; editBaseImage: string; editMaskImage: string;
+  strictLocalEdit: boolean; size: string; count: number; clarity: string; sourceResultId: string; negativePrompt?: string;
+  guideContract: {
+    version: string; scope: string; mode: string; repairPath: string; issue: string; evidenceLevel: string;
+    minimumEvidence: string; outputType: string; parentResultId: string; guide: string;
+    annotation: { mustStrokeCount: number; hasEditMask?: boolean }; postCompositeOutsideMask: boolean;
+    modelProfile?: ReturnType<typeof profiles.resolve>; operation?: string; textTarget?: string; replacementText?: string;
+  };
+};
+function payload(cfg = config()): GuideBackendPayload {
+  return {
+    prompt: 'Repair the selected product defect only.', promptSource: 'reference',
+    productImages: [png(1024, 1024, 2)], editBaseImage: png(), editMaskImage: png(), strictLocalEdit: true,
+    size: '1024*1024', count: 1, clarity: '4K', sourceResultId: 'result-1',
+    guideContract: {
+      version: 'GUIDE_REGEN_TEST_V1', scope: 'current', mode: 'subject', repairPath: 'L2', issue: 'subject-missing',
+      evidenceLevel: 'E3', minimumEvidence: 'E2', outputType: 'formal', parentResultId: 'result-1', guide: 'Repair the selected product defect only.',
+      annotation: { mustStrokeCount: 1 }, postCompositeOutsideMask: true, modelProfile: profiles.resolve(cfg)
+    }
+  };
+}
+
+test('Sunburst exact IDs, dated snapshots and gateway aliases select edit-first without rewriting model IDs', () => {
+  for (const model of ['gpt-image-2.5-sunburst', 'GPT-IMAGE-2.5-SUNBURST-2026-09-22', 'Image-2.5-sunburst', 'image2.5-sunburst']) {
+    const profile = profiles.resolve(config(`  ${model}  `));
+    assert.equal(profile.model, model);
+    assert.equal(profile.family, 'gpt-image-2.5-sunburst');
+    assert.equal(profile.promptStyle, 'edit-first');
+    assert.equal(profile.capability, 'mask-guided');
+    assert.equal(profile.inputFidelity, false);
+    assert.doesNotMatch(JSON.stringify(profile), /test-only|provider\.test/);
+  }
+  for (const model of ['gpt-image-2.50-sunburst', 'Image-2.50-sunburst', 'gpt-image-2.5', 'gpt-image-2.5-sunburst-unverified']) {
+    const profile = profiles.resolve(config(model));
+    assert.equal(profile.family, 'unknown');
+    assert.equal(profile.promptStyle, 'structured-edit');
+    assert.match(profile.label, /未验证/);
+  }
+});
+
+test('model capability and fidelity stay separate from configured adapter transport', () => {
+  for (const model of ['gpt-image-2', 'image2', 'gpt-image-2.5-sunburst']) {
+    assert.equal(profiles.resolve(config(model, 'generic-json')).capability, 'client-composited-mask');
+    for (const adapter of ['dashscope-wan', 'doubao-image', 'gemini-image', 'nano-banana']) {
+      assert.equal(profiles.resolve(config(model, adapter)).capability, 'annotation-reference');
+    }
+  }
+  for (const model of ['gemini-2.5-flash-image', 'doubao-seedream-4-5', 'wan2.7-image']) {
+    assert.equal(profiles.resolve(config(model)).capability, 'annotation-reference', model);
+  }
+  for (const model of ['gpt-4o', 'gpt-5.4', 'claude-sonnet-4', 'gemini-2.5-pro', 'dall-e-3', 'cogview-4', 'wan2.2-t2i-plus']) {
+    assert.equal(profiles.resolve(config(model)).capability, 'unsupported', model);
+    assert.equal(profiles.resolve(config(model, 'generic-json')).capability, 'unsupported', model);
+  }
+  for (const model of ['gpt-image-1', 'gpt-image-1-2025-04-15', 'gpt-image-1.5']) assert.equal(profiles.resolve(config(model)).inputFidelity, true);
+  for (const model of ['gpt-image-1-mini', 'gpt-image-2', 'Image-2.5-sunburst']) assert.equal(profiles.resolve(config(model)).inputFidelity, false);
+  assert.equal(profiles.resolve({ imageAdapter: 'openai-images' }).capability, 'mask-guided');
+});
+
+test('bindings reject model/adapter/family/capability tampering and stale selection', () => {
+  const cfg = config();
+  const profile = profiles.resolve(cfg);
+  assert.equal(profiles.sameBinding(profile, cfg), true);
+  for (const key of ['model', 'adapter', 'family', 'capability', 'version']) {
+    assert.equal(profiles.sameBinding({ ...profile, [key]: 'forged' }, cfg), false, key);
+  }
+  assert.equal(profiles.sameBinding(profile, config('gpt-image-2')), false);
+  assert.equal(profiles.sameBinding(profile, config(cfg.imageModel, 'generic-json')), false);
+});
+
+test('new guide sizes preserve legal dimensions, never upgrade quality or pixel budget, leave legacy and SKU sizes alone', () => {
+  const { api } = loadBackground();
+  const cfg = config();
+  for (const size of ['1024*1024', '2048*1536', '3840*2160']) {
+    assert.equal(api.guideModelSizeForConfig(cfg, { ...payload(cfg), size }).size, size);
+  }
+  for (const size of ['1000*1000', '2049*1537', '4096*4096']) {
+    const result = api.guideModelSizeForConfig(cfg, { ...payload(cfg), size });
+    assert.equal(result.ok, true);
+    const [w, h] = result.size.split('*').map(Number);
+    const [a, b] = size.split('*').map(Number);
+    assert.equal(w % 16, 0); assert.equal(h % 16, 0);
+    assert.ok(w <= 3840 && h <= 3840 && w * h >= 655360 && w * h <= 8294400 && w * h <= a * b);
+    assert.ok(Math.abs(Math.log((a / b) / (w / h))) <= 0.02);
+    assert.ok(Math.abs(a / b - w / h) <= 0.019);
+  }
+  for (const size of ['256*256', '4096*512', '800*820', '1146*590', '1330*503', 'auto']) assert.equal(api.guideModelSizeForConfig(cfg, { ...payload(cfg), size }).ok, false, size);
+  const legacy = payload(cfg); delete legacy.guideContract.modelProfile;
+  assert.equal(api.guideModelSizeForConfig(cfg, { ...legacy, size: '100*100' }).size, '100*100');
+  const sku = { ...payload(cfg), labMode: 'sku', promptSource: 'sku', detailMode: 'sku-guide', skuVisualLock: { version: 'SKU_SUBJECT_REPLACE_V2' }, size: '960*1280' };
+  assert.equal(api.guideModelSizeForConfig(cfg, sku).size, '960*1280');
+});
+
+test('new guide request sends Sunburst model unchanged, edits+mask, legal size, without fidelity/quality/beautification', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config('Image-2.5-sunburst');
+  const result = await api.createImageTask(cfg, { ...payload(cfg), size: '1000*1000' });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://provider.test/v1/images/edits');
+  const body = requests[0].options.body as FormDataRecorder;
+  assert.equal(body.value('model'), 'Image-2.5-sunburst');
+  assert.equal(body.value('size'), '992x992');
+  assert.equal(body.value('input_fidelity'), undefined);
+  assert.equal(body.value('quality'), undefined);
+  assert.equal(body.values('mask').length, 1);
+  assert.deepEqual(body.values('image[]').map((entry) => entry.filename), ['guide-edit-base.png', 'product-subject-1.png']);
+  assert.doesNotMatch(String(body.value('prompt')), /premium|balanced lighting|high resolution|4K commercial/);
+  assert.equal(result.guideModelProfile.family, 'gpt-image-2.5-sunburst');
+  assert.equal(result.guideProviderSize, '992*992');
+});
+
+test('backend rejects stale profile, text model, oversized mask before network, while legacy guide still runs', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config();
+  let result = await api.createImageTask(config('gpt-image-2'), payload(cfg));
+  assert.equal(result.code, 'guide_model_profile_mismatch');
+  const textCfg = config('gpt-4o');
+  result = await api.createImageTask(textCfg, payload(textCfg));
+  assert.equal(result.ok, false);
+  assert.match(result.error, /不支持/);
+  result = await api.createImageTask(cfg, { ...payload(cfg), editMaskImage: png(1024, 1024, 1, 4 * 1024 * 1024) });
+  assert.equal(result.ok, false); assert.match(result.error, /4MB/);
+  assert.equal(requests.length, 0);
+  const legacy = payload(cfg); delete legacy.guideContract.modelProfile;
+  result = await api.createImageTask(cfg, legacy);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(requests.length, 1);
+});
+
+test('generic gateway receives recomputed safe profile and client-composited capability', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config('image2.5-sunburst', 'generic-json');
+  const data = payload(cfg);
+  data.guideContract.modelProfile.label = 'forged verified native';
+  data.guideContract.modelProfile.promptStyle = 'forged';
+  data.guideContract.modelProfile.apiKey = 'must-never-forward';
+  const result = await api.createImageTask(cfg, data);
+  assert.equal(result.ok, true, result.error);
+  const body = JSON.parse(requests[0].options.body as string);
+  assert.equal(body.model, 'image2.5-sunburst');
+  assert.deepEqual(body.guide_contract.modelProfile, profiles.resolve(cfg));
+  assert.equal(result.guideCapability, 'client-composited-mask');
+  assert.doesNotMatch(JSON.stringify(body), /must-never-forward|forged/);
+});
+
+test('recognized non-GPT model on OpenAI transport sends annotation reference without native mask', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config('gemini-2.5-flash-image');
+  const data = { ...payload(cfg), strictLocalEdit: false, guideAnnotationImage: png(1024, 1024, 3) };
+  const result = await api.createImageTask(cfg, data);
+  assert.equal(result.ok, true, result.error);
+  const body = requests[0].options.body as FormDataRecorder;
+  assert.equal(body.value('mask'), undefined);
+  assert.ok(body.values('image[]').some((entry) => entry.filename === 'guide-annotation-reference.png'));
+  assert.equal(result.guideCapability, 'annotation-reference');
+  assert.match(result.guideWarning, /不能保证/);
+});
+
+test('SKU guide keeps base then evidence in provider inputs and never reintroduces full subject replacement', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config();
+  const data = { ...payload(cfg), prompt: 'Repair the single selected missing handle.', labMode: 'sku', promptSource: 'sku', detailMode: 'sku-guide', skuVisualLock: { version: 'SKU_SUBJECT_REPLACE_V2' } };
+  assert.deepEqual(clone(api.inputImagesFromPayload(data)), [data.editBaseImage, data.productImages[0]]);
+  const result = await api.createOpenAIImage(cfg, data);
+  assert.equal(result.ok, true, result.error);
+  const body = requests[0].options.body as FormDataRecorder;
+  assert.deepEqual(body.values('image[]').map((entry) => entry.filename), ['immutable-sku-base.png', 'replacement-subject.png']);
+  const prompt = String(body.value('prompt'));
+  assert.match(prompt, /Edit input image 1, the current selected result/);
+  assert.match(prompt, /Product photos after image 1 prove product identity/);
+  assert.match(prompt, /CHANGE: Repair the selected product defect only/);
+  assert.doesNotMatch(prompt, /Replace only the original product subject|STRICT SKU SUBJECT REPLACEMENT CONTRACT|Input image 2 is the IMMUTABLE/);
+  const standard = api.skuSubjectReplacePrompt({ ...data, detailMode: 'sku', guideContract: null });
+  assert.match(standard, /STRICT SKU SUBJECT REPLACEMENT CONTRACT/);
+});
+
+test('guide disables generic clarity suffix and provider prompt extension while ordinary generation retains defaults', () => {
+  const { api } = loadBackground();
+  const cfg = config();
+  const data = payload(cfg);
+  assert.equal(api.generationClaritySuffix(data), '');
+  assert.equal(api.generationPayload(cfg, data).parameters.prompt_extend, false);
+  assert.match(api.generationClaritySuffix({ clarity: '4K' }), /4K/);
+  assert.equal(api.generationPayload(cfg, { prompt: 'ordinary', productImages: [png()] }).parameters.prompt_extend, true);
+});
+
+
+test('backend reconstructs Sunburst-only prompt from its contract and rejects incompatible or changed endpoints before network', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = config();
+  const data = payload(cfg);
+  data.prompt = 'OLD ENTIRE IMAGE REPLACEMENT WITH OLD COPY';
+  data.negativePrompt = 'OLD LIGHTING AND NEGATIVE';
+  data.guideContract.operation = 'replace-visible-text';
+  data.guideContract.textTarget = '旧文字';
+  data.guideContract.replacementText = '新文字';
+  data.guideContract.guide = '只替换圈选文字';
+  data.guideContract.annotation.hasEditMask = true;
+  data.guideContract.modelProfile.strategyLabel = 'FORGED';
+  const result = await api.createImageTask(cfg, data);
+  assert.equal(result.ok, true, result.error);
+  const body = requests[0].options.body as FormDataRecorder;
+  assert.match(String(body.value('prompt')), /Replace only the exact visible text “旧文字” with “新文字”/);
+  assert.doesNotMatch(String(body.value('prompt')), /OLD|FORGED|STRUCTURED GUIDE|Execution path:/);
+  assert.equal(body.values('image[]').length, 0);
+  assert.equal(body.values('image').length, 1);
+  assert.equal(result.guideModelProfile.strategyLabel, 'Sunburst 精准编辑：修改 / 保留 / 证据');
+  const originalRequests = requests.length;
+  for (const endpoint of ['https://provider.test/v1/chat/completions', 'javascript:alert(1)', 'file:///tmp/image']) {
+    const badCfg = { ...cfg, imageEndpoint: endpoint };
+    const rejected = await api.createImageTask(badCfg, payload(badCfg));
+    assert.equal(rejected.ok, false, endpoint);
+  }
+  const changed = await api.createImageTask({ ...cfg, imageEndpoint: 'https://provider.test/v1/chat/completions' }, payload(cfg));
+  assert.equal(changed.code, 'guide_model_profile_mismatch');
+  assert.equal(requests.length, originalRequests);
+});
+
+test('guide edits routing preserves query while replacing generation path and trailing slash', async () => {
+  const { api, requests } = loadBackground();
+  const cfg = { ...config(), imageEndpoint: 'https://provider.test/v1/images/generations/?route=edit' };
+  const result = await api.createImageTask(cfg, payload(cfg));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(requests[0].url, 'https://provider.test/v1/images/edits?route=edit');
 });

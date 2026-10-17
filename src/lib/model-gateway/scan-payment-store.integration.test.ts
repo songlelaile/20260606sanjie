@@ -84,7 +84,7 @@ describe.skipIf(process.env.PAYMENT_CORE_INTEGRATION !== "1")("scan checkout Pos
     await Promise.all(Array.from({ length: 12 }, (_, index) => index % 2 ? checkout.getCheckout(owner, view.id)
       : checkout.receiveScanNotification("alipay", new Request("http://localhost/notify", { method: "POST" }))));
     expect((await mocks.client!.gatewayWallet.findUniqueOrThrow({ where: { userId: owner } })).balanceCents).toBe(12000);
-    expect(await mocks.client!.gatewayBillingLedger.count({ where: { orderId: view.id } })).toBe(1);
+    expect(await mocks.client!.gatewayOrder.count({ where: { id: view.id, status: "paid", paymentReceipt: "alipay:page-pay-verified" } })).toBe(1);
     const paid = await checkout.getCheckout(owner, view.id);
     expect(paid).toMatchObject({ status: "paid", checkoutMode: "alipay_page", qrCodeDataUrl: null, paymentUrl: "" });
     expect(paid.cashierUrl).toBeUndefined(); expect(paid.fallbackCashierUrl).toBeUndefined();
@@ -116,8 +116,7 @@ describe.skipIf(process.env.PAYMENT_CORE_INTEGRATION !== "1")("scan checkout Pos
     const saved = await mocks.client!.gatewayOrder.findUniqueOrThrow({ where: { id: order.id } });
     expect(saved).toMatchObject({ status: "paid", paymentReceipt: "alipay:race-verified", confirmedBy: null, receivedAmountCents: 9900 });
     expect((await mocks.client!.gatewayWallet.findUniqueOrThrow({ where: { userId: owner } })).balanceCents).toBe(12000);
-    const ledger = await mocks.client!.gatewayBillingLedger.findMany({ where: { orderId: order.id } });
-    expect(ledger).toHaveLength(1); expect(ledger[0]).toMatchObject({ provider: "alipay", actorId: null, deltaCents: 12000 });
+    expect(await mocks.client!.gatewayOrder.count({ where: { paymentReceipt: "alipay:race-verified", status: "paid" } })).toBe(1);
   });
   it("rejects wrong amounts, wrong channels, reused receipts, unsigned events and cross-channel events", async () => {
     const order = await rawOrder();
@@ -138,8 +137,29 @@ describe.skipIf(process.env.PAYMENT_CORE_INTEGRATION !== "1")("scan checkout Pos
     const results = await Promise.allSettled(orders.map(order => store.settleVerifiedScanPayment(evidence(order.id, "cross-order-race"))));
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
     expect((results.find(result => result.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "RECEIPT_ALREADY_USED" });
-    expect(await mocks.client!.gatewayBillingLedger.count({ where: { userId: owner, kind: "recharge" } })).toBe(1);
+    expect(await mocks.client!.gatewayOrder.count({ where: { userId: owner, status: "paid" } })).toBe(1);
     expect((await mocks.client!.gatewayWallet.findUniqueOrThrow({ where: { userId: owner } })).balanceCents).toBe(12000);
+  });
+  it("settles distinct valid receipts concurrently when the user has no wallet yet", async () => {
+    const orders = await Promise.all(Array.from({ length: 8 }, () => rawOrder()));
+    await Promise.all(orders.map((order, i) => store.settleVerifiedScanPayment(evidence(order.id, `first-wallet-${i}`))));
+    expect((await mocks.client!.gatewayWallet.findUniqueOrThrow({ where: { userId: owner } })).balanceCents).toBe(8 * 12000);
+    expect(await mocks.client!.gatewayOrder.count({ where: { userId: owner, status: "paid" } })).toBe(8);
+  });
+  it("preserves concurrent legacy usage deductions while settling distinct orders for one wallet", async () => {
+    const key = await store.createGatewayApiKey(owner, "Compatibility UAT");
+    const orders = await Promise.all(Array.from({ length: 8 }, () => rawOrder()));
+    await Promise.all([
+      ...orders.map((order, i) => store.settleVerifiedScanPayment(evidence(order.id, `distinct-${i}`))),
+      ...Array.from({ length: 10 }, (_, i) => store.recordGatewayUsage({
+        auth: { userId: owner, username: "owner", apiKeyId: key.record.id, keyPrefix: key.record.keyPrefix },
+        endpoint: "/v1/chat/completions", provider: "existing-runtime", model: "existing-model",
+        requestId: `usage-${i}`, costCents: 31, status: "ok"
+      }))
+    ]);
+    expect((await mocks.client!.gatewayWallet.findUniqueOrThrow({ where: { userId: owner } })).balanceCents).toBe(8 * 12000 - 10 * 31);
+    expect(await mocks.client!.gatewayOrder.count({ where: { userId: owner, status: "paid" } })).toBe(8);
+    expect(await mocks.client!.gatewayUsage.count({ where: { userId: owner } })).toBe(10);
   });
   it("hides expired QR codes but accepts a valid delayed payment", async () => {
     const order = await rawOrder(other, "wechat");
@@ -161,7 +181,7 @@ describe.skipIf(process.env.PAYMENT_CORE_INTEGRATION !== "1")("scan checkout Pos
     try {
       await expect(store.settleVerifiedScanPayment(evidence(order.id, "rollback-credit"))).rejects.toBeTruthy();
       expect(await mocks.client!.gatewayOrder.findUniqueOrThrow({ where: { id: order.id } })).toMatchObject({ status: "pending", paymentReceipt: null });
-      expect(await mocks.client!.gatewayBillingLedger.count({ where: { orderId: order.id } })).toBe(0);
+      expect(await mocks.client!.gatewayWallet.findUnique({ where: { userId: other } })).toBeNull();
     } finally { await mocks.client!.$executeRawUnsafe('ALTER TABLE "GatewayWallet" DROP CONSTRAINT "scan_reject_credit"'); }
   });
 });

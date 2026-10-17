@@ -4,7 +4,7 @@ export type SupplyCredential = { id: string; apiKey: string };
 export type SupplyCredentials = { primary: SupplyCredential; backup: SupplyCredential | null };
 
 const AUTHENTICATION_REJECTIONS = new Set(["invalid_api_key", "invalid_key", "api_key_invalid", "api_key_expired", "api_key_disabled"]);
-// Sub2API api_key_auth middleware rejects these before invoking the paid handler.
+// Sub2API commit 5106065716e494204fc0e8db16f68f6e9d576be0 api_key_auth.go rejects these before invoking the paid handler.
 const SUB2API_AUTHENTICATION_REJECTIONS = new Set(["INVALID_API_KEY", "API_KEY_DISABLED"]);
 const ACCEPTANCE_FIELDS = new Set(["id", "request_id", "task_id", "data", "choices", "video", "usage", "output", "result", "results", "task", "job", "image", "images"]);
 const ACCEPTED_STATES = new Set(["accepted", "submitted", "queued", "pending", "processing", "running", "completed", "succeeded", "done"]);
@@ -28,7 +28,7 @@ function hasAcceptanceFields(value: unknown): boolean {
 
 /** A transport failure or a general HTTP error does not prove that a paid task was rejected. */
 export async function isDefinitiveSupplyAuthenticationRejection(response: Response): Promise<boolean> {
-  if (response.status !== 401 || !/json/i.test(response.headers.get("content-type") || "")) return false;
+  if (![401, 403].includes(response.status) || !/json/i.test(response.headers.get("content-type") || "")) return false;
   if (Number(response.headers.get("content-length") || 0) > MAX_AUTH_ERROR_BYTES || !response.body) return false;
   const reader = response.clone().body!.getReader();
   const chunks: Uint8Array[] = [];
@@ -49,6 +49,10 @@ export async function isDefinitiveSupplyAuthenticationRejection(response: Respon
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     const body: unknown = JSON.parse(new TextDecoder().decode(bytes));
     if (!object(body) || hasAcceptanceFields(body)) return false;
+    // api_key_auth.go:223,229 uses this exact top-level 403 for an expired Key.
+    // Wallet, subscription, inactive-account and other 403 responses are excluded.
+    if (response.status === 403) return body.code === "API_KEY_EXPIRED" && typeof body.message === "string" &&
+      Object.keys(body).every(key => ["code", "message"].includes(key));
     if (typeof body.code === "string" && SUB2API_AUTHENTICATION_REJECTIONS.has(body.code)) return true;
     return object(body.error) && typeof body.error.code === "string" && AUTHENTICATION_REJECTIONS.has(body.error.code);
   } catch { return false; }

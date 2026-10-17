@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 
-// Prisma 单例：避免 Next.js dev 热重载反复 new PrismaClient 造成连接耗尽。
+// Cache in production too: middleware and route bundles share a process, but
+// can evaluate this module separately and otherwise open independent pools.
 const globalForPrisma = globalThis as typeof globalThis & {
   __prisma?: PrismaClient;
 };
@@ -8,6 +9,4 @@ const globalForPrisma = globalThis as typeof globalThis & {
 export const prisma: PrismaClient =
   globalForPrisma.__prisma ?? new PrismaClient({ log: ["warn", "error"] });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.__prisma = prisma;
-}
+globalForPrisma.__prisma = prisma;

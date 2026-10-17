@@ -11,10 +11,18 @@
   --dmp-competitor: #fff1df;
   --dmp-competitor-ink: #a85b12;
   --dmp-difference: #f3ecff;
+  --dmp-competitor2: #f3ecff;
+  --dmp-competitor2-ink: #5b3a9c;
+  --dmp-competitor3: #eaf7ea;
+  --dmp-competitor3-ink: #2f6b3a;
   --dmp-up: #d33c32;
   --dmp-down: #087f5b;
+  --ink: var(--dmp-ink);
+  --muted: var(--dmp-muted);
+  --line: var(--dmp-line);
   background: radial-gradient(circle at 85% 0, #dff4ef 0, transparent 28rem), var(--dmp-canvas);
   color: var(--dmp-ink);
+  color-scheme: light !important;
   font: 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   font-variant-numeric: tabular-nums;
   isolation: isolate;
@@ -177,47 +185,6 @@
   padding: 0 18px 42px;
 }
 
-.qualityBanner {
-  align-items: center;
-  background: #fff8e6;
-  border: 1px solid #edc76b;
-  border-left: 5px solid #d99a17;
-  border-radius: 12px;
-  color: #6f4f0f;
-  display: flex;
-  gap: 18px;
-  justify-content: space-between;
-  padding: 14px 16px;
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;
-}
-
-.qualityBanner strong {
-  color: #583c08;
-  display: block;
-  font-size: 15px;
-}
-
-.qualityBanner p {
-  margin: 3px 0 0;
-}
-
-.qualityAction {
-  background: #0f766e;
-  border-radius: 8px;
-  color: #fff;
-  flex: 0 0 auto;
-  font-weight: 700;
-  padding: 8px 13px;
-  text-decoration: none;
-}
-
-.qualityOwnerHint {
-  flex: 0 0 auto;
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .reportSection {
   background: var(--dmp-paper);
   border: 1px solid var(--dmp-line);
@@ -263,15 +230,6 @@
   color: var(--dmp-teal);
   font-size: 12px;
   padding: 4px 9px;
-}
-
-.sectionNote {
-  background: #f1f8f6;
-  border-left: 3px solid #52aa96;
-  border-radius: 6px;
-  color: #49666d;
-  margin: 12px 0 18px;
-  padding: 10px 12px;
 }
 
 .productGrid {
@@ -442,14 +400,6 @@
   font-weight: 700;
 }
 
-.metricScope {
-  color: var(--dmp-muted);
-  display: block;
-  font-size: 10px;
-  line-height: 1.4;
-  margin-top: 9px;
-}
-
 .periodBand {
   align-items: center;
   background: linear-gradient(135deg, #0b5e5c, #158875);
@@ -469,31 +419,6 @@
 
 .periodBand strong {
   font-size: 16px;
-}
-
-.dataNotice {
-  display: grid;
-  gap: 8px;
-  list-style: none;
-  margin: 16px 0 0;
-  padding: 0;
-}
-
-.dataNotice li {
-  align-items: baseline;
-  background: #fdf6e6;
-  border-left: 3px solid #e0a52a;
-  border-radius: 6px;
-  color: #7a5b18;
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 13px;
-  gap: 10px;
-  padding: 10px 12px;
-}
-
-.dataNotice strong {
-  color: #5d430c;
 }
 
 .subheading {
@@ -810,10 +735,10 @@
 }
 
 .tableShell {
-  background: #fff;
+  background: #edf5f3;
   border: 1px solid var(--dmp-line);
   border-radius: 10px;
-  color-scheme: light;
+  color-scheme: light !important;
   max-height: 72vh;
   max-width: 100%;
   min-width: 0;
@@ -822,7 +747,7 @@
 }
 
 .tableShell table {
-  background: #fff;
+  background: #edf5f3;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 12px;
@@ -834,7 +759,8 @@
 .tableShell td {
   border-bottom: 1px solid #e4eceb;
   border-right: 1px solid #e4eceb;
-  color: var(--dmp-ink);
+  border-top: 0 !important;
+  color: var(--dmp-ink) !important;
   min-width: var(--dmp-column-width);
   padding: 9px 10px;
   text-align: left;
@@ -872,19 +798,19 @@
 }
 
 .tableShell tbody > tr > td {
-  background-color: #fff;
+  background-color: #edf5f3 !important;
 }
 
 .tableShell tbody tr:nth-child(even) > td {
-  background-color: #f9fbfb;
+  background-color: #f9fbfb !important;
 }
 
 .tableShell tbody tr:hover > td {
-  background-color: #eef8f5;
+  background-color: #e5f3ef !important;
 }
 
 .stickyColumn {
-  background: #fff;
+  background: #edf5f3 !important;
   left: var(--dmp-sticky-left);
   position: sticky !important;
   z-index: 5;
@@ -915,6 +841,20 @@
   background-color: var(--dmp-difference) !important;
 }
 
+.tableShell tbody > tr > td.subject {
+  background-color: var(--dmp-subject) !important;
+  color: var(--dmp-subject-ink) !important;
+}
+
+.tableShell tbody > tr > td.competitor {
+  background-color: var(--dmp-competitor) !important;
+  color: var(--dmp-competitor-ink) !important;
+}
+
+.tableShell tbody > tr > td.difference {
+  background-color: var(--dmp-difference) !important;
+}
+
 .tableShell thead th,
 .tableShell thead th.subject,
 .tableShell thead th.competitor,
@@ -926,14 +866,14 @@
   -webkit-print-color-adjust: exact;
 }
 
-.subjectRow > td {
+.tableShell tbody > tr.subjectRow > td {
   background-color: var(--dmp-subject) !important;
-  color: var(--dmp-subject-ink);
+  color: var(--dmp-subject-ink) !important;
 }
 
-.competitorRow > td {
+.tableShell tbody > tr.competitorRow > td {
   background-color: var(--dmp-competitor) !important;
-  color: var(--dmp-competitor-ink);
+  color: var(--dmp-competitor-ink) !important;
 }
 
 .trendUp {
@@ -986,7 +926,6 @@
 }
 
 @media (max-width: 560px) {
-  .qualityBanner { align-items: flex-start; flex-direction: column; }
   .metricGrid,
   .dailySummary { grid-template-columns: 1fr; }
   .productCard { grid-template-columns: 96px minmax(0, 1fr); }
@@ -1095,3 +1034,486 @@
     position: static !important;
   }
 }
+.attributionControls { margin: 0 0 20px; padding: 16px; border: 1px solid #d6e4e0; border-radius: 12px; background: #fff; color: #173d42; }
+.attributionControls label { display: flex; align-items: center; gap: 12px; font-weight: 600; }
+.attributionControls select { padding: 8px 12px; color: inherit; background: #fff; border: 1px solid #7a9c96; border-radius: 8px; }
+.attributionControls p { margin: 10px 0; font-size: 13px; }
+.attributionControls span { display: inline-block; margin-right: 18px; font-size: 13px; }
+
+
+/* ---- v2.3.100 shop competition layout (R6) ---- */
+.competitor2 { background-color: var(--dmp-competitor2) !important; color: var(--dmp-competitor2-ink) !important; }
+.competitor3 { background-color: var(--dmp-competitor3) !important; color: var(--dmp-competitor3-ink) !important; }
+.shopObjects { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 0 0 12px; }
+.shopObjectCard { border: 1px solid var(--dmp-line); border-radius: 12px; padding: 14px; min-width: 0; }
+.shopObjectCard span, .shopObjectCard small { display: block; font-size: 12px; }
+.shopObjectCard strong { display: block; margin: 6px 0; font-size: 17px; overflow-wrap: anywhere; }
+.shopTable thead th.entityHead { text-align: center; font-weight: 700; }
+.shopTable thead th.entityHead.subject { background: #1d5f96 !important; color: #fff !important; }
+.shopTable thead th.entityHead.competitor1 { background: #b8651a !important; color: #fff !important; }
+.shopTable thead th.entityHead.competitor2 { background: #6a44b0 !important; color: #fff !important; }
+.shopTable thead th.entityHead.competitor3 { background: #37804a !important; color: #fff !important; }
+.shopTable thead th.groupHead { background: #3b5f5b !important; color: #fff !important; text-align: center; }
+.shopTable thead th.periodHead { text-align: center; font-weight: 600; }
+.shopTable thead th.periodHead.subject { background: #1d5f96 !important; color: #fff !important; }
+.shopTable thead th.periodHead.competitor1 { background: #b8651a !important; color: #fff !important; }
+.shopTable thead th.periodHead.competitor2 { background: #6a44b0 !important; color: #fff !important; }
+.shopTable thead th.periodHead.competitor3 { background: #37804a !important; color: #fff !important; }
+.shopTable thead tr:nth-child(2) th { top: 44px; }
+.precisionCell { text-align: center !important; }
+.relative { background-color: #f3f6ff !important; color: #3b4a8c; }
+.relative.trendUp { color: var(--dmp-up) !important; }
+.relative.trendDown { color: var(--dmp-down) !important; }
+td.subject.trendUp, td.competitor.trendUp { color: var(--dmp-up) !important; }
+td.subject.trendDown, td.competitor.trendDown { color: var(--dmp-down) !important; }
+.noteCell { color: #9aa8a5 !important; font-weight: 400; }
+.noteCell small { display: block; font-size: 10px; color: #7a8a87; white-space: normal; max-width: 260px; }
+.badge { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 10px; line-height: 1.6; border: 1px solid transparent; white-space: nowrap; }
+.badge_exact { background: var(--dmp-teal); color: #fff; }
+.badge_interval { border-color: var(--dmp-teal); color: var(--dmp-teal); }
+.badge_text { background: #e6ebe9; color: #5a6b68; }
+.badge_sample { border: 1px dashed #c96a12; color: #c96a12; background: #fff7ec; }
+.badge_formula { border-color: #5b3a9c; color: #5b3a9c; }
+.badge_missing { color: #9aa8a5; }
+.kpiGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; min-width: 0; }
+.kpiCard { border: 1px solid var(--dmp-line); border-radius: 12px; padding: 14px 16px; background: #fff; min-width: 0; }
+.kpiCard h3 { margin: 0 0 10px; font-size: 15px; }
+/* 2026-09-18 color-block re-layout: label+badge on row 1, VALUE alone on full-width row 2, change on row 3 — big number never squeezed. */
+.kpiRow { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label badge" "value value" "change change"; gap: 2px 8px; align-items: center; padding: 10px 12px; border-radius: 10px; margin-bottom: 8px; }
+.kpiRow > .kpiLabel { grid-area: label; }
+.kpiRow > .kpiValue { grid-area: value; text-align: left; white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.15; letter-spacing: -0.01em; }
+.kpiRow > .kpiChange { grid-area: change; min-width: 0; text-align: left; }
+.kpiRow > :nth-child(4) { grid-area: badge; justify-self: end; }
+.kpiRow.subject .kpiValue { font-size: 24px; font-weight: 700; }
+.kpiRow:not(.subject) .kpiValue { font-size: 18px; font-weight: 600; }
+.kpiLabel { font-size: 12px; }
+.kpiValue { font-size: 14px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.kpiChange { font-size: 11px; min-width: 0; text-align: left; }
+.kpiRelative { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pill { font-size: 11px; padding: 2px 9px; border-radius: 12px; background: #eef2ff; border: 1px solid #c9d3f5; }
+.foldRow > td { padding: 0 !important; background: #f7faf9 !important; }
+.foldRow details { padding: 6px 12px; }
+.foldRow summary { cursor: pointer; color: var(--dmp-teal); font-size: 12px; }
+.foldRow table { margin-top: 6px; }
+.foldedSection > details > summary { cursor: pointer; list-style: none; }
+.foldedSection > details > summary .sectionHeading { margin-bottom: 0; }
+.foldedSection > details[open] > summary .sectionHeading { margin-bottom: 14px; }
+.totalRow > td { font-weight: 700; background: #eef5f2 !important; }
+.notesSection ol { margin: 0; padding-left: 20px; color: #3d5450; }
+.notesSection li { margin: 4px 0; }
+@media print { .foldedSection > details { display: block; } .badge, .relative, .competitor2, .competitor3 { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+
+
+/* ---- v2.3.103 店铺视角七区块（R14）------------------------------------------------------ */
+/* 新样式只使用 .root 已声明的 --dmp-* 变量；表头 #0d716b 白字沿用 .tableShell th。 */
+
+.subTitle {
+  color: var(--dmp-ink);
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0 0 8px;
+}
+
+.grid2 {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+  min-width: 0;
+}
+
+.derivedFlag {
+  background: var(--dmp-mint);
+  border-radius: 9px;
+  color: var(--dmp-teal);
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 8px;
+  padding: 1px 7px;
+  vertical-align: 1px;
+}
+
+.kpiDerivedNote {
+  border-top: 1px dashed var(--dmp-line);
+  color: var(--dmp-muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 8px 0 0;
+  padding-top: 8px;
+}
+
+.bridgeGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.bridgeObject {
+  border-radius: 6px;
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+}
+
+.bridge {
+  align-items: stretch;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 28px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.bridgeBox {
+  background: #fbfdfc;
+  border: 1px solid var(--dmp-line);
+  border-radius: 10px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.bridgeBox b {
+  display: block;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+
+.bridgeBox small {
+  color: var(--dmp-muted);
+  display: block;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.bridgeLabel {
+  color: var(--dmp-muted);
+  font-size: 12px;
+}
+
+.bridgeArrow {
+  align-self: center;
+  color: var(--dmp-muted);
+  font-size: 18px;
+  text-align: center;
+}
+
+.barObject {
+  border-radius: 6px;
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  margin: 8px 0 2px;
+  padding: 1px 7px;
+}
+
+.bar {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 84px minmax(0, 1fr) minmax(0, 260px);
+  margin: 6px 0;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.barName {
+  color: var(--dmp-muted);
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barTrack {
+  background: var(--dmp-canvas);
+  border-radius: 4px;
+  height: 18px;
+  overflow: hidden;
+  position: relative;
+}
+
+.barTrack > i {
+  border-radius: 4px;
+  bottom: 0;
+  display: block;
+  left: 0;
+  position: absolute;
+  top: 0;
+}
+
+.barSelf,
+i.barSelf {
+  background: var(--dmp-subject-ink);
+}
+
+.barTrack > i.subject {
+  background: var(--dmp-subject-ink);
+}
+
+.barTrack > i.competitor {
+  background: var(--dmp-competitor-ink);
+}
+
+.barTrack > i.competitor2 {
+  background: var(--dmp-competitor2-ink);
+}
+
+.barTrack > i.competitor3 {
+  background: var(--dmp-competitor3-ink);
+}
+
+.barValue {
+  color: var(--dmp-ink);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.stack {
+  display: flex;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+.stack span {
+  align-items: center;
+  display: flex;
+  font-size: 10px;
+  justify-content: center;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.stackSegment {
+  background: var(--dmp-subject-ink);
+  color: #fff;
+}
+
+.stackSegmentAlt {
+  background: var(--dmp-competitor-ink);
+  color: #fff;
+}
+
+.stackSegmentSoft {
+  background: var(--dmp-competitor);
+  color: var(--dmp-competitor-ink);
+}
+
+.stackSegmentSofter {
+  background: var(--dmp-mint);
+  color: var(--dmp-teal);
+}
+
+.channelCell {
+  min-width: 132px;
+  text-align: right;
+  white-space: normal;
+}
+
+.who {
+  border-radius: 5px;
+  display: block;
+  font-size: 11px;
+  padding: 1px 6px;
+  text-align: right;
+}
+
+.who + .who {
+  margin-top: 2px;
+}
+
+.who.subject {
+  background: var(--dmp-subject) !important;
+  color: var(--dmp-subject-ink) !important;
+}
+
+.who.competitor {
+  background: var(--dmp-competitor) !important;
+  color: var(--dmp-competitor-ink) !important;
+}
+
+.who.competitor2 {
+  background: var(--dmp-competitor2) !important;
+  color: var(--dmp-competitor2-ink) !important;
+}
+
+.who.competitor3 {
+  background: var(--dmp-competitor3) !important;
+  color: var(--dmp-competitor3-ink) !important;
+}
+
+.structureBlock {
+  margin-top: 14px;
+}
+
+.subChannelFold {
+  border: 1px solid var(--dmp-line);
+  border-radius: 8px;
+  margin-top: 8px;
+  padding: 6px 10px;
+}
+
+.subChannelFold > summary {
+  color: var(--dmp-teal);
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+
+.subChannelFold > summary::before {
+  content: "▸ ";
+}
+
+.subChannelFold[open] > summary::before {
+  content: "▾ ";
+}
+
+.subChannelTable {
+  margin-top: 8px;
+  max-height: 46vh;
+}
+
+.shareHead,
+.shareCell {
+  background-color: var(--dmp-mint);
+  color: var(--dmp-teal) !important;
+}
+
+.aggregateRow > td {
+  background-color: var(--dmp-canvas) !important;
+  font-style: italic;
+}
+
+.notes {
+  background: #f1f8f6;
+  border-left: 3px solid #52aa96;
+  border-radius: 6px;
+  color: #49666d;
+  font-size: 12px;
+  line-height: 1.7;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 8px 12px;
+}
+
+.notes li {
+  margin: 3px 0;
+}
+
+.notePill {
+  background: var(--dmp-mint);
+  border-radius: 9px;
+  color: var(--dmp-teal);
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 6px;
+  padding: 1px 7px;
+}
+
+.notePillMissing {
+  background: var(--dmp-competitor);
+  color: var(--dmp-competitor-ink);
+}
+
+.notePillSuggestion {
+  background: var(--dmp-difference);
+  color: var(--dmp-competitor2-ink);
+}
+
+.notesSection .notes {
+  margin: 0;
+}
+
+.shopSpark {
+  display: block;
+  height: 72px;
+  margin: 0 0 12px;
+  overflow: visible;
+  width: 100%;
+}
+
+.shopBarGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr;
+  margin: 0 0 16px;
+}
+
+.shopBarCard {
+  margin: 0;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid #dbe7e5;
+  border-radius: 12px;
+  padding: 10px 12px 4px;
+  background: #fbfdfc;
+}
+
+.shopBarCard figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.shopBarLegend {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #667c83;
+}
+
+.shopBarLegend i {
+  font-style: normal;
+}
+
+.shopBarLegend i::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+  background: #1d5f96;
+}
+
+.shopBarLegend i[data-tone="1"]::before { background: #b8651a; }
+.shopBarLegend i[data-tone="2"]::before { background: #37804a; }
+
+.shopBars {
+  display: block;
+  width: 100%;
+  min-width: 720px;
+  height: 210px;
+}
+
+.shopBarAxis, .shopBarDate {
+  fill: #667c83;
+  font-size: 10px;
+}
+
+/* Rebase note (2403): production 2394 removed .sectionNote, but the shop-mode sections that
+   survive the rebase (ShopKpiSection / ShopBridgeSection / ShopSpendSection / ShopChannelSection
+   / ShopTrafficSection / ShopSampleSection / ShopCompetitionSection notes) still reference
+   styles.sectionNote, so the rule is restored verbatim to keep the shop view styled.
+   It is not referenced by any production (growth) code path in BASE. */
+.sectionNote {
+  background: #f1f8f6;
+  border-left: 3px solid #52aa96;
+  border-radius: 6px;
+  color: #49666d;
+  margin: 12px 0 18px;
+  padding: 10px 12px;
+}
+
+/* R14 canvas alignment with growth report grids */
+@media (max-width: 720px) { .kpiGrid, .grid2, .bridgeGrid, .shopObjects { grid-template-columns: 1fr; } }

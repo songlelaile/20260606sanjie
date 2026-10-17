@@ -113,6 +113,7 @@ describe("DMP JSON 工程文件识别", () => {
     expect(itemRows?.[1][3]).toBe(31500);
     expect(itemRows?.[2][2]).toBe("");
     const periodRows = report?.tables.find((table) => table.name === "周期汇总")?.rows;
+    expect(report?.tables.find((table) => table.name === "周期汇总")?.columns[8]).toBe("付费金额占比");
     expect(periodRows?.[1][8]).toBe("0.31746~0.433862");
     expect(periodRows?.[1][9]).toBe("2026-08-13");
     expect(Number(periodRows?.[1][10])).toBeGreaterThan(0);
@@ -134,95 +135,119 @@ describe("DMP JSON 工程文件识别", () => {
     expect(level2Competitor?.[7]).toBe(27.23);
     expect(level2Competitor?.[11]).toBe("0.68~0.91");
     expect(level2Competitor?.[13]).toBe("3.67~7.34");
-    expect(report?.quality).toMatchObject({ complete: false, missing: ["PPC"] });
   });
 
-  it("backfills the four standard rows from aligned period ingredients and marks the canonical report complete", () => {
-    const report = canonicalToDmpReport({
-      schema_version: "3.0",
-      title: "旧版达摩盘报告",
-      item_id: "593063365092",
-      period: "2026-08-01 至 2026-08-03",
-      tables: [
-        {
-          name: "报告总览",
-          columns: ["项目", "主体", "对手", "范围"],
-          rows: [{ cells: ["商品ID", "593063365092", "623803508105", ""] }]
-        },
-        {
-          name: "周期汇总",
-          columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告消耗", "营销推广点击量"],
-          rows: [
-            { cells: ["593063365092", "主体", "1000", "300", "100", "50"] },
-            { cells: ["623803508105", "目标对手", "2000", "500", "200", "80"] }
-          ]
-        }
-      ]
-    });
+  it("统一付费金额占比字段，并按付费成交额除以总成交额计算双区间", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: [["成交", "总GMV", "50万~60万", "50万~60万", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告GMV贡献率"],
+        rows: [
+          ["subject", "主体", "50万~60万", "20万", ""],
+          ["competitor", "目标对手", "50万~60万", "20万~30万", ""]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [["总GMV", "50万~60万", "50万~60万", ""]]
+      }
+    ];
 
-    expect(report?.quality).toMatchObject({ complete: true, observed: 4 });
-    expect(report?.quality.missing).toBeUndefined();
-    for (const name of ["报告总览", "对标总表", "基础指标对比"]) {
-      const table = report?.tables.find((candidate) => candidate.name === name);
-      const metricIndex = table?.columns.findIndex((column) => /^(?:项目|对标指标|指标)$/.test(column)) ?? -1;
-      const subjectIndex = table?.columns.findIndex((column) => /^(?:主体|主体周期值|主体值)$/.test(column)) ?? -1;
-      const values = new Map(table?.rows.map((row) => [String(row[metricIndex]), row[subjectIndex]]));
-      expect(values.get("推广消耗")).toBe("100");
-      expect(values.get("费比")).toBe(0.1);
-      expect(values.get("ROI")).toBe(3);
-      expect(values.get("PPC")).toBe(2);
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.columns.at(-1)).toBe("付费金额占比");
+    expect(period?.rows[0].at(-1)).toBe("0.333333~0.4");
+    expect(period?.rows[1].at(-1)).toBe("0.333333~0.6");
+    for (const [tableName, metricIndex] of [["报告总览", 0], ["对标总表", 1], ["基础指标对比", 0]] as const) {
+      const table = tables.find((candidate) => candidate.name === tableName);
+      const row = table?.rows.find((candidate) => candidate[metricIndex] === "付费金额占比");
+      expect(row, `${tableName} 应补齐付费金额占比`).toBeDefined();
+      if (tableName === "报告总览") expect(row?.[3]).toBe("30日严格同周期");
+      else expect(row?.[tableName === "对标总表" ? 4 : 3]).toBe("");
     }
   });
 
-  it("propagates a disclosed derived metric instead of replacing it with a recalculation", () => {
-    const report = canonicalToDmpReport({
-      schema_version: "3.0",
-      title: "保留披露值",
-      item_id: "593063365092",
-      period: "2026-08-01 至 2026-08-03",
-      tables: [
-        {
-          name: "报告总览",
-          columns: ["项目", "主体", "对手", "范围"],
-          rows: [
-            { cells: ["商品ID", "593063365092", "623803508105", ""] },
-            { cells: ["投入产出比", "2.99", "", "30日"] }
-          ]
-        },
-        {
-          name: "周期汇总",
-          columns: ["商品ID", "对象", "总GMV", "付费成交额", "广告消耗", "营销推广点击量"],
-          rows: [{ cells: ["593063365092", "主体", "1000", "300", "100", "50"] }]
-        }
-      ]
-    });
-    const benchmark = report?.tables.find((table) => table.name === "对标总表");
-    const roi = benchmark?.rows.find((row) => row[1] === "ROI");
+  it("兼容旧周期汇总的全渠道总GMV与付费GMV列并补齐总览占比", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "全渠道总GMV", "付费GMV"],
+        rows: [
+          ["subject", "主体", "50万", "20万"],
+          ["competitor", "目标对手", "80万", "20万~30万"]
+        ]
+      }
+    ];
 
-    expect(roi?.[2]).toBe("2.99");
-    expect(report?.quality.complete).toBe(true);
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.columns.at(-1)).toBe("付费金额占比");
+    expect(period?.rows[0].at(-1)).toBe(0.4);
+    expect(period?.rows[1].at(-1)).toBe("0.25~0.375");
+    expect(tables[0].rows.find((row) => row[0] === "付费金额占比"))
+      .toEqual(["付费金额占比", 0.4, "0.25~0.375", "30日严格同周期"]);
   });
 
-  it.each(["competition", "market"] as const)("does not inject growth metric rows into a %s report", (reportType) => {
-    const report = canonicalToDmpReport({
-      schema_version: "3.0",
-      report_type: reportType,
-      title: "非打爆路径报告",
-      item_id: "593063365092",
-      period: "2026-08-01 至 2026-08-03",
-      tables: [{
+  it("付费成交额与总成交额都可能从0起时不伪造大于0的占比", () => {
+    const tables = [
+      {
         name: "报告总览",
-        columns: ["指标", "当前值"],
-        rows: [{ cells: ["成交笔数", "10"] }]
-      }]
-    });
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "付费金额占比"],
+        rows: [
+          ["subject", "主体", "<50万", "<20万", ""],
+          ["competitor", "目标对手", "0~50万", "0~20万", ""]
+        ]
+      }
+    ];
 
-    expect(report?.tables).toEqual([{
-      name: "报告总览",
-      columns: ["指标", "当前值"],
-      rows: [["成交笔数", "10"]]
-    }]);
-    expect(report?.quality.complete).toBe(true);
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.rows[0].at(-1)).toBeNull();
+    expect(period?.rows[1].at(-1)).toBeNull();
+  });
+
+  it("兼容中文至区间并拒绝负数或倒置的付费金额区间", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", "subject", "competitor", ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "付费金额占比"],
+        rows: [
+          ["subject", "主体", "50万至60万", "20万至30万", ""],
+          ["competitor", "目标对手", "50万~20万", "-10万", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "subject", "competitor", 30);
+    const period = tables.find((table) => table.name === "周期汇总");
+    expect(period?.rows[0].at(-1)).toBe("0.333333~0.6");
+    expect(period?.rows[1].at(-1)).toBeNull();
   });
 
   it("restores render_data product links, subject daily values, generated time and table presentation", () => {
@@ -375,6 +400,55 @@ describe("DMP JSON 工程文件识别", () => {
     const daily = report?.tables.find((table) => table.name === "日GMV与费比");
     expect(daily?.rows).toHaveLength(2);
     expect(daily?.rows[0]).toEqual(["2026-08-01", "120", "190", "20", "成长期"]);
+  });
+
+  it("canonicalizes archived range objects before paid-metric reconciliation", () => {
+    const report = canonicalToDmpReport({
+      schema_version: "3.0",
+      title: "达摩盘报告",
+      item_id: "593063365092",
+      period: "2026-07-20 至 2026-08-18",
+      tables: [
+        {
+          name: "报告总览",
+          columns: ["项目", "主体", "对手", "范围"],
+          rows: [{ cells: ["商品ID", "593063365092", "623803508105", ""] }]
+        },
+        {
+          name: "周期汇总",
+          columns: ["商品ID", "对象", "付费成交额", "推广消耗", "ROI", "付费PPC"],
+          rows: [
+            { cells: ["593063365092", "主体", "200000", "50000", "", ""] },
+            { cells: ["623803508105", "目标对手", { min: "800000.00", max: "900000.00" }, "80000", "", ""] }
+          ]
+        },
+        {
+          name: "对标总表",
+          columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+          rows: [
+            { cells: ["投放", "付费成交额", "", "", ""] },
+            { cells: ["投放", "ROI", "", "", ""] },
+            { cells: ["投放", "付费PPC", "", "", ""] }
+          ]
+        },
+        {
+          name: "基础指标对比",
+          columns: ["指标", "主体值", "对手值", "主体相对对手"],
+          rows: [
+            { cells: ["营销推广点击量", "25000", '{"min":30000,"max":40000}', ""] },
+            { cells: ["付费成交额", "", "", ""] },
+            { cells: ["ROI", "", "", ""] },
+            { cells: ["付费PPC", "", "", ""] }
+          ]
+        }
+      ]
+    });
+
+    const benchmark = report?.tables.find((table) => table.name === "对标总表");
+    const metric = (name: string) => benchmark?.rows.find((row) => row[1] === name);
+    expect(metric("付费成交额")?.[3]).toBe("800000.00~900000.00");
+    expect(metric("ROI")?.[3]).toBe("10~11.25");
+    expect(metric("付费PPC")?.[3]).toBe("2~2.666667");
   });
 
   it("fills blank derived scene cells for both old and concise headers but preserves disclosed values and intervals", () => {
@@ -618,53 +692,56 @@ describe("DMP JSON 工程文件识别", () => {
     expect(coverage?.[2]).toBe("");
   });
 
-  it("keeps same-ID subject and competitor period rows isolated by their explicit roles", () => {
-    const itemId = "593063365092";
+  it("propagates paid-GMV ranges and derives ROI/PPC ranges from exact spend without inventing a difference", () => {
     const tables = [
       {
         name: "报告总览",
         columns: ["项目", "主体", "对手", "范围"],
-        rows: [["商品ID", itemId, itemId, ""]]
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["付费成交额", "", "", ""],
+          ["ROI", "", "", ""],
+          ["付费PPC", "", "", ""]
+        ]
       },
       {
         name: "周期汇总",
-        columns: ["商品ID", "对象", "总GMV", "付费成交额", "推广消耗", "营销推广点击量", "ROI", "PPC"],
-        // 故意把对手放在第一行，证明同 ID 时不会按首个 ID 命中而串值。
+        columns: ["商品ID", "对象", "付费成交额", "推广消耗", "ROI", "付费PPC"],
         rows: [
-          [itemId, "目标对手", "200", "80", "20", "10", "", ""],
-          [itemId, "主体", "100", "50", "10", "5", "", ""]
+          ["593063365092", "主体", "200000", "50000", "", ""],
+          ["623803508105", "目标对手", "800000.00~900000.00", "80000", "", ""]
         ]
       },
       {
         name: "对标总表",
         columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
-        rows: []
+        rows: [
+          ["投放", "付费成交额", "", "", "-75%"],
+          ["投放", "ROI", "", "", "-60%"],
+          ["投放", "付费PPC", "", "", "10%"]
+        ]
       },
       {
         name: "基础指标对比",
         columns: ["指标", "主体值", "对手值", "主体相对对手"],
-        rows: []
-      },
-      {
-        name: "商品与成功品",
-        columns: ["角色", "商品ID", "商品标题", "30日GMV"],
         rows: [
-          ["主体", itemId, "主体口径", ""],
-          ["目标对手", itemId, "对手口径", ""]
+          ["营销推广点击量", "25000", "30000~40000", ""],
+          ["付费成交额", "", "", "-75%"],
+          ["ROI", "", "", "-60%"],
+          ["付费PPC", "", "", "10%"]
         ]
       }
     ];
 
-    reconcileDmpCrossTableMetrics(tables, itemId, itemId, 2);
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 30, {
+      preserveDisclosedRanges: true
+    });
 
-    const overviewPair = (metric: string) => tables[0].rows.find((row) => row[0] === metric)?.slice(1, 3);
-    expect(overviewPair("总GMV")).toEqual(["100", "200"]);
-    expect(overviewPair("付费成交额")).toEqual(["50", "80"]);
-    expect(overviewPair("推广消耗")).toEqual(["10", "20"]);
-    expect(overviewPair("ROI")).toEqual([5, 4]);
-    expect(overviewPair("PPC")).toEqual([2, 2]);
-    expect(tables[1].rows.map((row) => row.slice(6, 8))).toEqual([[4, 2], [5, 2]]);
-    expect(tables[4].rows.map((row) => row[3])).toEqual(["100", "200"]);
+    const benchmarkMetric = (metric: string) => tables[2].rows.find((row) => row[1] === metric);
+    expect(benchmarkMetric("付费成交额")?.slice(2, 5)).toEqual(["200000", "800000.00~900000.00", ""]);
+    expect(benchmarkMetric("ROI")?.slice(2, 5)).toEqual([4, "10~11.25", ""]);
+    expect(benchmarkMetric("付费PPC")?.slice(2, 5)).toEqual([2, "2~2.666667", ""]);
+    expect(tables[1].rows[1].slice(4, 6)).toEqual(["10~11.25", "2~2.666667"]);
   });
 
   it("returns zero PPC only when an interval guarantees a positive paid-click denominator", () => {

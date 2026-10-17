@@ -317,6 +317,17 @@
     }
     function resolveUncertain(options) {
       if (state.busy || !options || options.confirmed !== true) return fail('CREATIVE_RECEIPT_CONFIRM_REQUIRED', '请先核对供应商任务与本机历史后确认。');
+      if (state.accountKey && state.accountKey !== currentAccount()) return fail('CREATIVE_ACCOUNT_CHANGED', '账号已切换，请回到原账号核对任务回执。');
+      var pending;
+      try { pending = deps.journal && deps.journal.read() || null; } catch (_) { return fail('CREATIVE_JOURNAL_FAILED', '无法读取当前任务回执，已保留等待状态，请重试。'); }
+      if (pending) {
+        var expected = state.uncertain;
+        var sameOwner = expected && (!pending.accountKey || pending.accountKey === currentAccount()) && (!expected.accountKey || expected.accountKey === currentAccount());
+        var sameReceipt = sameOwner && (pending.jobId || expected.jobId ? !!pending.jobId && pending.jobId === expected.jobId
+          : !!pending.signature && pending.signature === expected.signature && !!pending.shotId && pending.shotId === expected.shotId && pending.batchId === expected.batchId && pending.tool === expected.tool);
+        if (!sameReceipt && extension.strictReceipts) { state.uncertain = clone(pending); report('发现更新的任务回执，请核对该任务后再确认。', 'uncertain'); }
+        if (!sameReceipt) return fail('CREATIVE_RECEIPT_CHANGED', '任务回执已由其他页面更新，请重新核对当前任务；较新的回执仍保留。');
+      }
       try {
         if (extension.strictReceipts && clearSettledReceipt(state.uncertain) === false) { report('发现更新的任务回执，请核对该任务后再确认。', 'uncertain'); return fail('CREATIVE_RECEIPT_CHANGED', '回执已变化，未清除更新任务。'); }
         if (!extension.strictReceipts) clearPending();
@@ -367,7 +378,7 @@
           // cannot ignore a task submitted by another tab after it was mounted.
           if (observePending()) { state.stopped = true; break; }
           var slot = selected[index], payload = contractCreatePayload(plan, slot.shot.id), jobId = deps.newJobId ? deps.newJobId() : newId('job');
-          var receipt = { jobId: jobId, signature: plan.signature, shotId: slot.shot.id, batchId: state.batchId, tool: plan.tool, createdAt: Date.now() };
+          var receipt = { jobId: jobId, signature: plan.signature, shotId: slot.shot.id, batchId: state.batchId, tool: plan.tool, accountKey: state.accountKey, createdAt: Date.now() };
           try { if (deps.journal) deps.journal.write(receipt); } catch (_) { slot.status = 'failed'; slot.error = '无法保存任务回执，尚未提交生图。'; state.stopped = true; report(slot.error, 'error'); break; }
           if (extension.strictReceipts && contextAccount(archiveContext) !== currentAccount()) { clearSettledReceipt(receipt); state.stopped = true; slot.status = 'ready'; report('检测到账号切换，尚未提交当前任务。', 'error'); break; }
           state.jobId = jobId; slot.status = 'generating'; slot.error = ''; slot.submission = { planSignature: plan.signature, shot: clone(slot.shot), config: clone(plan.config), createdAt: Date.now() };
@@ -446,8 +457,15 @@
     function snapshot() { return clone(state); }
     function restore(saved) {
       if (state.busy || !object(saved)) return fail('CREATIVE_RESTORE_INVALID', '当前任务不能恢复。');
-      if (saved.plan) { var check = contractVerifyPlan(saved.plan); if (!check.ok) return check; }
-      if (extension.validateState) { var stateCheck = extension.validateState(saved); if (!stateCheck.ok) return stateCheck; }
+      if (saved.plan) {
+        var check = contractVerifyPlan(saved.plan); if (!check.ok) return check;
+        if (extension.validateState) { var stateCheck = extension.validateState(saved); if (!stateCheck.ok) return stateCheck; }
+        if (!Array.isArray(saved.slots) || saved.slots.length !== saved.plan.shots.length || saved.slots.some(function (slot, index) {
+          return !object(slot) || JSON.stringify(slot.shot) !== JSON.stringify(saved.plan.shots[index]);
+        })) return fail('CREATIVE_RESTORE_SLOTS', '草稿镜头与已确认方案不一致，已保留原草稿，请先核对本机历史。');
+      }
+      if (own(saved, 'accountKey') && saved.accountKey && String(saved.accountKey) !== currentAccount()) return fail('CREATIVE_ACCOUNT_CHANGED', '草稿属于原账号，请回到原账号恢复；当前草稿未被覆盖。');
+      if (!saved.plan && extension.validateState) { var stateCheck = extension.validateState(saved); if (!stateCheck.ok) return stateCheck; }
       var restored = clone(saved);
       state.plan = restored.plan || null; state.slots = Array.isArray(restored.slots) ? restored.slots : []; state.previousResults = Array.isArray(restored.previousResults) ? restored.previousResults : [];
       state.batchId = restored.batchId || newId('creative'); state.accountKey = own(restored, 'accountKey') ? String(restored.accountKey || '') : currentAccount(); state.busy = false; state.jobId = ''; state.stopped = false;

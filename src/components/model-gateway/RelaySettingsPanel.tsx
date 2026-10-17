@@ -21,6 +21,11 @@ function errorText(error: unknown) {
   return error instanceof Error ? error.message : "网络连接失败，请重试。";
 }
 
+function beijingTime(value: string | null | undefined) {
+  if (!value || !Number.isFinite(Date.parse(value))) return "暂无成功获取记录";
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+}
+
 export function RelaySettingsPanel({ onCatalogChange }: { onCatalogChange: () => Promise<void> }) {
   const [settings, setSettings] = useState<RelaySettingsView | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
@@ -64,7 +69,7 @@ export function RelaySettingsPanel({ onCatalogChange }: { onCatalogChange: () =>
 
   const dirty = useMemo(() => !!settings && (
     baseUrl !== settings.baseUrl || !!apiKey.trim() || clearKey || JSON.stringify(models) !== JSON.stringify(settings.models) ||
-    usdRate !== (settings.usdCnyRate == null ? "" : String(settings.usdCnyRate)) ||
+    (settings.exchangeRate?.mode !== "automatic" && usdRate !== (settings.usdCnyRate == null ? "" : String(settings.usdCnyRate))) ||
     shopDrafts.some((item) => item.clear || !!item.apiKey.trim()) ||
     JSON.stringify(shopDrafts.map((item) => ({ shopName: item.shopName, purpose: item.purpose }))) !== JSON.stringify(settings.shopKeys || [])
   ), [settings, baseUrl, apiKey, clearKey, models, usdRate, shopDrafts]);
@@ -92,7 +97,7 @@ export function RelaySettingsPanel({ onCatalogChange }: { onCatalogChange: () =>
   }
 
   async function save() {
-    const prepared = prepareRelaySettingsUpdate({ baseUrl, apiKey, clearKey, models, usdCnyRate: usdRate, shopKeys: shopDrafts });
+    const prepared = prepareRelaySettingsUpdate({ baseUrl, apiKey, clearKey, models, usdCnyRate: usdRate, usdCnyAutomatic: settings?.exchangeRate?.mode === "automatic", shopKeys: shopDrafts });
     if (prepared.error) {
       setFailed(true);
       setMessage(prepared.error);
@@ -180,7 +185,7 @@ export function RelaySettingsPanel({ onCatalogChange }: { onCatalogChange: () =>
       <div className="modelgw-panel-head compact">
         <div>
           <h2 id="relay-settings-heading">中转站管理</h2>
-          <p>设置平台上游地址、凭据和模型路由。仅管理员可管理，保存的凭据只在服务端使用。</p>
+          <p>设置模型目录、上游地址和历史兼容凭据。注册用户的创作调用使用各自的主备 Key，所有凭据仅在服务端使用。</p>
         </div>
       </div>
       <div className={styles.form}>
@@ -207,13 +212,18 @@ export function RelaySettingsPanel({ onCatalogChange }: { onCatalogChange: () =>
             </div>
             <div className={styles.fields}>
               <label className={styles.field}>
-                <span>美元结算汇率</span>
-                <input className={styles.input} inputMode="decimal" value={usdRate} onChange={(event) => setUsdRate(event.target.value)} placeholder="例如 7.2" disabled={!!busy} />
-                <small className={styles.hint}>1 美元换算的人民币。中转站返回 actual_cost 时，网站积分按这笔美元费用乘汇率，再乘套餐倍率。没有这笔费用时仍按模型目录费率。留空表示不启用美元换算。网站余额不会充进中转站。</small>
+                <span>{settings.exchangeRate?.mode === "automatic" ? "美元兑人民币 · 每日自动汇率" : "美元结算汇率"}</span>
+                <input className={styles.input} inputMode="decimal" value={usdRate} onChange={(event) => setUsdRate(event.target.value)} placeholder={settings.exchangeRate?.mode === "automatic" ? "等待有效汇率" : "例如 7.2"} readOnly={settings.exchangeRate?.mode === "automatic"} disabled={!!busy} />
+                {settings.exchangeRate?.mode === "automatic" ? <>
+                  <small className={styles.hint}>ECB 参考汇率 · 数据日期：{settings.exchangeRate.referenceDate || "暂无"} · 最近成功获取：{beijingTime(settings.exchangeRate.fetchedAt)}（北京时间）。每天 00:05 自动获取最新已发布数据，周末、休市沿用最新有效参考日。</small>
+                  <small className={styles.hint}>{settings.exchangeRate.status === "unavailable" ? "有效汇率暂不可用，新的平台供应调用暂停受理。" : settings.exchangeRate.status === "stale" ? "正在沿用上一份有效汇率，自动任务会继续尝试更新。" : "自动汇率可用。"} 每笔调用保存汇率快照，跨日更新不会改变已受理调用的结算。</small>
+                  {settings.exchangeRate.errorCode && <small className={styles.hint}>最近一次自动更新未成功，请查看当前数据日期和最近成功获取时间。</small>}
+                  <small className={styles.hint}>上游返回美元费用 actual_cost 时，美元费用 × 本次汇率 × 套餐倍率换算人民币费用，再按人民币 0.1 元对应 1 积分换算；没有明确美元费用时按模型目录费率结算。此值为平台参考换算汇率。</small>
+                </> : <small className={styles.hint}>1 美元换算的人民币。中转站返回 actual_cost 时，网站积分按这笔美元费用乘汇率，再乘套餐倍率。没有这笔费用时仍按模型目录费率。留空表示不启用美元换算。网站余额不会充进中转站。</small>}
               </label>
             </div>
             <div>
-              <p className={styles.hint}>所有租户的模型调用都使用上方平台 Key，对应中转站的供应订阅。店铺 Key 不参与调用。Key 只保存在服务端，页面不回显。</p>
+              <p className={styles.hint}>注册用户的模型调用使用该用户独立的主 Key 和备用 Key。上方平台 Key 用于读取模型目录及兼容历史任务；店铺 Key 不参与调用。Key 只保存在服务端，页面不回显。</p>
               {shopDrafts.length ? shopDrafts.map((item, index) => (
                 <div className={styles.fields} key={`${item.purpose}-${index}`}>
                   <label className={styles.field}>

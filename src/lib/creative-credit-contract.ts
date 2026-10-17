@@ -23,7 +23,7 @@ export type CreativeCreditModel = {
 
 export type CreativeCreditPlan = { code: string; name: string; multiplierBps: number; ruleVersion: number };
 export type CreativeCreditsData = {
-  wallet: { balanceCents: number; balancePoints: number; exists: boolean };
+  wallet: { balanceCents: number; balancePoints: number; exists: boolean; availableCents?: number; availablePoints?: number; reservedCents?: number; reservedPoints?: number };
   plan: CreativeCreditPlan;
   models: CreativeCreditModel[];
   catalogError: string | null;

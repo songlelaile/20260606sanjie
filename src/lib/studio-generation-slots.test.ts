@@ -11,7 +11,7 @@ describe('shared studio browser concurrency slots',()=>{
     const storage={get length(){return local.size;},key:(index:number)=>[...local.keys()][index]||null,getItem:(key:string)=>local.get(key)??null,
       setItem:(key:string,value:string)=>local.set(key,value),removeItem:(key:string)=>local.delete(key)};
     const context=createContext({localStorage:storage,account,environment:'',workspaceScope:scope});
-    const start=source.indexOf('  function journal('),end=source.indexOf('  // Shared browser slots',start);
+    const start=source.indexOf('  function journal()'),end=source.indexOf('  // Shared browser slots',start);
     runInContext(source.slice(start,end),context);
     const journal=context.journal(),receipt={jobId:'one',accountKey:account,taskId:'task',shotId:'shot-1',batchId:'batch',createdAt:100},other={...receipt,jobId:'two',shotId:'shot-2'};
     journal.write(receipt);journal.write(other);

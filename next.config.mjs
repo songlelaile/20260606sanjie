@@ -6,6 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   outputFileTracingRoot: __dirname,
+  experimental: { cpus: 1, webpackMemoryOptimizations: true },
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   // Preserve the raw server origin for internal rewrites behind the TLS proxy.

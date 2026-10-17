@@ -70,6 +70,21 @@ describe("creative credit display and safe demonstration", () => {
     await h.respond(1, { data: { ...data, wallet: { balanceCents: 24000, balancePoints: 2400 } } });
     expect(h.text()).toContain("2,400");
   });
+  it("供应结算事件刷新可用余额和冻结积分，旧请求不能覆盖新余额", async () => {
+    const h = harness();
+    h.events.get("sanjie:credits-changed")?.(); h.render();
+    expect(h.requests[0].signal.aborted).toBe(true);
+    expect(h.requests[1].url).toBe("/api/creative/credits");
+    await h.respond(1, { data: { ...data, wallet: { ...data.wallet, availableCents: 9000, reservedCents: 3000 } } });
+    const balanceButton = h.nodes().find(node => node.type === "button" && h.text(node.props.children as Value).includes("可用积分"))!;
+    expect(h.text(balanceButton.props.children as Value)).toContain("900");
+    expect(h.text()).toContain("冻结 300 积分");
+    await h.respond(0, { data: { ...data, wallet: { balanceCents: 24000, balancePoints: 2400 } } });
+    expect(h.text(balanceButton.props.children as Value)).toContain("900");
+    expect(h.text()).not.toContain("2,400");
+    expect(h.text()).toContain("购买积分");
+  });
+
   it("rounds each actual request and distinguishes four-image grouping", () => {
     const h = harness();
     expect(h.quote(data.models[0], 2, 10001)?.costCents).toBe(102);
@@ -90,8 +105,7 @@ describe("creative credit display and safe demonstration", () => {
     expect(h.text()).toContain("本次预计 4 积分");
     h.click("模拟扣分并查看记录");
     expect(h.text()).toContain("演示记录"); expect(h.text()).toContain("1,200 → 1,196");
-    expect(h.text()).toContain("仅演示，未发起 API 请求");
-    expect(h.text()).not.toContain("真实扣分0 积分");
+    expect(h.text()).toContain("仅演示，未发起 API 请求"); expect(h.text()).not.toContain("真实扣分0 积分");
     expect(h.requests.every(request => request.url.startsWith("/api/creative/credits"))).toBe(true);
     expect(h.requests).toHaveLength(2); // account + actual ledger GET on initial open
     h.click("重置演示"); expect(h.text()).not.toContain("演示记录");

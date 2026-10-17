@@ -4,8 +4,8 @@ import { AIAccessError, setAIAccessActiveShop, type AIAccessAuthorization } from
 import type { AiAccessOperation } from "@/lib/ai-access-operation-policy";
 import { getCreativeAccessForSession } from "@/lib/creative-entitlements";
 import { getDmpAutomationAccessForSession } from "@/lib/tool-entitlements";
-import { getDmpBusinessReport, listDmpBusinessReportSummaries } from "@/lib/dmp-report-store";
-import { listAvailableGatewayModels } from "@/lib/model-gateway/runtime-catalog";
+import { getDmpBusinessReport, listDmpBusinessReportSummaries } from "@/lib/ai-access-production-reports";
+import { GATEWAY_MODELS } from "@/lib/model-gateway/catalog";
 
 /** Direct services only. No arbitrary proxy, reusable web session or credential forwarding. */
 export async function executeAiAccessOperation(operation: AiAccessOperation, authorization: AIAccessAuthorization): Promise<unknown> {
@@ -20,7 +20,7 @@ export async function executeAiAccessOperation(operation: AiAccessOperation, aut
       return { shops, activeShopId: authorization.activeShopId };
     }
     case "models.list": {
-      const models = await listAvailableGatewayModels();
+      const models = GATEWAY_MODELS;
       return { models: models.map(({ id, label, kind, provider }) => ({ id, label, kind, provider })) };
     }
     case "shops.activate": {

@@ -143,19 +143,16 @@ function periodMetric(
   if (!table) return undefined;
   const valueIndex = columnIndex(table, aliases);
   if (valueIndex < 0) return undefined;
-  const roleIndex = columnIndex(table, ["对象", "角色"]);
-  const rolePattern = side === "subject" ? /主体|本店/ : /目标对手|对手|竞品/;
-  const roleRow = roleIndex >= 0
-    ? table.rows.find((candidate) => rolePattern.test(String(candidate[roleIndex] ?? "")))
-    : undefined;
   const idIndex = columnIndex(table, ["商品ID", "商品编号"]);
   const targetId = side === "subject" ? report.item.id : report.item.competitorId;
-  const sameIdentity = Boolean(report.item.id && report.item.id === report.item.competitorId);
-  let row = sameIdentity ? roleRow : undefined;
-  if (!row && idIndex >= 0 && targetId) {
-    row = table.rows.find((candidate) => String(candidate[idIndex] ?? "").trim() === targetId);
+  let row = idIndex >= 0 && targetId
+    ? table.rows.find((candidate) => String(candidate[idIndex] ?? "").trim() === targetId)
+    : undefined;
+  const roleIndex = columnIndex(table, ["对象", "角色"]);
+  if (!row && roleIndex >= 0) {
+    const pattern = side === "subject" ? /主体|本店/ : /目标对手|对手|竞品/;
+    row = table.rows.find((candidate) => pattern.test(String(candidate[roleIndex] ?? "")));
   }
-  if (!row) row = roleRow;
   if (!row && table.rows.length === 2) row = table.rows[side === "subject" ? 0 : 1];
   return row?.[valueIndex];
 }

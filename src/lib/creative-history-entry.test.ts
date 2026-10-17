@@ -72,27 +72,6 @@ describe("safe existing generation history entry", () => {
     expect(h.bridge.openHistory).not.toHaveBeenCalled();
   });
 
-  it("rejects an iframe reload that retains its element and window while account validation is pending", async () => {
-    const h = fixture(), waiting = deferred<string>();
-    h.bridge.getAccountKey.mockImplementation(() => waiting.promise);
-    const opened = openCreativeHistory(() => h.frame, h.abort.signal);
-    const rejected = expect(opened).rejects.toThrow("创作页面已切换");
-    Object.defineProperty(h.frame, "contentDocument", { value: { ...h.document } });
-    waiting.resolve("tenant:alice"); await rejected;
-    expect(h.bridge.openHistory).not.toHaveBeenCalled();
-  });
-
-  it.each(["frame", "account"])("rejects a late dialog response after its %s changes", async kind => {
-    const h = fixture(), waiting = deferred<{ ok: boolean }>();
-    h.bridge.openHistory.mockImplementation(() => waiting.promise);
-    let current: HTMLIFrameElement | null = h.frame;
-    const opened = openCreativeHistory(() => current, h.abort.signal);
-    const rejected = expect(opened).rejects.toThrow(kind === "frame" ? "创作页面已切换" : "登录账号已变化");
-    await vi.waitFor(() => expect(h.bridge.openHistory).toHaveBeenCalledOnce());
-    if (kind === "frame") current = null; else h.account.key = "tenant:bob";
-    waiting.resolve({ ok: true }); await rejected;
-  });
-
   it("stops polling on timeout and cannot open after a late identity response", async () => {
     vi.useFakeTimers();
     const h = fixture(), waiting = deferred<string>();

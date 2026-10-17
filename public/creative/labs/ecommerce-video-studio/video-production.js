@@ -8,19 +8,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, Contract) {
   'use strict';
 
-  // 官方刊例的 720p / 5 秒、无视频参考输入显示价（非促销）。
-  // https://docs.volcengine.com/docs/ark/model-pricing?lang=zh
-  // Fast: 108000 tokens × 37 元 / 百万 tokens = 3.996 元，显示并预算为 4.00 元。
-  var PRICE_VERSION = 'volcengine-list-2026-10-10-fast-no-ref-720p';
-  var PRICES = Object.freeze({ 'seedance-2.0-mini': 2.48, 'seedance-2.0-fast': 4.00, 'seedance-2.0': 4.97, 'seedance-2.5': 7.56 });
-  var RESOLUTION_PRICES = Object.freeze({
-    'seedance-2.0-mini': Object.freeze({ '480p': 1.16, '720p': 2.48 }),
-    'seedance-2.0-fast': Object.freeze({ '480p': 1.86, '720p': 4.00 }),
-    'seedance-2.0': Object.freeze({ '480p': 2.31, '720p': 4.97, '1080p': 12.39, '4k': 25.27 }),
-    'seedance-2.5': Object.freeze({ '480p': 3.36, '720p': 7.56, '1080p': 18.71 })
-  });
+  var PRICES = Object.freeze({ 'seedance-2.0-mini': 2.48, 'seedance-2.0': 4.97, 'seedance-2.5': 7.56 });
   var MODES = Object.freeze(['economic', 'balanced', 'quality']);
-  var BUDGET_PRODUCT_KEYS = Object.freeze(['seedance-2.0-mini', 'seedance-2.0-fast']);
   function error(code, message, details) {
     var value = new Error(message); value.code = code; value.name = 'VideoProductionError';
     if (details !== undefined) value.details = details;
@@ -37,7 +26,6 @@
     return value !== '' && value != null && Number.isFinite(Number(value)) ? Number(value) : fallback;
   }
   function round(value) { return Math.round((value + Number.EPSILON) * 100) / 100; }
-  function timelineSecond(value) { return Math.round(value * 1000) / 1000; }
   function id(prefix) {
     return prefix + '_' + (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10));
   }
@@ -50,17 +38,15 @@
   }
   function normalizeOptions(raw) {
     raw = raw || {};
-    var mode = String(raw.mode || raw.preset || 'quality');
+    var mode = String(raw.mode || raw.preset || 'economic');
     if (MODES.indexOf(mode) < 0) throw error('PRODUCTION_MODE_INVALID', '请选择经济、均衡或品质方案。');
-    var budgetProductKey = String(raw.budgetProductKey || 'seedance-2.0-mini');
-    if (BUDGET_PRODUCT_KEYS.indexOf(budgetProductKey) < 0) throw error('PRODUCTION_BUDGET_MODEL_INVALID', '预算模型只能选择 Seedance 2.0 Mini 或 Fast。');
     var budget = finite(raw.budgetYuan, 30);
     var attempts = finite(raw.maxAttempts, 1);
     var ai = finite(raw.hybridAiSeconds, 10);
     if (budget < 0 || budget > 100000) throw error('PRODUCTION_BUDGET_INVALID', '预算必须为 0–100000 元。');
     if (!Number.isInteger(attempts) || attempts < 1 || attempts > 2) throw error('PRODUCTION_ATTEMPTS_INVALID', '每镜最多尝试次数必须为 1–2 次。');
     if (!Number.isInteger(ai) || ai < 0 || ai > 15 || ai % 5 !== 0) throw error('PRODUCTION_AI_DURATION_INVALID', '混合方案 AI 时长只能为 0、5、10 或 15 秒。');
-    var result = { mode: mode, budgetProductKey: budgetProductKey, budgetYuan: round(budget), maxAttempts: attempts, hybridAiSeconds: ai };
+    var result = { mode: mode, budgetYuan: round(budget), maxAttempts: attempts, hybridAiSeconds: ai };
     if (raw.totalDurationSeconds != null) result.totalDurationSeconds = totalDuration(raw.totalDurationSeconds);
     return freeze(result);
   }
@@ -68,9 +54,12 @@
     if (shot && shot.kind === 'local') return 0;
     var request = shot && (shot.request || shot) || {};
     var key = shot && shot.productKey || request.productKey;
-    var rate = RESOLUTION_PRICES[key] && RESOLUTION_PRICES[key][request.resolution];
+    var rate = PRICES[key];
     var duration = finite(shot && shot.durationSeconds, finite(request.durationSeconds, 0));
     if (!rate) throw error('PRODUCTION_PRICE_UNKNOWN', '该模型没有已核对的镜头参考价格。');
+    if (request.resolution !== '720p' || ['16:9', '9:16'].indexOf(request.ratio) < 0) {
+      throw error('PRODUCTION_PRICE_UNKNOWN', '预算仅支持 720p 的 16:9 或 9:16，不估算其他画幅。');
+    }
     if (duration < 4 || duration > 15) throw error('PRODUCTION_SHOT_DURATION_INVALID', 'AI 镜头时长必须为 4–15 秒。');
     if ((request.videos && request.videos.length) || (request.audios && request.audios.length) || request.referenceVideo) {
       throw error('PRODUCTION_REFERENCE_PRICE_UNKNOWN', '参考视频/音频输入费用未计入此估价，禁止据此提交。');
@@ -106,58 +95,34 @@
     }
     return storyboard;
   }
-  function dimensions(resolution, ratio) {
-    var shortEdge = { '480p': 480, '720p': 720, '1080p': 1080, '4k': 2160 }[resolution];
-    var parts = String(ratio).split(':').map(Number);
-    if (!shortEdge || parts.length !== 2 || !parts.every(function (n) { return Number.isFinite(n) && n > 0; })) {
-      throw error('PRODUCTION_DIMENSIONS_INVALID', '请明确选择成片分辨率和画面比例；自动比例无法保证交付尺寸。');
-    }
-    function even(n) { return Math.round(n / 2) * 2; }
-    return { width: even(shortEdge * Math.max(1, parts[0] / parts[1])), height: even(shortEdge * Math.max(1, parts[1] / parts[0])) };
-  }
-  function storyboardWindow(storyboard, start, end) {
-    return storyboard.filter(function (story) { return story.startSecond < end && story.endSecond > start; }).map(function (story, index) {
-      var from = Math.max(start, story.startSecond), to = Math.min(end, story.endSecond);
-      return Object.assign({}, clone(story), { id: story.id + ':at:' + start, sourceStoryboardId: story.id,
-        order: index + 1, startSecond: timelineSecond(from - start), endSecond: timelineSecond(to - start), durationSeconds: timelineSecond(to - from),
-        continuation: from > story.startSecond, continuesAfter: to < story.endSecond });
-    });
-  }
   function storyForSlot(storyboard, index, count) {
     if (!storyboard.length) return null;
     var duration = storyboard[storyboard.length - 1].endSecond;
     var at = (index + 0.5) / count * duration;
     return storyboard.find(function (shot) { return at >= shot.startSecond && at < shot.endSecond; }) || storyboard[storyboard.length - 1];
   }
-  function aiRequest(original, key, stories, index, count, images) {
+  function aiRequest(original, key, story, index, count, images) {
     var route = original.creativeRoute || 'free_direct';
     if (route === 'reference_rebuild' || route === 'audio_visual') route = 'storyboard_direct';
     if (route === 'elements_compose' && images.length < 2) route = images.length ? 'hero_product' : 'free_direct';
     if (route === 'hero_product' && !images.length) route = 'free_direct';
-    var details = stories.map(function (story) {
-      return story.startSecond + '–' + story.endSecond + ' 秒：' + [story.visual, story.composition, story.camera, story.motion, story.rhythm,
-        story.continuation ? '从上一镜既有姿态继续此动作，不重做起始动作' : '', story.continuesAfter ? '动作在镜末保持可衔接状态，下一镜继续' : ''].filter(Boolean).join('；');
-    }).join('\n');
+    var details = story ? [story.visual, story.composition, story.camera, story.motion, story.rhythm].filter(Boolean).join('；') : '';
     var supplement = [
       original.supplementalRequirements || '',
       '商品锁定：保持参考商品的轮廓、比例、包装版式、材质、颜色、Logo 与可见文字一致，不虚构卖点。',
       '这是成片的第 ' + (index + 1) + '/' + count + ' 镜，只生成这一镜的 5 秒内容，不重复生成完整视频。',
       details ? '已确认对应分镜：' + details : '按原用户脚本为该镜头安排一个清晰画面与动作。',
-      '每一帧必须是真实连续动态视频：按分镜执行人物、手部、商品与镜头动作，禁止静态图片、幻灯片、定格画面或仅缩放原图。',
-      '连续性：保持人物身份、商品、服装、光线、空间、行进方向与动作阶段一致；如附有上一镜尾帧，从该姿态平滑延续，避免重复起步或突然跳变。',
-      '确认口播由独立配音服务按脚本重新生成。上传音频仅作参考，严禁把上传音频原样加入结果。视频镜头不含口播，合成时再按确认时间轴配音。'
+      '视频与音频素材仅用于本地剪辑，未作为本次模型参考输入。字幕、Logo 叠加与剪辑在本地完成。'
     ].filter(Boolean).join('\n');
     var raw = Object.assign({}, clone(original), {
       mode: 'direct', creativeRoute: route, productKey: key, durationSeconds: 5,
-      resolution: original.resolution, audioMode: 'silent', generateSound: false, narration: false, narrationLanguage: '', images: clone(images), videos: [], audios: [],
+      resolution: '720p', audioMode: 'silent', generateSound: false, narration: false, narrationLanguage: '', images: clone(images), videos: [], audios: [],
       generationVideos: [], referenceAudios: [], referenceVideos: [], referenceVideo: null, referenceFrames: [],
       storyboard: [], scriptConfirmed: false, reviewFingerprint: '', reviewConfirmedAt: '',
       script: String(original.script || original.confirmedScript || original.goal || original.prompt || '').trim(),
       supplementalRequirements: supplement
     });
     if (!raw.script) throw error('PRODUCTION_SCRIPT_REQUIRED', '请先填写或确认用户脚本。');
-    // Keep all confirmed scene intervals, including scene changes within a five-second provider task.
-    // A direct request otherwise normalizes storyboard away, so the explicit timeline is also in the prompt.
     var rights = original.rights || original.assetRights || {};
     raw.rights = { confirmed: rights.confirmed === true, confirmedAt: rights.confirmedAt || '', fingerprint: Contract.assetRightsFingerprint(raw) };
     return clone(Contract.normalizeRequest(raw, { stage: 'submit' }));
@@ -167,46 +132,54 @@
     if (!input || typeof input !== 'object') throw error('PRODUCTION_REQUEST_INVALID', '缺少原始创作请求。');
     var request = clone(input), options = normalizeOptions(rawOptions);
     var total = totalDuration(options.totalDurationSeconds == null ? request.durationSeconds : options.totalDurationSeconds);
-    var size = dimensions(request.resolution, request.ratio);
+    if (['16:9', '9:16'].indexOf(request.ratio) < 0) throw error('PRODUCTION_PRICE_UNKNOWN', '成本方案仅支持 16:9 或 9:16，请先选择画幅。');
     assertRights(request);
-    var count = total / 5, aiCount = count;
-    var storyboard = confirmedStoryboard(request, true);
-    if (storyboard.length && Math.abs(storyboard[storyboard.length - 1].endSecond - total) > 0.01) {
-      throw error('PRODUCTION_STORYBOARD_DURATION_MISMATCH', '确认分镜的总时长与成片时长不一致，请调整后重新确认；不会拉伸或改写已确认时间轴。');
-    }
+    var count = total / 5, aiCount = options.mode === 'economic' ? options.hybridAiSeconds / 5 : count;
+    var storyboard = confirmedStoryboard(request, aiCount > 0);
     var images = selected(request.images || request.productImages);
     var videos = selected(request.videos || request.generationVideos || (request.mode === 'remix' ? [] : request.referenceVideos));
-    if (videos.length) throw error('PRODUCTION_REFERENCE_PRICE_UNKNOWN', '视频参考输入的预算尚未配置，不能静默丢弃参考视频；请使用关键帧参考或先配置视频参考计价。');
-    var limits = Contract.MODEL_CAPABILITIES[request.productKey];
-    if (!limits) throw error('PRODUCTION_MODEL_INVALID', '所选模型不存在。');
-    if (images.length >= limits.imageMax && count > 1) throw error('PRODUCTION_CONTINUITY_REFERENCE_LIMIT', '连续动作需要为上一镜尾帧预留 1 张图片参考位；请减少一张参考图后重新确认。');
-    var planId = id('production');
+    var sources = images.map(function (asset) { return { id: assetId(asset), kind: 'image', asset: asset }; })
+      .concat(videos.map(function (asset) { return { id: assetId(asset), kind: 'video', asset: asset }; })).filter(function (source) { return !!source.id; });
+    if (aiCount > count) throw error('PRODUCTION_AI_DURATION_INVALID', '混合 AI 时长不能超过成片时长。');
+    if (options.mode === 'economic' && count > aiCount && !sources.length) {
+      throw error('PRODUCTION_LOCAL_ASSET_REQUIRED', '经济方案需要已有商品图片或实拍视频；没有素材不能制作本地镜头。');
+    }
+    var aiPositions = {};
+    for (var aiIndex = 0; aiIndex < aiCount; aiIndex++) {
+      aiPositions[aiCount === 1 ? 0 : Math.round(aiIndex * (count - 1) / (aiCount - 1))] = true;
+    }
+    var planId = id('production'), localIndex = 0;
     var shots = Array.from({ length: count }, function (_, index) {
-      var key = request.productKey;
-      var stories = storyboardWindow(storyboard, index * 5, (index + 1) * 5);
+      var isAi = options.mode !== 'economic' || !!aiPositions[index];
+      var key = options.mode === 'quality' ? request.productKey : (options.mode === 'balanced' && index % 3 === 2 ? 'seedance-2.0' : 'seedance-2.0-mini');
+      var story = storyForSlot(storyboard, index, count);
       var shot = {
-        id: planId + '_shot_' + (index + 1), index: index, kind: 'ai',
+        id: planId + '_shot_' + (index + 1), index: index, kind: isAi ? 'ai' : 'local',
         durationSeconds: 5, startSecond: index * 5, endSecond: (index + 1) * 5,
-        productKey: key, estimatedYuan: 0, storyboard: stories,
-        continuity: index ? { previousShotId: planId + '_shot_' + index, required: true } : null,
-        sourceStoryboardId: stories.length ? stories[0].sourceStoryboardId : '', subtitle: '',
-        subtitleCues: stories.map(function (story) { return { startSecond: story.startSecond, endSecond: story.endSecond, text: story.narration }; })
+        productKey: isAi ? key : '', estimatedYuan: 0,
+        sourceStoryboardId: story ? story.id : '', subtitle: story ? String(story.narration || '') : ''
       };
-        shot.request = aiRequest(request, key, stories, index, count, images);
+      if (isAi) {
+        shot.request = aiRequest(request, key, story, index, count, images);
         shot.estimatedYuan = estimateShot(shot); shot.reservedYuan = Math.ceil(shot.estimatedYuan * 110) / 100;
+      } else {
+        var source = sources[localIndex++ % sources.length];
+        shot.sourceAssetId = source.id; shot.sourceKind = source.kind; shot.sourceStartSeconds = 0; shot.reservedYuan = 0;
+      }
       return shot;
     });
     var estimate = round(shots.reduce(function (sum, shot) { return sum + shot.estimatedYuan; }, 0));
     var reserved = round(shots.reduce(function (sum, shot) { return sum + shot.reservedYuan; }, 0));
+    var audios = selected(request.audios || request.referenceAudios);
+    var music = audios.find(function (asset) { return asset.role === 'rhythm'; }) || audios[0];
     return freeze({
-      id: planId, version: 2, priceVersion: PRICE_VERSION, createdAt: new Date().toISOString(), options: options, request: request,
+      id: planId, version: 1, createdAt: new Date().toISOString(), options: options, request: request,
       shots: shots, totalSeconds: total, aiSeconds: aiCount * 5, localSeconds: total - aiCount * 5,
       estimateYuan: estimate, reservedEstimateYuan: reserved, maximumGenerationYuan: round(estimate * options.maxAttempts), maximumReservedYuan: round(reserved * options.maxAttempts), withinBudget: reserved <= options.budgetYuan,
-      resolution: request.resolution, ratio: request.ratio, width: size.width, height: size.height,
-      musicAssetIds: [], audioTracks: [], referenceAudioIds: selected(request.audios || request.referenceAudios).map(assetId),
-      narrationRequired: request.audioMode !== 'silent',
-      estimateScope: '所选模型与分辨率的动态镜头参考价；脚本配音单列计费，实际结算以回执为准。',
-      adjustments: []
+      resolution: '720p', ratio: request.ratio, width: request.ratio === '9:16' ? 720 : 1280, height: request.ratio === '9:16' ? 1280 : 720,
+      musicAssetIds: music && assetId(music) ? [assetId(music)] : [],
+      estimateScope: '首轮 5 秒 AI 镜头参考价；不含生图、素材采购、存储或付费剪辑，不承诺实际结算价。',
+      adjustments: [request.resolution !== '720p' ? '本方案统一以 720p 生成与交付。' : '', request.audioMode && request.audioMode !== 'silent' ? 'AI 镜头使用静音生成，已上传声音仅在本地合成。' : '', audios.length > 1 ? '本地合成使用第一个节奏/声音素材，其余音频未混入。' : ''].filter(Boolean)
     });
   }
 
@@ -235,34 +208,7 @@
       if (role === 'narration' && track.loop === true) throw error('PRODUCTION_NARRATION_LOOP_INVALID', '人声不能循环播放。');
       seen[trackId] = true;
       return { id: trackId, assetId: sourceId, role: role, volume: volume(track.volume, role === 'narration' ? 1 : 0.25),
-        startSeconds: start, loop: role === 'music' && track.loop !== false,
-        origin: track.origin, scriptFingerprint: track.scriptFingerprint, requestId: track.requestId,
-        endSeconds: track.endSeconds, maxDurationSeconds: track.maxDurationSeconds };
-    });
-  }
-  function narrationFingerprint(plan) {
-    var request = plan.request || {};
-    return Contract.fingerprint([String(request.script || ''), (request.storyboard || []).map(function (story) {
-      return [story.id, story.startSecond, story.endSecond, story.narration || ''];
-    })], 'narration_');
-  }
-  function assertGeneratedNarration(plan, tracks, enabled) {
-    if (!(plan.version >= 2)) return;
-    var expected = (plan.request && plan.request.storyboard || []).filter(function (story) { return String(story.narration || '').trim(); });
-    if (!plan.narrationRequired && tracks.length) throw error('PRODUCTION_UNEXPECTED_AUDIO', '已选择无口播，不能加入未确认的声音轨道。');
-    if (plan.narrationRequired && (!expected.length || expected.length !== tracks.length || enabled !== true)) {
-      throw error('PRODUCTION_SCRIPT_NARRATION_REQUIRED', '按脚本重新生成的配音尚未全部就绪，不能用上传原音频或静音代替。');
-    }
-    var fingerprint = narrationFingerprint(plan), references = plan.referenceAudioIds || [];
-    var starts = Object.create(null);
-    tracks.forEach(function (track) {
-      var segment = expected.find(function (story) { return Math.abs(story.startSecond - track.startSeconds) < 0.001 && Math.abs(story.endSecond - track.endSeconds) < 0.001; });
-      if (track.origin !== 'script_narration' || track.scriptFingerprint !== fingerprint || !track.requestId ||
-          references.indexOf(track.assetId) >= 0 || track.role !== 'narration' || !segment || starts[track.startSeconds] ||
-          !Number.isFinite(track.maxDurationSeconds) || Math.abs(track.maxDurationSeconds - (segment.endSecond - segment.startSecond)) > 0.001) {
-        throw error('PRODUCTION_NARRATION_BINDING_INVALID', '配音回执与确认脚本或分镜不一致，不能混入成片；原素材保留。');
-      }
-      starts[track.startSeconds] = true;
+        startSeconds: start, loop: role === 'music' && track.loop !== false };
     });
   }
   function abortable(promise, signal, timeout) {
@@ -335,10 +281,6 @@
     context.fillStyle = '#ffffff'; context.textAlign = 'center'; context.textBaseline = 'top';
     lines.forEach(function (text, index) { context.fillText(text, width / 2, height - boxHeight - padding / 2 + index * lineHeight); });
   }
-  function subtitleAt(shot, second) {
-    if (!Array.isArray(shot.subtitleCues)) return shot.subtitle;
-    return shot.subtitleCues.filter(function (cue) { return second >= cue.startSecond && second < cue.endSecond; }).map(function (cue) { return cue.text; }).filter(Boolean).join('\n');
-  }
   // Live MediaRecorder WebM 通常缺 Duration；补入标准 EBML Info，保证下载后可读取真实时长。
   function vint(bytes, offset, isId) {
     var first = bytes[offset], mask = 128, length = 1;
@@ -408,19 +350,15 @@
     try {
       aborted(signal);
       if (!root.document || !root.MediaRecorder) throw error('PRODUCTION_RECORDER_UNAVAILABLE', '当前浏览器没有 MediaRecorder，无法本地制作视频。');
-      if (!plan || !Array.isArray(plan.shots) || !plan.shots.length) throw error('PRODUCTION_PLAN_INVALID', '镜头计划无效。');
-      var dynamic = plan.version >= 2;
+      if (!plan || !Array.isArray(plan.shots) || !plan.shots.length || ['16:9', '9:16'].indexOf(plan.ratio) < 0) throw error('PRODUCTION_PLAN_INVALID', '镜头计划无效。');
       var total = plan.shots.reduce(function (sum, shot) {
         if (['local', 'ai'].indexOf(shot.kind) < 0 || !Number.isFinite(shot.durationSeconds) || shot.durationSeconds <= 0) throw error('PRODUCTION_PLAN_INVALID', '镜头类型或时长无效。');
-        if (dynamic && shot.kind !== 'ai') throw error('PRODUCTION_STATIC_SHOT_FORBIDDEN', '动态成片不能使用静态图片镜头；原素材和历史计划保留，请创建动态计划。');
         return sum + shot.durationSeconds;
       }, 0);
       if (Math.abs(total - plan.totalSeconds) > 0.01 || total < 1 || total > 60) throw error('PRODUCTION_PLAN_INVALID', '时间轴与成片时长不一致。');
       var tracks = normalizeAudioTracks(audioSelection, total);
-      assertGeneratedNarration(plan, tracks, settings.generatedAudio);
-      var sourceAudioVolume = dynamic ? 0 : preserveAudio ? volume(requestedSourceVolume, tracks.length ? 0.35 : 1) : 0;
-      var size = dimensions(dynamic ? plan.resolution : '720p', plan.ratio);
-      var width = size.width, height = size.height;
+      var sourceAudioVolume = preserveAudio ? volume(requestedSourceVolume, tracks.length ? 0.35 : 1) : 0;
+      var width = plan.ratio === '9:16' ? 720 : 1280, height = plan.ratio === '9:16' ? 1280 : 720;
       var canvas = root.document.createElement('canvas'); canvas.width = width; canvas.height = height;
       if (!canvas.captureStream) throw error('PRODUCTION_CAPTURE_UNAVAILABLE', '当前浏览器无法录制 Canvas 视频。');
       var context = canvas.getContext('2d', { alpha: false });
@@ -458,8 +396,6 @@
           }
           if (!Number.isFinite(effectiveDuration) || effectiveDuration <= 0) throw error('PRODUCTION_MEDIA_DURATION', '源媒体没有有效时长。');
           if (shot && shot.kind === 'ai' && effectiveDuration < shot.durationSeconds - 0.25) throw error('PRODUCTION_VIDEO_TOO_SHORT', '生成镜头比计划短，请先更换该镜头。');
-          // Providers align the long edge to codec blocks; the selected p tier describes the short edge.
-          if (dynamic && Math.min(media.videoWidth, media.videoHeight) < Math.min(width, height)) throw error('PRODUCTION_VIDEO_RESOLUTION_MISMATCH', '供应商镜头尺寸小于所选分辨率，不能放大后冒充原分辨率交付。');
           var start = shot && finite(shot.sourceStartSeconds, 0) || 0;
           if (start < 0 || start >= effectiveDuration) throw error('PRODUCTION_SOURCE_TIME_INVALID', '本地视频截取起点超出素材时长。');
           if (start || media.seeking || Math.abs(media.currentTime - start) > 0.001) { var seeked = mediaReady(media, 'seeked', signal); media.currentTime = start; await seeked; }
@@ -498,9 +434,6 @@
           throw error('PRODUCTION_NARRATION_TOO_LONG', '人声需要 ' + (track.startSeconds + buffer.duration).toFixed(2) + ' 秒，超过 ' + total + ' 秒成片；请延长成片或自行编辑人声，不能自动截断。',
             { assetId: track.assetId, durationSeconds: buffer.duration, startSeconds: track.startSeconds, totalDurationSeconds: total });
         }
-        if (dynamic && buffer.duration > track.maxDurationSeconds + 0.01) {
-          throw error('PRODUCTION_NARRATION_SEGMENT_TOO_LONG', '新配音长于已确认的分镜口播时段，请调整口播或仅重做该段配音；不会截断、加速或覆盖下一镜。', { requestId: track.requestId, durationSeconds: buffer.duration, allowedSeconds: track.maxDurationSeconds });
-        }
         var audioSource = audioContext.createBufferSource(), audioGain = audioContext.createGain();
         audioSource.buffer = buffer; audioSource.loop = track.loop;
         audioGain.gain.value = track.volume; audioSource.connect(audioGain); audioGain.connect(destination);
@@ -514,7 +447,7 @@
         silentClock.connect(silentGain); silentGain.connect(destination); audioNodes.push(silentClock, silentGain);
       }
       aborted(signal);
-      drawMedia(context, visuals[0].media, width, height, 0, visuals[0].kind === 'image'); drawSubtitle(context, subtitleAt(plan.shots[0], 0), width, height);
+      drawMedia(context, visuals[0].media, width, height, 0, visuals[0].kind === 'image'); drawSubtitle(context, plan.shots[0].subtitle, width, height);
       stream = canvas.captureStream(30);
       if (destination) destination.stream.getAudioTracks().forEach(function (track) { stream.addTrack(track); });
       recorder = new root.MediaRecorder(stream, { mimeType: recorderMime(), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
@@ -548,7 +481,7 @@
               aborted(signal); if (visual.kind === 'video' && visual.media.error) throw error('PRODUCTION_MEDIA_INVALID', '视频播放中发生解码错误，合成未完成。');
               var elapsed = Math.min(currentShot.durationSeconds, Math.max(0, (root.performance.now() - started) / 1000));
               drawMedia(context, visual.media, width, height, elapsed / currentShot.durationSeconds, visual.kind === 'image');
-              drawSubtitle(context, subtitleAt(currentShot, elapsed), width, height);
+              drawSubtitle(context, currentShot.subtitle, width, height);
               progress({ stage: 'rendering', shotIndex: index, totalShots: visuals.length, secondsRendered: rendered + elapsed, progress: (rendered + elapsed) / total });
               if (elapsed >= currentShot.durationSeconds) { done(); resolve(); }
               else timer = root.setTimeout(frame, Math.min(1000 / 30, (currentShot.durationSeconds - elapsed) * 1000));
@@ -582,5 +515,5 @@
       urls.forEach(function (url) { root.URL.revokeObjectURL(url); });
     }
   }
-  return Object.freeze({ MODES: MODES, PRICES_PER_FIVE_SECONDS: PRICES, RESOLUTION_PRICES: RESOLUTION_PRICES, dimensions: dimensions, normalizeOptions: normalizeOptions, normalizeAudioTracks: normalizeAudioTracks, estimateShot: estimateShot, buildPlan: buildPlan, renderTimeline: renderTimeline, fixWebmDuration: fixWebmDuration });
+  return Object.freeze({ MODES: MODES, PRICES_PER_FIVE_SECONDS: PRICES, normalizeOptions: normalizeOptions, normalizeAudioTracks: normalizeAudioTracks, estimateShot: estimateShot, buildPlan: buildPlan, renderTimeline: renderTimeline, fixWebmDuration: fixWebmDuration });
 });

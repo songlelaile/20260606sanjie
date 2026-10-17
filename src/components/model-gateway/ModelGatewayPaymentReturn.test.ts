@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import * as scanPaymentContract from "@/lib/model-gateway/scan-payment-contract";
 
 const source = ts.transpileModule(readFileSync(resolve("src/components/model-gateway/ModelGatewayConsole.tsx"), "utf8"), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX }
@@ -41,6 +42,7 @@ function paymentConsole(search: string, plans: Array<{ code: string; name: strin
       if (name === "./RelaySettingsPanel") return { RelaySettingsPanel: "RelaySettingsPanel" };
       if (name === "./UserSupplyPanel") return { UserSupplyPanel: "UserSupplyPanel" };
       if (name === "../creative/ScanPaymentDialog") return { ScanPaymentDialog: "ScanPaymentDialog" };
+      if (name === "@/lib/model-gateway/scan-payment-contract") return scanPaymentContract;
       throw new Error(name);
     }
   }));

@@ -184,7 +184,7 @@
   function measurementClaims(text) {
     var out = [], re = /([-+]?\d+(?:\.\d+)?)\s*(kg|公斤|千克|mm|毫米|cm|厘米|m|米|l|升|%|％|db|分贝|w|瓦|v|伏)/ig, match;
     while ((match = re.exec(String(text || '')))) {
-      out.push({ value: String(Number(match[1])), unit: claimUnit(match[2]), raw: match[0], index: match.index });
+      out.push({ value: String(Number(match[1])), unit: claimUnit(match[2]), raw: match[0] });
     }
     return out;
   }
@@ -202,26 +202,6 @@
     var visualContext = /(?:字号|字体|标题|副标题|说明文字|注释文字|文字|文案区|画面|主体|商品|产品|构图|布局|版式|留白|图文|视觉|占画面|面积占比)/i.test(nearby);
     var claimContext = /(?:率|功效|效果|有效|提升|提高|降低|减少|增长|准确|成功|满意|好评|转化|点击|除菌|抑菌|杀菌|抗菌|去除|治愈|治疗|防护|节省|省电|省水)/i.test(nearby);
     return (visualPath || visualContext) && !claimContext;
-  }
-
-  function photographicFocalLength(entry, claim) {
-    if (!entry || !claim || claim.unit !== 'mm') return false;
-    var path = String(entry.fieldPath || '');
-    if (/(?:文案|标题|卖点|商品声明|产品名称|copy|headline|title|sellingPoint|claim)/i.test(path) ||
-        !/(?:镜头|焦距|焦段|中文(?:详情)?提示词|生图提示词|构图|画面|摄影|focal|camera|lens|imagePrompt|generationPrompt|composition)/i.test(path)) return false;
-    var text = String(entry.text || '');
-    var index = Number(claim.index);
-    if (!isFinite(index) || index < 0) return false;
-    var before = text.slice(Math.max(0, index - 32), index).split(/[,，。;；\n]/).pop();
-    var after = text.slice(index + claim.raw.length, index + claim.raw.length + 32).split(/[,，。;；\n]/)[0];
-    var nearby = before + claim.raw + after;
-    // mm 也可能是商品尺寸；视觉字段不能掩盖其中夹带的规格声明。
-    if (/(?:长度|宽度|高度|厚度|深度|尺寸|直径|口径|规格|长宽|厚|外壳|结构|部件|包装|参数)/i.test(nearby) ||
-        /(?:商品|产品|机身)\s*(?:的)?\s*[:：=为是]?\s*$/.test(before)) return false;
-    var opticalField = /(?:^|\.)(?:镜头|摄影镜头|焦距|焦段|focalLength|cameraLens)$/i.test(path);
-    var opticalBefore = /(?:镜头|焦距|焦段|focal\s*length)\s*[:：=为是]?\s*$/i.test(before);
-    var opticalAfter = /^(?:\s*(?:摄影|拍摄|人像|商业|等效|全画幅|定焦|广角|长焦|中焦|中长焦|标准)){0,4}\s*(?:镜头|焦距|焦段|focal\s*length|lens)/i.test(after);
-    return opticalField || opticalBefore || opticalAfter;
   }
 
   function factMatchesMeasurement(fact, claim) {
@@ -271,9 +251,9 @@
       });
       measurementClaims(entry.text).forEach(function (claim) {
         // 字号、留白、主体占画面等百分比是视觉执行参数，不是商品功效或规格。
-        // 仅豁免明确的视觉百分比和摄影焦段；商品参数及“除菌率 99%”一类
+        // 仅豁免明确的视觉百分比；kg/mm 等商品参数以及“除菌率 99%”一类
         // 带功效/指标语境的百分比仍必须经过输入或已验证事实证据校验。
-        if (visualLayoutPercentage(entry, claim) || photographicFocalLength(entry, claim)) return;
+        if (visualLayoutPercentage(entry, claim)) return;
         var pending = facts.find(function (fact) { return !claimFactVerified(fact) && factMatchesMeasurement(fact, claim); });
         if (pending) {
           reject(entry, 'needs_evidence_measurement', claim.raw, 'needs_evidence_fact_used_as_claim', pending);

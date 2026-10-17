@@ -72,13 +72,13 @@ const IMAGE_SURFACES = [
     id: "main",
     label: "主图",
     icon: ImageIcon,
-    src: "/creative/labs/image-prompt-lab/promptlab.html?mode=main&source=web&studio=1"
+    src: "/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1"
   },
   {
     id: "detail",
     label: "详情",
     icon: LayoutPanelTop,
-    src: "/creative/labs/image-prompt-lab/promptlab.html?mode=detail&source=web&studio=1"
+    src: "/creative/labs/image-prompt-lab/promptlab.html?mode=detail&detailMode=link&source=web&studio=1"
   },
   {
     id: "ad",
@@ -186,14 +186,6 @@ export function CreativeStudio({
   const [navigationPending, setNavigationPending] = useState(false);
   const [historyNotice, setHistoryNotice] = useState("");
   const [apiConfigNotice, setApiConfigNotice] = useState("");
-  const [apiConfigRetry, setApiConfigRetry] = useState(0);
-  const handledApiConfigRetry = useRef(0);
-
-  useEffect(() => {
-    // A failed menu action belongs to the visible workbench, not the next one.
-    setHistoryNotice("");
-    setApiConfigNotice("");
-  }, [kind, surface, batch]);
 
   function bridgeFor(id: string): WorkflowBridge | undefined {
     return (frames.current[id]?.contentWindow as (Window & { SanjieViralWorkflowBridge?: WorkflowBridge }) | null)?.SanjieViralWorkflowBridge;
@@ -462,12 +454,11 @@ export function CreativeStudio({
   }, [initialHistory, kind, surface, batch, navigationPending, router]);
 
   useEffect(() => {
-    if (!initialApiConfig && apiConfigRetry === handledApiConfigRetry.current) {
+    if (!initialApiConfig) {
       setApiConfigNotice(previous => previous === "正在打开自定义配置 API…" ? "" : previous);
       return;
     }
     if (navigationPending) return;
-    handledApiConfigRetry.current = apiConfigRetry;
     const abort = new AbortController();
     const frameId = batch ? BATCH_FRAME_ID : surface;
     setApiConfigNotice("正在打开自定义配置 API…");
@@ -481,7 +472,7 @@ export function CreativeStudio({
         router.replace(`${path}${query}`, { scroll: false });
       });
     return () => abort.abort();
-  }, [initialApiConfig, apiConfigRetry, kind, surface, batch, navigationPending, router]);
+  }, [initialApiConfig, kind, surface, batch, navigationPending, router]);
   const current = useMemo(
     () => ALL_IMAGE_SURFACES.find((item) => item.id === surface) || IMAGE_SURFACES[0],
     [surface]
@@ -604,13 +595,7 @@ export function CreativeStudio({
         <CreativeCredits />
         {navigationNotice ? <p role="alert" className={styles.navigationNotice}>{navigationNotice}</p> : null}
         {historyNotice ? <p role={historyNotice === "正在打开生图历史…" ? "status" : "alert"} className={styles.navigationNotice}>{historyNotice}</p> : null}
-        {apiConfigNotice ? <p role={apiConfigNotice === "正在打开自定义配置 API…" ? "status" : "alert"} className={styles.navigationNotice}>
-          {apiConfigNotice}
-          {apiConfigNotice !== "正在打开自定义配置 API…" ? <button type="button" className={styles.batchButton}
-            style={{ marginLeft: 12 }} disabled={navigationPending} onClick={() => setApiConfigRetry(previous => previous + 1)}>
-            重试打开 API 配置
-          </button> : null}
-        </p> : null}
+        {apiConfigNotice ? <p role={apiConfigNotice === "正在打开自定义配置 API…" ? "status" : "alert"} className={styles.navigationNotice}>{apiConfigNotice}</p> : null}
         {backgroundTasks.length > 0 ? <aside className={styles.backgroundTasks} aria-label="创作任务状态">
           <p className={styles.taskOverview}>执行中 {taskTotals.activeCount} · 回执待确认 {taskTotals.pendingReceiptCount}</p>
           {backgroundTasks.map(task => {

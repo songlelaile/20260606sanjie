@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { centsToPoints } from "@/lib/model-gateway/billing-contract";
+import * as allocationContract from "@/lib/model-gateway/scan-payment-contract";
 
 type Node = { type: string; props: Record<string, unknown> };
 type Value = Node | string | number | boolean | null | undefined | Value[];
@@ -66,7 +66,7 @@ function harness(extra: Record<string, unknown> = {}) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
       if (name === "react-dom") return { createPortal: (value: Value) => value };
-      if (name === "@/lib/model-gateway/billing-contract") return { centsToPoints };
+      if (name === "@/lib/model-gateway/scan-payment-contract") return allocationContract;
       if (name === "lucide-react") return new Proxy({}, { get: (_, key) => String(key) });
       if (name.endsWith(".module.css")) return { __esModule: true, default: new Proxy({}, { get: (_, key) => String(key) }) };
       throw new Error(name);
@@ -108,6 +108,33 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-02T01:
 afterEach(() => { vi.useRealTimers(); });
 
 describe("扫码充值交互与到账边界", () => {
+  it.each(["pending", "awaiting_capacity", "paid"])("已核验待分配状态 %s 隐藏所有重付入口，不假报到账或过期", async status => {
+    const h = harness({ resumeOrderId: pendingOrder.id });
+    await h.respond(0, options);
+    await h.respond(1, { data: { order: { ...pageOrder, status, creditAllocationState: "awaiting_capacity",
+      qrCodeDataUrl: pendingOrder.qrCodeDataUrl, expiresAt: "2026-10-02T00:00:00.000Z" } } });
+    expect(h.text()).toContain("已收款，积分待分配");
+    expect(h.text()).toContain("请勿再次付款");
+    expect(h.text()).not.toContain("二维码已过期");
+    expect(h.text()).not.toContain("支付成功");
+    expect(h.text()).not.toContain("重新选择支付方式");
+    expect(h.nodes().some(node => ["img", "iframe", "a"].includes(node.type))).toBe(false);
+    expect(h.onPaid).not.toHaveBeenCalled(); expect(h.events).toHaveLength(0);
+    h.click("查询分配状态");
+    expect(h.requests[2].url).toBe(`/api/model-gateway/checkout/${pendingOrder.id}`);
+    expect(h.requests.every(request => !request.options.method)).toBe(true);
+  });
+
+  it("原待分配订单真正入账后才刷新余额并发送一次到账事件", async () => {
+    const h = harness({ resumeOrderId: pendingOrder.id });
+    await h.respond(0, options);
+    await h.respond(1, { data: { order: { ...pageOrder, status: "awaiting_capacity", creditAllocationState: "awaiting_capacity" } } });
+    h.click("查询分配状态");
+    await h.respond(2, { data: { order: { ...pageOrder, status: "paid", creditAllocationState: "credited" } } });
+    expect(h.text()).toContain("支付成功"); expect(h.onPaid).toHaveBeenCalledOnce(); expect(h.events).toHaveLength(1);
+    expect(h.requests.every(request => !request.options.method)).toBe(true);
+  });
+
   it.each(["alipay", "wechat"])("保留 %s 原生二维码路径，不嵌入收银台", async paymentProvider => {
     const h = harness({ resumeOrderId: pendingOrder.id });
     await h.respond(0, options);

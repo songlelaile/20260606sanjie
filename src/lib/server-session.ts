@@ -14,8 +14,7 @@ export async function getCurrentUser() {
     return null;
   }
   const user = await prisma.user.findUnique({
-    where: { username: session.username },
-    include: { tenant: { select: { name: true } } }
+    where: { username: session.username }
   });
   if (!user || user.status !== "active" || user.tenantId !== session.tenantId ||
     (user.authRole === "admin" ? "admin" : "tenant") !== session.role) return null;

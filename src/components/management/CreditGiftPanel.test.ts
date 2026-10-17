@@ -46,6 +46,7 @@ const gift = {
 const overview = (gifts: unknown[] = [], ready = true) => ({ data: { pool: { ready, balanceCents: ready ? 5000 : null, balancePoints: ready ? 500 : null }, gifts } });
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 let storage: Map<string, string>;
+let listeners: Map<string, () => void>;
 
 function resetHooks() { state.cursor = 0; state.values.clear(); state.refs.clear(); state.effects = []; state.mounted = false; }
 function render(props: Partial<Parameters<typeof CreditGiftPanel>[0]> = {}) {
@@ -92,7 +93,8 @@ async function readyForm() {
 beforeEach(() => {
   resetHooks();
   storage = new Map();
-  vi.stubGlobal("window", { confirm: vi.fn(() => true), sessionStorage: {
+  listeners = new Map();
+  vi.stubGlobal("window", { confirm: vi.fn(() => true), addEventListener: (name: string, listener: () => void) => listeners.set(name, listener), removeEventListener: (name: string) => listeners.delete(name), sessionStorage: {
     getItem: vi.fn((key: string) => storage.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => { storage.set(key, value); }),
     removeItem: vi.fn((key: string) => { storage.delete(key); })
@@ -108,16 +110,99 @@ describe("credit gift form and pool readiness", () => {
     expect(parseCreditGiftPoints("214748364.7")).toBe(2147483647);
     for (const value of ["", "0", "0.0", "-1", "1e2", "Infinity", "NaN", "1.01", "1.", ".5", "214748364.8", "123456789012345678901"]) expect(parseCreditGiftPoints(value)).toBeNull();
   });
-  it("shows unknown pool balance and locks submission until the accounting pool is ready", async () => {
+  it("accepts the old ready=false response as uninitialized and locks submission", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response(overview([], false)));
     const tree = await mount();
     const html = renderToStaticMarkup(tree);
-    expect(html).toContain("未知");
-    expect(html).toContain("积分记账系统完成并接通总积分池后可赠送");
+    expect(html).toContain("未配置");
+    expect(html).toContain("总积分池尚未初始化，无法确认可赠送余额");
+    expect(html).not.toContain("60618.0775600000");
+    expect(html).not.toContain("Codex_credit");
     expect(html).not.toContain("客户乙");
     expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
     await click(tree, "确认赠送积分");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    ["uninitialized", "未配置", "总积分池尚未初始化，无法确认可赠送余额", "总积分池尚未初始化，当前不能赠送。"],
+    ["pending", "待核对", "总积分池已建立", "来源余额需重新核对，当前不能赠送。"],
+    ["invalid", "异常", "总积分池状态或余额异常", "总积分池状态异常，当前不能赠送。"]
+  ])("distinguishes the %s pool state and exposes the actual submission blocker", async (poolState, label, hint, blocker) => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { pool: { state: poolState, ready: false, balanceCents: null, balancePoints: null }, gifts: [] } }));
+    let tree = await mount();
+    change(tree, "自定义积分", "100.5"); change(tree, "赠送理由", "状态验收"); tree = render();
+    const text = textContent(tree);
+    expect(text).toContain(label); expect(text).toContain(hint); expect(text).toContain(blocker);
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+    expect(button(tree, "确认赠送积分").props["aria-describedby"]).toBe("credit-gift-submit-blocker");
+    expect(text).not.toContain("读取失败");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("shows loading separately and never reports a not-yet-loaded pool as uninitialized", async () => {
+    let resolve!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const tree = await mount();
+    expect(textContent(tree)).toContain("读取中…");
+    expect(textContent(tree)).toContain("正在读取总积分池，请等待核对完成");
+    expect(textContent(tree)).not.toContain("尚未配置");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+    resolve(response(overview())); await flush();
+    expect(textContent(render())).not.toContain("读取中…");
+  });
+  it.each([401, 403, 503])("shows GET %s failure separately from uninitialized", async (status) => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ error: "读取失败" }, status));
+    const tree = await mount();
+    expect(textContent(tree)).toContain("总积分池读取失败，请先刷新核对");
+    expect(textContent(tree)).toContain("读取失败不能判断是否已配置");
+    expect(textContent(tree)).not.toContain("尚未配置总积分池");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+  });
+  it.each([
+    { state: "ready", ready: false, balanceCents: null, balancePoints: null },
+    { state: "pending", ready: true, balanceCents: 5000, balancePoints: 500 },
+    { state: "unknown", ready: false, balanceCents: null, balancePoints: null },
+    { state: 123, ready: false, balanceCents: null, balancePoints: null },
+    { state: { toString: "pending" }, ready: false, balanceCents: null, balancePoints: null },
+    { state: "ready", ready: true, balanceCents: 5000, balancePoints: 5000 }
+  ])("treats inconsistent or malformed explicit state as a read failure (%j)", async (pool) => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { pool, gifts: [] } }));
+    const tree = await mount();
+    expect(textContent(tree)).toContain("总积分池读取失败，请先刷新核对");
+    expect(textContent(tree)).not.toContain("尚未配置总积分池");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+  });
+  it("does not mislabel an invalid JSON response as uninitialized", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(new Response("broken", { status: 200 }));
+    const tree = await mount();
+    expect(textContent(tree)).toContain("读取失败");
+    expect(textContent(tree)).not.toContain("尚未配置总积分池");
+  });
+  it("shows an empty but ready pool as zero and explains insufficient balance", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { pool: { state: "ready", ready: true, balanceCents: 0, balancePoints: 0 }, gifts: [] } }));
+    let tree = await mount(); change(tree, "自定义积分", "0.1"); change(tree, "赠送理由", "状态验收"); tree = render();
+    expect(renderToStaticMarkup(tree)).toContain("<strong>0<small> 积分</small></strong>");
+    expect(textContent(tree)).toContain("总积分池可赠送余额不足，请调整积分数量");
+    expect(textContent(tree)).not.toContain("未配置");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+  });
+  it("explains missing account, quantity and reason before enabling the ready-state button", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { ...overview().data, pool: { ...overview().data.pool, state: "ready" } } }));
+    let tree = await mount({ initialUserId: "" });
+    expect(textContent(tree)).toContain("请选择启用中的赠送账号");
+    change(tree, "赠送账号", "user-a"); tree = render();
+    expect(textContent(tree)).toContain("请填写大于 0、最多 1 位小数的积分数量");
+    change(tree, "自定义积分", "100.5"); tree = render();
+    expect(textContent(tree)).toContain("请填写 2 至 500 字的赠送理由");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+    for (const value of ["x", "x".repeat(501), "有效\n理由"]) {
+      change(tree, "赠送理由", value); tree = render();
+      expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+      expect(textContent(tree)).toContain("请填写 2 至 500 字的赠送理由");
+    }
+    change(tree, "赠送理由", "状态验收"); tree = render();
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(false);
+    expect(button(tree, "确认赠送积分").props["aria-describedby"]).toBeUndefined();
+    expect(textContent(tree)).not.toContain("请填写 2 至 500 字的赠送理由，不能");
   });
   it("shows the target and pool deduction before confirmation and honors cancellation", async () => {
     const tree = await readyForm();
@@ -129,7 +214,66 @@ describe("credit gift form and pool readiness", () => {
   });
 });
 
+describe("explicit gift submission refreshes an adopted shared source", () => {
+  const pendingOverview = (available: unknown) => ({ data: { pool: { state: "pending", ready: false,
+    balanceCents: null, balancePoints: null, refreshOnSubmitAvailable: available }, gifts: [] } });
+  async function pendingForm() {
+    vi.mocked(fetch).mockResolvedValueOnce(response(pendingOverview(true)));
+    let tree = await mount(); change(tree, "自定义积分", "100.5"); change(tree, "赠送理由", " 内测赠送 "); tree = render();
+    expect(button(tree, "核对最新余额并赠送").props.disabled).toBe(false);
+    expect(textContent(tree)).toContain("余额足够且校验通过后才赠送");
+    expect(textContent(tree)).not.toContain("预计余额");
+    return tree;
+  }
+  it("keeps a pending null balance honest and cancelling confirmation sends no mutation", async () => {
+    const tree = await pendingForm(); vi.mocked(window.confirm).mockReturnValueOnce(false);
+    await click(tree, "核对最新余额并赠送");
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining("先读取最新上游余额并核对账本"));
+    expect(vi.mocked(window.confirm).mock.calls[0][0]).not.toContain("预计余额");
+    expect(fetch).toHaveBeenCalledTimes(1); expect(storage.size).toBe(0);
+  });
+  it("sends one original gift POST, never a separate source POST, and rejects insufficient backing without success", async () => {
+    const tree = await pendingForm(); let finish!: (value: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const first = click(tree, "核对最新余额并赠送"); await click(tree, "核对最新余额并赠送");
+    expect(fetch).toHaveBeenCalledTimes(2); expect(vi.mocked(fetch).mock.calls[1][0]).toBe(ENDPOINT);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body))).toEqual(payload);
+    expect(JSON.parse(storage.get(STORAGE_KEY)!)).toEqual(payload);
+    finish(response({ error: "总积分池可分配积分不足" }, 409)); await first;
+    expect(textContent(render())).toContain("本次赠送未成功"); expect(textContent(render())).not.toContain("赠送成功：");
+    expect(storage.size).toBe(0);
+  });
+  it("retains unknown outcomes and retries only the same gift key", async () => {
+    const tree = await pendingForm(); vi.mocked(fetch).mockRejectedValueOnce(new Error("fixture offline"));
+    await click(tree, "核对最新余额并赠送"); expect(textContent(render())).toContain("赠送结果待核对");
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: gift })).mockResolvedValueOnce(response(overview([gift])));
+    await click(render(), "重试同一笔赠送");
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[1][1]?.body))).toEqual(payload);
+    expect(JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body))).toEqual(payload);
+    expect(crypto.randomUUID).toHaveBeenCalledTimes(1); expect(storage.size).toBe(0);
+    expect(textContent(render())).toContain("赠送成功：");
+    expect(vi.mocked(fetch).mock.calls.every(call => call[0] === ENDPOINT)).toBe(true);
+  });
+  it.each([false, undefined])("a missing or false capability remains blocked (%s)", async available => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(pendingOverview(available)));
+    let tree = await mount(); change(tree, "自定义积分", "100.5"); change(tree, "赠送理由", "状态验收"); tree = render();
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+    await click(tree, "确认赠送积分"); expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { state: "pending", ready: false, balanceCents: null, balancePoints: null, refreshOnSubmitAvailable: "true" },
+    { state: "uninitialized", ready: false, balanceCents: null, balancePoints: null, refreshOnSubmitAvailable: true },
+    { state: "invalid", ready: false, balanceCents: null, balancePoints: null, refreshOnSubmitAvailable: true },
+    { state: "ready", ready: true, balanceCents: 5000, balancePoints: 500, refreshOnSubmitAvailable: true }
+  ])("malformed or contradictory refresh capability cannot enable submission (%j)", async pool => {
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { pool, gifts: [] } }));
+    const tree = await mount(); expect(textContent(tree)).toContain("总积分池读取失败");
+    expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
+  });
+});
+
 describe("credit gift uncertainty and idempotent recovery", () => {
+  it("source adoption event refreshes only GET and preserves an unsent gift draft", async () => { let tree = await readyForm(); expect(listeners.has("sanjie-credit-pool-updated")).toBe(true); vi.mocked(fetch).mockResolvedValueOnce(response(overview())); listeners.get("sanjie-credit-pool-updated")!(); await flush(); tree = render(); expect(field(tree, "自定义积分").props.value).toBe("100.5"); expect(field(tree, "赠送理由").props.value).toBe(" 内测赠送 "); expect(button(tree, "确认赠送积分").props.disabled).toBe(false); expect(fetch).toHaveBeenCalledTimes(2); expect(vi.mocked(fetch).mock.calls[1][1]).not.toHaveProperty("method", "POST"); expect(storage.size).toBe(0); });
   it("sends only the documented payload and prevents duplicate clicks while pending", async () => {
     const tree = await readyForm();
     let finish!: (response: Response) => void;

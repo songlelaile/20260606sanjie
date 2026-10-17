@@ -8,6 +8,7 @@ import {
   runThreeStageCalculation
 } from "@/lib/algorithm/three-stage";
 import { Prisma } from "@prisma/client";
+import { hashPassword } from "@/lib/accounts";
 import {
   assessComparisonWindow,
   canConcludeComparison
@@ -20,6 +21,13 @@ import {
 } from "@/lib/dashboard-share";
 import type { BusinessDiagnosisSource } from "@/lib/business-diagnosis";
 import { prisma } from "@/lib/db";
+import { lockGatewayAccountingIdentities } from "@/lib/model-gateway/accounting-coordination";
+import { assertGatewayAccountingDeletionSafe } from "@/lib/model-gateway/credit-pool-accounting";
+import { GatewayBillingError } from "@/lib/model-gateway/billing-contract";
+import {
+  getDmpAutomationAccessForUserIds,
+  NO_DMP_AUTOMATION_ACCESS
+} from "@/lib/tool-entitlements";
 import { resolveAiEncryptionKeySource } from "@/lib/ai-encryption-key";
 import {
   DEFAULT_AI_PROVIDER,
@@ -102,12 +110,14 @@ import type {
   GrowthProfitConfigRow,
   Intervention,
   InterventionComparison,
+  InviteCode,
   ManagementDashboard,
   ProductBreakthroughResult,
   ProductComparison,
   ProductInvestmentResult,
   ImportBatch,
   ImportValidationResult,
+  ManagedUser,
   PrefillItem,
   ProductTag,
   ProductSourceRow,
@@ -1708,10 +1718,182 @@ export async function getVersions(cycleId?: string): Promise<VersionSnapshot[]> 
 // 邀请码（关系表，跨租户索引）
 // ——————————————————————————————————————————————————————————————
 
-export {
-  getInviteCodes, createInviteCode, deleteInviteCode, consumeInviteCode,
-  getManagedUsers, setManagedUserStatus, deleteManagedUser, resetManagedUserPassword
-} from "@/lib/store/user-store";
+export async function getInviteCodes(): Promise<InviteCode[]> {
+  const { tenantId } = await requireShopScope();
+  const rows = await prisma.inviteCode.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: "desc" }
+  });
+  return rows.map(toDomainInvite);
+}
+
+export async function createInviteCode(input: {
+  note: string;
+  maxUses: number;
+}): Promise<InviteCode> {
+  const { tenantId } = await requireShopScope();
+  const actor = await currentActorName();
+  const code = await generateUniqueInviteCode();
+  const row = await prisma.inviteCode.create({
+    data: {
+      tenantId,
+      code,
+      registrationUrl: `/login?invite=${code}`,
+      usedCount: 0,
+      maxUses: input.maxUses,
+      note: input.note.trim() || "未备注",
+      createdBy: actor
+    }
+  });
+  return toDomainInvite(row);
+}
+
+export async function deleteInviteCode(id: string): Promise<boolean> {
+  const { tenantId } = await requireShopScope();
+  const result = await prisma.inviteCode.deleteMany({ where: { id, tenantId } });
+  return result.count > 0;
+}
+
+/**
+ * 消费一个邀请码（注册时调用，无会话上下文）：校验存在性与剩余次数，
+ * 成功后 usedCount + 1。被吊销（删除）的码自然失效。
+ */
+export async function consumeInviteCode(rawCode: string): Promise<{ ok: true; invite: InviteCode } | { ok: false; error: string }> {
+  const code = rawCode.trim().toUpperCase();
+  if (!code) {
+    return { ok: false, error: "请输入邀请码" };
+  }
+  const invite = await prisma.inviteCode.findUnique({ where: { code } });
+  if (!invite) {
+    return { ok: false, error: "邀请码无效或已失效" };
+  }
+  if (invite.usedCount >= invite.maxUses) {
+    return { ok: false, error: "邀请码使用次数已用尽" };
+  }
+  const consumed = await prisma.inviteCode.updateMany({
+    where: { id: invite.id, usedCount: { lt: invite.maxUses } },
+    data: { usedCount: { increment: 1 } }
+  });
+  if (consumed.count === 0) {
+    return { ok: false, error: "邀请码使用次数已用尽" };
+  }
+  const updated = await prisma.inviteCode.findUnique({ where: { id: invite.id } });
+  if (!updated) {
+    return { ok: false, error: "邀请码无效或已失效" };
+  }
+  return { ok: true, invite: toDomainInvite(updated) };
+}
+
+export async function getManagedUsers(): Promise<ManagedUser[]> {
+  const scope = await requireShopScope();
+  const users = await prisma.user.findMany({
+    where: scope.isAdmin ? {} : { tenantId: scope.tenantId },
+    orderBy: { createdAt: "desc" }
+  });
+  const dmpAccessByUserId = await getDmpAutomationAccessForUserIds(users.map((user) => user.id));
+  return users.map((u) => ({
+    id: u.id,
+    tenantId: u.tenantId,
+    name: u.name,
+    username: u.username,
+    email: u.email,
+    role: u.role as ManagedUser["role"],
+    shopName: u.shopName,
+    status: u.status as ManagedUser["status"],
+    dmpAutomationAccess: dmpAccessByUserId.get(u.id) ?? { ...NO_DMP_AUTOMATION_ACCESS },
+    createdAt: u.createdAt.toISOString(),
+    lastActiveAt: u.lastActiveAt.toISOString()
+  }));
+}
+
+type ManagedUserActionResult =
+  | { ok: true }
+  | { ok: false; error: string; status: number };
+
+/** 校验目标用户可被当前管理员操作：非本人、非管理员账号；管理账号可跨租户管理租户账号。 */
+async function guardManagedUserAction(id: string): Promise<ManagedUserActionResult> {
+  const scope = await requireShopScope();
+  const session = await getServerSession();
+  if (!session || !scope.isAdmin) {
+    return { ok: false, error: "仅管理员可执行此操作", status: 403 };
+  }
+  const user = await prisma.user.findUnique({ where: { id } });
+  if (!user) {
+    return { ok: false, error: "用户不存在", status: 404 };
+  }
+  if (session && user.username === session.username) {
+    return { ok: false, error: "不能对当前登录的账号执行此操作", status: 400 };
+  }
+  if (user.authRole === "admin") {
+    return { ok: false, error: "不能操作管理员账号", status: 403 };
+  }
+  return { ok: true };
+}
+
+async function mutateManagedUser(id: string, mutate: (tx: Prisma.TransactionClient) => Promise<unknown>): Promise<ManagedUserActionResult> {
+  const session = await getServerSession();
+  if (!session) return { ok: false, error: "仅管理员可执行此操作", status: 403 };
+  const identity = await prisma.user.findUnique({ where: { username: session.username }, select: { id: true } });
+  if (!identity) return { ok: false, error: "仅管理员可执行此操作", status: 403 };
+  try {
+    return await prisma.$transaction(async tx => {
+      await lockGatewayAccountingIdentities(tx, [identity.id, id]);
+      const admin = await tx.user.findUnique({ where: { id: identity.id } });
+      const target = await tx.user.findUnique({ where: { id } });
+      if (!admin || admin.status !== "active" || admin.authRole !== "admin" || admin.tenantId !== session.tenantId) return { ok: false, error: "仅管理员可执行此操作", status: 403 };
+      if (!target) return { ok: false, error: "用户不存在", status: 404 };
+      if (target.id === admin.id || target.authRole === "admin") return { ok: false, error: "不能操作当前账号或管理员账号", status: 403 };
+      await mutate(tx);
+      return { ok: true };
+    });
+  } catch (error) {
+    if (error instanceof GatewayBillingError) return { ok: false, error: "账号仍有积分、未核账付款或未完成请求，请先核账", status: error.status };
+    throw error;
+  }
+}
+
+/** 禁用/启用租户成员。禁用后该账号无法登录。 */
+export async function setManagedUserStatus(
+  id: string,
+  status: "active" | "disabled"
+): Promise<ManagedUserActionResult> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  return mutateManagedUser(id, tx => tx.user.update({ where: { id }, data: { status } }));
+}
+
+/** 删除租户成员（硬删除，账号即刻失效）。 */
+export async function deleteManagedUser(id: string): Promise<ManagedUserActionResult> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  return mutateManagedUser(id, async tx => {
+    await assertGatewayAccountingDeletionSafe(tx, id);
+    return tx.user.delete({ where: { id } });
+  });
+}
+
+/** 重置租户成员密码：生成 10 位临时密码并写库，明文仅随本次响应返回一次。 */
+export async function resetManagedUserPassword(
+  id: string
+): Promise<{ ok: true; password: string } | { ok: false; error: string; status: number }> {
+  const guard = await guardManagedUserAction(id);
+  if (!guard.ok) {
+    return guard;
+  }
+  // 去掉易混淆字符（0O1lI），降低口头/抄写传达出错率。
+  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const { randomInt } = await import("node:crypto");
+  let password = "";
+  for (let index = 0; index < 10; index += 1) {
+    password += alphabet[randomInt(alphabet.length)];
+  }
+  await prisma.user.update({ where: { id }, data: { password: hashPassword(password) } });
+  return { ok: true, password };
+}
 
 // ——————————————————————————————————————————————————————————————
 // 内部工具
@@ -1719,6 +1901,45 @@ export {
 
 function pushVersion(state: WorkspaceData, version: VersionSnapshot) {
   state.versions = pruneAdminVersionSnapshots([version, ...state.versions]);
+}
+
+function toDomainInvite(row: {
+  id: string;
+  tenantId: string;
+  code: string;
+  registrationUrl: string;
+  usedCount: number;
+  maxUses: number;
+  note: string;
+  createdBy: string;
+  createdAt: Date;
+}): InviteCode {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    code: row.code,
+    registrationUrl: row.registrationUrl,
+    usedCount: row.usedCount,
+    maxUses: row.maxUses,
+    note: row.note,
+    createdAt: row.createdAt.toISOString(),
+    createdBy: row.createdBy
+  };
+}
+
+async function generateUniqueInviteCode(): Promise<string> {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    let code = "";
+    for (let index = 0; index < 10; index += 1) {
+      code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    const existing = await prisma.inviteCode.findUnique({ where: { code } });
+    if (!existing) {
+      return code;
+    }
+  }
+  throw new Error("生成邀请码失败，请重试");
 }
 
 export class ImportRetentionError extends Error {

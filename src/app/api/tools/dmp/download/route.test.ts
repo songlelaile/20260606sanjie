@@ -33,7 +33,7 @@ describe("GET /api/tools/dmp/download", () => {
     const response = await GET();
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "该账号尚未开通达摩盘一体化自动取数｜少壮AI自动化，请联系管理员付费开通"
+      error: "该账号尚未开通少壮AI自动化-数据报告，请联系管理员付费开通"
     });
     expect(mocks.readFile).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe("GET /api/tools/dmp/download", () => {
     const response = await GET();
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
-      error: "达摩盘一体化自动取数｜少壮AI自动化的 30 天授权已到期，请联系管理员付费续费"
+      error: "少壮AI自动化-数据报告的 30 天授权已到期，请联系管理员付费续费"
     });
     expect(mocks.readFile).not.toHaveBeenCalled();
   });
@@ -61,12 +61,12 @@ describe("GET /api/tools/dmp/download", () => {
     expect(response.headers.get("content-type")).toBe("application/zip");
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-disposition")).toContain("filename*=UTF-8''");
-    expect(response.headers.get("content-disposition")).toContain("v2.3.55");
+    expect(response.headers.get("content-disposition")).toContain("v2.4.11");
     expect(mocks.readFile).toHaveBeenCalledWith(path.join(
       process.cwd(),
       "private-assets",
       "dmp",
-      "shaozhuang-dmp-unified-automation-v2.3.55.zip"
+      "shaozhuang-dmp-unified-automation-v2.4.11.zip"
     ));
     expect(Buffer.from(await response.arrayBuffer()).toString()).toBe("zip-bytes");
   });

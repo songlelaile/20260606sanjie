@@ -227,23 +227,6 @@
     const clear = root.querySelector('[data-action="clear-products"]'); if (clear) clear.disabled = !draft.products.length || isBusy();
   }
   function state() { return controller && controller.state || { slots: [] }; }
-  function renderCredits() {
-    const hints=window.SZCreativeCreditHints;if(!hints||!root||!bridge||!draft)return;
-    const config=bridgeConfig()||{},slots=state().slots||[];
-    const model=config.imageModel||currentModelInfo.model||'';
-    root.querySelectorAll('[data-action="analyze"]').forEach(button=>hints.chat(button,config.visionModel,'本次 1 项素材分析；整理方案为本地操作'));
-    hints.image($('ctGenerateBtn'),model,state().plan?Array(slots.filter(slot=>['ready','queued'].includes(slot.status)).length).fill(1):null,state().plan?'按已确认方案的待生成张数计算':'先整理并确认方案，按实际待生成张数估算');
-    hints.image($('ctRetryFailedBtn'),model,Array(slots.filter(slot=>slot.status==='failed').length).fill(1),'只重新请求失败项，成功图片保留');
-    root.querySelectorAll('[data-action="retry-shot"]').forEach(button=>hints.image(button,model,[1],'本次重新生成 1 张图片'));
-    if(material&&modalGenerationController){
-      const current=modalGenerationController.state,pending=contract.createMaterialPlan({kind:material.kind,config:clone(material.config)});
-      const same=pending.ok&&current.plan&&pending.sourceSignature===current.plan.sourceSignature;
-      const failed=(current.slots||[]).filter(slot=>slot.status==='failed').length,ready=(current.slots||[]).filter(slot=>['ready','queued'].includes(slot.status)).length;
-      const count=same&&failed?failed:same&&ready?ready:pending.ok?pending.shots.length:null;
-      hints.image($('ctMaterialGenerate'),model,count===null?null:Array(count).fill(1),`本次 ${count===null?'待确认':count} 张${material.kind==='model'?'模特':'场景'}素材；应用已有素材不再生成`);
-    }
-  }
-  window.SZCreativeCreditHints?.register('creative-tools',renderCredits);
   function renderPlans() {
     const target = $('ctPlanGrid'); if (!target) return;
     const plan = state().plan;
@@ -275,7 +258,7 @@
     let step = current.busy ? 'generate' : slots.length && done === slots.length ? 'done' : editable ? 'review' : draft.products.length ? 'plan' : 'upload';
     const stages = ['upload','plan','review','generate','done'], activeIndex = stages.indexOf(step);
     root.querySelectorAll('[data-step]').forEach((item) => { const index = stages.indexOf(item.dataset.step); item.classList.toggle('active',index === activeIndex); item.classList.toggle('complete',index < activeIndex); });
-    renderCredits();
+    renderCreditHints();
   }
   function resultSlots() { const current=state(); return (current.slots||[]).concat((current.previousResults||[]).filter((slot)=>slot.item)); }
   function itemImage(item) { return item && (item.url || item.image || item.dataUrl || item.imageUrl) || ''; }
@@ -296,8 +279,26 @@
       const archived = slot.archiveOk === true;
       return `<article class="ct-result"><button class="ct-result-image" type="button" data-action="preview-result" data-index="${index}"${image ? '' : ' disabled'} aria-label="${esc(image ? `预览${title}` : labels[slot.status] || slot.status)}">${image ? `<img src="${esc(image)}" alt="${esc(title)}">` : esc(labels[slot.status] || slot.status || '待生成')}</button><div class="ct-result-content"><h3>${esc(title)}${previous ? ' · 历史版本' : ''}</h3><p>${esc(labels[slot.status] || slot.status || '')}</p>${image ? `<p class="ct-note">${esc([slot.item.ratio,slot.item.resolution,slot.item.model].filter(Boolean).join(' · '))}</p>` : ''}${slot.error ? `<p class="ct-error">${esc(slot.error.message || slot.error)}</p>` : ''}${image ? `<p class="${archived ? 'ct-note success' : 'ct-error'}">${archived ? '已保存至本机历史' : '原件待补存'}${slot.archiveError ? `：${esc(slot.archiveError.message || slot.archiveError)}` : ''}</p>` : ''}<div class="ct-card-actions">${image ? `<button class="btn ghost" type="button" data-action="download-result" data-index="${index}">下载</button><button class="btn ghost" type="button" data-action="preview-result" data-index="${index}">对照预览</button>${!archived ? `<button class="btn ghost" type="button" data-action="retry-archive" data-index="${index}"${current.busy ? ' disabled' : ''}>补存原件</button>` : ''}${typeof bridge.openResultAction === 'function' ? (bridge.resultActions || []).map((action) => `<button class="btn ghost" type="button" data-action="result-${esc(action)}" data-index="${index}">${esc({edit:'编辑 / 引导重生',video:'生成视频',fission:'裂变衍生'}[action] || action)}</button>`).join('') : ''}` : ''}${!previous && ['failed','done','outdated'].includes(slot.status) ? `<button class="btn ghost" type="button" data-action="retry-shot" data-id="${esc(slot.shot && slot.shot.id || '')}"${current.busy || current.uncertain || !modelReady ? ' disabled' : ''}>${['done','outdated'].includes(slot.status) ? '重新生成' : '重试生成'}</button>` : ''}</div></div></article>`;
     }).join('');
-    renderCredits();
+    renderCreditHints();
   }
+  function renderCreditHints() {
+    const hints=window.SZCreativeCreditHints;if(!hints||!root||!draft||!bridge)return;
+    const config=bridgeConfig()||{}, model=config.imageModel||config.model||'', current=state();
+    const pending=current.plan?(current.slots||[]).filter(slot=>!slot.item&&['ready','queued'].includes(slot.status)).map(()=>1):null;
+    const failed=(current.slots||[]).filter(slot=>!slot.item&&slot.status==='failed').map(()=>1);
+    root.querySelectorAll('[data-action="generate"]').forEach(button=>hints.image(button,model,pending,pending?`本次 ${pending.length} 张待生成图片；已完成原件保留`:'整理并保存方案后确认本次生成张数'));
+    root.querySelectorAll('[data-action="retry-failed"]').forEach(button=>hints.image(button,model,failed,`本次 ${failed.length} 张失败项重试；已有成功图片保留`));
+    root.querySelectorAll('[data-action="retry-shot"]').forEach(button=>hints.image(button,model,[1],'本次只重新生成此图 1 张；原结果保留'));
+    root.querySelectorAll('[data-action="analyze"]').forEach(button=>hints.chat(button,config.visionModel||config.textModel||'','本次 1 项商品素材分析；核对采用与整理方案为本地操作'));
+    if(material&&modalGenerationController&&$('ctMaterialGenerate')){
+      const next=contract.createMaterialPlan({kind:material.kind,config:clone(material.config)}), run=modalGenerationController.state;
+      const same=next.ok&&run.plan&&next.sourceSignature===run.plan.sourceSignature;
+      const failures=(run.slots||[]).filter(slot=>!slot.item&&slot.status==='failed'), ready=(run.slots||[]).filter(slot=>!slot.item&&['ready','queued'].includes(slot.status));
+      const count=same&&failures.length?failures.length:same&&ready.length?ready.length:next.ok?next.shots.length:null;
+      hints.image($('ctMaterialGenerate'),model,count===null?null:Array(count).fill(1),count===null?'确认素材生成参数后报价':`本次 ${count} 张${material.kind==='model'?'模特':'场景'}候选；应用已有素材为本地操作`);
+    }
+  }
+  window.SZCreativeCreditHints?.register('creative-tools',renderCreditHints);
   function apiSwitchLocked() {
     return isBusy() || Boolean(controller && controller.state.uncertain) || Boolean(modalGenerationController && modalGenerationController.state.uncertain);
   }
@@ -617,11 +618,6 @@
     renderMaterialHistory();
     } finally { generationStarting--;renderStatus();renderMaterialStatus(); }
   }
-  function dismissMaterial() {
-    if($('ctMaterialModal'))$('ctMaterialModal').hidden=true;
-    material=null;modalGenerationController=null;
-    if(modalReturnFocus&&modalReturnFocus.isConnected)modalReturnFocus.focus();
-  }
   async function closeMaterial() {
     if(!material)return;
     if(isBusy()){if($('ctMaterialStatus'))$('ctMaterialStatus').textContent='素材任务仍在执行，请等待返回或停止后续生成。';return;}
@@ -634,6 +630,11 @@
       dismissMaterial();
     } catch(error) { saveFault=true;throw error; }
     finally { navigationBusy=false;renderStatus();renderMaterialStatus(); }
+  }
+  function dismissMaterial() {
+    if($('ctMaterialModal'))$('ctMaterialModal').hidden=true;
+    material=null;modalGenerationController=null;
+    if(modalReturnFocus&&modalReturnFocus.isConnected)modalReturnFocus.focus();
   }
   function handleInput(event) {
     const input=event.target;
@@ -720,6 +721,6 @@
     initializing=false;renderStatus();renderMaterialStatus();
     if(window.SZ_LAB_STARTUP)window.SZ_LAB_STARTUP.ready();
   }
-  const start=()=>boot().catch((error)=>{startupFailed=true;if(window.SZ_LAB_STARTUP)window.SZ_LAB_STARTUP.fail(error.message||String(error));else if(root)root.innerHTML=`<section class="panel"><h2>创作工具暂未就绪</h2><p class="ct-message error" role="alert">${esc(error.message||error)}</p><p class="ct-note">请检查当前登录状态和统一 API 设置，然后重新打开此页面。</p></section>`;});
+  const start=()=>boot().catch((error)=>{startupFailed=true;initializing=false;if(window.SZ_LAB_STARTUP)window.SZ_LAB_STARTUP.fail(error.message||String(error));else if(root)root.innerHTML=`<section class="panel"><h2>创作工具暂未就绪</h2><p class="ct-message error" role="alert">${esc(error.message||error)}</p><p class="ct-note">请检查当前登录状态和统一 API 设置，然后重新打开此页面。</p></section>`;});
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true});else start();
 })();

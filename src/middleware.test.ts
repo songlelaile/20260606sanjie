@@ -96,7 +96,7 @@ describe("authentication redirects behind the production proxy", () => {
         }
       }));
       expect(response.status).toBe(307);
-      expect(response.headers.get("location")).toBe("https://shaozhuangai.com/login");
+      expect(response.headers.get("location")).toBe(pathname === "/dashboards/operating-network" ? "https://shaozhuangai.com/login?returnTo=%2Fdashboards%2Foperating-network" : "https://shaozhuangai.com/login");
       expect(response.headers.get("cache-control")).toBe("private, no-store");
     }
   );

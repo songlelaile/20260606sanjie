@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/server-session";
-import { backfillUserSupplyKeys, listUserSupplyStatus } from "@/lib/model-gateway/user-supply";
+import { backfillUserSupplyKeys, listUserSupplyStatus, resetUserSupplyProvisioningFailures } from "@/lib/model-gateway/user-supply";
 import { getSub2ApiProvisioningView, saveSub2ApiProvisionConfig, Sub2ApiProvisionError } from "@/lib/model-gateway/sub2api-provisioner";
 import { readJsonWithLimit, RequestBodyTooLargeError } from "@/lib/read-json-with-limit";
 import { rejectsCrossSiteMutation } from "@/lib/request-security";
@@ -13,7 +13,10 @@ const MAX_BATCH_SIZE = 10;
 const SAFE_ERROR_CODES = new Set([
   "USER_SUPPLY_STORE_UNAVAILABLE", "USER_SUPPLY_PROVISION_NOT_CONFIGURED", "USER_SUPPLY_PROVISION_FAILED",
   "USER_SUPPLY_PROVISION_PENDING", "USER_SUPPLY_PROVIDER_UNCONFIRMED", "USER_SUPPLY_USER_DISABLED",
-  "USER_SUPPLY_DECRYPT_FAILED", "USER_SUPPLY_CREDENTIAL_MISMATCH", "USER_SUPPLY_LIMIT_INVALID"
+  "USER_SUPPLY_DECRYPT_FAILED", "USER_SUPPLY_CREDENTIAL_MISMATCH", "USER_SUPPLY_LIMIT_INVALID",
+  "supply_provisioning_rate_limited", "supply_provisioning_key_count_limit", "supply_provisioning_key_count_exceeded",
+  "supply_provisioning_auth_rejected", "supply_provisioning_group_forbidden", "supply_provisioning_inactive_owner",
+  "supply_provisioning_invalid_config", "supply_provisioning_invalid_session", "supply_provisioning_unconfigured"
 ]);
 const CONFIG_ERRORS: Record<string, { message: string; status: number }> = {
   supply_provisioning_invalid_config: { message: "请填写有效配发账号、密码、上游分组和每 Key 额度", status: 400 },
@@ -148,7 +151,10 @@ export async function PUT(request: Request) {
       return responseError("请仅提交配发账号、密码、分组和每 Key 额度", "INVALID_SUPPLY_CONFIG", 400);
     }
     const view = await saveSub2ApiProvisionConfig(config);
-    return NextResponse.json({ data: safeProvisioningView(view) }, { headers: PRIVATE_HEADERS });
+    let retryReset: "ready" | "unavailable" = "ready";
+    try { await resetUserSupplyProvisioningFailures(); }
+    catch { retryReset = "unavailable"; }
+    return NextResponse.json({ data: { ...safeProvisioningView(view), retryReset } }, { headers: PRIVATE_HEADERS });
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return responseError("配发账号配置请求不能超过 4 KiB", "REQUEST_TOO_LARGE", 413);

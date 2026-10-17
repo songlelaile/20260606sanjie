@@ -1,3 +1,4 @@
+import { assertGatewayAllocationBudget } from "./credit-allocation-window";
 import "server-only";
 import crypto from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -9,7 +10,10 @@ import {
   GatewayBillingError
 } from "@/lib/model-gateway/billing";
 import type { GatewayBillingSnapshot, GatewayBillingAudit } from "@/lib/model-gateway/billing-contract";
+import { getGatewayAvailableBalance, isGatewayBillingHoldSettlement } from "@/lib/model-gateway/billing-hold";
 import type { VerifiedScanPayment } from "@/lib/model-gateway/scan-payment-providers";
+import { lockGatewayAccountingIdentities, lockGatewayAccountingPool } from "./accounting-coordination";
+import { assertGatewayPoolReady, assertGatewayPoolNewQuote, assertGatewayPoolUsageEvidence, moveGatewayPool, recordGatewaySourceUsage, refreshGatewaySharedPoolFromSource } from "./credit-pool-accounting";
 import {
   GatewayPaymentError,
   getGatewayManualPaymentConfig,
@@ -38,24 +42,17 @@ export function hashGatewayKey(key: string) {
 }
 
 export async function ensureGatewayWallet(userId: string) {
-  return prisma.gatewayWallet.upsert({
-    where: { userId },
-    update: {},
-    create: {
-      userId,
-      balanceCents: 0,
-      monthlyQuotaCents: 0,
-      planCode: "free",
-      planName: "体验版",
-      periodStart: new Date(),
-      periodEnd: new Date()
-    }
-  });
+  return prisma.$transaction(tx => lockGatewayBillingWallet(tx, userId));
 }
 
 export async function getGatewayOverview(userId: string) {
+  await ensureGatewayWallet(userId);
   const [wallet, keys, orders, usages] = await Promise.all([
-    ensureGatewayWallet(userId),
+    prisma.$transaction(async (tx) => {
+      const wallet = await tx.gatewayWallet.findUniqueOrThrow({ where: { userId } });
+      const balance = await getGatewayAvailableBalance(tx, userId);
+      return { ...wallet, ...balance };
+    }, { isolationLevel: "RepeatableRead" }),
     prisma.gatewayApiKey.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -64,7 +61,9 @@ export async function getGatewayOverview(userId: string) {
     prisma.gatewayOrder.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
-      take: 8
+      take: 8,
+      select: { id: true, userId: true, planCode: true, planName: true, amountCents: true, creditCents: true, status: true,
+        paymentProvider: true, paymentUrl: true, paidAt: true, createdAt: true, creditAllocationState: true }
     }),
     prisma.gatewayUsage.findMany({
       where: { userId },
@@ -135,7 +134,12 @@ export async function createGatewayOrder(userId: string, planCode: string) {
     throw new GatewayPaymentError("INVALID_PLAN", "套餐不存在或不可购买", 400);
   }
   const payment = getGatewayManualPaymentConfig();
-  return prisma.gatewayOrder.create({
+  return prisma.$transaction(async tx => {
+    await lockGatewayAccountingIdentities(tx, [userId]);
+    const awaiting = await tx.gatewayOrder.findFirst({ where: { userId, planCode, paymentProvider: payment.paymentProvider,
+      status: "pending", creditAllocationState: "awaiting_capacity" }, orderBy: { createdAt: "desc" } });
+    if (awaiting) return { ...awaiting, paymentUrl: "" };
+    return tx.gatewayOrder.create({
     data: {
       userId,
       planCode: plan.code,
@@ -145,6 +149,7 @@ export async function createGatewayOrder(userId: string, planCode: string) {
       paymentProvider: payment.paymentProvider,
       paymentUrl: payment.paymentUrl
     }
+    });
   });
 }
 
@@ -164,6 +169,10 @@ async function creditGatewayOrder(
     actor: { id: string; username: string; name: string } | null;
   }
 ) {
+  await lockGatewayAccountingIdentities(tx, [order.userId, ...(confirmation.actor ? [confirmation.actor.id] : [])]);
+  const pool = await lockGatewayAccountingPool(tx);
+  // Refresh under the global fence: a row read before waiting may already have been credited.
+  order = await tx.gatewayOrder.findUniqueOrThrow({ where: { id: order.id } });
   if (order.paymentProvider !== confirmation.provider) {
     throw new GatewayPaymentError("PAYMENT_PROVIDER_MISMATCH", "付款渠道与订单不一致，不能确认入账", 409);
   }
@@ -183,10 +192,41 @@ async function creditGatewayOrder(
   if (order.status !== "pending") {
     throw new GatewayPaymentError("ORDER_NOT_PAYABLE", "订单已关闭或失败，不能确认入账", 409);
   }
+  const evidence = await tx.gatewayCreditFundingEvidence.findUnique({ where: { orderId: order.id } });
+  if (evidence && (evidence.receipt !== confirmation.receipt || evidence.provider !== confirmation.provider ||
+    evidence.receivedAmountCents !== confirmation.receivedAmountCents || evidence.creditCents !== order.creditCents || evidence.userId !== order.userId)) {
+    throw new GatewayPaymentError("ORDER_CONFIRMATION_CONFLICT", "已核验付款证据不一致，请核对收款流水", 409);
+  }
+  if (evidence) confirmation = { provider: evidence.provider, receipt: evidence.receipt, receivedAmountCents: evidence.receivedAmountCents,
+    note: evidence.note, actor: evidence.actorId ? { id: evidence.actorId, username: evidence.actorUsername ?? "", name: evidence.actorName ?? "" } : null };
+  const user = await tx.user.findUniqueOrThrow({ where: { id: order.userId }, include: { tenant: { select: { name: true } } } });
+  const before = await lockGatewayBillingWallet(tx, order.userId);
+  await tx.$queryRaw`SELECT "id" FROM "GatewayOrder" WHERE "id" = ${order.id} FOR UPDATE`;
+  if (!evidence) await tx.gatewayCreditFundingEvidence.create({ data: {
+    orderId: order.id, userId: order.userId, provider: confirmation.provider, receipt: confirmation.receipt,
+    receivedAmountCents: confirmation.receivedAmountCents, creditCents: order.creditCents,
+    actorId: confirmation.actor?.id, actorUsername: confirmation.actor?.username, actorName: confirmation.actor?.name, note: confirmation.note
+  } });
+  // Verified money is acknowledged durably even if capacity/source is not currently allocatable.
+  // Missing/uninitialized pool preserves legacy recharge; it is adopted later in full W.
+  let waiting = false;
+  if (pool && (pool.accountingVersion !== 0 || pool.status !== "pending")) {
+    try {
+      await assertGatewayPoolReady(tx, pool);
+      await assertGatewayAllocationBudget(tx, pool, order.creditCents);
+      waiting = pool.balanceCents < order.creditCents;
+    }
+    catch (error) { if (!(error instanceof GatewayBillingError)) throw error; waiting = true; }
+  }
+  if (before.balanceCents > 2_147_483_647 - order.creditCents) waiting = true;
+  if (waiting) return tx.gatewayOrder.update({ where: { id: order.id }, data: {
+    creditAllocationState: "awaiting_capacity", paymentReceipt: confirmation.receipt,
+    receivedAmountCents: confirmation.receivedAmountCents, confirmedBy: evidence?.actorId ?? confirmation.actor?.id ?? null,
+    confirmationNote: evidence?.note ?? confirmation.note
+  } });
   const now = new Date();
   const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-  // Claim the pending row before touching the wallet. The conditional write is
-  // serialized by the database; a concurrent confirmation cannot credit twice.
+  // Locks are held in coordination -> identity -> pool -> wallet -> order order.
   const claim = await tx.gatewayOrder.updateMany({
     where: { id: order.id, status: "pending" },
     data: {
@@ -195,7 +235,8 @@ async function creditGatewayOrder(
       paymentReceipt: confirmation.receipt,
       confirmedBy: confirmation.actor?.id ?? null,
       confirmationNote: confirmation.note,
-      receivedAmountCents: confirmation.receivedAmountCents
+      receivedAmountCents: confirmation.receivedAmountCents,
+      creditAllocationState: "credited"
     }
   });
   if (claim.count !== 1) {
@@ -203,9 +244,9 @@ async function creditGatewayOrder(
     if (current?.status === "paid" && current.paymentReceipt === confirmation.receipt) return current;
     throw new GatewayPaymentError("ORDER_CONFIRMATION_CONFLICT", "订单状态已变化，请刷新后再确认", 409);
   }
-  const user = await tx.user.findUniqueOrThrow({ where: { id: order.userId }, include: { tenant: { select: { name: true } } } });
-  const before = await lockGatewayBillingWallet(tx, order.userId);
   await ensureGatewayBillingOpening(tx, user, before);
+  await moveGatewayPool(tx, { eventId: `recharge:${order.id}`, kind: "recharge", userId: user.id,
+    actorId: evidence?.actorId ?? confirmation.actor?.id, amountCents: order.creditCents });
   const wallet = await tx.gatewayWallet.upsert({
     where: { userId: order.userId },
     update: {
@@ -236,13 +277,18 @@ async function creditGatewayOrder(
     actorId: confirmation.actor?.id ?? null, actorUsername: confirmation.actor?.username ?? null,
     actorName: confirmation.actor?.name ?? null, reason: confirmation.note
   } });
+  // Check deferred allocation constraints before COMMIT so the API cannot
+  // report credited if an older Prisma engine swallows a commit-time failure.
+  await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
   return tx.gatewayOrder.findUniqueOrThrow({ where: { id: order.id } });
 }
 
 async function confirmGatewayOrder(where: { id: string; userId?: string }, input: ManualPaymentConfirmation) {
   const confirmation = parseManualPaymentConfirmation(input, input?.confirmedBy);
+  await refreshGatewaySharedPoolFromSource();
   try {
     return await prisma.$transaction(async (tx) => {
+      await lockGatewayAccountingIdentities(tx, [confirmation.confirmedBy]);
       // Defense in depth: callers cannot credit an order merely by passing an
       // arbitrary confirmedBy value, even if they bypass the HTTP route.
       const admin = await tx.user.findUnique({ where: { id: confirmation.confirmedBy } });
@@ -283,8 +329,10 @@ export async function settleVerifiedScanPayment(payment: VerifiedScanPayment) {
       !Number.isSafeInteger(payment.amountCents) || payment.amountCents <= 0) {
     throw new GatewayPaymentError("INVALID_PAYMENT_EVIDENCE", "支付核验结果无效", 400);
   }
+  await refreshGatewaySharedPoolFromSource();
   try {
     return await prisma.$transaction(async tx => {
+      await lockGatewayAccountingIdentities(tx, []);
       const order = await tx.gatewayOrder.findUnique({ where: { id: payment.orderId } });
       if (!order) throw new GatewayPaymentError("ORDER_NOT_FOUND", "订单不存在", 404);
       return creditGatewayOrder(tx, order, {
@@ -301,9 +349,47 @@ export async function settleVerifiedScanPayment(payment: VerifiedScanPayment) {
   }
 }
 
+/** Server-side reconciliation of a previously verified receipt; no second provider call/payment. */
+export async function retryGatewayPendingCredit(adminId: string, orderId: string) {
+  await refreshGatewaySharedPoolFromSource();
+  return prisma.$transaction(async tx => {
+    await lockGatewayAccountingIdentities(tx, [adminId]);
+    const admin = await tx.user.findUnique({ where: { id: adminId } });
+    if (!admin || admin.status !== "active" || admin.authRole !== "admin") throw new GatewayPaymentError("ADMIN_REQUIRED", "仅有效管理员可核对待入账付款", 403);
+    const order = await tx.gatewayOrder.findUnique({ where: { id: orderId } });
+    const evidence = await tx.gatewayCreditFundingEvidence.findUnique({ where: { orderId } });
+    if (!order || !evidence || (order.status !== "paid" && order.creditAllocationState !== "awaiting_capacity")) throw new GatewayPaymentError("PAYMENT_EVIDENCE_MISSING", "没有可核对的已验真付款", 409);
+    return creditGatewayOrder(tx, order, { provider: evidence.provider, receipt: evidence.receipt, receivedAmountCents: evidence.receivedAmountCents,
+      note: evidence.note, actor: evidence.actorId ? { id: evidence.actorId, username: evidence.actorUsername ?? "", name: evidence.actorName ?? "" } : null });
+  });
+}
+
+/** Authenticated owner can resume only the database's exact already-verified payment. */
+export async function resumeGatewayOrderAllocation(userId: string, orderId: string) {
+  await refreshGatewaySharedPoolFromSource();
+  return prisma.$transaction(async tx => {
+    await lockGatewayAccountingIdentities(tx, [userId]);
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    const order = await tx.gatewayOrder.findFirst({ where: { id: orderId, userId } });
+    if (!user || user.status !== "active" || !order) throw new GatewayPaymentError("ORDER_NOT_FOUND", "订单不存在或账号不可用", 404);
+    if (order.status === "paid") return order;
+    const evidence = await tx.gatewayCreditFundingEvidence.findUnique({ where: { orderId: order.id } });
+    if (order.creditAllocationState !== "awaiting_capacity" || !evidence || evidence.userId !== userId ||
+      evidence.provider !== order.paymentProvider || evidence.receipt !== order.paymentReceipt ||
+      evidence.creditCents !== order.creditCents || evidence.receivedAmountCents !== order.amountCents ||
+      order.receivedAmountCents !== evidence.receivedAmountCents) throw new GatewayPaymentError("PAYMENT_EVIDENCE_MISSING", "没有可核对的已验真付款", 409);
+    return creditGatewayOrder(tx, order, { provider: evidence.provider, receipt: evidence.receipt,
+      receivedAmountCents: evidence.receivedAmountCents, note: evidence.note,
+      actor: evidence.actorId ? { id: evidence.actorId, username: evidence.actorUsername ?? "", name: evidence.actorName ?? "" } : null });
+  });
+}
+
 export async function assertGatewayBalance(userId: string, minCents = 1) {
-  const wallet = await ensureGatewayWallet(userId);
-  return wallet.balanceCents >= minCents;
+  await ensureGatewayWallet(userId);
+  return prisma.$transaction(async (tx) => {
+    await lockGatewayBillingWallet(tx, userId);
+    return (await getGatewayAvailableBalance(tx, userId)).availableCents >= minCents;
+  });
 }
 
 export async function recordGatewayUsage(input: {
@@ -324,7 +410,7 @@ export async function recordGatewayUsage(input: {
   baseCostCents?: number;
   billingEventId?: string;
   audit?: GatewayBillingAudit;
-}) {
+}, transaction?: Prisma.TransactionClient) {
   const billingEventId = input.billingEventId || crypto.randomUUID();
   if (!/^[A-Za-z0-9_.:-]{1,160}$/.test(billingEventId) || ["opening:", "recharge:", "gift:"].some((prefix) => billingEventId.startsWith(prefix))) {
     throw new GatewayBillingError("INVALID_BILLING_EVENT", "调用计费事件标识无效");
@@ -339,9 +425,13 @@ export async function recordGatewayUsage(input: {
   const count = (value: number | undefined) => Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 2_147_483_647 ? Number(value) : 0;
   const shortId = (value: string | undefined) => value && /^[A-Za-z0-9_.:-]{1,256}$/.test(value) && !/sk-|bearer/i.test(value) ? value : "";
   const stableMetadata = (value: unknown) => JSON.stringify(Object.entries(safeGatewayBillingMetadata(value)).filter(([key]) => key !== "outcome").sort(([left], [right]) => left.localeCompare(right)));
-  const outcome = await prisma.$transaction(async (tx) => {
+  const write = async (tx: Prisma.TransactionClient) => {
+    await lockGatewayAccountingIdentities(tx, [input.auth.userId]);
     const user = await tx.user.findUnique({ where: { id: input.auth.userId }, include: { tenant: { select: { name: true } } } });
-    if (!user || user.status !== "active" || user.tenantId !== snapshot.tenantId) throw new GatewayBillingError("ACCOUNT_UNAVAILABLE", "当前计费账号已失效", 401);
+    const hold = await tx.gatewayBillingHold.findUnique({where:{eventId:billingEventId}});
+    if (hold?.billingMode === "prepaid_quote" && !isGatewayBillingHoldSettlement(tx,billingEventId)) throw new GatewayBillingError("HOLD_SETTLEMENT_REQUIRED", "提交收费请求的用量需在原结算事务核对", 409);
+    const prepaid = hold?.billingMode === "prepaid_quote";
+    if (!user || (!prepaid && user.status !== "active") || user.tenantId !== snapshot.tenantId) throw new GatewayBillingError("ACCOUNT_UNAVAILABLE", "当前计费账号已失效", 401);
     const before = await lockGatewayBillingWallet(tx, user.id);
     const existing = await tx.gatewayUsage.findUnique({ where: { billingEventId } });
     if (existing) {
@@ -355,15 +445,20 @@ export async function recordGatewayUsage(input: {
       }
       return { usage: existing, insufficient: entry.status === "settlement_rejected" };
     }
+    if (!prepaid && input.status === "ok" && quotedCost > 0 && !isGatewayBillingHoldSettlement(tx, billingEventId)) await assertGatewayPoolNewQuote(tx, snapshot);
+    if ((prepaid || input.status === "ok") && quotedCost > 0) await assertGatewayPoolUsageEvidence(tx, snapshot, { eventId: billingEventId, baseCostCents, chargedCostCents: quotedCost, metadata });
     await ensureGatewayBillingOpening(tx, user, before);
-    let costCents = input.status === "ok" ? quotedCost : 0;
+    let costCents = !prepaid && input.status === "ok" ? quotedCost : 0;
     let insufficient = false;
     if (costCents > 0) {
-      const debit = await tx.gatewayWallet.updateMany({
+      const available = await getGatewayAvailableBalance(tx, user.id, isGatewayBillingHoldSettlement(tx, billingEventId) ? billingEventId : undefined);
+      const debit = available.availableCents < costCents ? { count: 0 } : await tx.gatewayWallet.updateMany({
         where: { userId: user.id, balanceCents: { gte: costCents } },
         data: { balanceCents: { decrement: costCents } }
       });
       if (debit.count !== 1) { insufficient = true; costCents = 0; }
+      if (costCents > 0) await moveGatewayPool(tx, { eventId: billingEventId, kind: "debit", userId: user.id,
+        actorId: user.id, amountCents: costCents });
     }
     const status = insufficient ? "error" : input.status;
     const error = insufficient ? "INSUFFICIENT_BALANCE" : safeGatewayBillingError(input.error);
@@ -381,7 +476,7 @@ export async function recordGatewayUsage(input: {
       }
     });
     await tx.gatewayBillingLedger.create({ data: {
-      billingEventId, kind: status === "ok" ? "debit" : "error", usageId: usage.id,
+      billingEventId, kind: prepaid ? "usage" : status === "ok" ? "debit" : "error", usageId: usage.id,
       userId: user.id, tenantId: snapshot.tenantId, tenantName: snapshot.tenantName || user.tenant.name, username: snapshot.username, userName: snapshot.userName,
       planCode: snapshot.planCode, planName: snapshot.planName, multiplierBps: snapshot.multiplierBps, ruleVersion: snapshot.ruleVersion,
       deltaCents: -costCents, balanceBeforeCents: before.balanceCents, balanceAfterCents: before.balanceCents - costCents,
@@ -394,8 +489,10 @@ export async function recordGatewayUsage(input: {
         : status === "error" && input.audit?.outcome === "balance_rejected" ? "preflight_rejected" : status, error, metadata,
       actorId: user.id, actorUsername: snapshot.username, actorName: snapshot.userName
     } });
+    if (costCents > 0 || (prepaid && quotedCost > 0)) await recordGatewaySourceUsage(tx, billingEventId, user.id, metadata);
     return { usage, insufficient };
-  });
+  };
+  const outcome = transaction ? await write(transaction) : await prisma.$transaction(write);
   if (outcome.insufficient) throw new GatewayBillingError("INSUFFICIENT_BALANCE", "余额不足，当前调用未扣费，请充值后再操作", 402);
   return outcome.usage;
 }

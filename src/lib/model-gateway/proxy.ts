@@ -1,16 +1,20 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
+import { publicCreditServiceFailure } from "./public-errors";
 import { NextResponse } from "next/server";
 import { type GatewayModel } from "@/lib/model-gateway/catalog";
 import { getGatewayBillingSnapshot } from "@/lib/model-gateway/billing";
-import { applyGatewayBillingCost, GatewayBillingError, type GatewayBillingSnapshot } from "@/lib/model-gateway/billing-contract";
+import { applyGatewayBillingCost, GatewayBillingError, type GatewayBillingSnapshot, type GatewayFxSnapshot } from "@/lib/model-gateway/billing-contract";
+import { requireGatewayFxSnapshot, gatewayFxMetadata } from "@/lib/model-gateway/exchange-rate";
 import { getRelayRuntime, RelayConfigError } from "@/lib/model-gateway/relay-config";
 import { getUserSupplyCredential, getUserSupplyRuntime, UserSupplyError } from "@/lib/model-gateway/user-supply";
 import { redactSupplySecrets, runSupplyWithFailover, type SupplyCredentials } from "@/lib/model-gateway/supply-failover";
 import { formatUsd, parseUpstreamUsdCost, usdToCnyCents } from "@/lib/model-gateway/relay-routing";
 import { normalizeRelayBaseUrl, relayFetch, RelayNetworkError } from "@/lib/model-gateway/relay-network";
 import { findAvailableGatewayModel, listAvailableGatewayModels } from "@/lib/model-gateway/runtime-catalog";
-import { findGatewayVideoJob } from "@/lib/model-gateway/video-jobs";
+import { findGatewayVideoJob, reconcileGatewayVideoTerminal } from "@/lib/model-gateway/video-jobs";
+import { gatewayOutcomeFingerprint, gatewayRequestFingerprint, prepareGatewayBillingQuote } from "@/lib/model-gateway/billing-request";
+import { reserveGatewayBillingHold, markGatewayBillingHoldDispatched, bindGatewayBillingHoldCredential, markGatewayBillingHoldUnknown, releaseGatewayBillingHold, settleGatewayBillingHold, refundGatewayBillingHold } from "@/lib/model-gateway/billing-hold";
 import {
   assertGatewayBalance,
   authenticateGatewayKey,
@@ -26,7 +30,8 @@ type UsageInput = Parameters<typeof recordGatewayUsage>[0];
 type Parsed = {
   auth: GatewayAuth; body: JsonObject; form?: FormData; model: GatewayModel; upstream: Upstream;
   billingSnapshot: GatewayBillingSnapshot; billingEventId: string; startedAt: number;
-  usdCnyRate: number | null; settlementAttempt?: UsageInput;
+  settlementAttempt?: UsageInput;
+  holdReserved?: boolean; dispatched?: boolean; providerAttempted?: boolean;
 };
 
 const NO_STORE = { "Cache-Control": "private, no-store" };
@@ -69,21 +74,22 @@ function upstreamSecrets(upstream: Upstream) {
   return upstream.supply ? [upstream.supply.primary.apiKey, upstream.supply.backup?.apiKey || ""] : [upstream.apiKey];
 }
 
-async function resolveUpstream(model: GatewayModel, userId: string): Promise<Upstream & { usdCnyRate: number | null }> {
+async function resolveUpstream(model: GatewayModel, userId: string): Promise<Upstream & { fxSnapshot?: GatewayFxSnapshot }> {
   if (model.provider === "shaozhuang") {
-    const relay = await getUserSupplyRuntime(userId);
+    const relay = await getRelayRuntime();
+    const supply = await getUserSupplyRuntime(userId);
+    if (supply.baseUrl !== relay.baseUrl) throw new UserSupplyError("供应配置已变化，请重新核对后重试");
     return {
       baseUrl: relay.baseUrl,
-      apiKey: relay.primary.apiKey || relay.backup?.apiKey || "",
-      credentialId: relay.primary.apiKey ? relay.primary.id : relay.backup?.id,
-      supply: { primary: relay.primary, backup: relay.backup },
-      usdCnyRate: relay.usdCnyRate
+      apiKey: supply.primary.apiKey || supply.backup?.apiKey || "",
+      credentialId: supply.primary.apiKey ? supply.primary.id : supply.backup?.id,
+      supply: { primary: supply.primary, backup: supply.backup },
+      fxSnapshot: requireGatewayFxSnapshot(relay)
     };
   }
   return {
     baseUrl: normalizeRelayBaseUrl(String(process.env[model.baseUrlEnv] || model.defaultBaseUrl)),
-    apiKey: resolveGatewayUpstreamApiKey(model),
-    usdCnyRate: null
+    apiKey: resolveGatewayUpstreamApiKey(model)
   };
 }
 
@@ -142,6 +148,9 @@ async function parseGatewayRequest(request: Request, endpoint: Endpoint): Promis
   if (contentType.startsWith("multipart/form-data") && (endpoint === "images.edits" || endpoint === "videos")) {
     try {
       form = await new Response(bytes, { headers: { "Content-Type": contentType } }).formData();
+      for (const name of ["model", "prompt", "n", "stream", "max_tokens", "max_completion_tokens"]) {
+        if (form.getAll(name).length > 1) return { error: jsonError(`${name} 参数不能重复`, 400, "invalid_request") };
+      }
       body = Object.fromEntries([...form.entries()].filter((entry) => typeof entry[1] === "string"));
     } catch { return { error: jsonError("multipart 请求体无效", 400, "invalid_request") }; }
   } else {
@@ -179,12 +188,13 @@ async function parseGatewayRequest(request: Request, endpoint: Endpoint): Promis
   }
   const upstream = await resolveUpstream(model, auth.userId);
   if (!upstream.apiKey) return { error: jsonError(`上游 ${model.provider} 还没有配置 API Key`, 503, "upstream_key_missing") };
-  const billingSnapshot = await getGatewayBillingSnapshot(auth.userId);
-  const baseMinimum = endpoint === "videos" ? model.videoCents!
-    : endpoint.startsWith("images.") ? imageCostCents(model, Number(body.n ?? 1)) : tokenCostCents(model, textSizeTokens(body), 0);
+  const billingSnapshot = { ...await getGatewayBillingSnapshot(auth.userId), ...(upstream.fxSnapshot ? { fxSnapshot: upstream.fxSnapshot } : {}) };
+  const baseMinimum = prepareGatewayBillingQuote(model, endpoint, body);
   const minimum = applyGatewayBillingCost(baseMinimum, billingSnapshot);
-  const parsed: Parsed = { auth, body, form, model, upstream, billingSnapshot, billingEventId: randomUUID(), startedAt: Date.now(), usdCnyRate: upstream.usdCnyRate };
-  if (!await assertGatewayBalance(auth.userId, minimum)) {
+  const idempotencyKey = request.headers.get("idempotency-key") || undefined;
+  const parsed: Parsed = { auth, body, form, model, upstream, billingSnapshot, billingEventId: randomUUID(), startedAt: Date.now() };
+  // A replay must reach its original frozen quote even if that hold consumed the available balance.
+  if (!idempotencyKey && !await assertGatewayBalance(auth.userId, minimum)) {
     try { await recordGatewayUsage({ auth, endpoint, provider: model.provider, model: model.id,
       costCents: 0, baseCostCents: baseMinimum, billingSnapshot, billingEventId: parsed.billingEventId,
       ...(endpoint === "chat.completions" ? { promptTokens: textSizeTokens(body), completionTokens: 0, totalTokens: textSizeTokens(body) } : {}),
@@ -198,6 +208,13 @@ async function parseGatewayRequest(request: Request, endpoint: Endpoint): Promis
     }
     return { error: jsonError("余额不足，请先购买模型额度", 402, "insufficient_balance", { "X-Gateway-Billing-Id": parsed.billingEventId }) };
   }
+  const reservation = await reserveGatewayBillingHold({ auth, billingSnapshot, eventId: parsed.billingEventId, billingMode: "prepaid_quote",
+    quoteCents: minimum, requestFingerprint: await gatewayRequestFingerprint({ endpoint, model: model.id, body, form }),
+    endpoint, provider: model.provider, model: model.id, idempotencyKey });
+  if (!reservation.shouldDispatch) throw new GatewayFailure("该请求已提交，请核对原调用状态，勿重复生成", 409, "request_already_submitted");
+  parsed.billingSnapshot = reservation.hold.billingSnapshot;
+  parsed.billingEventId = reservation.hold.eventId;
+  parsed.holdReserved = true;
   return parsed;
 }
 
@@ -242,22 +259,29 @@ async function parseUpstreamResponse(response: Response, keys: readonly string[]
 
 async function forward(request: Request, parsed: Parsed, endpoint: Endpoint) {
   const { model, body, form, upstream } = parsed;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { Authorization: `Bearer ${upstream.apiKey}`, "Idempotency-Key": parsed.billingEventId };
   let payload: BodyInit;
   if (form) { form.set("model", model.upstreamModel); payload = form; }
   else { headers["Content-Type"] = "application/json"; payload = JSON.stringify({ ...body, model: model.upstreamModel }); }
+  const dispatch = await markGatewayBillingHoldDispatched({ userId: parsed.auth.userId, eventId: parsed.billingEventId });
+  if (!dispatch.shouldDispatch) throw new GatewayFailure("该请求已提交，请核对原调用状态", 409, "request_already_submitted");
+  parsed.billingSnapshot = dispatch.hold.billingSnapshot;
+  parsed.dispatched = true;
   const signal = requestSignal(request);
-  const send = (apiKey: string) => relayFetch(`${upstream.baseUrl}/${endpointPath(endpoint)}`, {
-    method: "POST", headers: { ...headers, Authorization: `Bearer ${apiKey}` }, body: payload, signal, cache: "no-store"
-  });
+  const send = (apiKey: string) => {
+    parsed.providerAttempted = true;
+    return relayFetch(`${upstream.baseUrl}/${endpointPath(endpoint)}`, {
+      method: "POST", headers: { ...headers, Authorization: `Bearer ${apiKey}` }, body: payload, signal, cache: "no-store"
+    });
+  };
   let response: Response;
   if (upstream.supply) {
-    const result = await runSupplyWithFailover(upstream.supply, (credential) => {
+    const result = await runSupplyWithFailover(upstream.supply, async credential => {
       upstream.credentialId = credential.id;
+      await bindGatewayBillingHoldCredential({ userId: parsed.auth.userId, eventId: parsed.billingEventId, credentialId: credential.id });
       return send(credential.apiKey);
     });
     response = result.response;
-    upstream.credentialId = result.credentialId;
   } else response = await send(upstream.apiKey);
   return { status: response.status, data: await parseUpstreamResponse(response, upstreamSecrets(upstream)), retryAfter: response.headers.get("retry-after") };
 }
@@ -321,8 +345,9 @@ async function recordResponse(parsed: Parsed, endpoint: Endpoint, response: { st
   const imageCount = Array.isArray(data.data) ? data.data.length : Number(body.n ?? 1);
   const catalogCents = !ok ? 0 : endpoint === "chat.completions" ? tokenCostCents(model, promptTokens, completionTokens)
     : endpoint === "videos" ? model.videoCents! : imageCostCents(model, imageCount);
-  const usd = ok ? parseUpstreamUsdCost(data) : null;
-  const settledCents = usd != null && parsed.usdCnyRate != null ? usdToCnyCents(usd, parsed.usdCnyRate) : null;
+  const usd = parseUpstreamUsdCost(data);
+  const frozenRate = parsed.billingSnapshot.fxSnapshot?.rate ?? null;
+  const settledCents = usd != null && frozenRate != null ? usdToCnyCents(usd, frozenRate) : null;
   const baseCostCents = settledCents ?? catalogCents;
   const costSource = settledCents == null ? "catalog" : "upstream_usd";
   const input: UsageInput = {
@@ -334,15 +359,23 @@ async function recordResponse(parsed: Parsed, endpoint: Endpoint, response: { st
     billingSnapshot: parsed.billingSnapshot, billingEventId: parsed.billingEventId,
     audit: { durationMs: Math.max(0, Date.now() - parsed.startedAt), upstreamStatus: status, outcome: ok ? "success" : "upstream_error" },
     status: ok ? "ok" : "error", error: ok ? "" : responseBillingError(status, data),
-    metadata: { ...billingMetadata(parsed, endpoint), reportedTokenFields: reportedFields.join(","),
+    metadata: { ...billingMetadata(parsed, endpoint), ...gatewayFxMetadata(parsed.billingSnapshot.fxSnapshot), reportedTokenFields: reportedFields.join(","),
       tokenSource: reportedFields.length === 3 ? "reported" : reportedUsage ? "partial" : endpoint === "chat.completions" ? "estimated" : "unreported",
-      costSource, ...(settledCents == null || usd == null || parsed.usdCnyRate == null ? {} : { usdCost: formatUsd(usd), usdCnyRate: formatUsd(parsed.usdCnyRate) }) }
+      costSource, ...(settledCents == null || usd == null || frozenRate == null ? {} : { usdCost: formatUsd(usd), usdCnyRate: formatUsd(frozenRate) }) }
   };
   parsed.settlementAttempt = input;
-  await recordGatewayUsage(input);
+  try { await settleGatewayBillingHold({ userId: auth.userId, eventId: parsed.billingEventId, finalCostCents: input.costCents,
+    outcomeFingerprint: gatewayOutcomeFingerprint({ status, data }),
+    writeUsage: async (tx, frozen) => { await recordGatewayUsage({ ...input, billingSnapshot: frozen.billingSnapshot, billingEventId: frozen.eventId }, tx); } });
+  } finally {
+    if (!ok) await refundGatewayBillingHold({ userId: auth.userId, eventId: parsed.billingEventId, reason: "confirmed_failed",
+      evidenceFingerprint: gatewayOutcomeFingerprint({ status, data }) });
+  }
 }
 
 function failureResponse(error: unknown) {
+  const publicCredit = publicCreditServiceFailure(error);
+  if (publicCredit) return jsonError(publicCredit.message, publicCredit.status, publicCredit.code);
   if (error instanceof GatewayBillingError) return jsonError(error.message, error.status, error.code);
   if (error instanceof UserSupplyError) return jsonError(error.message, error.status, error.code);
   if (error instanceof GatewayFailure) return jsonError(error.message, error.status, error.code);
@@ -386,18 +419,16 @@ async function handleGeneration(request: Request, endpoint: Endpoint) {
     // Expose public alias to callers while retaining all compatible payload fields.
     return NextResponse.json({ ...response.data, model: parsed.model.id }, { status, headers });
   } catch (error) {
-    if (parsed && !recorded) {
-      const failedSettlement = parsed.settlementAttempt;
-      await recordGatewayUsage(failedSettlement ? {
-        ...failedSettlement, status: "error", costCents: 0,
-        error: error instanceof GatewayBillingError ? error.code : "SETTLEMENT_FAILED",
-        audit: { ...failedSettlement.audit, outcome: "settlement_failed" }
-      } : { auth: parsed.auth, endpoint, provider: parsed.model.provider, model: parsed.model.id,
-        costCents: 0, baseCostCents: 0, billingSnapshot: parsed.billingSnapshot, billingEventId: parsed.billingEventId,
-        audit: { durationMs: Math.max(0, Date.now() - parsed.startedAt),
-          outcome: error instanceof GatewayFailure || error instanceof GatewayBillingError ? error.code : "gateway_unavailable" },
-        metadata: { ...billingMetadata(parsed, endpoint), tokenSource: "unreported" }, status: "error",
-        error: error instanceof GatewayFailure || error instanceof GatewayBillingError ? error.code : "gateway_unavailable" }).catch(() => undefined);
+    if (parsed?.holdReserved && !recorded) {
+      if (parsed.dispatched && !parsed.providerAttempted) {
+        await refundGatewayBillingHold({userId:parsed.auth.userId,eventId:parsed.billingEventId,reason:"confirmed_failed",
+          evidenceFingerprint:gatewayOutcomeFingerprint({reason:"local_before_provider_send"})}).catch(() => undefined);
+      } else if (parsed.dispatched) {
+        await markGatewayBillingHoldUnknown({ userId: parsed.auth.userId, eventId: parsed.billingEventId,
+          reason: parsed.settlementAttempt ? "settlement_failed" : error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name) ? "timeout" : "ambiguous_response" }).catch(() => undefined);
+      } else {
+        await releaseGatewayBillingHold({ userId: parsed.auth.userId, eventId: parsed.billingEventId, reason: "pre_dispatch" }).catch(() => undefined);
+      }
     }
     const failure = failureResponse(error);
     if (parsed) failure.headers.set("X-Gateway-Billing-Id", parsed.billingEventId);
@@ -429,10 +460,8 @@ export async function handleGatewayVideoRead(request: Request, id: string, conte
     const job = await findGatewayVideoJob(auth.userId, id);
     if (!job) return jsonError("视频任务不存在或不属于当前用户", 404, "video_not_found");
     if (job.provider !== "shaozhuang") return jsonError("视频任务上游不受支持", 503);
-    // Older tasks predate per-user credentials and retain their original global route.
-    const relay = job.credentialId
-      ? await getUserSupplyCredential(auth.userId, job.credentialId)
-      : await getRelayRuntime();
+    // Tasks created before per-user supply retain their original global route.
+    const relay = job.credentialId ? await getUserSupplyCredential(auth.userId, job.credentialId) : await getRelayRuntime();
     if (!relay.apiKey) return jsonError("上游 shaozhuang 还没有配置 API Key", 503, "upstream_key_missing");
     if (relay.baseUrl !== job.baseUrl) return jsonError("任务创建后上游地址已变更，请恢复原地址后查询", 409, "video_upstream_changed");
     const variant = new URL(request.url).searchParams.get("variant");
@@ -447,6 +476,7 @@ export async function handleGatewayVideoRead(request: Request, id: string, conte
     const response = await relayFetch(url, { method: "GET", headers: upstreamHeaders, signal: requestSignal(request), cache: "no-store" });
     if (!content || !response.ok || /json/i.test(response.headers.get("content-type") || "")) {
       const data = await parseUpstreamResponse(response, [relay.apiKey]);
+      if (!content && response.ok) await reconcileGatewayVideoTerminal(auth.userId, id, job, data);
       if (!response.ok || data.error) return jsonError(`上游调用失败：${responseError(data)}`, [401, 403].includes(response.status) || response.ok ? 502 : response.status, "upstream_error");
       if (content) return jsonError("上游未返回可下载的视频内容", 502, "invalid_upstream_response");
       return NextResponse.json({ ...normalizeVideoReply(data, request, job.baseUrl, id), model: job.model }, { status: response.status, headers: NO_STORE });

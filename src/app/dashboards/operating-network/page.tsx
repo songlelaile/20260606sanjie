@@ -1,8 +1,4 @@
 import { CreativeStudio } from "@/components/creative/CreativeStudio";
-import { CreativeAccessGate } from "@/components/creative/CreativeAccessGate";
-import { getCurrentSession } from "@/lib/server-session";
-import { getCreativeAccessForSession, UNAVAILABLE_CREATIVE_ACCESS } from "@/lib/creative-entitlements";
-import { GATEWAY_PLANS } from "@/lib/model-gateway/catalog";
 
 import { CREATIVE_VIRAL_SURFACES } from "@/lib/creative-viral-surfaces";
 
@@ -17,8 +13,5 @@ export default async function OperatingNetworkPage({
 }) {
   const params = await searchParams;
   const surface = params.surface && SURFACES.has(params.surface) ? params.surface : "main";
-  const access = await getCreativeAccessForSession(await getCurrentSession()).catch(() => UNAVAILABLE_CREATIVE_ACCESS);
-  return <CreativeAccessGate access={access} plans={GATEWAY_PLANS}>
-    {access.allowed ? <CreativeStudio kind="image" initialSurface={surface} initialBatch={params.batch === "1"} initialHistory={params.history === "1"} initialApiConfig={params.apiConfig === "1"} /> : null}
-  </CreativeAccessGate>;
+  return <CreativeStudio kind="image" initialSurface={surface} initialBatch={params.batch === "1"} initialHistory={params.history === "1"} initialApiConfig={params.apiConfig === "1"} />;
 }

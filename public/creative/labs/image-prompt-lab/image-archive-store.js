@@ -6,7 +6,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
-  var DB_NAME = 'sz_image_archive_v1' + (root.__SANJIE_ENVIRONMENT ? ':environment:' + encodeURIComponent(String(root.__SANJIE_ENVIRONMENT)) : '');
+  var DB_NAME = 'sz_image_archive_v1';
   var DB_VERSION = 2;
   var BATCH_STORE = 'batches';
   var ASSET_STORE = 'assets';
@@ -309,6 +309,95 @@
     return !!(blob && typeof blob.size === 'number' && blob.size > 0 && blob.size <= MAX_IMAGE_BYTES && allowedMime(blob.type));
   }
 
+  function receiptContentUrl(value) {
+    try {
+      var pageOrigin = root.location && root.location.origin;
+      if (typeof pageOrigin !== 'string' || !/^https?:\/\//i.test(pageOrigin)) return '';
+      var url = new URL(value);
+      if (url.origin !== pageOrigin || url.username || url.password || url.hash) return '';
+      var match = /^\/api\/creative\/image-receipts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/content\/(0|[1-9]\d*)$/.exec(url.pathname);
+      if (!match || !Number.isSafeInteger(Number(match[2]))) return '';
+      var queryNames = [];
+      url.searchParams.forEach(function (_, name) { queryNames.push(name); });
+      if (queryNames.length !== 1 || queryNames[0] !== 'identity') return '';
+      var identity = JSON.parse(url.searchParams.get('identity'));
+      if (!identity || typeof identity !== 'object' || Array.isArray(identity) || identity.version !== 1 || identity.receiptId !== match[1]) return '';
+      return url.href;
+    } catch (_) { return ''; }
+  }
+
+  function receiptReadError(code, message) {
+    var error = new Error(message);
+    error.code = code;
+    return error;
+  }
+
+  function receiptContentToBlob(value, fetcher) {
+    var pacer = root.SZCreativeRequestPacer;
+    if (!pacer || pacer.version !== 1) return receiptContentToBlobOnce(value,fetcher);
+    var identity;
+    try { identity = JSON.parse(new URL(value,root.location.origin).searchParams.get('identity')); } catch (_) { return Promise.reject(receiptReadError('IMAGE_RECEIPT_READ_FAILED','图片回执身份暂不能核对')); }
+    return pacer.read(identity,function () {
+      return receiptContentToBlobOnce(value,fetcher).then(function (blob) { return {status:200,value:blob}; },function (error) {
+        if (error && error.httpStatus === 429) return {status:429,retryAfter:error.retryAfter,error:error};throw error;
+      });
+    }).then(function (result) { if (result && result.status === 200) return result.value;throw result && result.error || receiptReadError('IMAGE_RECEIPT_READ_FAILED','图片回执暂不能读取，可稍后补存'); });
+  }
+
+  function receiptContentToBlobOnce(value, fetcher) {
+    if (typeof root.AbortController !== 'function' || typeof root.setTimeout !== 'function' || typeof root.clearTimeout !== 'function' || !root.crypto || !root.crypto.subtle) {
+      return Promise.reject(receiptReadError('IMAGE_RECEIPT_READ_UNAVAILABLE', '当前环境无法安全读取图片回执'));
+    }
+    return new Promise(function (resolve, reject) {
+      var controller = new root.AbortController(), finished = false, reader, headersTimer, idleTimer, totalTimer;
+      var origin = root.location.origin, frame = root.frameElement;
+      function current() { return root.location.origin === origin && (!frame || root.frameElement === frame && frame.isConnected); }
+      function clearTimers() { root.clearTimeout(headersTimer);root.clearTimeout(idleTimer);root.clearTimeout(totalTimer); }
+      function fail(error) {
+        if (finished) return;
+        finished = true;clearTimers();try { controller.abort(); } catch (_) {}
+        if (reader && typeof reader.cancel === 'function') { try { Promise.resolve(reader.cancel()).catch(function () {}); } catch (_) {} }
+        reject(error && (['IMAGE_RECEIPT_READ_TIMEOUT','IMAGE_RECEIPT_CONTENT_MISMATCH','IMAGE_RECEIPT_READ_UNAVAILABLE'].indexOf(error.code) >= 0 || error.httpStatus === 429) ? error : receiptReadError('IMAGE_RECEIPT_READ_FAILED', '图片回执读取失败，可稍后补存原图'));
+      }
+      function timeout() { fail(receiptReadError('IMAGE_RECEIPT_READ_TIMEOUT', '图片回执读取超时，可稍后补存原图')); }
+      function check() { if (finished || controller.signal.aborted || !current()) throw receiptReadError('IMAGE_RECEIPT_READ_FAILED', '原件所属页面已变化，请从原任务补存'); }
+      function idle() { root.clearTimeout(idleTimer);idleTimer=root.setTimeout(timeout,30000); }
+      headersTimer=root.setTimeout(timeout,30000);totalTimer=root.setTimeout(timeout,8*60*1000);
+      Promise.resolve().then(function () {
+        check();return fetcher(value,{method:'GET',credentials:'same-origin',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
+      }).then(async function (response) {
+        check();root.clearTimeout(headersTimer);
+        if (response && response.status === 429) {
+          var limited=receiptReadError('IMAGE_RECEIPT_RATE_LIMITED','图片回执读取排队中，可稍后补存');limited.httpStatus=429;limited.retryAfter=response.headers&&response.headers.get&&response.headers.get('Retry-After');
+          if (response.body && typeof response.body.cancel === 'function') { try { Promise.resolve(response.body.cancel()).catch(function () {}); } catch (_) {} }
+          throw limited;
+        }
+        if (!response || !response.ok || !response.body || typeof response.body.getReader !== 'function') throw receiptReadError('IMAGE_RECEIPT_READ_UNAVAILABLE','无法完整核对原件正文，请稍后补存');
+        var length=response.headers&&response.headers.get&&response.headers.get('Content-Length'),expected=response.headers&&response.headers.get&&response.headers.get('X-Sanjie-Image-Content-Sha256');
+        var mime=allowedMime(response.headers&&response.headers.get&&response.headers.get('Content-Type'));
+        if (!/^[1-9]\d*$/.test(length||'') || !Number.isSafeInteger(Number(length)) || Number(length)>MAX_IMAGE_BYTES || !/^[a-f0-9]{64}$/.test(expected||'') || !mime) throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件校验信息不完整，请保留原请求核对');
+        reader=response.body.getReader();var chunks=[],size=0,empty=0;idle();
+        for (;;) {
+          check();var part=await reader.read();check();
+          if (part.done) break;
+          if (!part.value || typeof part.value.byteLength !== 'number') throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件正文暂不能核对');
+          var chunk=new Uint8Array(part.value);
+          if (!chunk.byteLength) { if (++empty>32) throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件正文没有有效进展');continue; }
+          empty=0;size+=chunk.byteLength;
+          if (size>MAX_IMAGE_BYTES || size>Number(length)) throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件正文大小不匹配');
+          chunks.push(chunk.slice());idle();
+        }
+        root.clearTimeout(idleTimer);
+        if (size!==Number(length)) throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件正文尚未完整接收');
+        var blob=new root.Blob(chunks,{type:mime});check();
+        var digest=await root.crypto.subtle.digest('SHA-256',await blob.arrayBuffer());check();
+        var actual=Array.prototype.map.call(new Uint8Array(digest),function (b) { return b.toString(16).padStart(2,'0'); }).join('');
+        if (actual!==expected || !validBlob(blob)) throw receiptReadError('IMAGE_RECEIPT_CONTENT_MISMATCH','原件内容校验不匹配，请保留原请求核对');
+        return blob;
+      }).then(function (blob) { if (finished) return;check();finished=true;clearTimers();resolve(blob); }).catch(fail);
+    });
+  }
+
   function sourceToBlob(source, fetcher) {
     if (validBlob(source)) return Promise.resolve(source);
     var value = String(source || '');
@@ -316,6 +405,8 @@
     if (!/^(https?:|blob:)/i.test(value)) return Promise.reject(new Error('没有可留档的本机图片来源'));
     fetcher = fetcher || root.fetch;
     if (typeof fetcher !== 'function') return Promise.reject(new Error('当前环境无法读取图片文件'));
+    var receiptUrl = receiptContentUrl(value);
+    if (receiptUrl) return receiptContentToBlob(receiptUrl, fetcher);
     return fetcher(value, { credentials: 'omit', referrerPolicy: 'no-referrer' }).then(function (response) {
       if (!response || !response.ok) throw new Error('图片文件读取失败');
       var declared = Number(response.headers && response.headers.get && response.headers.get('content-length')) || 0;
@@ -1208,6 +1299,7 @@
         }
         return { existingPreflight: true };
       }
+      if (options.prefetchedExisting === true) throw Object.assign(new Error('原件留档状态已变化，请重新核对。'),{code:'ARCHIVE_ASSET_MISSING'});
       return sourceToBlob(raw && (raw.blob || raw.url), options.fetch);
     }).then(function (blobOrExisting) {
       var expectedExisting = !!(blobOrExisting && blobOrExisting.existingPreflight);
@@ -1233,6 +1325,9 @@
 
         function finish() {
           if (stopped || !batchReady || !assetReady || !tombstoneReady) return;
+          if (typeof options.beforeCommit === 'function') {
+            try { if (options.beforeCommit() !== true) { stop(Object.assign(new Error('原件所属任务或账号已变化。'),{code:'ARCHIVE_CONTEXT_CHANGED'}));return; } } catch (error) { stop(error);return; }
+          }
           var blocked = rejectForTombstone(existingTombstone, safe);
           if (blocked) { stop(blocked); return; }
           if (existingAsset) {
@@ -1587,6 +1682,61 @@
     return { batches: batches, missing: missing };
   }
 
+  // Existing archives predate the studio receipt DTO. Bind their stored asset,
+  // result, job and provider task fields; the caller validates the studio plan
+  // and receipt before this read. Never migrate, purge, fetch or save here.
+  function readCommittedResult(accountKey, expected) {
+    if (typeof accountKey !== 'string' || normalizeAccountKey(accountKey) !== accountKey || accountKey === 'local' ||
+        !expected || typeof expected !== 'object' || Array.isArray(expected) ||
+        Object.keys(expected).length !== 4 || ['archiveAssetId','resultId','jobId','providerTaskId'].some(function (key) { return typeof expected[key] !== 'string'; }) ||
+        !expected.archiveAssetId || !expected.resultId || !expected.jobId ||
+        expected.archiveAssetId.length > 260 || expected.resultId.length > 260 || expected.jobId.length > 260 || expected.providerTaskId.length > 180) {
+      return Promise.resolve({ ok: false, reason: 'identity_invalid' });
+    }
+    var binding = { archiveAssetId: expected.archiveAssetId, resultId: expected.resultId, jobId: expected.jobId, providerTaskId: expected.providerTaskId };
+    if (!root.indexedDB || typeof root.indexedDB.databases !== 'function') return Promise.resolve({ ok: false, reason: 'unavailable' });
+    return new Promise(function (resolve) {
+      var db, tx, finished = false, opened = false;
+      var timer = setTimeout(function () { finish({ ok: false, reason: 'read_timeout' }); }, 10000);
+      function finish(value) {
+        if (finished) return;
+        finished = true; clearTimeout(timer);
+        try { if (tx) tx.abort(); } catch (_) {}
+        try { if (db) db.close(); } catch (_) {}
+        resolve(value);
+      }
+      Promise.resolve().then(function () { return root.indexedDB.databases(); }).then(function (databases) {
+        if (finished) return;
+        if (!databases.some(function (entry) { return entry.name === DB_NAME; })) { finish({ ok: false, reason: 'missing' }); return; }
+        var request = root.indexedDB.open(DB_NAME);
+        request.onupgradeneeded = function () { try { request.transaction.abort(); } catch (_) {} };
+        request.onerror = function () { finish({ ok: false, reason: 'read_failed' }); };
+        request.onsuccess = function () {
+          if (finished) { try { request.result.close(); } catch (_) {} return; }
+          db = request.result; opened = true;
+          var result = { ok: false, reason: 'missing' };
+          try {
+            if (!db.objectStoreNames.contains(ASSET_STORE)) { finish({ ok: false, reason: 'missing' }); return; }
+            tx = db.transaction(ASSET_STORE, 'readonly');
+            var assetRequest = tx.objectStore(ASSET_STORE).get(binding.archiveAssetId);
+            assetRequest.onsuccess = function () {
+              if (finished) return;
+              var asset = assetRequest.result;
+              if (asset && asset.accountKey === accountKey && asset.archiveAssetId === binding.archiveAssetId &&
+                  asset.resultId === binding.resultId && asset.jobId === binding.jobId && (asset.taskId || '') === binding.providerTaskId &&
+                  asset.archiveState === 'committed' && !asset.deletedAt && !asset.purgeAt && typeof root.Blob === 'function' && asset.blob instanceof root.Blob && validBlob(asset.blob) &&
+                  asset.blob.size === asset.size && asset.blob.size <= MAX_IMAGE_BYTES && allowedMime(asset.blob.type)) {
+                result = { ok: true, accountKey: accountKey, archiveAssetId: asset.archiveAssetId, resultId: asset.resultId, jobId: asset.jobId, providerTaskId: binding.providerTaskId, blob: asset.blob };
+              }
+            };
+            tx.oncomplete = function () { tx = null; finish(result); };
+            tx.onerror = tx.onabort = function () { tx = null; finish({ ok: false, reason: 'read_failed' }); };
+          } catch (_) { finish({ ok: false, reason: 'read_failed' }); }
+        };
+      }).catch(function () { finish({ ok: false, reason: opened ? 'read_failed' : 'unavailable' }); });
+    });
+  }
+
   function list(accountKey, options) {
     accountKey = normalizeAccountKey(accountKey);
     options = options || {};
@@ -1600,22 +1750,58 @@
     });
   }
 
-  function summary(accountKey) {
+  // Read the account's records once for both views. Keep list()'s full-list
+  // contract intact for existing callers and retain the same expiry/missing
+  // blob cleanup rules, including the provisional-record exclusion.
+  function listSnapshot(accountKey, options) {
     accountKey = normalizeAccountKey(accountKey);
-    return purgeExpired(accountKey).then(function () {
-      return recordsForAccount(accountKey);
-    }).then(function (records) {
-      var active = projectArchiveRecords(records, { trash: false });
-      var trash = projectArchiveRecords(records, { trash: true });
-      var cleanup = active.missing.length ? permanentlyRemove(accountKey, active.missing) : Promise.resolve();
-      return cleanup.then(function () {
+    options = options || {};
+    var now = Number(options.now) || Date.now();
+    return recordsForAccount(accountKey).then(function (records) {
+      var removedIds = Object.create(null);
+      var expiredCount = 0;
+      var remaining = (records.assets || []).filter(function (asset) {
+        if (!options.skipPurge && Number(asset.deletedAt) > 0 && Number(asset.purgeAt) > 0 && Number(asset.purgeAt) <= now) {
+          removedIds[asset.archiveAssetId] = true;
+          expiredCount++;
+          return false;
+        }
+        return true;
+      });
+      var active, trash;
+      if (options.maintenanceOnly) {
+        remaining.forEach(function (asset) {
+          if (asset && asset.archiveState === 'provisional' && !options.includeProvisional) return;
+          if (!validBlob(asset && asset.blob) && asset && asset.archiveAssetId) removedIds[asset.archiveAssetId] = true;
+        });
+      } else {
+        var snapshot = { batches: records.batches, assets: remaining };
+        active = projectArchiveRecords(snapshot, Object.assign({}, options, { trash: false }));
+        trash = projectArchiveRecords(snapshot, Object.assign({}, options, { trash: true }));
+        active.missing.concat(trash.missing).forEach(function (id) { removedIds[id] = true; });
+      }
+      var ids = Object.keys(removedIds);
+      return permanentlyRemove(accountKey, ids).then(function () {
         return {
-          activeBatches: active.batches.length,
-          activeAssets: active.batches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
-          trashAssets: trash.batches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
-          bytes: active.batches.concat(trash.batches).reduce(function (sum, batch) { return sum + batch.totalBytes; }, 0)
+          activeBatches: active ? active.batches : [],
+          trashBatches: trash ? trash.batches : [],
+          maintenance: !!options.maintenanceOnly,
+          removed: ids.length,
+          expired: expiredCount
         };
       });
+    });
+  }
+
+  function summary(accountKey) {
+    return listSnapshot(accountKey).then(function (snapshot) {
+      var active = snapshot.activeBatches, trash = snapshot.trashBatches;
+      return {
+        activeBatches: active.length,
+        activeAssets: active.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
+        trashAssets: trash.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
+        bytes: active.concat(trash).reduce(function (sum, batch) { return sum + batch.totalBytes; }, 0)
+      };
     });
   }
 
@@ -1631,6 +1817,7 @@
     projectArchiveRecords: projectArchiveRecords,
     dataUrlToBlob: dataUrlToBlob,
     sourceToBlob: sourceToBlob,
+    readCommittedResult: readCommittedResult,
     saveResult: saveResult,
     saveProvisionalResult: saveProvisionalResult,
     commitProvisionalResult: commitProvisionalResult,
@@ -1639,6 +1826,7 @@
     scanExpiredReferenceProvisionals: scanExpiredReferenceProvisionals,
     reconcileReferenceProvisionalAuthority: reconcileReferenceProvisionalAuthority,
     list: list,
+    listSnapshot: listSnapshot,
     summary: summary,
     moveToTrash: moveToTrash,
     restore: restore,

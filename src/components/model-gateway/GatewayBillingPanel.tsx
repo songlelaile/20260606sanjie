@@ -28,6 +28,7 @@ type LedgerItem = {
   keyPrefix: string; metadata: unknown;
 };
 type AccountItem = GatewayBillingAccountView;
+type PendingHold = { eventId: string; userId: string; tenantId: string; model: string; endpoint: string; heldCents: number; status: "reserved" | "dispatched" | "unknown"; updatedAt: string };
 type PageView<T> = { items: T[]; total: number; page: number; pageSize: number };
 type Filters = { tenantId: string; search: string; planCode: string; kind: string; from: string; to: string; model: string; endpoint: string };
 type RuleEdit = { value: string; reason: string; originalBps: number; version: number };
@@ -39,13 +40,13 @@ const PLAN_NOTES: Record<string, string> = {
   growth: "现售 ¥299 · 到账 3,800 积分",
   business: "现售 ¥899 · 到账 12,000 积分"
 };
-const EVENT_LABELS: Record<string, string> = { opening: "历史钱包开账", recharge: "充值到账", gift: "管理员赠送", debit: "调用扣费", error: "调用失败" };
+const EVENT_LABELS: Record<string, string> = { opening: "历史钱包开账", recharge: "充值到账", gift: "管理员赠送", debit: "调用扣费", error: "调用失败", generation_charge: "生成提交扣分", generation_refund: "生成失败退款", usage: "调用用量记录" };
 
 function ruleEdit(rule: GatewayBillingRuleView): RuleEdit {
   return { value: multiplier(rule.multiplierBps), reason: "", originalBps: rule.multiplierBps, version: rule.version };
 }
 function planLabel(planCode: string, planName: string) { return planCode === "free" ? "未购买套餐" : planName; }
-function isCall(item: LedgerItem) { return item.kind === "debit" || item.kind === "error"; }
+function isCall(item: LedgerItem) { return ["debit", "error", "generation_charge", "generation_refund", "usage"].includes(item.kind); }
 function actor(item: LedgerItem) {
   if (item.actorName && item.actorUsername && item.actorName !== item.actorUsername) return `${item.actorName}（${item.actorUsername}）`;
   return item.actorUsername || item.actorName || (item.kind === "opening" ? "系统" : "未记录");
@@ -187,6 +188,7 @@ export function GatewayBillingPanel() {
   const rules = useBillingQuery<RulesView>("/api/management/gateway-billing/rules", refreshKey, "rules");
   const ledger = useBillingQuery<PageView<LedgerItem>>(`/api/management/gateway-billing/ledger?${queryString(filters, page, true)}`, refreshKey, "items");
   const accounts = useBillingQuery<PageView<AccountItem>>(`/api/management/gateway-billing/accounts?${queryString(filters, accountPage, false)}`, refreshKey, "items");
+  const holds = useBillingQuery<{ items: PendingHold[]; limit: number }>("/api/management/gateway-billing/holds", refreshKey, "items");
   useEffect(() => {
     if (rules.data) setEdits((current) => Object.fromEntries(rules.data!.rules.map((rule) => {
       const edit = current[rule.planCode];
@@ -195,7 +197,7 @@ export function GatewayBillingPanel() {
   }, [rules.data]);
   const dirty = rules.data?.rules.some((rule) => edits[rule.planCode] && parseGatewayBillingMultiplier(edits[rule.planCode].value) !== rule.multiplierBps) ?? false;
   const currentPageBalance = useMemo(() => accounts.data?.items.reduce((sum, account) => sum + account.balanceCents, 0) ?? null, [accounts.data]);
-  const loading = rules.loading || ledger.loading || accounts.loading;
+  const loading = rules.loading || ledger.loading || accounts.loading || holds.loading;
 
   function setFilter(key: keyof Filters, value: string) { setDraftFilters((current) => ({ ...current, [key]: value })); }
   function applyFilters() {
@@ -304,6 +306,15 @@ export function GatewayBillingPanel() {
         {accounts.data?.items.map((account) => <tr key={account.userId}><td><strong>{account.username || account.userName}</strong><span>{account.userName} · {account.tenantName || account.tenantId}</span><span className={styles.mono}>{account.tenantId}</span></td><td>{planLabel(account.planCode, account.planName)}</td><td className={styles.amount}>{points(account.balanceCents)}</td><td>{points(account.monthlyQuotaCents)}</td><td>{multiplier(account.multiplierBps)}</td><td>v{account.ruleVersion}</td><td>{account.status === "active" ? "正常" : account.status === "disabled" ? "已停用" : account.status}<span>{beijingTime(account.updatedAt)}</span></td></tr>)}
       </tbody></table></div>
       <PageControls data={accounts.data} page={accountPage} loading={accounts.loading || !!accounts.error} onPage={setAccountPage} />
+    </section>
+
+    <section className={styles.section} aria-labelledby="gateway-billing-holds-heading">
+      <div className={styles.sectionHead}><div><h3 id="gateway-billing-holds-heading">进行中与待核账调用</h3><p>显示最早更新的前 50 条。供应结果不明确时保留冻结，核对供应记录后再结算或释放。</p></div></div>
+      <QueryMessage loading={holds.loading} error={holds.error} hasData={!!holds.data} />
+      <div className={styles.tableWrap}><table className={styles.table}><thead><tr><th>更新时间</th><th>租户 / 账号</th><th>模型 / 接口</th><th>冻结积分</th><th>状态</th><th>核账事件 ID</th></tr></thead><tbody>
+        {!holds.loading && !holds.error && holds.data?.items.length === 0 ? <tr><td className={styles.empty} colSpan={6}>没有进行中或待核账调用。</td></tr> : null}
+        {holds.data?.items.map(item => <tr key={item.eventId}><td>{beijingTime(item.updatedAt)}</td><td>{item.tenantId}<span>{item.userId}</span></td><td>{item.model}<span>{item.endpoint}</span></td><td>{points(item.heldCents)}</td><td>{item.status === "unknown" ? "待核账" : item.status === "reserved" ? "待发送" : "进行中"}</td><td className={styles.mono}>{item.eventId}</td></tr>)}
+      </tbody></table></div>
     </section>
 
     <section className={styles.section} aria-labelledby="gateway-billing-ledger-heading">

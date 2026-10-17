@@ -54,4 +54,10 @@ describe("billing audit redaction", () => {
     expect(safeGatewayBillingMetadata({ tokenSource: "unreported", reportedTokenFields: "private text" }))
       .toEqual({ tokenSource: "unreported" });
   });
+  it("stores strictly typed FX provenance and rejects arbitrary or malformed values",()=>{
+    const valid={fxSource:"ecb",fxQuoteId:"a".repeat(64),fxReferenceDate:"2026-10-02",fxFetchedAt:"2026-10-02T16:05:00.000Z"};
+    expect(safeGatewayBillingMetadata({...valid,apiKey:"test-only-secret",xml:"private"})).toEqual(valid);
+    expect(safeGatewayBillingMetadata({fxSource:"secret",fxQuoteId:"Bearer private",fxReferenceDate:"2026-02-30",fxFetchedAt:"yesterday"})).toEqual({});
+  });
+
 });

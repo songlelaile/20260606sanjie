@@ -13,40 +13,42 @@ datasource db {
 }
 
 model Tenant {
-  id         String              @id @default(cuid())
-  name       String
-  slug       String              @unique
-  createdAt  DateTime            @default(now())
-  users      User[]
-  invites    InviteCode[]
-  shops      Shop[]
-  workspace  Workspace?
-  calcRun    CalcRun?
-  dmpReports DmpBusinessReport[]
+  id              String                  @id @default(cuid())
+  name            String
+  slug            String                  @unique
+  createdAt       DateTime                @default(now())
+  users           User[]
+  invites         InviteCode[]
+  shops           Shop[]
+  workspace       Workspace?
+  calcRun         CalcRun?
+  dmpReports      DmpBusinessReport[]
+  nativeVideoJobs GatewayNativeVideoJob[]
 }
 
 model User {
-  id               String              @id @default(cuid())
-  tenantId         String
-  tenant           Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  username         String              @unique
-  password         String
-  name             String
-  authRole         String              @default("tenant") // 登录权限：tenant | admin
-  role             String              @default("operator") // 管理视图角色：owner | admin | operator | viewer
-  email            String              @default("")
-  shopName         String              @default("")
-  status           String              @default("active")
-  createdAt        DateTime            @default(now())
-  lastActiveAt     DateTime            @default(now())
-  gatewayWallet    GatewayWallet?
-  gatewayApiKeys   GatewayApiKey[]
+  aiAccessGrants    AIAccessGrant[]
+  id                String                    @id @default(cuid())
+  tenantId          String
+  tenant            Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  username          String                    @unique
+  password          String
+  name              String
+  authRole          String                    @default("tenant") // 登录权限：tenant | admin
+  role              String                    @default("operator") // 管理视图角色：owner | admin | operator | viewer
+  email             String                    @default("")
+  shopName          String                    @default("")
+  status            String                    @default("active")
+  createdAt         DateTime                  @default(now())
+  lastActiveAt      DateTime                  @default(now())
+  gatewayWallet     GatewayWallet?
+  gatewayApiKeys    GatewayApiKey[]
+  gatewayOrders     GatewayOrder[]
+  gatewayUsages     GatewayUsage[]
+  toolEntitlements  ToolEntitlement[]
+  nativeVideoJobs   GatewayNativeVideoJob[]
+  dmpReports        DmpBusinessReport[]
   supplyCredentials GatewaySupplyCredential[]
-  gatewayOrders    GatewayOrder[]
-  gatewayUsages    GatewayUsage[]
-  toolEntitlements ToolEntitlement[]
-  dmpReports       DmpBusinessReport[]
-  aiAccessGrants   AIAccessGrant[]
 
   @@index([tenantId])
 }
@@ -181,7 +183,6 @@ model DmpBusinessReport {
   quality          String           @default("complete")
   sourceVersion    String           @default("")
   fingerprint      String?
-  summary          Json?
   report           Json
   createdAt        DateTime         @default(now())
   shares           DmpReportShare[]
@@ -189,8 +190,6 @@ model DmpBusinessReport {
   @@unique([tenantId, userId, fingerprint])
   @@index([tenantId, userId, createdAt])
   @@index([tenantId, userId, shopId, createdAt])
-  @@index([tenantId, userId, shopId, createdAt, id])
-  @@index([tenantId, userId, shopId, subjectItemId, competitorItemId, createdAt], map: "dmp_report_pair_created_idx")
 }
 
 // 管理员在插件中导出达摩盘报告表格版 XLSX 的最小审计记录。
@@ -398,18 +397,210 @@ model GatewayWallet {
 // Unified accounting system's allocatable balance. No capacity is seeded or inferred.
 // Only that system may activate id="total" after all purchases/reservations share this pool.
 model GatewayCreditPool {
-  id           String   @id @default("total")
-  status       String   @default("pending") // pending | ready
-  balanceCents Int      @default(0)
-  createdAt    DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
-  updatedAt    DateTime @updatedAt
+  id                       String                       @id @default("total")
+  status                   String                       @default("pending") // pending | ready | blocked
+  balanceCents             Int                          @default(0)
+  accountingVersion        Int                          @default(0)
+  capacityCents            BigInt                       @default(0)
+  allocatedCents           BigInt                       @default(0)
+  consumedCents            BigInt                       @default(0)
+  deficitCents             BigInt                       @default(0)
+  sourceSnapshotId         String?
+  sourceScope              String                       @default("independent_usd")
+  accountingEpochId        String?
+  accountingEpochStartedAt DateTime?
+  frozenValuationProduct   BigInt?
+  sourceSnapshot           GatewayCreditSourceSnapshot? @relation(fields: [sourceSnapshotId], references: [id], onDelete: Restrict)
+  entries                  GatewayCreditPoolLedger[]
+  allocationWindows        GatewayCreditAllocationWindow[]
+  revision                 Int                          @default(0)
+  createdAt                DateTime                     @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+  updatedAt                DateTime                     @updatedAt
+}
+
+// Append-only source proof. Only a reviewed server connector can produce verified records.
+// Missing conversion/ownership/freshness proof remains pending with NULL capacity.
+model GatewayCreditSourceSnapshot {
+  id                   String                      @id @default(cuid())
+  status               String                      @default("pending")
+  snapshotHash         String                      @unique
+  identityHash         String
+  conversionPolicyHash String?
+  nativeUnit           String?
+  providerBaseUrl      String?
+  sourceScope          String                      @default("independent_usd")
+  accountingEpochId    String?
+  capacityCents        Int?
+  proof                Json
+  observedAt           DateTime
+  expiresAt            DateTime
+  createdAt            DateTime                    @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  pools                GatewayCreditPool[]
+  proposals            GatewayCreditPoolProposal[]
+  entries              GatewayCreditPoolLedger[]
+  observations         GatewayCreditSourceUsage[]
+  allocationWindows    GatewayCreditAllocationWindow[]
+}
+
+// Each explicit successful verification starts one immutable 50% allocation window.
+model GatewayCreditAllocationWindow {
+  id               String @id
+  poolId           String
+  pool             GatewayCreditPool @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  sourceSnapshotId String @unique
+  observationHash  String @unique
+  sourceSnapshot   GatewayCreditSourceSnapshot @relation(fields: [sourceSnapshotId], references: [id], onDelete: Restrict)
+  identityHash     String
+  policyHash       String
+  epochId          String
+  poolRevision     Int
+  baselineCents    Int
+  limitCents       Int
+  createdAt        DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  allocations      GatewayCreditAllocation[]
+  verifications    GatewayCreditVerification[]
+  @@unique([poolId, poolRevision])
+}
+
+model GatewayCreditVerification {
+  requestKey String @id
+  adminId    String
+  windowId   String
+  window     GatewayCreditAllocationWindow @relation(fields: [windowId], references: [id], onDelete: Restrict)
+  createdAt  DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+}
+
+// Positive gift/recharge allocations only. Refunds never replenish this budget.
+model GatewayCreditAllocation {
+  eventId     String @id
+  ledger      GatewayCreditPoolLedger @relation(fields: [eventId], references: [eventId], onDelete: Restrict)
+  windowId    String
+  window      GatewayCreditAllocationWindow @relation(fields: [windowId], references: [id], onDelete: Restrict)
+  kind        String
+  amountCents Int
+  createdAt   DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  @@index([windowId])
+}
+
+// Explicit administrator authorization. No FK deletion may erase its audit content.
+model GatewayCreditGiftPlan {
+  id           String @id
+  requestKey   String @unique
+  adminId      String
+  userId       String
+  amountCents  Int
+  reason       String
+  status       String @default("pending")
+  lastCode     String?
+  expiresAt    DateTime
+  executedAt   DateTime?
+  cancelledAt  DateTime?
+  createdAt    DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  updatedAt    DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  @@index([status, createdAt])
+}
+
+// Immutable approval facts; adoption is represented by an append-only journal, not a mutable flag.
+model GatewayCreditPoolProposal {
+  id                   String                      @id @default(cuid())
+  snapshotId           String
+  snapshot             GatewayCreditSourceSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Restrict)
+  snapshotHash         String
+  identityHash         String
+  conversionPolicyHash String
+  adminId              String
+  version              Int                         @default(1)
+  kind                 String                      @default("adoption")
+  consumedCents        BigInt                      @default(0)
+  capacityCents        Int
+  walletTotalCents     BigInt
+  heldSubsetCents      BigInt
+  walletStateHash      String
+  expiresAt            DateTime
+  createdAt            DateTime                    @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  entries              GatewayCreditPoolLedger[]
+}
+
+// Append-only pool movements. No FK to User: account deletion cannot erase audit evidence.
+model GatewayCreditPoolLedger {
+  id                     String                       @id @default(cuid())
+  eventId                String                       @unique
+  kind                   String
+  poolId                 String
+  pool                   GatewayCreditPool            @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  actorId                String?
+  userId                 String?
+  proposalId             String?
+  proposal               GatewayCreditPoolProposal?   @relation(fields: [proposalId], references: [id], onDelete: Restrict)
+  sourceSnapshotId       String?
+  sourceSnapshot         GatewayCreditSourceSnapshot? @relation(fields: [sourceSnapshotId], references: [id], onDelete: Restrict)
+  deltaAllocatedCents    BigInt
+  deltaConsumedCents     BigInt
+  capacityCents          BigInt
+  capacityBeforeCents    BigInt
+  allocatedBeforeCents   BigInt
+  allocatedAfterCents    BigInt
+  consumedBeforeCents    BigInt
+  consumedAfterCents     BigInt
+  allocatableBeforeCents Int
+  allocatableAfterCents  Int
+  deficitAfterCents      BigInt
+  deficitBeforeCents     BigInt                       @default(0)
+  createdAt              DateTime                     @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  allocation             GatewayCreditAllocation?
+
+  @@index([userId, createdAt])
+}
+
+// Actual upstream USD observation only; never a second wallet/pool debit.
+model GatewayCreditSourceUsage {
+  billingEventId        String                      @id
+  billingLedger         GatewayBillingLedger        @relation(fields: [billingEventId], references: [billingEventId], onDelete: Restrict)
+  sourceSnapshotId      String
+  sourceSnapshot        GatewayCreditSourceSnapshot @relation(fields: [sourceSnapshotId], references: [id], onDelete: Restrict)
+  identityHash          String
+  groupId               String?
+  cycleId               String?
+  sourceScope           String                      @default("independent_usd")
+  accountingEpochId     String?
+  credentialFingerprint String?
+  routingBindingHash    String?
+  userId                String
+  actualUsdUnits        BigInt?
+  billingProvenance     String                      @default("upstream_actual_usd")
+  localPricingHash      String?
+  outcomeHash           String?
+  // Response price is not evidence that asynchronous owner debit has committed.
+  ownerDebitPosting     String                      @default("legacy_independent")
+  eligibleUsdUnits      BigInt                      @default(0)
+  createdAt             DateTime                    @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+
+  @@index([identityHash, groupId, cycleId])
+}
+
+// Verified payment evidence survives insufficient capacity and account removal.
+// Crediting is proven by recharge:<orderId> in the wallet and pool journals.
+model GatewayCreditFundingEvidence {
+  orderId             String   @id
+  userId              String
+  receipt             String   @unique
+  provider            String
+  receivedAmountCents Int
+  creditCents         Int
+  actorId             String?
+  actorUsername       String?
+  actorName           String?
+  note                String
+  createdAt           DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+
+  @@index([userId])
 }
 
 // Immutable identity and balance snapshots; account removal must not delete gift history.
 model GatewayCreditGift {
-  id                String   @id @default(cuid())
-  requestKey        String   @unique
-  billingEventId    String   @unique
+  id                String               @id @default(cuid())
+  requestKey        String               @unique
+  billingEventId    String               @unique
   billingLedger     GatewayBillingLedger @relation(fields: [billingEventId], references: [billingEventId], onDelete: Restrict)
   adminId           String
   adminUsername     String
@@ -427,7 +618,7 @@ model GatewayCreditGift {
   walletBeforeCents Int
   walletAfterCents  Int
   reason            String
-  createdAt         DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+  createdAt         DateTime             @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
 
   @@index([userId, createdAt])
   @@index([adminId, createdAt])
@@ -450,50 +641,25 @@ model GatewayApiKey {
   @@index([userId, status])
 }
 
-// Outbound provider credentials are encrypted, never exposed as client GatewayApiKey records.
-// Pending secrets are committed before provider issuance for idempotent crash recovery.
-model GatewaySupplyCredential {
-  id              String   @id
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  slot            String
-  name            String
-  sealedKey       String
-  status          String   @default("pending")
-  providerKeyId   String?
-  providerOwnerId String?
-  providerGroupId String?
-  leaseToken      String?
-  leaseUntil      DateTime?
-  retryAfter      DateTime?
-  attempts        Int      @default(0)
-  lastErrorCode   String   @default("")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now())
-  readyAt         DateTime?
-
-  @@unique([userId, slot], map: "GatewaySupplyCredential_user_slot_key")
-  @@index([status, retryAfter], map: "GatewaySupplyCredential_status_idx")
-}
-
 // 套餐/充值订单。真实支付接入后由支付回调把 status 改为 paid 并充值钱包。
 model GatewayOrder {
-  id              String    @id @default(cuid())
-  userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  planCode        String
-  planName        String
-  amountCents     Int
-  creditCents     Int
-  status          String    @default("pending")
-  paymentProvider String    @default("manual")
-  paymentUrl      String    @default("")
-  paymentReceipt  String?   @unique
-  confirmedBy     String?
-  confirmationNote String?
-  receivedAmountCents Int?
-  paidAt          DateTime?
-  createdAt       DateTime  @default(now())
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planCode              String
+  planName              String
+  amountCents           Int
+  creditCents           Int
+  status                String    @default("pending")
+  paymentProvider       String    @default("manual")
+  paymentUrl            String    @default("")
+  paymentReceipt        String?   @unique
+  confirmedBy           String?
+  confirmationNote      String?
+  receivedAmountCents   Int?
+  creditAllocationState String    @default("legacy") // legacy | credited | awaiting_capacity
+  paidAt                DateTime?
+  createdAt             DateTime  @default(now())
 
   @@index([userId, createdAt])
   @@index([status])
@@ -506,8 +672,8 @@ model GatewayUsage {
   user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   apiKeyId         String?
   apiKey           GatewayApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
-  requestId        String         @default("")
   billingEventId   String?        @unique
+  requestId        String         @default("")
   endpoint         String
   provider         String
   model            String
@@ -525,85 +691,6 @@ model GatewayUsage {
   @@index([apiKeyId, createdAt])
 }
 
-// One adjustable multiplier per plan. Versioned changes are appended to the audit table.
-model GatewayBillingRule {
-  planCode      String   @id
-  planName      String
-  multiplierBps Int     @default(10000)
-  version       Int     @default(0)
-  updatedBy     String?
-  updatedAt     DateTime @updatedAt
-}
-
-// Identity snapshots intentionally have no cascading foreign keys: history survives account deletion.
-model GatewayBillingRuleAudit {
-  id                    String   @id @default(cuid())
-  planCode              String
-  planName              String
-  previousMultiplierBps Int
-  multiplierBps         Int
-  previousVersion       Int
-  version               Int
-  updatedBy             String
-  updatedByUsername     String
-  updatedByName         String
-  reason                String
-  createdAt             DateTime @default(now())
-
-  @@unique([planCode, version])
-  @@index([createdAt])
-}
-
-// Append-only billing journal. RMB cents remain the authoritative, unrounded wallet unit.
-model GatewayBillingLedger {
-  id                 String   @id @default(cuid())
-  billingEventId     String   @unique
-  kind               String
-  userId             String
-  tenantId           String
-  tenantName         String   @default("")
-  username           String
-  userName           String
-  planCode           String
-  planName           String
-  multiplierBps      Int      @default(10000)
-  ruleVersion        Int      @default(0)
-  deltaCents         Int
-  balanceBeforeCents Int
-  balanceAfterCents  Int
-  baseCostCents      Int      @default(0)
-  chargedCostCents   Int      @default(0)
-  endpoint           String   @default("")
-  provider           String   @default("")
-  model              String   @default("")
-  requestId          String   @default("")
-  apiKeyId           String?
-  keyPrefix          String   @default("")
-  usageId            String?  @unique
-  orderId            String?
-  promptTokens       Int      @default(0)
-  completionTokens   Int      @default(0)
-  totalTokens        Int      @default(0)
-  imageCount         Int      @default(0)
-  durationMs         Int?
-  upstreamStatus     Int?
-  status             String
-  error              String   @default("")
-  actorId            String?
-  actorUsername      String?
-  actorName          String?
-  reason             String?
-  metadata           Json     @default("{}")
-  createdAt          DateTime @default(now())
-  creditGift         GatewayCreditGift?
-
-  @@index([tenantId, userId, createdAt])
-  @@index([userId, createdAt])
-  @@index([planCode, createdAt])
-  @@index([kind, createdAt])
-}
-
-// Shared security quotas. No credentials, request bodies or plain account/IP values.
 model SecurityRateBucket {
   bucketKey   String   @db.Char(64)
   windowStart DateTime @db.Timestamptz(6)
@@ -614,7 +701,7 @@ model SecurityRateBucket {
   @@index([expiresAt], map: "SecurityRateBucket_expiresAt_idx")
 }
 
-// Explicit administrator approval, controlled by manual enable/disable.
+// Explicit, short-lived administrator approval for the separate AI channel.
 model AIAccessGrant {
   id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId       String
@@ -627,8 +714,6 @@ model AIAccessGrant {
   activeShopId String?
   createdAt    DateTime        @default(now()) @db.Timestamptz(6)
   expiresAt    DateTime        @db.Timestamptz(6)
-  manualControl Boolean       @default(false)
-  disabledAt   DateTime?       @db.Timestamptz(6)
   revokedAt    DateTime?       @db.Timestamptz(6)
   lastUsedAt   DateTime?       @db.Timestamptz(6)
   events       AIAccessEvent[]
@@ -651,4 +736,191 @@ model AIAccessEvent {
 
   @@index([userId, createdAt(sort: Desc)], map: "AIAccessEvent_userId_createdAt_idx")
   @@index([grantId, createdAt(sort: Desc)], map: "AIAccessEvent_grantId_createdAt_idx")
+}
+
+model GatewayBillingRule {
+  planCode      String   @id
+  planName      String
+  multiplierBps Int      @default(10000)
+  version       Int      @default(0)
+  updatedBy     String?
+  updatedAt     DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')")) @updatedAt
+}
+
+model GatewayBillingRuleAudit {
+  id                    String   @id @default(cuid())
+  planCode              String
+  planName              String
+  previousMultiplierBps Int
+  multiplierBps         Int
+  previousVersion       Int
+  version               Int
+  updatedBy             String
+  updatedByUsername     String
+  updatedByName         String
+  reason                String
+  createdAt             DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+
+  @@unique([planCode, version])
+  @@index([createdAt])
+}
+
+model GatewayBillingLedger {
+  id                 String                    @id @default(cuid())
+  billingEventId     String                    @unique
+  kind               String
+  userId             String
+  tenantId           String
+  tenantName         String                    @default("")
+  username           String
+  userName           String
+  planCode           String
+  planName           String
+  multiplierBps      Int                       @default(10000)
+  ruleVersion        Int                       @default(0)
+  deltaCents         Int
+  balanceBeforeCents Int
+  balanceAfterCents  Int
+  baseCostCents      Int                       @default(0)
+  chargedCostCents   Int                       @default(0)
+  endpoint           String                    @default("")
+  provider           String                    @default("")
+  model              String                    @default("")
+  requestId          String                    @default("")
+  apiKeyId           String?
+  keyPrefix          String                    @default("")
+  usageId            String?                   @unique
+  orderId            String?
+  promptTokens       Int                       @default(0)
+  completionTokens   Int                       @default(0)
+  totalTokens        Int                       @default(0)
+  imageCount         Int                       @default(0)
+  durationMs         Int?
+  upstreamStatus     Int?
+  status             String
+  error              String                    @default("")
+  actorId            String?
+  actorUsername      String?
+  actorName          String?
+  reason             String?
+  metadata           Json                      @default("{}")
+  createdAt          DateTime                  @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  creditGift         GatewayCreditGift?
+  creditSourceUsage  GatewayCreditSourceUsage?
+
+  @@index([tenantId, userId, createdAt])
+  @@index([userId, createdAt])
+  @@index([planCode, createdAt])
+  @@index([kind, createdAt])
+}
+
+model GatewayBillingHold {
+  eventId            String                 @id
+  userId             String
+  tenantId           String
+  apiKeyId           String?
+  idempotencyHash    String?
+  requestFingerprint String
+  endpoint           String
+  provider           String
+  model              String
+  quoteCents         Int
+  heldCents          Int
+  billingMode        String                 @default("reservation")
+  amountDueCents     Int                    @default(0)
+  chargedCents       Int                    @default(0)
+  refundedCents      Int                    @default(0)
+  cancelledAt        DateTime?
+  refundFingerprint  String?
+  settledCents       Int?
+  status             String                 @default("reserved")
+  billingSnapshot    Json
+  outcomeFingerprint String?
+  usageId            String?
+  reason             String                 @default("")
+  createdAt          DateTime               @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  updatedAt          DateTime               @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  dispatchedAt       DateTime?
+  nativeVideoJob     GatewayNativeVideoJob?
+  credentialId       String?
+  sourceBinding      Json?
+
+  @@unique([userId, idempotencyHash])
+  @@index([userId, status])
+  @@index([status, updatedAt])
+}
+
+model GatewayBillingCancellation {
+  userId          String
+  idempotencyHash String
+  createdAt       DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  @@id([userId, idempotencyHash])
+}
+
+// Pending native Seedance work exists before final usage/debit accounting.
+// Credentials and user prompts/media bytes are never stored in this table.
+model GatewayNativeVideoJob {
+  id                 String             @id
+  userId             String
+  user               User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tenantId           String
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  eventId            String             @unique
+  hold               GatewayBillingHold @relation(fields: [eventId], references: [eventId], onDelete: Restrict)
+  idempotencyHash    String
+  requestFingerprint String
+  bindingFingerprint String
+  model              String
+  upstreamModel      String
+  tariff             Json
+  providerTaskId     String?
+  state              String             @default("reserved")
+  resultUrl          String?
+  completionTokens   Int?
+  errorCode          String             @default("")
+  createdAt          DateTime           @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  updatedAt          DateTime           @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+  // migration also adds a partial unique active-request index and CHECKs.
+  credentialId       String?
+
+  @@unique([userId, tenantId, idempotencyHash])
+  @@unique([bindingFingerprint, providerTaskId])
+  @@index([userId, tenantId, createdAt])
+  @@index([state, updatedAt])
+}
+
+model GatewayBillingHoldEvent {
+  id                  String   @id
+  eventId             String
+  userId              String
+  transition          String
+  reason              String   @default("")
+  evidenceFingerprint String?
+  createdAt           DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')"))
+
+  @@index([eventId, createdAt])
+}
+
+model GatewaySupplyCredential {
+  id              String    @id
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slot            String
+  name            String
+  sealedKey       String
+  status          String    @default("pending")
+  providerKeyId   String?
+  providerOwnerId String?
+  providerGroupId String?
+  leaseToken      String?
+  leaseUntil      DateTime?
+  retryAfter      DateTime?
+  attempts        Int       @default(0)
+  lastErrorCode   String    @default("")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now())
+  readyAt         DateTime?
+
+  @@unique([userId, slot], map: "GatewaySupplyCredential_user_slot_key")
+  @@index([status, retryAfter], map: "GatewaySupplyCredential_status_idx")
 }

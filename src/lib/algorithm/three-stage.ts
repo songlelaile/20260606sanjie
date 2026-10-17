@@ -20,8 +20,6 @@ import { assessEvidenceWindow } from "@/lib/analysis-evidence";
 import { countInclusiveDays } from "@/lib/analysis-period";
 import { currentIsoDate } from "@/lib/comparison-window";
 import { divideOrNull } from "@/lib/safe-math";
-import { marginMatrix } from "@/lib/algorithm/three-stage-config";
-export { gradeRows, lifecycleColumns, marginMatrix } from "@/lib/algorithm/three-stage-config";
 
 interface PromotionSummary {
   cost: number | null;
@@ -45,6 +43,9 @@ export interface ThreeStageInput {
   /** 三张分日源在店铺层的真实覆盖天数；实体没有经营活动不等于源数据缺日。 */
   sourceObservedDays?: Partial<Record<"product" | "promotion" | "audience", number>>;
 }
+
+import { marginMatrix } from "@/lib/algorithm/three-stage-config";
+export { gradeRows, lifecycleColumns, marginMatrix } from "@/lib/algorithm/three-stage-config";
 
 const dimensionLabels: Record<BreakthroughDimensionScore["key"], string> = {
   searchDisplayValue: "搜索展现价值",

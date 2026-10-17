@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { RelaySettingsPanel } from "./RelaySettingsPanel";
 import { UserSupplyPanel } from "./UserSupplyPanel";
 import { ScanPaymentDialog } from "../creative/ScanPaymentDialog";
+import { AWAITING_CREDIT_ALLOCATION_LABEL, gatewayOrderDisplayStatus, isGatewayOrderAwaitingCapacity } from "@/lib/model-gateway/scan-payment-contract";
 
 type GatewayPlan = {
   code: string;
@@ -33,6 +34,7 @@ type GatewayOrder = {
   amountCents: number;
   creditCents: number;
   status: string;
+  creditAllocationState?: string;
   paymentProvider: string;
   paymentUrl: string;
   createdAt: string;
@@ -323,9 +325,9 @@ export function ModelGatewayConsole({
             <div key={order.id} className="modelgw-row">
               <div>
                 <strong>{order.planName} · {yuan(order.amountCents)}</strong>
-                <span>{({ paid: "已支付", pending: "待付款确认", expired: "已过期", closed: "已关闭", failed: "支付失败" } as Record<string, string>)[order.status] || order.status} · 充值 {points(order.creditCents)} · {dateText(order.createdAt)}</span>
+                <span>{({ paid: "已支付", pending: "待付款确认", awaiting_capacity: AWAITING_CREDIT_ALLOCATION_LABEL, expired: "已过期", closed: "已关闭", failed: "支付失败" } as Record<string, string>)[gatewayOrderDisplayStatus(order)] || order.status} · 充值 {points(order.creditCents)} · {dateText(order.createdAt)}</span>
               </div>
-              {order.status === "pending" && (order.paymentProvider === "alipay" || order.paymentProvider === "wechat") ? <button type="button" onClick={() => { setPaymentPlan(order.planCode); setResumeOrderId(order.id); setPaymentOpen(true); }}>继续付款</button> : order.status === "pending" && /^https:\/\//i.test(order.paymentUrl) ? <a href={order.paymentUrl} target="_blank" rel="noopener noreferrer">去付款</a> : <em>{order.status === "paid" ? "已到账" : order.paymentProvider === "manual" ? "人工确认" : "—"}</em>}
+              {isGatewayOrderAwaitingCapacity(order) ? (order.paymentProvider === "alipay" || order.paymentProvider === "wechat") ? <button type="button" onClick={() => { setPaymentPlan(order.planCode); setResumeOrderId(order.id); setPaymentOpen(true); }}>查看分配状态</button> : <em>积分待分配</em> : order.status === "pending" && (order.paymentProvider === "alipay" || order.paymentProvider === "wechat") ? <button type="button" onClick={() => { setPaymentPlan(order.planCode); setResumeOrderId(order.id); setPaymentOpen(true); }}>继续付款</button> : order.status === "pending" && /^https:\/\//i.test(order.paymentUrl) ? <a href={order.paymentUrl} target="_blank" rel="noopener noreferrer">去付款</a> : <em>{order.status === "paid" ? "已到账" : order.paymentProvider === "manual" ? "人工确认" : "—"}</em>}
             </div>
           )) : <div className="modelgw-empty">还没有购买记录。</div>}
         </div>
@@ -369,7 +371,7 @@ export function ModelGatewayConsole({
           </div>
           <div className="modelgw-note">
             <strong>接入状态</strong>
-            <span><code>/api/v1</code> 为本轮新增测试版路径，访问规则仍待合入和部署验证；完成前请继续使用已保留的 <code>/v1</code> 聊天、生图入口。</span>
+            <span><code>/api/v1</code> 兼容接口已上线。平台供应调用需管理员配置平台 Key；美元费用使用每日参考汇率换算，每笔调用固定自己的汇率快照。</span>
           </div>
         </div>
       </section>

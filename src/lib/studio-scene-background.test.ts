@@ -169,7 +169,7 @@ describe("website scene backend contract", () => {
     const h = backend();
     expect(await h.api.verifyKnowledgeBeforeImage(payload(h.contract))).toMatchObject({ ok: true, knowledgeMeta: { code: "scene_extension_scope" } });
     expect((await h.api.verifyKnowledgeBeforeImage({ promptSource: "scene-extension" })).ok).toBe(false);
-    expect(await h.api.verifyKnowledgeBeforeImage({ labMode: "detail", detailMode: "link", promptSource: "link" })).toMatchObject({ ok: true, knowledgeMeta: { code: "prompt_input_scope" } });
+    expect(await h.api.verifyKnowledgeBeforeImage({ labMode: "detail", detailMode: "link", promptSource: "link" })).toMatchObject({ ok: false, code: "missing_knowledge_batch" });
     expect(h.requests).toHaveLength(0);
   });
   it("blocks a scene transport marker smuggled into the old reference knowledge bypass", async () => {

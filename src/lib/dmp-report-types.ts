@@ -46,7 +46,7 @@ export const DMP_GROWTH_METRIC_ALIASES = {
   spend: ["推广消耗", "广告消耗", "广告/推广消耗", "营销推广消耗", "营销推广花费", "推广花费", "广告花费", "总消耗", "总花费"],
   paidGmv: ["付费成交额", "付费GMV", "广告归因GMV", "营销推广成交额", "推广成交额"],
   roi: ["ROI", "推广ROI", "营销推广ROI", "投入产出比", "投产比", "直接ROI"],
-  ppc: ["PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
+  ppc: ["PPC", "付费PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
   feeRatio: ["费比", "推广费比", "广告费比"],
   roas: ["全域ROAS", "ROAS"],
   paidShare: ["付费金额占比", "付费成交额占比", "付费GMV贡献率", "广告GMV贡献率", "广告归因GMV贡献率"],
@@ -186,18 +186,15 @@ function dmpGrowthSubjectMetricValue(
 
 function dmpSubjectPeriodRow(table: DmpReportTableSnapshot, itemId: string) {
   const idIndex = dmpColumnIndex(table.columns, ["商品ID", "商品编号"]);
-  let exactRows: DmpReportTableSnapshot["rows"] = [];
   if (idIndex >= 0 && itemId) {
-    exactRows = table.rows.filter((row) => String(row.cells[idIndex] ?? "").trim() === itemId);
-    if (exactRows.length === 1) return exactRows[0];
+    const exact = table.rows.find((row) => String(row.cells[idIndex] ?? "").trim() === itemId);
+    if (exact) return exact;
   }
   const roleIndex = dmpColumnIndex(table.columns, ["对象", "角色"]);
   if (roleIndex >= 0) {
-    const subject = (exactRows.length ? exactRows : table.rows)
-      .find((row) => /主体|本店/.test(String(row.cells[roleIndex] ?? "")));
+    const subject = table.rows.find((row) => /主体|本店/.test(String(row.cells[roleIndex] ?? "")));
     if (subject) return subject;
   }
-  if (exactRows.length) return exactRows[0];
   return table.rows.length === 2 ? table.rows[0] : undefined;
 }
 
@@ -226,33 +223,6 @@ export type DmpReportQuality = "complete" | "partial";
 export interface DmpReportShop {
   id: string;
   name: string;
-}
-
-export interface DmpReportSummaryThumbnail {
-  url: string;
-  title: string;
-}
-
-/**
- * 报告中心列表专用的轻量投影。这个类型故意不包含 report/tables/rows；
- * 正文只能在用户选中某个 reportId 后单独读取。
- */
-export interface DmpBusinessReportSummary {
-  id: string;
-  reportType: DmpReportKind;
-  shopId: string;
-  shopName: string;
-  subjectItemId: string;
-  competitorItemId: string;
-  period: string;
-  quality: DmpReportQuality;
-  createdAt: string;
-  title: string;
-  marketScope?: DmpMarketScope;
-  subjectThumbnail: DmpReportSummaryThumbnail;
-  competitorThumbnail: DmpReportSummaryThumbnail;
-  coverageStart?: string;
-  coverageEnd?: string;
 }
 
 export interface DmpBusinessReportRecord {

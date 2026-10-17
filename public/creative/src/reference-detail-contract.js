@@ -8,8 +8,6 @@
   'use strict';
 
   var SOURCE_SCHEMA = 'REFERENCE_DETAIL_SOURCE_V1';
-  var SCREENSHOT_SOURCE_SCHEMA = 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1';
-  var SCREENSHOT_LIMITS = Object.freeze({ maxImages: 6, maxImageBytes: 6 * 1024 * 1024, maxTotalBytes: 24 * 1024 * 1024 });
   var BLUEPRINT_SCHEMA = 'REFERENCE_DETAIL_BLUEPRINT_V1';
   var BATCH_SCHEMA = 'REFERENCE_DETAIL_BATCH_V1';
   var SCHEMA_VERSION = 1;
@@ -128,7 +126,7 @@
   function ContractError(code, message, path) {
     this.name = 'ReferenceDetailContractError';
     this.code = code || 'CONTRACT_ERROR';
-    this.message = message || '清单成详合同错误';
+    this.message = message || '参考成详合同错误';
     this.path = path || '$';
     if (Error.captureStackTrace) Error.captureStackTrace(this, ContractError);
   }
@@ -246,7 +244,7 @@
   function screenCountValue(value, path) {
     if (value === undefined) return 10;
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 5 || value > 16) {
-      fail('INVALID_SCREEN_COUNT', '清单成详输出屏数必须是 5–16 的整数 number。', path);
+      fail('INVALID_SCREEN_COUNT', '参考成详输出屏数必须是 5–16 的整数 number。', path);
     }
     return value;
   }
@@ -921,7 +919,6 @@
     var context = createContext(options);
     if (!isPlainObject(input)) fail('INVALID_CONTRACT', '来源快照必须是普通对象。', '$');
     var schema = ownValue(input, 'schema', context, '$.schema');
-    if (schema === SCREENSHOT_SOURCE_SCHEMA) return sanitizeScreenshotSourceSnapshot(input, options);
     if (schema !== SOURCE_SCHEMA) fail('INVALID_SCHEMA', '来源快照 schema 必须为 ' + SOURCE_SCHEMA + '。', '$.schema');
     if (Number(ownValue(input, 'schemaVersion', context, '$.schemaVersion')) !== SCHEMA_VERSION) fail('INVALID_SCHEMA_VERSION', 'schemaVersion 必须为 1。', '$.schemaVersion');
     var source = sanitizeSource(ownValue(input, 'source', context, '$.source'), context, options);
@@ -967,116 +964,6 @@
     };
     var output = Object.assign({ snapshotId: stableHash(outputCore, 'rds_') }, outputCore);
     return deepFreeze(output);
-  }
-
-  function validateScreenshotImageUrl(value) {
-    var raw = typeof value === 'string' ? value.trim() : '';
-    var match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(raw);
-    if (!match || match[2].length % 4 !== 0) return { ok: false, code: 'INVALID_SCREENSHOT_IMAGE', reason: '参考截图必须为 PNG、JPEG 或 WebP 的 base64 图片。' };
-    var encoded = match[2];
-    var bytes = encoded.length / 4 * 3 - (/==$/.test(encoded) ? 2 : /=$/.test(encoded) ? 1 : 0);
-    if (bytes < 12 || bytes > SCREENSHOT_LIMITS.maxImageBytes) return { ok: false, code: 'SCREENSHOT_IMAGE_TOO_LARGE', reason: '每张参考截图不得超过 6 MiB。' };
-    var alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    var header = [];
-    for (var index = 0; index < Math.min(24, encoded.length); index += 4) {
-      var bits = (alphabet.indexOf(encoded[index]) << 18) | (alphabet.indexOf(encoded[index + 1]) << 12) |
-        (Math.max(0, alphabet.indexOf(encoded[index + 2])) << 6) | Math.max(0, alphabet.indexOf(encoded[index + 3]));
-      header.push((bits >>> 16) & 255, (bits >>> 8) & 255, bits & 255);
-    }
-    var png = [137, 80, 78, 71, 13, 10, 26, 10].every(function (byte, position) { return header[position] === byte; });
-    var jpeg = header[0] === 255 && header[1] === 216 && header[2] === 255;
-    var webp = header[0] === 82 && header[1] === 73 && header[2] === 70 && header[3] === 70 &&
-      header[8] === 87 && header[9] === 69 && header[10] === 66 && header[11] === 80;
-    if ((match[1] === 'png' && !png) || (match[1] === 'jpeg' && !jpeg) || (match[1] === 'webp' && !webp)) {
-      return { ok: false, code: 'SCREENSHOT_FORMAT_MISMATCH', reason: '参考截图内容与图片格式不匹配。' };
-    }
-    return { ok: true, url: raw, mimeType: 'image/' + match[1], byteLength: bytes };
-  }
-
-  function createScreenshotSource(images, options) {
-    options = isPlainObject(options) ? options : {};
-    var context = createContext(options);
-    var list = arrayValue(images, '$images', SCREENSHOT_LIMITS.maxImages, true);
-    if (!list.length) fail('SCREENSHOT_IMAGES_REQUIRED', '请添加 1–6 张参考详情截图。', '$images');
-    var capturedAt = timestampValue(ownValue(options, 'capturedAt'), '$options.capturedAt', context, new Date().toISOString());
-    var totalBytes = 0;
-    var records = list.map(function (item, index) {
-      var path = '$images[' + index + ']';
-      var url = typeof item === 'string' ? item : isPlainObject(item) ? ownValue(item, 'url') || ownValue(item, 'dataUrl') || ownValue(item, 'src') : '';
-      var validated = validateScreenshotImageUrl(url);
-      if (!validated.ok) fail(validated.code, validated.reason, path);
-      totalBytes += validated.byteLength;
-      if (totalBytes > SCREENSHOT_LIMITS.maxTotalBytes) fail('SCREENSHOT_PAYLOAD_TOO_LARGE', '参考截图总大小不得超过 24 MiB。', '$images');
-      var width = isPlainObject(item) ? ownValue(item, 'width') : null;
-      var height = isPlainObject(item) ? ownValue(item, 'height') : null;
-      width = width == null ? null : pixelInteger(width, path + '.width', false);
-      height = height == null ? null : pixelInteger(height, path + '.height', false);
-      if ((width === null) !== (height === null) || width > 8192 || height > 65535 || (width && height && width * height > 40000000)) {
-        fail('INVALID_SCREENSHOT_DIMENSIONS', '参考截图尺寸不完整或超过像素上限。', path);
-      }
-      return { url: validated.url, width: width, height: height };
-    });
-    var source = { sourceMode: 'screenshots', capturedAt: capturedAt };
-    var sourceKey = stableHash({ source: source, images: records }, 'rdscreens_');
-    var assets = [];
-    var evidence = [];
-    var assetById = Object.create(null);
-    var blocks = records.map(function (record, index) {
-      var assetId = stableHash(record.url, 'rda_');
-      var sourcePath = 'screenshots[' + index + ']';
-      if (assetById[assetId] && (assetById[assetId].width !== record.width || assetById[assetId].height !== record.height)) {
-        fail('SCREENSHOT_DIMENSIONS_MISMATCH', '相同参考截图不得声明不同尺寸。', '$images[' + index + ']');
-      }
-      if (!assetById[assetId]) {
-        var asset = { assetId: assetId, url: record.url, mediaType: 'image', role: 'detail', originalIndex: index,
-          width: record.width, height: record.height, altText: '', sourcePath: sourcePath, rightsStatus: 'reference_only', completeness: 'complete' };
-        assetById[assetId] = asset;
-        assets.push(asset);
-      }
-      var evidenceId = stableHash({ source: sourceKey, originalIndex: index }, 'rde_');
-      evidence.push({ evidenceId: evidenceId, kind: 'user', sourcePath: sourcePath, endpointPath: '', locator: 'ordered-reference-screenshot:' + index, note: '', completeness: 'complete' });
-      return { blockId: stableHash({ source: sourceKey, originalIndex: index }, 'rdb_'), originalIndex: index,
-        type: 'image', salesRole: 'unknown', sourceSummary: '', text: '', assetIds: [assetId], factIds: [], evidenceIds: [evidenceId], completeness: 'complete' };
-    });
-    var core = { schema: SCREENSHOT_SOURCE_SCHEMA, schemaVersion: 1, source: source,
-      completeness: { source: 'partial', facts: 'unknown', orderedBlocks: 'complete', assets: 'complete', evidence: 'complete', overall: 'partial' },
-      facts: [], orderedBlocks: blocks, assets: assets, evidence: evidence,
-      rights: { defaultStatus: 'reference_only', notice: '参考截图仅供学习详情结构与视觉表达。', reusableAssetIds: [], restrictedAssetIds: assets.map(function (asset) { return asset.assetId; }) }, warnings: [] };
-    return deepFreeze(Object.assign({ snapshotId: stableHash(core, 'rds_') }, core));
-  }
-
-  function sanitizeScreenshotSourceSnapshot(input, options) {
-    var allowedKeys = ['schema', 'schemaVersion', 'snapshotId', 'source', 'completeness', 'facts', 'orderedBlocks', 'assets', 'evidence', 'rights', 'warnings'];
-    if (Object.keys(input).some(function (key) { return allowedKeys.indexOf(key) < 0; })) fail('SCREENSHOT_SOURCE_CONTENT_FORBIDDEN', '截图来源不得夹带商品事实、业务字段或旧参考图别名。', '$');
-    if (Number(ownValue(input, 'schemaVersion')) !== 1) fail('INVALID_SCHEMA_VERSION', '截图来源 schemaVersion 必须为 1。', '$.schemaVersion');
-    var source = ownValue(input, 'source');
-    if (!isPlainObject(source) || ownValue(source, 'sourceMode') !== 'screenshots' ||
-        Object.keys(source).some(function (key) { return key !== 'sourceMode' && key !== 'capturedAt'; })) {
-      fail('INVALID_SCREENSHOT_SOURCE', '截图学习来源不得声明商品平台、商品 ID 或商品 URL。', '$.source');
-    }
-    if (ownValue(input, 'images') !== undefined || arrayValue(ownValue(input, 'facts'), '$.facts', 0, true).length) {
-      fail('SCREENSHOT_SOURCE_CONTENT_FORBIDDEN', '截图来源不得夹带商品事实或旧参考图别名。', '$');
-    }
-    var assets = arrayValue(ownValue(input, 'assets'), '$.assets', SCREENSHOT_LIMITS.maxImages, true);
-    var blocks = arrayValue(ownValue(input, 'orderedBlocks'), '$.orderedBlocks', SCREENSHOT_LIMITS.maxImages, true);
-    var lookup = Object.create(null);
-    assets.forEach(function (asset, index) {
-      if (!isPlainObject(asset) || !ownValue(asset, 'assetId') || lookup[ownValue(asset, 'assetId')]) fail('INVALID_SCREENSHOT_ASSET', '截图素材身份无效或重复。', '$.assets[' + index + ']');
-      lookup[ownValue(asset, 'assetId')] = asset;
-    });
-    var images = blocks.map(function (block, index) {
-      var ids = isPlainObject(block) ? ownValue(block, 'assetIds') : null;
-      ids = arrayValue(ids, '$.orderedBlocks[' + index + '].assetIds', 1, true);
-      if (ids.length !== 1 || typeof ids[0] !== 'string' || !lookup[ids[0]]) fail('INVALID_SCREENSHOT_BLOCK', '每张参考截图必须有一个有序图像块。', '$.orderedBlocks[' + index + ']');
-      var asset = lookup[ids[0]];
-      return { url: ownValue(asset, 'url'), width: ownValue(asset, 'width'), height: ownValue(asset, 'height') };
-    });
-    var canonical = createScreenshotSource(images, { capturedAt: ownValue(source, 'capturedAt') });
-    ['source', 'facts', 'orderedBlocks', 'assets', 'evidence', 'rights', 'completeness', 'warnings'].forEach(function (key) {
-      if (stableSerialize(ownValue(input, key)) !== stableSerialize(canonical[key])) fail('SCREENSHOT_SOURCE_DERIVATION_MISMATCH', '截图来源内容、顺序或只读权利记录与图片身份不一致。', '$.' + key);
-    });
-    if (ownValue(input, 'snapshotId') && ownValue(input, 'snapshotId') !== canonical.snapshotId) fail('SOURCE_SNAPSHOT_MISMATCH', '参考截图已变化，请重新学习结构。', '$.snapshotId');
-    return canonical;
   }
 
   function detailSemanticPath(value) {
@@ -1179,13 +1066,6 @@
 
   function projectDetailImageSource(input, options) {
     var snapshot = sanitizeSourceSnapshot(input, options);
-    if (snapshot.schema === SCREENSHOT_SOURCE_SCHEMA) return deepFreeze({
-      ok: true, code: 'SCREENSHOT_SOURCE_READY', snapshot: snapshot,
-      report: { boundaryContract: 'ORDERED_REFERENCE_SCREENSHOTS_V1', sourceKind: 'screenshots', detailScreenCount: snapshot.orderedBlocks.length,
-        detailImageScreenCount: snapshot.orderedBlocks.length, detailVideoScreenCount: 0, detailTextScreenCount: 0,
-        rawBlockCount: snapshot.orderedBlocks.length, rawAssetCount: snapshot.assets.length, filteredBlockCount: 0, filteredAssetCount: 0,
-        acceptedBlockIds: snapshot.orderedBlocks.map(function (block) { return block.blockId; }), rejectedBlocks: [] }
-    });
     var assetById = Object.create(null);
     var evidenceById = Object.create(null);
     var factById = Object.create(null);
@@ -3480,12 +3360,12 @@
   function sanitize(input, expectedSchema, options) {
     if (isPlainObject(expectedSchema)) { options = expectedSchema; expectedSchema = ''; }
     var schema = expectedSchema || ownValue(input, 'schema');
-    if (schema === SOURCE_SCHEMA || schema === SCREENSHOT_SOURCE_SCHEMA) return sanitizeSourceSnapshot(input, options);
+    if (schema === SOURCE_SCHEMA) return sanitizeSourceSnapshot(input, options);
     if (schema === BLUEPRINT_SCHEMA) return sanitizeBlueprint(input, options);
     if (schema === BATCH_SCHEMA) return sanitizeBatchProject(input, options);
     if (schema === VISUAL_STRUCTURE_BLUEPRINT_SCHEMA) return sanitizeVisualStructureBlueprint(input, options);
     if (schema === VISUAL_STRUCTURE_BATCH_SCHEMA) return sanitizeVisualStructureBatchProject(input, options);
-    fail('INVALID_SCHEMA', '无法识别清单成详合同 schema。', '$.schema');
+    fail('INVALID_SCHEMA', '无法识别参考成详合同 schema。', '$.schema');
   }
 
   function validate(input, expectedSchema, options) {
@@ -3499,14 +3379,13 @@
 
   return deepFreeze({
     REFERENCE_DETAIL_SOURCE_V1: SOURCE_SCHEMA,
-    REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1: SCREENSHOT_SOURCE_SCHEMA,
     REFERENCE_DETAIL_BLUEPRINT_V1: BLUEPRINT_SCHEMA,
     REFERENCE_DETAIL_BATCH_V1: BATCH_SCHEMA,
     REFERENCE_DETAIL_BLUEPRINT_V2: VISUAL_STRUCTURE_BLUEPRINT_SCHEMA,
     REFERENCE_DETAIL_BATCH_V2: VISUAL_STRUCTURE_BATCH_SCHEMA,
     VISUAL_STRUCTURE_ONLY: VISUAL_STRUCTURE_ONLY,
     SCHEMA_VERSION: SCHEMA_VERSION,
-    schemas: { source: SOURCE_SCHEMA, screenshotSource: SCREENSHOT_SOURCE_SCHEMA, blueprint: BLUEPRINT_SCHEMA, batch: BATCH_SCHEMA },
+    schemas: { source: SOURCE_SCHEMA, blueprint: BLUEPRINT_SCHEMA, batch: BATCH_SCHEMA },
     enums: {
       completeness: COMPLETENESS_STATUSES,
       sourceModes: SOURCE_MODES,
@@ -3525,9 +3404,6 @@
     ContractError: ContractError,
     createUrlPolicy: createUrlPolicy,
     validateUrl: validateUrl,
-    SCREENSHOT_LIMITS: SCREENSHOT_LIMITS,
-    validateScreenshotImageUrl: validateScreenshotImageUrl,
-    createScreenshotSource: createScreenshotSource,
     stableSerialize: stableSerialize,
     stableHash: stableHash,
     sanitize: sanitize,

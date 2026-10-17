@@ -23,10 +23,18 @@ describe("personal recharge order history", () => {
       where: { userId: "current-user" }, skip: 20, take: 20,
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       select: { id: true, planName: true, amountCents: true, creditCents: true,
-        status: true, paymentProvider: true, createdAt: true, paidAt: true }
+        status: true, creditAllocationState: true, paymentProvider: true, createdAt: true, paidAt: true }
     });
     expect(mocks.count).toHaveBeenCalledWith({ where: { userId: "current-user" } });
     expect(await response.json()).toEqual({ data: { items: [{ id: "order-1", status: "pending", amountCents: 9900 }], total: 23, page: 2, pageSize: 20 } });
+  });
+
+  it("保留已收款待分配显示字段，不把它改为paid或选择付款凭证", async () => {
+    mocks.orders.mockResolvedValue([{ id: "funded-1", status: "pending", creditAllocationState: "awaiting_capacity", amountCents: 9900 }]);
+    const response = await GET(request());
+    expect((await response.json()).data.items[0]).toMatchObject({ status: "pending", creditAllocationState: "awaiting_capacity" });
+    expect(mocks.orders.mock.calls[0][0].select).not.toHaveProperty("paymentReceipt");
+    expect(mocks.orders.mock.calls[0][0].select).not.toHaveProperty("confirmationNote");
   });
 
   it("does not widen scope for an administrator's own profile", async () => {

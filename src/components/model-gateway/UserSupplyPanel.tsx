@@ -13,9 +13,9 @@ type UserSupplyStatus = {
   primary: SupplySlot;
   backup: SupplySlot;
 };
-type ProvisioningView = { configured: boolean; missing: string[]; emailMasked?: string; groupId?: string; quotaUsd?: number; baseUrl?: string };
+type ProvisioningView = { configured: boolean; missing: string[]; emailMasked?: string; groupId?: string; quotaUsd?: number; baseUrl?: string; retryReset?: "ready" | "unavailable" };
 type SupplyOverview = { provisioning: ProvisioningView; users: UserSupplyStatus[] };
-type BatchResult = { processed: number; ready: number; failed: number; remaining: number };
+type BatchResult = { processed: number; ready: number; failed: number; remaining: number; errors?: Array<{ userId: string; code: string }> };
 
 const endpoint = "/api/management/user-supply";
 
@@ -46,6 +46,8 @@ export function UserSupplyPanel() {
   const [password, setPassword] = useState("");
   const [groupId, setGroupId] = useState("");
   const [quotaUsd, setQuotaUsd] = useState("");
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownReason, setCooldownReason] = useState<"rate" | "count" | "">("");
   const inFlight = useRef(true);
 
   function applyConfiguration(view: ProvisioningView) {
@@ -60,6 +62,7 @@ export function UserSupplyPanel() {
       setOverview(data);
       applyConfiguration(data.provisioning);
       setMessage(`已读取 ${data.users.length} 个注册用户的主备 Key 状态。`);
+      if (cooldownUntil <= Date.now()) { setCooldownUntil(0); setCooldownReason(""); }
     }).catch((error) => {
       if (controller.signal.aborted) return;
       setFailed(true);
@@ -106,7 +109,11 @@ export function UserSupplyPanel() {
       setPassword("");
       applyConfiguration(view);
       setOverview((current) => current ? { ...current, provisioning: view } : { provisioning: view, users: [] });
-      setMessage("配发账号配置已保存。可点击补齐主备 Key 开始本批配发。");
+      if (view.retryReset !== "unavailable" && cooldownReason === "count") { setCooldownUntil(0); setCooldownReason(""); }
+      setFailed(view.retryReset === "unavailable");
+      setMessage(view.retryReset === "unavailable"
+        ? "配发账号配置已保存，重试状态暂未恢复，请稍后刷新状态再补齐。"
+        : "配发账号配置已保存。可点击补齐主备 Key 开始本批配发。");
     } catch (error) {
       setFailed(true);
       setMessage(errorText(error));
@@ -117,7 +124,7 @@ export function UserSupplyPanel() {
   }
 
   async function backfill() {
-    if (inFlight.current || !overview?.provisioning.configured) return;
+    if (inFlight.current || !overview?.provisioning.configured || cooldownUntil > Date.now()) return;
     inFlight.current = true;
     setBusy("backfill");
     setFailed(false);
@@ -125,13 +132,24 @@ export function UserSupplyPanel() {
     try {
       const result = await request<BatchResult>({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: 10 }) });
       const summary = `本批处理 ${result.processed} 个用户，主备就绪 ${result.ready} 个，失败 ${result.failed} 个，剩余 ${result.remaining} 个待补齐。`;
-      setFailed(result.failed > 0);
-      setMessage(summary);
+      const codes = result.errors?.map((entry) => entry.code) || [];
+      let delayMessage = "";
+      if (codes.includes("supply_provisioning_rate_limited")) {
+        setCooldownUntil(Date.now() + 60 * 60 * 1000);
+        setCooldownReason("rate");
+        delayMessage = "上游配发频率受限，本批已停止，请至少 1 小时后再补齐。";
+      } else if (codes.some((code) => ["supply_provisioning_key_count_limit", "supply_provisioning_key_count_exceeded"].includes(code))) {
+        setCooldownUntil(Date.now() + 24 * 60 * 60 * 1000);
+        setCooldownReason("count");
+        delayMessage = "上游 Key 数量已达上限，请调整配发账号配置，或 24 小时后再补齐。";
+      }
+      setFailed(result.failed > 0 || delayMessage !== "");
+      setMessage(summary + delayMessage);
       try {
         setOverview(await request<SupplyOverview>());
       } catch {
         setFailed(true);
-        setMessage(`${summary} 状态刷新失败，请点击刷新。`);
+        setMessage(`${summary}${delayMessage} 状态刷新失败，请点击刷新。`);
       }
     } catch (error) {
       setFailed(true);
@@ -182,9 +200,10 @@ export function UserSupplyPanel() {
           <div className={styles.status} role="status">Key 发行服务尚未配置{overview.provisioning.missing.length ? `，缺少：${overview.provisioning.missing.join("、")}` : ""}。完成服务端配置后刷新。</div>
         ) : null}
         <div className={styles.actions}>
-          <button type="button" className="primary-button" onClick={backfill} disabled={!!busy || !overview?.provisioning.configured}>{busy === "backfill" ? "正在补齐..." : "补齐主备 Key"}</button>
+          <button type="button" className="primary-button" onClick={backfill} disabled={!!busy || !overview?.provisioning.configured || cooldownUntil > Date.now()}>{busy === "backfill" ? "正在补齐..." : "补齐主备 Key"}</button>
           <button type="button" className="secondary-button" onClick={refresh} disabled={!!busy}><RefreshCw size={15} /> {busy === "load" ? "正在刷新..." : "刷新状态"}</button>
         </div>
+        {cooldownUntil > Date.now() ? <div className={styles.status} role="status">{cooldownReason === "rate" ? "上游配发频率受限，请至少 1 小时后刷新再补齐。保存配置不会解除频率冷却。" : "上游 Key 数量已达上限，请调整配发账号配置，或 24 小时后刷新再补齐。"}</div> : null}
         {overview ? (
           <div className={styles.tableWrap}>
             <table className={styles.table}>

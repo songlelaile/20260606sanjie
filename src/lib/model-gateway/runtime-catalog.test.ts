@@ -6,9 +6,7 @@ import { getRelayRuntime } from "@/lib/model-gateway/relay-config";
 import { findAvailableGatewayModel, listAvailableGatewayModels } from "@/lib/model-gateway/runtime-catalog";
 
 const runtime = vi.mocked(getRelayRuntime);
-const base: Omit<Awaited<ReturnType<typeof getRelayRuntime>>, "models"> = {
-  baseUrl: "https://relay.example.com/v1", apiKey: "not-for-clients", shopKeys: [], usdCnyRate: null
-};
+const base = { baseUrl: "https://relay.example.com/v1", apiKey: "not-for-clients", shopKeys: [], usdCnyRate: null };
 
 beforeEach(() => { vi.resetAllMocks(); });
 

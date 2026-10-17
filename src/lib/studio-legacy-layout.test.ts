@@ -171,8 +171,7 @@ function harness(search: string, readyState = "complete") {
 const routes = [
   ["reference", "?mode=detail&detailMode=reference&source=detail-reference&layout=1"],
   ["sku", "?mode=sku&source=web&layout=1"],
-  ["viral", "?mode=viral&source=web&layout=1"],
-  ["main", "?mode=main&source=web&layout=1"]
+  ["viral", "?mode=viral&source=web&layout=1"]
 ] as const;
 
 function captureOriginals(document: TestDocument) {

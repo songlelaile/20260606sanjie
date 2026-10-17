@@ -77,22 +77,6 @@
   width: 100%;
 }
 
-.frameArea { display: flex; flex: 1; position: relative; }
-.frameLoading { visibility: hidden; }
-.frameWait { inset: 0; position: absolute; }
-.wallet { border-bottom: 1px solid var(--line); padding: 10px 22px; }
-.walletBar { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; }
-.walletNote { color: var(--muted); font-size: 12px; margin: 8px 0; }
-.ledger { font-size: 13px; margin-top: 8px; }
-.ledger summary { cursor: pointer; }
-.ledgerScroll { max-height: 260px; overflow: auto; margin: 12px 0; }
-.ledger table { border-collapse: collapse; min-width: 560px; width: 100%; }
-.ledger th, .ledger td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; }
-.surfaces { border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 22px; }
-.surface { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; color: var(--ink); cursor: pointer; font: inherit; font-size: 13px; padding: 8px 12px; }
-.surface[aria-current="page"] { background: var(--sidebar-active); font-weight: 650; }
-.surface:disabled, .retry:disabled { cursor: default; opacity: .5; }
-
 .state {
   align-items: center;
   color: var(--muted);

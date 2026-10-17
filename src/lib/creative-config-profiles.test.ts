@@ -5,15 +5,12 @@ import { describe, expect, it } from "vitest";
 
 const assetRoot = process.env.CREATIVE_ASSET_TEST_ROOT || "public/creative";
 const script = (file: string) => readFileSync(resolve(assetRoot, file), "utf8");
-// Published releases scope accounts inside the profile store; newer website
-// shims also scope storage operations and therefore perform a second auth check.
-const authPerRead = script("web-chrome.js").includes("global.SZ_WEB_ACCOUNT") ? 2 : 1;
-const platformWallet = script("web-chrome.js").includes("usesPlatformWallet: usesPlatformWallet");
-const platformApi = { provider: "openai-compatible", label: "少壮平台积分", imageModel: "image2", imageAdapter: "generic-json", platformWallet: true };
 const PROFILES_KEY = "sz_image_prompt_lab_config_profiles_v2";
 const CONFIG_KEY = "sz_image_prompt_lab_config";
+// The shipped website selector also advertises its keyless platform wallet.
+const platformApi = { provider: "openai-compatible", label: "少壮平台积分", imageModel: "image2", imageAdapter: "generic-json", platformWallet: true };
 type ImageApi = { provider: string; label: string; imageModel: string; imageAdapter: string };
-type MessageResponse = { ok: boolean; accountKey?: string; provider?: string; activeSupplyChannel?: string; code?: string; boundApis?: MessageResponse; providers?: ImageApi[]; catalog?: Array<{ provider: string; label: string }>; saved?: boolean; config?: Record<string, string>; error?: string };
+type MessageResponse = { ok: boolean; accountKey?: string; providers?: ImageApi[]; catalog?: Array<{ provider: string; label: string }>; saved?: boolean; config?: Record<string, string>; error?: string };
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -22,15 +19,17 @@ function memoryStorage() {
     removeItem: (key: string) => { values.delete(key); }, values };
 }
 
-function website(sharedStorage?: ReturnType<typeof memoryStorage>) {
+function website() {
   let username = "alice";
   const calls = { auth: 0, reads: 0, writes: 0 };
-  const localStorage = sharedStorage || memoryStorage();
+  const localStorage = memoryStorage();
   const context = createContext({ URL, URLSearchParams, Request, Headers, Response, Blob, FormData, TextEncoder,
     ArrayBuffer, Uint8Array, btoa, atob, console, setTimeout, clearTimeout, localStorage, sessionStorage: memoryStorage(),
     __SZ_PROMPTLAB_BACKGROUND_TEST_MODE__: true,
     location: { href: "https://site.test/creative/labs/image-prompt-lab/promptlab.html?studio=1", origin: "https://site.test", search: "?studio=1" },
-    document: { getElementById: () => null, addEventListener() {}, body: { classList: { contains: () => false, toggle() {} } } },
+    document: { getElementById: () => null, addEventListener() {},
+      createElement: () => ({ style: {}, setAttribute() {}, addEventListener() {}, appendChild() {} }),
+      body: { appendChild() {}, classList: { contains: () => false, toggle() {} } } },
     addEventListener() {},
     fetch: async (input: string) => {
       if (input !== "/api/auth/me") throw new Error(`Unexpected network request: ${input}`);
@@ -57,29 +56,6 @@ function website(sharedStorage?: ReturnType<typeof memoryStorage>) {
   return { context, calls, send, seed, normalize, localStorage, setUser: (value: string) => { username = value; } };
 }
 
-describe("hosted Shaozhuang model aliases", () => {
-  it("keeps public names in saved config and sends the relay ids that are actually running", () => {
-    const api = website().context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__;
-    const hosted = api.normalizeCfg({
-      provider: "openai-compatible",
-      textModel: "gpt-5.6-sol",
-      visionModel: "gpt-5.5",
-      imageModel: "gpt-image-2"
-    });
-    expect(hosted).toMatchObject({ textModel: "chatGPT5.5", visionModel: "chatGPT5.5", imageModel: "image2" });
-    expect(api.hostedTextUpstreamModel(hosted, hosted.textModel)).toBe("gpt-5.6-sol");
-    expect(api.hostedImageUpstreamModel(hosted, hosted.imageModel)).toBe("gpt-image-2");
-    expect(api.hostedTextUpstreamModel(hosted, "shop-custom-text")).toBe("shop-custom-text");
-    expect(api.hostedImageUpstreamModel(hosted, "gpt-image-2.5-sunburst")).toBe("gpt-image-2.5-sunburst");
-
-    const direct = api.normalizeCfg({ provider: "openai", textModel: "gpt-5.5", imageModel: "gpt-image-2" });
-    expect(direct.textModel).toBe("gpt-5.5");
-    expect(direct.imageModel).toBe("gpt-image-2");
-    expect(api.hostedTextUpstreamModel(direct, direct.textModel)).toBe("gpt-5.5");
-    expect(api.hostedImageUpstreamModel(direct, direct.imageModel)).toBe("gpt-image-2");
-  });
-});
-
 describe("bound image API selector snapshots", () => {
   it("reads once with fresh identity, returns the same selector as eight profile reads and never writes or leaks credentials", async () => {
     const h = website();
@@ -97,7 +73,7 @@ describe("bound image API selector snapshots", () => {
     const bulk = await h.send("GET_BOUND_IMAGE_APIS");
     expect(bulk).toMatchObject({ ok: true, accountKey: "user:shop:alice" });
     expect(bulk.providers?.map((entry) => entry.provider)).toEqual(["openai-compatible", "openai"]);
-    expect(h.calls).toEqual({ auth: authPerRead, reads: 1, writes: 0 });
+    expect(h.calls).toEqual({ auth: 1, reads: 1, writes: 0 });
     expect([...h.localStorage.values.entries()]).toEqual(before);
     expect(JSON.stringify(bulk)).not.toContain("synthetic-");
     expect(bulk.providers?.every((entry) => Object.keys(entry).sort().join(",") === "imageAdapter,imageModel,label,provider")).toBe(true);
@@ -112,7 +88,9 @@ describe("bound image API selector snapshots", () => {
       return { provider: config.provider, label: entry.label, imageModel: config.imageModel, imageAdapter: config.imageAdapter };
     }));
     expect(bulk.providers).toEqual(old.filter(Boolean));
-    expect(h.calls).toEqual({ auth: 8 * authPerRead, reads: 8, writes: 0 });
+    // Each queued profile operation still reads fresh identity once, with no
+    // extra storage-level auth trip or writes and no credential exposure.
+    expect(h.calls).toEqual({ auth: 8, reads: 8, writes: 0 });
   });
 
   it("uses normalized saved defaults while excluding unsaved presets and leaving old configuration untouched", async () => {
@@ -138,204 +116,30 @@ describe("bound image API selector snapshots", () => {
     await h.seed(PROFILES_KEY, { activeAccount: "user:shop:bob", configs: { openai: legacy }, accounts: {
       "user:shop:bob": { configs: { openai: legacy } }, "user:shop:alice": { configs: {} }
     } });
-    expect((await h.send("GET_BOUND_IMAGE_APIS")).providers).toEqual(platformWallet ? [platformApi] : []);
+    expect((await h.send("GET_BOUND_IMAGE_APIS")).providers).toEqual([platformApi]);
     expect(h.calls.writes).toBe(0);
 
     const owner = website();
     await owner.seed(CONFIG_KEY, legacy);
     await owner.seed(PROFILES_KEY, { activeAccount: "user:shop:alice", accounts: { "user:shop:alice": { configs: {} } } });
     const response = await owner.send("GET_BOUND_IMAGE_APIS");
-    expect(response.providers?.map((entry) => entry.provider)).toEqual(platformWallet ? ["openai-compatible", "openai"] : ["openai"]);
+    expect(response.providers?.map((entry) => entry.provider)).toEqual(["openai-compatible", "openai"]);
+    expect(response.providers?.[0]).toEqual(platformApi);
     expect(owner.calls.writes).toBe(0);
   });
 
   it("rechecks identity on each read and never returns the previous account's APIs after login changes", async () => {
     const h = website();
     await h.seed(PROFILES_KEY, { accounts: { "user:shop:alice": { configs: { openai: { apiKey: "synthetic-alice", imageModel: "gpt-image-1" } } } } });
-    expect((await h.send("GET_BOUND_IMAGE_APIS")).providers).toHaveLength(platformWallet ? 2 : 1);
+    const initial = await h.send("GET_BOUND_IMAGE_APIS");
+    expect(initial.providers?.map((entry) => entry.provider)).toEqual(["openai-compatible", "openai"]);
+    expect(initial.providers?.[0]).toEqual(platformApi);
     h.setUser("bob");
     const response = await h.send("GET_BOUND_IMAGE_APIS");
-    if (authPerRead === 2) {
-      expect(response.ok).toBe(false);
-      expect(response.providers).toBeUndefined();
-    } else {
-      // The published shim allows a new identity. The caller rejects the changed
-      // accountKey; the background must still exclude all of Alice's credentials.
-      expect(response).toMatchObject({ ok: true, accountKey: "user:shop:bob", providers: [] });
-    }
+    expect(response.ok).toBe(false);
+    expect(response.providers).toBeUndefined();
     expect(JSON.stringify(response)).not.toContain("synthetic-alice");
-    expect(h.calls.auth).toBe(authPerRead + 1);
+    expect(h.calls.auth).toBe(2);
     expect(h.calls.writes).toBe(0);
-  });
-
-  it("provides a temporary website platform default without storing a Key or replacing an external profile", async () => {
-    if (!platformWallet) return;
-    const h = website();
-    const external = h.normalize({ provider: "openai", apiKey: "", imageModel: "gpt-image-2" });
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      "user:shop:alice": { activeProvider: "openai", configs: { openai: external } }
-    } });
-    const before = [...h.localStorage.values.entries()];
-    const current = await h.send("GET_CONFIG_PROFILE");
-    expect(current).toMatchObject({ ok: true, saved: false, activeProvider: "openai-compatible", config: { provider: "openai-compatible", apiKey: "", imageModel: "image2" } });
-    expect((await h.send("GET_CONFIG_PROFILE", { provider: "openai" })).config).toEqual(external);
-    expect((await h.send("GET_BOUND_IMAGE_APIS")).providers).toEqual([platformApi]);
-    expect(h.calls.writes).toBe(0);
-    expect([...h.localStorage.values.entries()]).toEqual(before);
-
-    const own = website(), configured = own.normalize({ provider: "openai", apiKey: "synthetic-original-key", imageModel: "original-image" });
-    await own.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      "user:shop:alice": { activeProvider: "openai", configs: { openai: configured } }
-    } });
-    const original = [...own.localStorage.values.entries()];
-    expect((await own.send("GET_CONFIG_PROFILE")).config).toEqual(configured);
-    expect(own.calls.writes).toBe(0);
-    expect([...own.localStorage.values.entries()]).toEqual(original);
-
-    const hosted = website(), selected = hosted.normalize({ provider: "openai-compatible", apiKey: "", imageModel: "selected-platform-model", imageAdapter: "openai-images" });
-    await hosted.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      "user:shop:alice": { activeProvider: "openai-compatible", configs: { "openai-compatible": selected } }
-    } });
-    expect((await hosted.send("GET_CONFIG_PROFILE")).config).toEqual(selected);
-    expect((await hosted.send("GET_BOUND_IMAGE_APIS")).providers).toEqual([{ ...platformApi, imageModel: selected.imageModel, imageAdapter: selected.imageAdapter }]);
-    expect(hosted.calls.writes).toBe(0);
-  });
-});
-
-describe("explicit website platform credit selection", () => {
-  const accountKey = "user:shop:alice";
-  function externalConfig(h: ReturnType<typeof website>) {
-    return h.normalize({ provider: "openai-compatible", apiKey: "synthetic-retained-key",
-      visionBaseUrl: "https://custom-provider.test/v1", imageEndpoint: "https://custom-provider.test/v1/images/generations",
-      visionModel: "custom-vision", textModel: "custom-text", imageModel: "custom-image" });
-  }
-
-  it("persists credit selection across a new page while preserving same-provider APIs and legacy credentials", async () => {
-    const h = website(), external = externalConfig(h), direct = h.normalize({ provider: "openai", apiKey: "synthetic-direct-key" });
-    const configs = { "openai-compatible": external, openai: direct };
-    const otherAccount = { activeProvider: "openai", configs: { openai: direct } };
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, activeAccount: accountKey, accounts: {
-      [accountKey]: { activeProvider: "openai-compatible", configs }, "user:shop:bob": otherAccount
-    } });
-    await h.seed(CONFIG_KEY, external);
-    const legacyBefore = [...h.localStorage.values.entries()].find(([key]) => key.endsWith(`:${CONFIG_KEY}`));
-    const selected = await h.send("USE_PLATFORM_WALLET", { accountKey });
-    expect(selected).toMatchObject({ ok: true, accountKey, provider: "openai-compatible", activeSupplyChannel: "platform_wallet",
-      config: { apiKey: "", imageModel: "image2", visionBaseUrl: "https://sub.shaozhuangai.com/v1", imageEndpoint: "https://sub.shaozhuangai.com/v1/images/generations" } });
-    expect(h.calls.writes).toBe(1);
-    const stored = (await h.context.chrome.storage.local.get([PROFILES_KEY]))[PROFILES_KEY];
-    expect(stored.accounts[accountKey]).toMatchObject({ activeSupplyChannel: "platform_wallet", configs });
-    expect(stored.accounts["user:shop:bob"]).toEqual(otherAccount);
-    expect([...h.localStorage.values.entries()].find(([key]) => key.endsWith(`:${CONFIG_KEY}`))).toEqual(legacyBefore);
-
-    const reopened = website(h.localStorage);
-    expect(await reopened.send("GET_CONFIG_PROFILE")).toMatchObject({ ok: true, saved: false, activeSupplyChannel: "platform_wallet", config: selected.config });
-    expect((await reopened.send("GET_CONFIG_PROFILE", { provider: "openai-compatible" })).config).toEqual(external);
-    expect(await reopened.send("GET_CONFIG_PROFILE", { provider: "openai-compatible", preferActiveWallet: true }))
-      .toMatchObject({ ok: true, activeSupplyChannel: "platform_wallet", config: selected.config });
-    const snapshot = await reopened.send("GET_STUDIO_CONFIG_SNAPSHOT");
-    expect(snapshot).toMatchObject({ ok: true, accountKey, activeSupplyChannel: "platform_wallet", config: selected.config,
-      boundApis: { ok: true, accountKey, providers: [platformApi, { provider: "openai", label: "ChatGPT / GPT Image 2", imageModel: direct.imageModel, imageAdapter: direct.imageAdapter }] } });
-    expect(JSON.stringify(snapshot.boundApis)).not.toContain("synthetic-");
-    expect((await reopened.context.chrome.storage.local.get([PROFILES_KEY]))[PROFILES_KEY].accounts[accountKey].configs).toEqual(configs);
-  });
-
-  it("restores the saved API when a provider is selected or a custom configuration is saved", async () => {
-    const h = website(), external = externalConfig(h);
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      [accountKey]: { activeProvider: "openai-compatible", configs: { "openai-compatible": external } }
-    } });
-    expect((await h.send("USE_PLATFORM_WALLET", { accountKey })).ok).toBe(true);
-    expect((await h.send("SET_ACTIVE_PROVIDER", { provider: "openai-compatible" })).ok).toBe(true);
-    expect(await h.send("GET_CONFIG_PROFILE")).toMatchObject({ activeSupplyChannel: "external_key", config: external });
-    expect((await h.send("USE_PLATFORM_WALLET", { accountKey })).ok).toBe(true);
-    const updated = { ...external, imageModel: "new-custom-image" };
-    expect((await h.send("SAVE_CONFIG", { config: updated })).ok).toBe(true);
-    expect(await h.send("GET_CONFIG_PROFILE")).toMatchObject({ activeSupplyChannel: "external_key", config: updated });
-  });
-
-  it("saves wallet model changes separately from the original same-provider API", async () => {
-    const h = website(), external = externalConfig(h);
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      [accountKey]: { activeProvider: "openai-compatible", configs: { "openai-compatible": external } }
-    } });
-    const selected = await h.send("USE_PLATFORM_WALLET", { accountKey });
-    const configured = { ...selected.config, imageModel: "image1", imageAdapter: "openai-images", textModel: "custom-wallet-text" };
-    expect(await h.send("USE_PLATFORM_WALLET", { accountKey, config: configured })).toMatchObject({ ok: true, config: configured });
-    const stored = (await h.context.chrome.storage.local.get(PROFILES_KEY))[PROFILES_KEY];
-    expect(stored.accounts[accountKey]).toMatchObject({ configs: { "openai-compatible": external }, platformWalletConfig: configured });
-    const reopened = website(h.localStorage);
-    expect(await reopened.send("GET_STUDIO_CONFIG_SNAPSHOT")).toMatchObject({ ok: true, config: configured,
-      boundApis: { providers: [{ ...platformApi, imageModel: "image1", imageAdapter: "openai-images" }] } });
-    expect(await reopened.send("RESOLVE_CONFIG_PROFILE", { ref: { accountKey, provider: "openai-compatible", supplyChannel: "platform_wallet" } }))
-      .toMatchObject({ ok: true, config: { ...configured, _accountKey: accountKey } });
-    const before = [...h.localStorage.values.entries()];
-    for (const invalid of [
-      { ...configured, apiKey: "synthetic-key" },
-      { ...configured, visionBaseUrl: "https://external.example/v1" },
-      { ...configured, imageEndpoint: "https://external.example/v1/images/generations" },
-      { ...configured, provider: "openai" }
-    ]) {
-      expect(await h.send("USE_PLATFORM_WALLET", { accountKey, config: invalid })).toMatchObject({ ok: false, code: "platform_route_invalid" });
-    }
-    expect([...h.localStorage.values.entries()]).toEqual(before);
-    expect((await h.send("GET_CONFIG_PROFILE", { provider: "openai-compatible" })).config).toEqual(external);
-  });
-
-  it("resolves bound wallet references separately from preserved custom API references", async () => {
-    const h = website(), external = externalConfig(h);
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      [accountKey]: { activeProvider: "openai-compatible", configs: { "openai-compatible": external } }
-    } });
-    expect((await h.send("USE_PLATFORM_WALLET", { accountKey })).ok).toBe(true);
-    const [wallet, custom] = await Promise.all([
-      h.send("RESOLVE_CONFIG_PROFILE", { ref: { accountKey, provider: "openai-compatible", supplyChannel: "platform_wallet" } }),
-      h.send("RESOLVE_CONFIG_PROFILE", { ref: { accountKey, provider: "openai-compatible" } })
-    ]);
-    expect(wallet).toMatchObject({ ok: true, activeSupplyChannel: "platform_wallet", config: { apiKey: "", imageModel: "image2", _accountKey: accountKey } });
-    expect(custom).toMatchObject({ ok: true, config: { ...external, _accountKey: accountKey } });
-    expect(await h.send("RESOLVE_CONFIG_PROFILE", { ref: { accountKey } })).toMatchObject({ ok: true, activeSupplyChannel: "platform_wallet", config: { apiKey: "", imageModel: "image2" } });
-    expect(await h.send("RESOLVE_CONFIG_PROFILE", { ref: { provider: "openai-compatible", supplyChannel: "platform_wallet" } }))
-      .toMatchObject({ ok: false, code: "platform_route_invalid" });
-    expect(await h.send("RESOLVE_CONFIG_PROFILE", { ref: { accountKey, provider: "openai", supplyChannel: "platform_wallet" } }))
-      .toMatchObject({ ok: false, code: "platform_route_invalid" });
-    expect((await h.send("GET_CONFIG_PROFILE", { provider: "openai-compatible" })).config).toEqual(external);
-  });
-
-  it("keeps the current API selection when account storage rejects the switch", async () => {
-    const h = website(), external = externalConfig(h);
-    await h.seed(PROFILES_KEY, { version: 2, configs: {}, legacyConfigImports: {}, accounts: {
-      [accountKey]: { activeProvider: "openai-compatible", configs: { "openai-compatible": external } }
-    } });
-    const before = [...h.localStorage.values.entries()];
-    const originalSet = h.context.chrome.storage.local.set;
-    h.context.chrome.storage.local.set = (_items: unknown, callback: () => void) => {
-      h.context.chrome.runtime.lastError = { message: "fixture storage unavailable" };
-      callback();
-    };
-    expect(await h.send("USE_PLATFORM_WALLET", { accountKey })).toMatchObject({ ok: false, code: "CONFIG_WRITE_FAILED", error: "fixture storage unavailable" });
-    expect([...h.localStorage.values.entries()]).toEqual(before);
-    h.context.chrome.storage.local.set = originalSet;
-    expect(await h.send("GET_CONFIG_PROFILE")).toMatchObject({ activeSupplyChannel: "external_key", config: external });
-  });
-
-  it("rejects missing, stale, or unsupported account bindings without writing selection or submitting model work", async () => {
-    const h = website();
-    expect(await h.send("USE_PLATFORM_WALLET")).toMatchObject({ ok: false, code: "ACCOUNT_UNAVAILABLE" });
-    expect(await h.send("USE_PLATFORM_WALLET", { accountKey: "local" })).toMatchObject({ ok: false, code: "ACCOUNT_UNAVAILABLE" });
-    expect(await h.send("USE_PLATFORM_WALLET", { accountKey: "user:shop:bob" })).toMatchObject({ ok: false, code: "account_changed" });
-    expect(h.calls.writes).toBe(0);
-    expect(h.localStorage.values.size).toBe(0);
-
-    const switched = website();
-    await switched.send("GET_CONFIG_PROFILE");
-    switched.setUser("bob");
-    expect((await switched.send("USE_PLATFORM_WALLET", { accountKey })).ok).toBe(false);
-    expect(switched.calls.writes).toBe(0);
-
-    const extension = website();
-    runInContext("globalThis.SZ_WEB_ACCOUNT = undefined", extension.context);
-    expect(await extension.send("USE_PLATFORM_WALLET", { accountKey })).toMatchObject({ ok: false, code: "PLATFORM_WALLET_UNAVAILABLE" });
-    expect(extension.calls).toEqual({ auth: 0, reads: 0, writes: 0 });
   });
 });

@@ -15,12 +15,11 @@
 
   var WORKING_SCHEMA = 'REFERENCE_DETAIL_WORKING_BLUEPRINT_V1';
   var FORMAL_SOURCE_SCHEMA = 'REFERENCE_DETAIL_SOURCE_V1';
-  var SCREENSHOT_SOURCE_SCHEMA = 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1';
   // 只用于识别并拒绝旧本地状态；它不再是可创建、可导入或可导出的来源合同。
   var REMOVED_UPLOAD_SOURCE_SCHEMA = 'REFERENCE_DETAIL_UPLOAD_SOURCE_V1';
   var REMOVED_UPLOAD_MARKERS = Object.freeze(['upload_fallback', 'upload_images', 'uploaded_images']);
   var LEGACY_UPLOAD_REMOVED_MESSAGE = '旧 1–6 张手动参考图来源已移除。请粘贴淘宝/天猫商品 URL，或在受支持的当前商品页重新提取。';
-  var FORMAL_SOURCE_REQUIRED_MESSAGE = '请添加几张参考详情截图学习结构，或导入已提取的商品详情来源。';
+  var FORMAL_SOURCE_REQUIRED_MESSAGE = '参考成详只接受通过淘宝/天猫商品 URL 或受支持当前商品页提取的 REFERENCE_DETAIL_SOURCE_V1。';
   var SCHEMA_VERSION = 1;
   var MIN_CHUNK_SIZE = 4;
   var MAX_CHUNK_SIZE = 6;
@@ -78,7 +77,7 @@
   function BlueprintError(code, message, path) {
     this.name = 'ReferenceDetailBlueprintError';
     this.code = code || 'BLUEPRINT_ERROR';
-    this.message = message || '清单成详蓝图错误';
+    this.message = message || '参考成详蓝图错误';
     this.path = path || '$';
     if (Error.captureStackTrace) Error.captureStackTrace(this, BlueprintError);
   }
@@ -93,7 +92,7 @@
     contract = contract || injectedContract;
     if (!contract || typeof contract.sanitizeSourceSnapshot !== 'function' ||
         typeof contract.sanitizeBlueprint !== 'function' || typeof contract.stableHash !== 'function') {
-      fail('CONTRACT_UNAVAILABLE', '清单成详合同未加载，请先注入 SZ_REFERENCE_DETAIL_CONTRACT。', '$contract');
+      fail('CONTRACT_UNAVAILABLE', '参考成详合同未加载，请先注入 SZ_REFERENCE_DETAIL_CONTRACT。', '$contract');
     }
     return contract;
   }
@@ -343,10 +342,10 @@
       path: legacy.path,
       action: 'recapture_reference_detail_source'
     });
-    if (isPlainObject(input) && (own(input, 'schema') === FORMAL_SOURCE_SCHEMA || own(input, 'schema') === SCREENSHOT_SOURCE_SCHEMA)) return deepFreeze({
+    if (isPlainObject(input) && own(input, 'schema') === FORMAL_SOURCE_SCHEMA) return deepFreeze({
       ok: true,
       legacy: false,
-      code: own(input, 'schema') === SCREENSHOT_SOURCE_SCHEMA ? 'SCREENSHOT_SOURCE_ACCEPTED' : 'FORMAL_SOURCE_ACCEPTED',
+      code: 'FORMAL_SOURCE_ACCEPTED',
       message: '',
       path: '$.schema',
       action: ''
@@ -370,7 +369,7 @@
     rejectSourceDiagnostic(diagnostic);
     var contract = requireContract(options && options.contract);
     var snapshot = contract.sanitizeSourceSnapshot(input, options && options.contractOptions);
-    if (!snapshot || (snapshot.schema !== FORMAL_SOURCE_SCHEMA && snapshot.schema !== SCREENSHOT_SOURCE_SCHEMA)) {
+    if (!snapshot || snapshot.schema !== FORMAL_SOURCE_SCHEMA) {
       fail('FORMAL_SOURCE_REQUIRED', FORMAL_SOURCE_REQUIRED_MESSAGE, '$.schema');
     }
     return snapshot;
@@ -409,7 +408,7 @@
     var minSize = Number.isSafeInteger(options.minSize) ? options.minSize : MIN_CHUNK_SIZE;
     var maxSize = Number.isSafeInteger(options.maxSize) ? options.maxSize : MAX_CHUNK_SIZE;
     if (minSize < MIN_CHUNK_SIZE || maxSize < minSize || maxSize > MAX_CHUNK_SIZE) {
-      fail('INVALID_CHUNK_SIZE', '清单成详分析分片必须使用 4–6 块边界；仅总来源不足 4 块时允许短分片。', '$options');
+      fail('INVALID_CHUNK_SIZE', '参考成详分析分片必须使用 4–6 块边界；仅总来源不足 4 块时允许短分片。', '$options');
     }
     var blocks = snapshot.orderedBlocks;
     if (!blocks.length) return deepFreeze([]);
@@ -1288,7 +1287,7 @@
   function validateScreenCount(value) {
     var count = Number(value);
     if (!Number.isSafeInteger(count) || count < MIN_SCREEN_COUNT || count > MAX_SCREEN_COUNT) {
-      fail('INVALID_SCREEN_COUNT', '清单成详输出屏数必须在 5–16。', '$screenCount');
+      fail('INVALID_SCREEN_COUNT', '参考成详输出屏数必须在 5–16。', '$screenCount');
     }
     return count;
   }
@@ -1780,7 +1779,7 @@
       };
     });
     return deepFreeze({
-      '详情页方向': '清单成详：来源结构只读，使用自家事实与主体素材进行原创改写。',
+      '详情页方向': '参考成详：来源结构只读，使用自家事实与主体素材进行原创改写。',
       '全局销售逻辑': cloneJson(materialized.globalSalesLogic),
       '详情页规格': { '屏数': count },
       '屏幕规划': screenPlans,
@@ -2347,7 +2346,6 @@
     return deepFreeze({
       WORKING_SCHEMA: WORKING_SCHEMA,
       FORMAL_SOURCE_SCHEMA: FORMAL_SOURCE_SCHEMA,
-      SCREENSHOT_SOURCE_SCHEMA: SCREENSHOT_SOURCE_SCHEMA,
       SCHEMA_VERSION: SCHEMA_VERSION,
       MIN_CHUNK_SIZE: MIN_CHUNK_SIZE,
       MAX_CHUNK_SIZE: MAX_CHUNK_SIZE,

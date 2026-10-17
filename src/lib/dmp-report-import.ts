@@ -4,11 +4,13 @@ import {
   DMP_GROWTH_OVERVIEW_METRICS,
   DMP_GROWTH_REPORT_TABLES,
   DMP_GROWTH_REQUIRED_SUBJECT_METRICS,
+  dmpExpectedTableNames,
   dmpMetricCellIsDisclosed,
   sanitizeDmpReportRenderData,
   type DmpReportRenderData,
   type DmpReportTableSnapshot
 } from "@/lib/dmp-report-types";
+import { dmpDisplayCellText, type DmpDisplayCell } from "@/lib/dmp-report-format";
 
 export type DmpCell = string | number | boolean | null;
 
@@ -193,13 +195,13 @@ function magnitudeCell(value: string, inheritedMultiplier = 1) {
 }
 
 function metricRange(value: DmpCell | undefined): MetricRange | null {
-  if (typeof value === "number" && Number.isFinite(value)) return { min: value, max: value, exact: true };
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return { min: value, max: value, exact: true };
   if (typeof value !== "string") return null;
   const text = value.trim().replace(/[,，￥¥]/g, "");
   if (!text || text === "-" || text === "—") return null;
   if (/^[<>]/.test(text)) {
     const boundary = magnitudeCell(text.slice(1));
-    if (boundary == null) return null;
+    if (boundary == null || boundary < 0) return null;
     return text.startsWith("<")
       ? { min: 0, max: boundary, exact: false, upperOpen: true }
       : { min: boundary, max: null, exact: false, lowerOpen: true };
@@ -207,35 +209,55 @@ function metricRange(value: DmpCell | undefined): MetricRange | null {
   const wordBound = text.match(/^(.+?)(及以上|以上|及以下|以下|以内)$/);
   if (wordBound) {
     const boundary = magnitudeCell(wordBound[1]);
-    if (boundary == null) return null;
+    if (boundary == null || boundary < 0) return null;
     return /以下|以内/.test(wordBound[2])
       ? { min: 0, max: boundary, exact: false, upperOpen: true }
       : { min: boundary, max: null, exact: false, lowerOpen: true };
   }
-  const parts = text.split(/[~～]/);
+  const parts = text.split(/[~～至]/);
   if (parts.length === 2) {
     const leftUnit = parts[0].match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] ?? "";
     const rightUnit = parts[1].match(/(亿|万|千|[wWkK])(?=%?(?:元)?$)/)?.[1] ?? "";
     const sharedMultiplier = magnitudeCell(`1${leftUnit || rightUnit}`) ?? 1;
     const min = magnitudeCell(parts[0], sharedMultiplier);
     const max = magnitudeCell(parts[1], sharedMultiplier);
-    return min == null || max == null ? null : { min, max, exact: false };
+    return min == null || max == null || min < 0 || max < 0 || min > max
+      ? null
+      : { min, max, exact: false };
   }
   const exact = magnitudeCell(text);
-  return exact == null ? null : { min: exact, max: exact, exact: true };
+  return exact == null || exact < 0 ? null : { min: exact, max: exact, exact: true };
 }
 
 function rangeDividedByScalar(value: DmpCell | undefined, divisor: number, digits = 2): DmpCell | null {
-  if (!Number.isFinite(divisor) || divisor <= 0) return null;
-  const range = metricRange(value);
-  if (!range) return null;
-  const min = range.min == null ? null : roundMetric(range.min / divisor, digits);
-  const max = range.max == null ? null : roundMetric(range.max / divisor, digits);
-  if (range.upperOpen && max != null) return `<${max}`;
-  if (range.lowerOpen && min != null) return `>${min}`;
-  if (min != null && max != null) return min === max ? min : `${min}~${max}`;
-  if (max != null) return `<${max}`;
-  if (min != null) return `>${min}`;
+  return rangeDividedByRange(value, divisor, digits);
+}
+
+function rangeDividedByRange(value: DmpCell | undefined, divisor: DmpCell | undefined, digits = 2): DmpCell | null {
+  const numerator = metricRange(value);
+  const denominator = metricRange(divisor);
+  if (!numerator || !denominator) return null;
+  const numeratorMin = numerator.min != null && Number.isFinite(numerator.min) ? numerator.min : null;
+  const numeratorMax = numerator.max != null && Number.isFinite(numerator.max) ? numerator.max : null;
+  const denominatorMin = denominator.min != null && denominator.min > 0 ? denominator.min : null;
+  const denominatorMax = denominator.max != null && denominator.max > 0 ? denominator.max : null;
+  if (denominatorMin == null && denominatorMax == null) return null;
+  if (numerator.exact && numeratorMin === 0) return 0;
+  const lower = numeratorMin != null
+    ? denominatorMax != null ? roundMetric(numeratorMin / denominatorMax, digits) : 0
+    : null;
+  const upper = numeratorMax != null && denominatorMin != null
+    ? roundMetric(numeratorMax / denominatorMin, digits)
+    : null;
+  if (lower != null && upper != null) {
+    if (lower === upper && numerator.exact && denominator.exact) return lower;
+    if (lower === 0 && (numerator.upperOpen || denominator.lowerOpen)) return `<${upper}`;
+    return `${lower}~${upper}`;
+  }
+  if (upper != null) return `<${upper}`;
+  // 只有非负下界、但上界无法由脱敏区间证明时，不输出数学上不成立的 “>0”。
+  if (lower === 0) return null;
+  if (lower != null) return `>${lower}`;
   return null;
 }
 
@@ -279,7 +301,11 @@ type ReconcileOptions = {
   periodEndDate?: string;
 };
 
-const CROSS_TABLE_METRICS = DMP_GROWTH_METRIC_ALIASES;
+const CROSS_TABLE_METRICS = {
+  ...DMP_GROWTH_METRIC_ALIASES,
+  // 兼容 V2.3.12 线上实现使用的内部键名。
+  paidAmountShare: DMP_GROWTH_METRIC_ALIASES.paidShare
+} as const;
 
 function normalizedMetricLabel(value: unknown) {
   return String(value ?? "")
@@ -320,21 +346,18 @@ function periodRoleRow(
   competitorItemId: string
 ) {
   if (!table) return undefined;
-  const roleIndex = columnIndexByAliases(table, ["对象", "角色"]);
-  const rolePattern = side === "subject" ? /主体/ : /目标对手|对手|竞品/;
-  const roleRow = roleIndex >= 0
-    ? table.rows.find((row) => rolePattern.test(String(row[roleIndex] ?? "")))
-    : undefined;
-  // 主体与对手允许引用同一商品时，商品 ID 无法区分两行，必须以显式角色为准。
-  // 普通 X≠Y 报告仍保持原有的 ID 优先规则，以兼容没有规范角色文案的旧归档。
-  if (subjectItemId && subjectItemId === competitorItemId && roleRow) return roleRow;
   const itemId = side === "subject" ? subjectItemId : competitorItemId;
   const idIndex = columnIndexByAliases(table, ["商品ID", "商品编号"]);
   if (idIndex >= 0 && itemId) {
     const exact = table.rows.find((row) => String(row[idIndex] ?? "").trim() === itemId);
     if (exact) return exact;
   }
-  if (roleRow) return roleRow;
+  const roleIndex = columnIndexByAliases(table, ["对象", "角色"]);
+  if (roleIndex >= 0) {
+    const pattern = side === "subject" ? /主体/ : /目标对手|对手|竞品/;
+    const matched = table.rows.find((row) => pattern.test(String(row[roleIndex] ?? "")));
+    if (matched) return matched;
+  }
   if (table.rows.length === 2) return table.rows[side === "subject" ? 0 : 1];
   return undefined;
 }
@@ -420,11 +443,14 @@ const REQUIRED_METRIC_MATRICES: MetricMatrixSpec[] = [
 ];
 
 /**
- * 旧归档可能只有计算原料而没有四项标准行。这里仅补表结构和空行；业务值仍由后续
+ * 旧归档可能只有计算原料而没有八项标准行。这里仅补表结构和空行；业务值仍由后续
  * 同对象、同周期的确定性补算填写，任何已披露单元格都不会被覆盖。
  */
 function ensureRequiredMetricRows(tables: DmpReportTable[], createMissingTables: boolean) {
   for (const spec of REQUIRED_METRIC_MATRICES) {
+    // 固定八卡只属于报告总览；对标总表与基础指标对比保持线上原始结构，
+    // 已存在的同义指标仍会被后续跨表补算复用。
+    if (spec.name !== "报告总览") continue;
     let table = tables.find((candidate) => candidate.name === spec.name);
     if (!table && createMissingTables) {
       table = { name: spec.name, columns: spec.columns.map((column) => column.name), rows: [] };
@@ -653,54 +679,6 @@ function reconcilePartialDailySpend(
   ensurePartialSpendCoverageRow(tables, coverages);
 }
 
-function reconcileRequiredDerivedMetrics(
-  tables: DmpReportTable[],
-  subjectItemId: string,
-  competitorItemId: string
-) {
-  for (const side of ["subject", "competitor"] as const) {
-    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
-    const totalGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
-    if (!isBlankCell(totalGmv)) {
-      fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.totalGmv, totalGmv as DmpCell, "", subjectItemId, competitorItemId);
-    }
-    if (!isBlankCell(paidGmv)) {
-      fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidGmv, paidGmv as DmpCell, "", subjectItemId, competitorItemId);
-    }
-    const total = numericCell(totalGmv);
-    const disclosedPaidShare = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidShare, subjectItemId, competitorItemId);
-    const paidShare = isBlankCell(disclosedPaidShare) && total != null
-      ? rangeDividedByScalar(paidGmv, total, 6)
-      : disclosedPaidShare as DmpCell | undefined;
-    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidShare, paidShare ?? null, "", subjectItemId, competitorItemId);
-
-    const spendCell = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.spend, subjectItemId, competitorItemId);
-    const spend = numericCell(spendCell);
-    if (spend == null || spend < 0) continue;
-    fillMetricAcrossTables(
-      tables,
-      side,
-      CROSS_TABLE_METRICS.spend,
-      spendCell as DmpCell,
-      "",
-      subjectItemId,
-      competitorItemId
-    );
-    const marketingClicks = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
-    const derived = [
-      [CROSS_TABLE_METRICS.roi, rangeDividedByScalar(paidGmv, spend, 6)],
-      [CROSS_TABLE_METRICS.ppc, scalarDividedByRange(spend, marketingClicks, 6)],
-      [CROSS_TABLE_METRICS.feeRatio, scalarDividedByRange(spend, totalGmv, 6)],
-      [CROSS_TABLE_METRICS.roas, rangeDividedByScalar(totalGmv, spend, 6)]
-    ] as const;
-    for (const [aliases, calculated] of derived) {
-      const disclosed = disclosedMetricCell(tables, side, aliases, subjectItemId, competitorItemId);
-      const value = isBlankCell(disclosed) ? calculated : disclosed as DmpCell;
-      fillMetricAcrossTables(tables, side, aliases, value ?? null, "", subjectItemId, competitorItemId);
-    }
-  }
-}
-
 function populationVolatility(values: number[]) {
   if (!values.length) return null;
   const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -714,6 +692,120 @@ function shouldReplaceRange(value: DmpCell | undefined) {
   return isBlankCell(value) || Boolean(range && !range.exact);
 }
 
+function exactMetricValue(value: DmpCell | undefined) {
+  const range = metricRange(value);
+  if (!range?.exact || range.min == null || range.max == null || range.min !== range.max) return null;
+  return range.min;
+}
+
+function reconcilePaidMetricRanges(
+  tables: DmpReportTable[],
+  subjectItemId: string,
+  competitorItemId: string
+) {
+  for (const side of ["subject", "competitor"] as const) {
+    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
+    const totalGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
+    const spend = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.spend, subjectItemId, competitorItemId);
+    const paidClicks = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
+    const exactSpend = exactMetricValue(spend);
+
+    // 达摩盘对竞品常披露区间。把已披露的原值贯通至所有现有业务表，
+    // 再按区间运算补算，不把区间压成伪精确值。
+    const paidGmvValue = isBlankCell(paidGmv) ? null : paidGmv ?? null;
+    const totalGmvValue = isBlankCell(totalGmv) ? null : totalGmv ?? null;
+    const spendValue = isBlankCell(spend) ? null : spend ?? null;
+    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidGmv, paidGmvValue, "", subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.totalGmv, totalGmvValue, "", subjectItemId, competitorItemId);
+    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.spend, spendValue, "", subjectItemId, competitorItemId);
+
+    const disclosedPaidShare = disclosedMetricCell(
+      tables,
+      side,
+      CROSS_TABLE_METRICS.paidAmountShare,
+      subjectItemId,
+      competitorItemId
+    );
+    const paidShare = isBlankCell(disclosedPaidShare)
+      ? rangeDividedByRange(paidGmv, totalGmv, 6)
+      : disclosedPaidShare as DmpCell;
+    fillMetricAcrossTables(
+      tables,
+      side,
+      CROSS_TABLE_METRICS.paidAmountShare,
+      paidShare ?? null,
+      "",
+      subjectItemId,
+      competitorItemId
+    );
+
+    if (exactSpend == null || exactSpend < 0) continue;
+    const derived = [
+      [CROSS_TABLE_METRICS.roi, rangeDividedByScalar(paidGmv, exactSpend, 6)],
+      [CROSS_TABLE_METRICS.ppc, scalarDividedByRange(exactSpend, paidClicks, 6)],
+      [CROSS_TABLE_METRICS.feeRatio, scalarDividedByRange(exactSpend, totalGmv, 6)],
+      [CROSS_TABLE_METRICS.roas, rangeDividedByScalar(totalGmv, exactSpend, 6)]
+    ] as const;
+    for (const [aliases, calculated] of derived) {
+      const disclosed = disclosedMetricCell(tables, side, aliases, subjectItemId, competitorItemId);
+      const value = isBlankCell(disclosed) ? calculated : disclosed as DmpCell;
+      fillMetricAcrossTables(tables, side, aliases, value ?? null, "", subjectItemId, competitorItemId);
+    }
+  }
+}
+
+function suppressIntervalMetricDifferences(tables: DmpReportTable[]) {
+  for (const table of tables.filter((candidate) => candidate.name === "对标总表" || candidate.name === "基础指标对比")) {
+    const subjectIndex = sideColumnIndex(table, "subject");
+    const competitorIndex = sideColumnIndex(table, "competitor");
+    const differenceIndex = columnIndexByAliases(table, ["主体相对对手", "主体差异", "相对差", "差异", "变化率"]);
+    if ([subjectIndex, competitorIndex, differenceIndex].some((index) => index < 0)) continue;
+    for (const row of table.rows) {
+      const subjectRange = metricRange(row[subjectIndex]);
+      const competitorRange = metricRange(row[competitorIndex]);
+      if (subjectRange?.exact !== false && competitorRange?.exact !== false) continue;
+      const disclosedDifference = metricRange(row[differenceIndex]);
+      if (disclosedDifference?.exact === false) continue;
+      row[differenceIndex] = "";
+    }
+  }
+}
+
+function ensurePaidAmountShareRows(
+  tables: DmpReportTable[],
+  subjectValue: DmpCell | undefined,
+  competitorValue: DmpCell | undefined,
+  days: number
+) {
+  if (isBlankCell(subjectValue) && isBlankCell(competitorValue)) return;
+  for (const tableName of ["报告总览", "对标总表", "基础指标对比"]) {
+    const table = tables.find((candidate) => candidate.name === tableName);
+    if (!table) continue;
+    const metricIndex = columnIndexByAliases(table, ["项目", "对标指标", "指标"]);
+    const subjectIndex = sideColumnIndex(table, "subject");
+    const competitorIndex = sideColumnIndex(table, "competitor");
+    if ([metricIndex, subjectIndex, competitorIndex].some((index) => index < 0)) continue;
+    let row = metricRow(table, CROSS_TABLE_METRICS.paidAmountShare);
+    if (!row) {
+      row = table.columns.map(() => "" as DmpCell);
+      table.rows.push(row);
+    }
+    row[metricIndex] = "付费金额占比";
+    if (isBlankCell(row[subjectIndex]) && !isBlankCell(subjectValue)) row[subjectIndex] = subjectValue as DmpCell;
+    if (isBlankCell(row[competitorIndex]) && !isBlankCell(competitorValue)) row[competitorIndex] = competitorValue as DmpCell;
+    const moduleIndex = columnIndexByAliases(table, ["页面模块", "模块"]);
+    if (moduleIndex >= 0 && isBlankCell(row[moduleIndex])) row[moduleIndex] = "投放";
+    const scopeIndex = columnIndexByAliases(table, ["范围", "数据范围", "周期"]);
+    if (scopeIndex >= 0 && isBlankCell(row[scopeIndex])) row[scopeIndex] = days > 0 ? `${days}日严格同周期` : "严格同周期";
+    const differenceIndex = columnIndexByAliases(table, ["主体相对对手", "主体差异", "相对差", "差异", "变化率"]);
+    if (differenceIndex >= 0 && isBlankCell(row[differenceIndex])) {
+      const subjectExact = exactMetricValue(row[subjectIndex]);
+      const competitorExact = exactMetricValue(row[competitorIndex]);
+      if (subjectExact != null && competitorExact != null) row[differenceIndex] = roundMetric(subjectExact - competitorExact, 6);
+    }
+  }
+}
+
 export function reconcileDmpCrossTableMetrics(
   tables: DmpReportTable[],
   subjectItemId: string,
@@ -723,62 +815,44 @@ export function reconcileDmpCrossTableMetrics(
 ) {
   ensureRequiredMetricRows(tables, false);
   const gmvByItemId = new Map<string, DmpCell>();
-  const gmvByRole = new Map<ReportSide, DmpCell>();
   const remember = (itemId: string, value: DmpCell | undefined) => {
     if (itemId && !isBlankCell(value) && !gmvByItemId.has(itemId)) gmvByItemId.set(itemId, value as DmpCell);
   };
-  const rememberRole = (side: ReportSide, value: DmpCell | undefined) => {
-    if (!isBlankCell(value) && !gmvByRole.has(side)) gmvByRole.set(side, value as DmpCell);
-  };
 
   const periodTable = tables.find((table) => table.name === "周期汇总");
-  const periodIdIndex = periodTable?.columns.indexOf("商品ID") ?? -1;
-  const periodGmvIndex = periodTable?.columns.indexOf("总GMV") ?? -1;
+  const periodIdIndex = columnIndexByAliases(periodTable, ["商品ID", "商品编号"]);
+  const periodGmvIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.totalGmv);
   if (periodIdIndex >= 0 && periodGmvIndex >= 0) {
     periodTable?.rows.forEach((row) => remember(String(row[periodIdIndex] ?? ""), row[periodGmvIndex]));
-    rememberRole("subject", periodRoleRow(periodTable, "subject", subjectItemId, competitorItemId)?.[periodGmvIndex]);
-    rememberRole("competitor", periodRoleRow(periodTable, "competitor", subjectItemId, competitorItemId)?.[periodGmvIndex]);
   }
 
   const benchmark = tables.find((table) => table.name === "对标总表");
   const benchmarkMetricIndex = benchmark?.columns.indexOf("对标指标") ?? -1;
   const benchmarkSubjectIndex = benchmark?.columns.indexOf("主体周期值") ?? -1;
   const benchmarkCompetitorIndex = benchmark?.columns.indexOf("对手周期值") ?? -1;
-  const benchmarkGmv = benchmarkMetricIndex >= 0 ? benchmark?.rows.find((row) => String(row[benchmarkMetricIndex]) === "总GMV") : null;
+  const benchmarkGmv = benchmarkMetricIndex >= 0 ? metricRow(benchmark, CROSS_TABLE_METRICS.totalGmv) : null;
   if (benchmarkGmv) {
     remember(subjectItemId, benchmarkGmv[benchmarkSubjectIndex]);
     remember(competitorItemId, benchmarkGmv[benchmarkCompetitorIndex]);
-    rememberRole("subject", benchmarkGmv[benchmarkSubjectIndex]);
-    rememberRole("competitor", benchmarkGmv[benchmarkCompetitorIndex]);
   }
 
   const base = tables.find((table) => table.name === "基础指标对比");
   const baseMetricIndex = base?.columns.indexOf("指标") ?? -1;
   const baseSubjectIndex = base?.columns.indexOf("主体值") ?? -1;
   const baseCompetitorIndex = base?.columns.indexOf("对手值") ?? -1;
-  const baseGmv = baseMetricIndex >= 0 ? base?.rows.find((row) => String(row[baseMetricIndex]) === "总GMV") : null;
+  const baseGmv = baseMetricIndex >= 0 ? metricRow(base, CROSS_TABLE_METRICS.totalGmv) : null;
   if (baseGmv) {
     remember(subjectItemId, baseGmv[baseSubjectIndex]);
     remember(competitorItemId, baseGmv[baseCompetitorIndex]);
-    rememberRole("subject", baseGmv[baseSubjectIndex]);
-    rememberRole("competitor", baseGmv[baseCompetitorIndex]);
   }
 
   const itemTable = tables.find((table) => table.name === "商品与成功品");
   const itemIdIndex = itemTable?.columns.indexOf("商品ID") ?? -1;
-  const itemRoleIndex = itemTable?.columns.findIndex((column) => /^(?:对象|角色)$/.test(column)) ?? -1;
   const itemGmvIndex = itemTable?.columns.indexOf("30日GMV") ?? -1;
   const itemAverageIndex = itemTable?.columns.findIndex((column) => /日均成交/.test(column)) ?? -1;
   if (itemIdIndex >= 0 && itemGmvIndex >= 0) {
     itemTable?.rows.forEach((row) => {
-      const role = itemRoleIndex >= 0 && /主体/.test(String(row[itemRoleIndex] ?? ""))
-        ? "subject"
-        : itemRoleIndex >= 0 && /目标对手|对手|竞品/.test(String(row[itemRoleIndex] ?? ""))
-          ? "competitor"
-          : null;
-      const gmv = subjectItemId === competitorItemId && role
-        ? gmvByRole.get(role)
-        : gmvByItemId.get(String(row[itemIdIndex] ?? ""));
+      const gmv = gmvByItemId.get(String(row[itemIdIndex] ?? ""));
       if (gmv === undefined) return;
       if (isBlankCell(row[itemGmvIndex])) row[itemGmvIndex] = gmv;
       const numericGmv = numericCell(gmv);
@@ -789,51 +863,65 @@ export function reconcileDmpCrossTableMetrics(
   }
 
   reconcilePartialDailySpend(tables, subjectItemId, competitorItemId, days, options);
-  reconcileRequiredDerivedMetrics(tables, subjectItemId, competitorItemId);
+  reconcilePaidMetricRanges(tables, subjectItemId, competitorItemId);
 
   if (periodTable) {
-    const paidGmvIndex = periodTable.columns.findIndex((column) => /^(付费成交额|广告归因GMV)$/.test(column));
-    const contributionIndex = periodTable.columns.findIndex((column) => /^(付费|广告)GMV贡献率$/.test(column));
+    const paidGmvIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidGmv);
+    let contributionIndex = columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidAmountShare);
+    if (contributionIndex < 0 && paidGmvIndex >= 0 && periodGmvIndex >= 0) {
+      contributionIndex = periodTable.columns.length;
+      periodTable.columns.push("付费金额占比");
+      periodTable.rows.forEach((row) => row.push(""));
+    } else if (contributionIndex >= 0) {
+      periodTable.columns[contributionIndex] = "付费金额占比";
+    }
     const peakIndex = periodTable.columns.indexOf("GMV峰值日");
     const volatilityIndex = periodTable.columns.indexOf("GMV波动率");
     periodTable.rows.forEach((row) => {
-      const totalGmv = numericCell(row[periodGmvIndex]);
-      if (paidGmvIndex >= 0 && contributionIndex >= 0 && totalGmv != null && isBlankCell(row[contributionIndex])) {
-        row[contributionIndex] = rangeDividedByScalar(row[paidGmvIndex], totalGmv, 6);
+      if (paidGmvIndex >= 0 && contributionIndex >= 0 && periodGmvIndex >= 0 && isBlankCell(row[contributionIndex])) {
+        row[contributionIndex] = rangeDividedByRange(row[paidGmvIndex], row[periodGmvIndex], 6);
       }
     });
 
+    ensurePaidAmountShareRows(
+      tables,
+      tableMetricCell(periodTable, "subject", CROSS_TABLE_METRICS.paidAmountShare, subjectItemId, competitorItemId),
+      tableMetricCell(periodTable, "competitor", CROSS_TABLE_METRICS.paidAmountShare, subjectItemId, competitorItemId),
+      days
+    );
+
     const daily = tables.find((table) => table.name === "日GMV与费比");
     const dailyDateIndex = daily?.columns.indexOf("日期") ?? -1;
-    const fillDailyStatistics = (side: ReportSide, itemId: string, columnPatterns: RegExp[]) => {
+    const fillDailyStatistics = (itemId: string, columnPatterns: RegExp[]) => {
       const gmvIndex = daily?.columns.findIndex((column) => columnPatterns.some((pattern) => pattern.test(column))) ?? -1;
       if (!daily || dailyDateIndex < 0 || gmvIndex < 0) return;
       const values = daily.rows
         .map((row) => ({ date: String(row[dailyDateIndex] ?? ""), gmv: numericCell(row[gmvIndex]) }))
         .filter((row): row is { date: string; gmv: number } => Boolean(row.date) && row.gmv != null);
-      const periodGmv = numericCell(subjectItemId === competitorItemId ? gmvByRole.get(side) : gmvByItemId.get(itemId));
+      const periodGmv = numericCell(gmvByItemId.get(itemId));
       const sum = values.reduce((total, row) => total + row.gmv, 0);
       if (values.length !== days || periodGmv == null || Math.abs(sum - periodGmv) > 0.01) return;
       const peak = values.reduce((best, row) => row.gmv > best.gmv ? row : best, values[0]);
       const volatility = populationVolatility(values.map((row) => row.gmv));
-      const targetRow = periodRoleRow(periodTable, side, subjectItemId, competitorItemId);
-      if (targetRow) {
-        if (peakIndex >= 0 && isBlankCell(targetRow[peakIndex])) targetRow[peakIndex] = peak.date;
-        if (volatilityIndex >= 0 && isBlankCell(targetRow[volatilityIndex]) && volatility != null) targetRow[volatilityIndex] = roundMetric(volatility, 6);
-      }
+      periodTable.rows.filter((row) => String(row[periodIdIndex] ?? "") === itemId).forEach((row) => {
+        if (peakIndex >= 0 && isBlankCell(row[peakIndex])) row[peakIndex] = peak.date;
+        if (volatilityIndex >= 0 && isBlankCell(row[volatilityIndex]) && volatility != null) row[volatilityIndex] = roundMetric(volatility, 6);
+      });
     };
-    fillDailyStatistics("subject", subjectItemId, [/^主体日GMV$/]);
-    fillDailyStatistics("competitor", competitorItemId, [/^对手日GMV$/, /^日GMV$/]);
+    fillDailyStatistics(subjectItemId, [/^主体日GMV$/]);
+    fillDailyStatistics(competitorItemId, [/^对手日GMV$/, /^日GMV$/]);
   }
 
   const spendByRole = new Map<string, number>();
   if (periodTable) {
     const spendIndex = periodTable.columns.findIndex((column) => /^(广告消耗|推广消耗)$/.test(column));
-    for (const [side, label] of [["subject", "主体"], ["competitor", "对手"]] as const) {
-      const row = periodRoleRow(periodTable, side, subjectItemId, competitorItemId);
-      const spend = numericCell(row?.[spendIndex]);
-      if (spend != null) spendByRole.set(label, spend);
-    }
+    periodTable.rows.forEach((row) => {
+      const itemId = String(row[periodIdIndex] ?? "");
+      const spend = numericCell(row[spendIndex]);
+      if (spend == null) return;
+      if (itemId === subjectItemId) spendByRole.set("主体", spend);
+      if (itemId === competitorItemId) spendByRole.set("对手", spend);
+    });
   }
 
   const reconcileScenes = (sceneTable: DmpReportTable | undefined, parentSpend?: Map<string, number>) => {
@@ -877,17 +965,49 @@ export function reconcileDmpCrossTableMetrics(
 
   const level1Spend = reconcileScenes(tables.find((table) => table.name === "一级场景"));
   reconcileScenes(tables.find((table) => table.name === "二级场景"), level1Spend);
+  suppressIntervalMetricDifferences(tables);
   return tables;
+}
+
+/** A complete plugin snapshot includes intentional blanks from its scope gates. */
+export function hasAuthoritativeDmpGrowthSnapshot(input: unknown): boolean {
+  if (!isObject(input) || input.schema_version !== "3.0" || !Array.isArray(input.tables)
+    || input.report_type === "competition" || input.report_type === "market") return false;
+  const tables: DmpReportTableSnapshot[] = input.tables.filter(isObject).map((table) => ({
+    name: String(table.name ?? ""),
+    columns: Array.isArray(table.columns) ? table.columns.map(String) : [],
+    rows: Array.isArray(table.rows) ? table.rows.filter(isObject).map((row) => ({
+      cells: Array.isArray(row.cells) ? row.cells.map((cell) => dmpDisplayCellText(cell as DmpDisplayCell)) : []
+    })) : []
+  }));
+  if (tables.length !== DMP_GROWTH_REPORT_TABLES.length
+    || !DMP_GROWTH_REPORT_TABLES.every((name, index) => tables[index]?.name === name)) return false;
+  const overview = tables.find((table) => table.name === "报告总览");
+  const metricIndex = overview?.columns.indexOf("项目") ?? -1;
+  if (!overview || metricIndex < 0 || !overview.columns.includes("主体") || !overview.columns.includes("对手")) return false;
+  if (!DMP_GROWTH_OVERVIEW_METRICS.every((metric) => overview.rows.some((row) =>
+    metric.aliases.some((alias) => row.cells[metricIndex] === alias)))) return false;
+  return Boolean(sanitizeDmpReportRenderData(input.render_data, {
+    itemId: String(input.item_id ?? ""), period: String(input.period ?? ""),
+    tables, expectedTableNames: DMP_GROWTH_REPORT_TABLES
+  }));
 }
 
 export function normalizeDmpCanonicalReportForUse(input: unknown): DmpReport | null {
   if (!isObject(input) || input.schema_version !== "3.0" || !Array.isArray(input.tables)) return null;
-  const growthReport = input.report_type !== "competition" && input.report_type !== "market";
+  const reportType = input.report_type === "competition" || input.report_type === "market"
+    ? input.report_type
+    : "growth";
+  const growthReport = reportType === "growth";
   const snapshots: DmpReportTableSnapshot[] = input.tables.filter(isObject).map((table) => ({
     name: String(table.name ?? ""),
     columns: Array.isArray(table.columns) ? table.columns.map(String) : [],
     rows: Array.isArray(table.rows)
-      ? table.rows.filter(isObject).map((row) => ({ cells: Array.isArray(row.cells) ? row.cells.map(String) : [] }))
+      ? table.rows.filter(isObject).map((row) => ({
+          cells: Array.isArray(row.cells)
+            ? row.cells.map((cell) => dmpDisplayCellText(cell as DmpDisplayCell))
+            : []
+        }))
       : []
   }));
   const itemId = String(input.item_id ?? "");
@@ -896,7 +1016,7 @@ export function normalizeDmpCanonicalReportForUse(input: unknown): DmpReport | n
     itemId,
     period: periodLabel,
     tables: snapshots,
-    expectedTableNames: DMP_GROWTH_REPORT_TABLES
+    expectedTableNames: dmpExpectedTableNames(reportType)
   });
   const renderTableMeta = new Map((renderData?.tables ?? []).map((table) => [table.name, table]));
   const tables: DmpReportTable[] = snapshots.map((table) => {
@@ -935,11 +1055,15 @@ export function normalizeDmpCanonicalReportForUse(input: unknown): DmpReport | n
     mergeSubjectDailyGmv(tables, renderData?.subject_daily_gmv);
     alignComparisonRoleRows(tables);
     ensureRequiredMetricRows(tables, true);
-    reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
-      preserveDisclosedRanges: Boolean(renderData),
-      periodStartDate: startDate,
-      periodEndDate: endDate
-    });
+    // Reconciliation is for sparse legacy imports. A full snapshot already
+    // resolved object/period/attribution; arithmetic here cannot re-prove them.
+    if (!hasAuthoritativeDmpGrowthSnapshot(input)) {
+      reconcileDmpCrossTableMetrics(tables, itemId, competitorId, days, {
+        preserveDisclosedRanges: Boolean(renderData),
+        periodStartDate: startDate,
+        periodEndDate: endDate
+      });
+    }
     subjectMetricAudit = auditDmpGrowthSubjectMetrics({
       item_id: itemId,
       tables: tables.map((table) => ({

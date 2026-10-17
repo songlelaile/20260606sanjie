@@ -47,7 +47,7 @@ describe("unified AI chat client", () => {
     expect(endpoint).toBe("https://sub.shaozhuangai.com/v1/chat/completions");
     expect(input.headers.authorization).toBe("Bearer secret-key");
     expect(JSON.parse(input.body)).toMatchObject({
-      model: "gpt-5.6-sol",
+      model: "chatGPT5.5",
       messages: [{ role: "user", content: "分析" }],
       temperature: 0.2,
       max_tokens: 200

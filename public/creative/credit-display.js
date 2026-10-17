@@ -107,18 +107,30 @@
     if (spec.kind === 'local') return { text: '', detail: '', estimatedPoints: 0, platformPoints: 0 };
     if (['image', 'video', 'chat'].indexOf(spec.kind) < 0 || !hasRequest(spec)) return { text: '', detail: '' };
     if (external) return { text: '自有 API 计费', detail: ['费用由所配置的 API 服务计收', extra].filter(Boolean).join('；'), platformPoints: 0 };
-    var detail = preview ? ['仅平台演示，不扣积分'] : ['预计值，最终以实际用量结算为准'];
+    if (spec.kind === 'video' && spec.nativePlatform === true && ['prepaid_quote', 'direct_usage'].indexOf(spec.billingMode) >= 0 && spec.extraAnalysis &&
+        (spec.count === 0 || (Array.isArray(spec.requests) && spec.requests.length === 0))) {
+      var analysisOnly = { text: '分析按报价提交扣积分' + (preview ? ' · 演示不扣积分' : ''),
+        detail: [preview ? '仅平台演示，不扣积分' : '提交时按本次报价扣积分；生成失败退回，取消不退',
+          '另含分析调用，按报价提交扣积分，未计入图片或视频报价', extra].filter(Boolean).join('；') };
+      if (preview) analysisOnly.platformPoints = 0;
+      return analysisOnly;
+    }
+    if (spec.kind === 'video' && spec.nativePlatform === true && ['prepaid_quote', 'direct_usage'].indexOf(spec.billingMode) >= 0 && !external && !preview) {
+      return { text: Number.isSafeInteger(spec.quoteCents) && spec.quoteCents > 0 ? '生成 · ' + format(spec.quoteCents / 10) + ' 积分' : '提交时扣报价积分', detail: ['提交时扣报价积分；失败退回，取消不退',
+        spec.extraAnalysis ? '另含分析调用，按报价提交扣积分' : '', extra].filter(Boolean).join('；') };
+    }
+    var detail = preview ? ['仅平台演示，不扣积分'] : ['提交时按本次报价扣积分；生成失败退回，取消不退'];
     var result = { text: preview ? '演示积分待确认 · 不扣积分' : '本次积分待确认', detail: '' };
     if (preview) result.platformPoints = 0;
     var model = findModel(spec.kind, text(spec.model));
     if (spec.kind === 'chat') {
-      result.text = preview ? '演示按实际 Token 计费 · 不扣积分' : '按实际 Token 计费';
-      detail.push('分析或聊天消耗随输入和输出变化，生成前无法给出固定总积分');
+      result.text = preview ? '演示按报价提交扣积分 · 不扣积分' : '按报价提交扣积分';
+      detail.push('每次文本/分析请求按输入与输出上限报价，提交后按该报价扣积分');
       if (model && model.pricingStatus === 'priced' && model.promptPointsPer1K !== null && model.completionPointsPer1K !== null) {
-        result.text = '输入 ' + String(model.promptPointsPer1K) + ' / 输出 ' + String(model.completionPointsPer1K) + ' 积分/千 Token' + (preview ? ' · 演示不扣积分' : ' · 按实际用量结算');
+        result.text = '输入 ' + String(model.promptPointsPer1K) + ' / 输出 ' + String(model.completionPointsPer1K) + ' 积分/千 Token' + (preview ? ' · 演示不扣积分' : ' · 提交时按报价扣积分');
         detail.push('平台参考单价：输入 ' + String(model.promptPointsPer1K) + '、输出 ' + String(model.completionPointsPer1K) + ' 积分/千 Token');
       } else detail.push('平台模型价格待配置');
-    } else if (spec.channel === 'platform_wallet' && number(spec.reservationPoints) !== null && integer(spec.reservationPoints * 10, 1, MAX_CENTS)) {
+    } else if (spec.channel === 'platform_wallet' && spec.billingMode === 'reservation' && number(spec.reservationPoints) !== null && integer(spec.reservationPoints * 10, 1, MAX_CENTS)) {
       result.text = (spec.perRequestReservation ? '每镜最多预占 ' : '提交预占 ') + format(spec.reservationPoints) + ' 积分';
       detail.push('提交时预占，完成后按实际用量结算并释放剩余；预占不代表最终费用');
     } else if (model && model.pricingStatus === 'priced') {
@@ -135,18 +147,18 @@
           var points = sum / 10;
           result.estimatedPoints = points;
           if (!preview) result.platformPoints = points;
-          var quote = (preview ? '平台演示预计 ' : '本次预计 ') + format(points) + ' 积分';
+          var quote = (preview ? '平台演示预计 ' : '提交扣 ') + format(points) + ' 积分';
           result.text = preview ? quote + ' · 不扣积分' : quote;
           detail.push(spec.kind === 'video' ? counts.length + ' 个视频任务，按任务固定价估算，不按秒数相乘' : counts.reduce(function (total, count) { return total + count; }, 0) + ' 张图片，按 ' + counts.length + ' 次请求分别取整');
         } else detail.push('报价参数超出范围，无法估算');
       } else detail.push(counts === null ? '实际请求张数未确认，无法估算' : '平台模型价格待配置');
     } else detail.push('平台模型价格待配置');
     if (spec.extraAnalysis && (spec.count === 0 || (Array.isArray(spec.requests) && spec.requests.length === 0))) {
-      result.text = '分析按实际 Token 计费' + (preview ? ' · 演示不扣积分' : '');
+      result.text = '分析按报价提交扣积分' + (preview ? ' · 演示不扣积分' : '');
       delete result.estimatedPoints;
       if (!preview) delete result.platformPoints;
     }
-    if (spec.extraAnalysis) detail.push('另含分析调用，按实际 Token 计费，未计入图片或视频估算');
+    if (spec.extraAnalysis) detail.push('另含分析调用，按报价提交扣积分，未计入图片或视频报价');
     if (extra) detail.push(extra);
     result.detail = detail.join('；');
     return result;
@@ -158,7 +170,7 @@
   }
   function paint(record) {
     var quote = describe(record.spec);
-    var visible = quote.text + (record.spec.extraAnalysis ? '；另含分析，按实际 Token 计费' : '') + (text(record.spec.detail, 500) ? '；' + text(record.spec.detail, 500) : '');
+    var visible = quote.text + (record.spec.extraAnalysis ? '；另含分析，按报价提交扣积分' : '') + (text(record.spec.detail, 500) ? '；' + text(record.spec.detail, 500) : '');
     if (record.node.textContent !== visible) record.node.textContent = visible;
     if (record.node.title !== quote.detail) record.node.title = quote.detail;
     var hidden = !!record.button.hidden || (typeof record.button.getAttribute === 'function' && record.button.getAttribute('aria-hidden') === 'true');

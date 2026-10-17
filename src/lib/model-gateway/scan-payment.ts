@@ -4,7 +4,8 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { findGatewayPlan } from "./catalog";
 import { GatewayPaymentError } from "./payment";
-import { settleVerifiedScanPayment } from "./store";
+import { resumeGatewayOrderAllocation, settleVerifiedScanPayment } from "./store";
+import { isGatewayOrderAwaitingCapacity } from "./scan-payment-contract";
 import {
   createScanPayment, getScanProviderAvailability, getAlipayPageCheckout, queryScanPayment,
   verifyScanNotification, type ScanProvider
@@ -14,7 +15,7 @@ export const SCAN_PAYMENT_LIFETIME_MS = 15 * 60 * 1000;
 type Order = Prisma.GatewayOrderGetPayload<object>;
 export type CheckoutOrder = {
   id: string; planCode: string; planName: string; amountCents: number; creditCents: number;
-  paymentProvider: string; status: string; paymentUrl: string; qrCodeDataUrl: string | null;
+  paymentProvider: string; status: string; creditAllocationState: string; paymentUrl: string; qrCodeDataUrl: string | null;
   checkoutMode: "qr" | "alipay_page"; cashierUrl?: string; fallbackCashierUrl?: string;
   expiresAt: string | null; paidAt: string | null; createdAt: string;
 };
@@ -37,6 +38,12 @@ function validPaymentUrl(provider: ScanProvider, url: string) {
 }
 
 export async function checkoutOrderView(order: Order, now = new Date()): Promise<CheckoutOrder> {
+  if (isGatewayOrderAwaitingCapacity(order)) return {
+    id: order.id, planCode: order.planCode, planName: order.planName, amountCents: order.amountCents,
+    creditCents: order.creditCents, paymentProvider: order.paymentProvider, status: "awaiting_capacity",
+    creditAllocationState: "awaiting_capacity", paymentUrl: "", qrCodeDataUrl: null,
+    checkoutMode: "qr", expiresAt: null, paidAt: null, createdAt: order.createdAt.toISOString()
+  };
   const expiresAt = isScanProvider(order.paymentProvider) ? expiration(order) : null;
   const expired = order.status === "pending" && !!expiresAt && expiresAt <= now;
   const page = order.paymentProvider === "alipay" && order.paymentUrl ? getAlipayPageCheckout({
@@ -47,7 +54,8 @@ export async function checkoutOrderView(order: Order, now = new Date()): Promise
   return {
     id: order.id, planCode: order.planCode, planName: order.planName,
     amountCents: order.amountCents, creditCents: order.creditCents, paymentProvider: order.paymentProvider,
-    status: expired ? "expired" : order.status, paymentUrl: payable ? order.paymentUrl : "",
+    status: expired ? "expired" : order.status, creditAllocationState: order.creditAllocationState,
+    paymentUrl: payable ? order.paymentUrl : "",
     qrCodeDataUrl: payable ? await QRCode.toDataURL(order.paymentUrl, { errorCorrectionLevel: "M", margin: 4, width: 280 }) : null,
     checkoutMode: page ? "alipay_page" : "qr",
     ...(page && order.status === "pending" && !expired ? page : {}),
@@ -65,12 +73,16 @@ export async function createCheckout(userId: string, planCode: string, provider:
       !Number.isSafeInteger(plan.creditCents) || plan.creditCents <= 0) {
     throw new GatewayPaymentError("INVALID_PLAN", "套餐不存在或不可购买", 400);
   }
-  if (!getScanProviderAvailability().some(item => item.provider === provider && item.available)) {
-    throw new GatewayPaymentError("PAYMENT_PROVIDER_UNAVAILABLE", "该支付方式暂未开通，请联系管理员", 503);
-  }
   // A database lock also serializes retries across application instances.
   const order = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`scan-checkout:${userId}`}))::text`;
+    const funded = await tx.gatewayOrder.findFirst({ where: {
+      userId, planCode, paymentProvider: provider, status: "pending", creditAllocationState: "awaiting_capacity"
+    }, orderBy: { createdAt: "asc" } });
+    if (funded) return funded;
+    if (!getScanProviderAvailability().some(item => item.provider === provider && item.available)) {
+      throw new GatewayPaymentError("PAYMENT_PROVIDER_UNAVAILABLE", "该支付方式暂未开通，请联系管理员", 503);
+    }
     const existing = await tx.gatewayOrder.findFirst({ where: {
       userId, planCode, paymentProvider: provider, status: "pending",
       createdAt: { gt: new Date(Date.now() - SCAN_PAYMENT_LIFETIME_MS) }
@@ -80,12 +92,13 @@ export async function createCheckout(userId: string, planCode: string, provider:
       creditCents: plan.creditCents, paymentProvider: provider, paymentUrl: ""
     } });
   }, { maxWait: 15_000, timeout: 25_000 });
+  if (isGatewayOrderAwaitingCapacity(order)) return checkoutOrderView(await resumeGatewayOrderAllocation(userId, order.id));
   // Commit the order BEFORE calling the provider. A timeout must leave a known,
   // queryable order, and a retry always uses the same merchant order number.
   const result = await prisma.$transaction(async tx => {
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`scan-checkout:${userId}`}))::text`;
     let current = await tx.gatewayOrder.findUniqueOrThrow({ where: { id: order.id } });
-    if (current.status !== "pending" || current.paymentUrl || expiration(current) <= new Date()) return { order: current };
+    if (isGatewayOrderAwaitingCapacity(current) || current.status !== "pending" || current.paymentUrl || expiration(current) <= new Date()) return { order: current };
     try {
       const payment = await createScanPayment({ provider, orderId: current.id,
         description: `少壮 AI · ${current.planName}`, amountCents: current.amountCents, expiresAt: expiration(current) });
@@ -95,7 +108,7 @@ export async function createCheckout(userId: string, planCode: string, provider:
         throw new GatewayPaymentError("INVALID_PAYMENT_URL", "支付渠道未返回有效收款码，请稍后重试", 503);
       }
       // A notify may have settled this order while the upstream request ran.
-      await tx.gatewayOrder.updateMany({ where: { id: current.id, status: "pending" }, data: { paymentUrl: payment.paymentUrl } });
+      await tx.gatewayOrder.updateMany({ where: { id: current.id, status: "pending", creditAllocationState: { not: "awaiting_capacity" } }, data: { paymentUrl: payment.paymentUrl } });
       current = await tx.gatewayOrder.findUniqueOrThrow({ where: { id: current.id } });
       return { order: current };
     } catch (error) {
@@ -104,12 +117,14 @@ export async function createCheckout(userId: string, planCode: string, provider:
     }
   }, { maxWait: 15_000, timeout: 25_000 });
   if ("error" in result) throw result.error;
+  if (isGatewayOrderAwaitingCapacity(result.order)) return checkoutOrderView(await resumeGatewayOrderAllocation(userId, result.order.id));
   return checkoutOrderView(result.order);
 }
 
 export async function getCheckout(userId: string, id: string): Promise<CheckoutOrder> {
   let order = await prisma.gatewayOrder.findFirst({ where: { id, userId, paymentProvider: { in: ["alipay", "wechat"] } } });
   if (!order) throw new GatewayPaymentError("ORDER_NOT_FOUND", "订单不存在", 404);
+  if (isGatewayOrderAwaitingCapacity(order)) return checkoutOrderView(await resumeGatewayOrderAllocation(userId, order.id));
   if (order.status === "pending" && isScanProvider(order.paymentProvider)) {
     const verified = await queryScanPayment(order.paymentProvider, order.id);
     if (verified) {

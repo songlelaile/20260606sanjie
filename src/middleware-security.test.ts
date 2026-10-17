@@ -113,3 +113,23 @@ it.each(["/api/payments/alipay/notify/extra", "/api/payments/wechat/notify-extra
   expect((await middleware(req(path, {}, "POST"))).status).toBe(401);
   expect((await middleware(req(path, { origin: "https://evil.example" }, "POST"))).status).toBe(403);
 });
+
+// These are existing deployed extension/client contracts; adding payment callbacks must preserve them.
+it.each(["/api/tools/updates/ai-automation/latest", "/downloads/shaozhuang-ai-v1.9.83-macos-full.zip"])("preserves the precise production public updater %s", async path => {
+  mocks.session.mockResolvedValue(null);
+  expect((await middleware(req(path))).headers.get("x-middleware-next")).toBe("1");
+  expect((await middleware(req(path, {}, "POST"))).status).toBe(405);
+  expect(mocks.session).not.toHaveBeenCalled();
+});
+it.each(["/api/video-assets", "/api/tools/sower-work/lease/verify"])("preserves handler-owned extension authentication for %s", async path => {
+  mocks.session.mockResolvedValue(null);
+  const response = await middleware(req(path, { origin: "chrome-extension://existing-installed-client" }, "POST"));
+  expect(response.headers.get("x-middleware-next")).toBe("1");
+  expect(mocks.session).not.toHaveBeenCalled();
+});
+it.each(["/api/payments/alipay/notify", "/api/payments/wechat/notify", "/api/tools/sower-work/lease/verify"])("keeps declared AI channel enforcement ahead of %s exceptions", async path => {
+  const response = await middleware(req(path, { "x-sanjie-ai-client": "Codex" }, "POST"));
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ code: "AI_CHANNEL_REQUIRED" });
+  expect(mocks.session).not.toHaveBeenCalled();
+});

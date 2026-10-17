@@ -14,7 +14,7 @@ type DemoRow = { id: string; createdAt: string; model: string; count: number; re
 
 const points = (cents: number) => centsToPoints(cents).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 const time = (date: string) => new Date(date).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
-const kindLabels: Record<string, string> = { opening: "期初余额", recharge: "充值", gift: "管理员赠送", debit: "模型消费", error: "请求异常" };
+const kindLabels: Record<string, string> = { opening: "期初余额", recharge: "充值", gift: "管理员赠送", debit: "模型消费", error: "请求异常", generation_charge: "生成提交扣分", generation_refund: "生成失败退款", usage: "调用用量记录" };
 const statusLabels: Record<string, string> = { ok: "完成", error: "失败", preflight_rejected: "余额不足未提交", settlement_rejected: "结算拒绝", settlement_failed: "结算异常" };
 
 export function creativeDemoQuote(model: ModelPrice, count: number, multiplierBps: number, grouping: "single" | "four" = "single") {
@@ -53,7 +53,7 @@ export function CreativeCredits() {
     const abort = new AbortController();
     fetch("/api/creative/credits", { cache: "no-store", signal: abort.signal })
       .then(async response => { if (!response.ok) throw new Error("积分信息暂不可用，请刷新重试"); return response.json(); })
-      .then(body => { setData(body.data); setError(""); })
+      .then(body => { if (!abort.signal.aborted) { setData(body.data); setError(""); } })
       .catch(() => { if (!abort.signal.aborted) { setData(null); setError("积分信息暂不可用，请刷新重试"); } });
     return () => abort.abort();
   }, [revision]);
@@ -61,7 +61,16 @@ export function CreativeCredits() {
   useEffect(() => {
     const refreshCredits = () => setRevision(value => value + 1);
     window.addEventListener("sanjie:payment-paid", refreshCredits);
-    return () => window.removeEventListener("sanjie:payment-paid", refreshCredits);
+    window.addEventListener("sanjie:credits-changed", refreshCredits);
+    const refreshVisible = () => { if (document.visibilityState === "visible") refreshCredits(); };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.removeEventListener("sanjie:payment-paid", refreshCredits);
+      window.removeEventListener("sanjie:credits-changed", refreshCredits);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
   }, []);
 
   useEffect(() => {
@@ -77,7 +86,7 @@ export function CreativeCredits() {
     setLoading(true); setLedger(null); setLedgerError("");
     fetch(`/api/creative/credits/ledger?page=${page}`, { cache: "no-store", signal: abort.signal })
       .then(async response => { if (!response.ok) throw new Error(); return response.json(); })
-      .then(body => { setLedger(body.data); })
+      .then(body => { if (!abort.signal.aborted) setLedger(body.data); })
       .catch(() => { if (!abort.signal.aborted) setLedgerError("积分记录读取失败，请刷新重试"); })
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
@@ -86,7 +95,7 @@ export function CreativeCredits() {
   const pricedModels = data?.models.filter(model => model.kind !== "chat" && (model.kind === "image" ? model.imageCents !== undefined : model.videoCents !== undefined)) || [];
   const selected = pricedModels.find(model => model.id === modelId) || pricedModels[0];
   const quote = selected && data ? creativeDemoQuote(selected, count, data.plan.multiplierBps, grouping) : null;
-  const demoBalance = demos[0]?.afterCents ?? data?.wallet.balanceCents ?? 0;
+  const demoBalance = demos[0]?.afterCents ?? data?.wallet.availableCents ?? data?.wallet.balanceCents ?? 0;
 
   function simulate() {
     if (!quote || !selected || !data || selected.kind === "chat") return;
@@ -97,7 +106,7 @@ export function CreativeCredits() {
       beforeCents: demoBalance, afterCents: demoBalance - quote.costCents, planName: data.plan.name,
       multiplierBps: data.plan.multiplierBps, ruleVersion: data.plan.ruleVersion };
     setDemos(previous => {
-      const before = previous[0]?.afterCents ?? data.wallet.balanceCents;
+      const before = previous[0]?.afterCents ?? data.wallet.availableCents ?? data.wallet.balanceCents;
       if (before < row.chargedCents) return previous;
       return [{ ...row, beforeCents: before, afterCents: before - row.chargedCents }, ...previous].slice(0, 100);
     });
@@ -106,8 +115,9 @@ export function CreativeCredits() {
   return <div className={styles.container}>
     <div className={styles.summary}>
       <button type="button" className={styles.balanceButton} onClick={() => setOpen(value => !value)} aria-expanded={open} aria-controls="creative-credit-records">
-        <span>可用积分</span><strong>{data ? points(data.wallet.balanceCents) : "—"}</strong><span>积分记录</span>
+        <span>可用积分</span><strong>{data ? points(data.wallet.availableCents ?? data.wallet.balanceCents) : "—"}</strong><span>积分记录</span>
       </button>
+      {data && (data.wallet.reservedCents ?? 0) > 0 ? <small>冻结 {points(data.wallet.reservedCents!)} 积分 · 任务结算后更新</small> : null}
       {!data ? <small>{error || "正在读取积分"}</small> : null}
       <a href="/models?recharge=1" className={styles.rechargeLink}>购买积分</a>
     </div>

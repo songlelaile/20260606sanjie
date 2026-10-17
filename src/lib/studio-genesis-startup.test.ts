@@ -144,7 +144,7 @@ type StartupOptions = { holdRecovery?: boolean; omitRecovery?: boolean; timeoutM
 function harness(entry: StartupEntry, holdRestore = false, storage = new Map<string, string>(), environment = "", startup: StartupOptions = {}) {
   const mode = entry === "detail" ? "detail" : "main";
   const uiScript = source("studio-genesis-ui.js");
-  const document = new TestDocument(), refresh = deferred<{ ok: boolean; accountKey: string; error?: string; boundApis?: Catalog }>(), catalog = deferred<Catalog>();
+  const document = new TestDocument(), refresh = deferred<{ ok: boolean; accountKey: string; error?: string }>(), catalog = deferred<Catalog>();
   const read = deferred<unknown>(), restore = deferred<void>(), recovery = deferred<void>();
   const reads: string[] = [], writes: Array<{ key: string; value: unknown }> = [];
   const writeControl: { wait?: Promise<void>; error?: Error } = {};
@@ -160,52 +160,22 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
   const bridge = {
     refresh: vi.fn(() => refresh.promise),
     getAccountKey: vi.fn(async () => accountKey),
-    listBoundApis: vi.fn((snapshot?: Catalog) => snapshot ? Promise.resolve(snapshot) : catalog.promise),
+    listBoundApis: vi.fn(() => catalog.promise),
     modelInfo: vi.fn(() => ({ ready: true, supportsReference: true, provider: provider.provider, model: provider.imageModel })),
     setApiBusy: vi.fn(), openConfig: vi.fn(), analyze: vi.fn(), send: vi.fn()
   };
-  const persistedDrafts = new Map<string, unknown>();
-  const initialDraftKey = `${accountKey}:${entry === "batch" ? "batch" : "single"}:${mode}${entry === "ad" ? ":ad" : ""}`;
-  let initialDraftSeeded = false, transactionQueue = Promise.resolve();
-  let activeWriteTransaction: { abort(): void } | undefined;
   const db = {
     transaction: (_store: string, access?: string) => {
-      if (access && !["readonly", "readwrite"].includes(access)) throw new Error(`Unexpected access: ${access}`);
-      const prior = transactionQueue;let release!: () => void;
-      transactionQueue = new Promise<void>(resolve => { release = resolve; });
-      const pendingWrites = new Map<string, unknown>();let pending = 0, finished = false;
-      const finish = (kind: "complete" | "abort" | "error") => {
-        if (finished) return;finished = true;
-        if (kind === "complete") pendingWrites.forEach((value, key) => persistedDrafts.set(key, clone(value)));
-        if (activeWriteTransaction === tx) activeWriteTransaction = undefined;
-        release();queueMicrotask(() => { if (kind === "complete") tx.oncomplete?.();else if (kind === "abort") tx.onabort?.();else tx.onerror?.(); });
-      };
-      const idle = () => queueMicrotask(() => { if (!pending && !finished) finish("complete"); });
-      const tx = { oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: undefined as undefined | Error,
-        abort: () => finish("abort"), objectStore: () => ({
+      const tx = { oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), error: undefined as undefined | Error, objectStore: () => ({
         get: (key: string) => {
           reads.push(key);
           const request = { result: undefined as unknown, onsuccess: undefined as undefined | (() => void) };
-          pending++;
-          prior.then(() => read.promise).then(value => {
-            if (finished) return;
-            if (!initialDraftSeeded) { initialDraftSeeded = true;if (value !== undefined) persistedDrafts.set(initialDraftKey, clone(value)); }
-            const saved = pendingWrites.has(key) ? pendingWrites.get(key) : persistedDrafts.get(key);
-            request.result = saved === undefined ? undefined : clone(saved);request.onsuccess?.();
-          }).finally(() => { pending--;idle(); });
+          read.promise.then(value => { request.result = clone(value); request.onsuccess?.(); });
           return request;
         },
-        put: (value: unknown, key: string) => {
-          const captured = clone(value);writes.push({ key, value: captured });pending++;
-          prior.then(() => writeControl.wait).then(() => {
-            if (finished) return;
-            if (writeControl.error) { tx.error = writeControl.error;finish("error"); }
-            else pendingWrites.set(key, captured);
-          }).finally(() => { pending--;idle(); });
-        }
+        put: (value: unknown, key: string) => { writes.push({ key, value: clone(value) }); Promise.resolve(writeControl.wait).then(() => { if (writeControl.error) { tx.error = writeControl.error; tx.onerror?.(); } else tx.oncomplete?.(); }); }
       }) };
-      if (access === "readwrite") activeWriteTransaction = tx;
-      prior.then(idle);
+      if (access && access !== "readwrite") throw new Error(`Unexpected access: ${access}`);
       return tx;
     }
   };
@@ -213,7 +183,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     const request = { result: db, onsuccess: undefined as undefined | (() => void) };
     queueMicrotask(() => request.onsuccess?.()); return request;
   }) };
-  const context = createContext({ document, indexedDB, URL, URLSearchParams, crypto: { randomUUID }, console, setTimeout, clearTimeout, setInterval:vi.fn(),
+  const context = createContext({ document, indexedDB, URL, URLSearchParams, crypto: { randomUUID }, console, setTimeout, clearTimeout,
     __SANJIE_ENVIRONMENT: environment,
     navigator: { locks: { request: async (name: string, _options: unknown, callback: (lock: { name: string }) => unknown) => callback({ name }) } },
     location: { search: `?studio=1&mode=${mode}${entry === "ad" ? "&type=ad" : entry === "batch" ? "&batch=1" : ""}` }, localStorage: {
@@ -224,7 +194,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     addEventListener: (name: string, listener: (event: UnloadEvent) => void) => {
       const listeners = windowListeners.get(name) || []; listeners.push(listener); windowListeners.set(name, listeners);
     },
-    SZ_LAB_FIRST_PAINT: { complete: vi.fn() }, SZ_CREATIVE_TOOLS_BRIDGE: bridge });
+    SZ_CREATIVE_TOOLS_BRIDGE: bridge });
   context.window = context;
   // Use the matching production upload markup when the UI references it,
   // without starting its decoration observer in this focused startup harness.
@@ -274,8 +244,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     for (const listener of windowListeners.get("beforeunload") || []) listener(event);
     return event;
   };
-  return { document, bridge, refresh, catalog, read, restore, restoreStarted, recovery, recoveryStarted, reads, writes, saved, beforeUnload, storage, engine, context, writeControl, persistedDrafts,
-    abortPendingWrite: () => activeWriteTransaction?.abort(),
+  return { document, bridge, refresh, catalog, read, restore, restoreStarted, recovery, recoveryStarted, reads, writes, saved, beforeUnload, storage, engine, context, writeControl,
     controller: () => uiController, dispatchWindow,
     navigationGuard: () => context.SanjieStudioGenesisBridge as { canDeactivate(): Promise<{ allowed: boolean; reason?: string }> } };
 }
@@ -293,20 +262,18 @@ describe.each(["main", "detail"] as const)("%s studio first paint and safe start
     expect(h.document.root.textContent).toContain("正在读取创作工作台");
     expect(h.bridge.refresh).toHaveBeenCalledWith({ deferArchive: true });
     h.refresh.complete({ ok: true, accountKey });
-    await vi.waitFor(() => expect(h.reads).toEqual([`${accountKey}:single:${mode}:type-recovery-v1`]));
+    await vi.waitFor(() => expect(h.reads).toEqual([`${accountKey}:single:${mode}`]));
     expect(h.document.root.querySelector("[data-files]")).toBeNull();
     expect(h.bridge.listBoundApis).not.toHaveBeenCalled();
     h.read.complete(h.saved);
     await vi.waitFor(() => expect(h.restoreStarted).toHaveBeenCalledOnce());
-    expect(h.reads).toEqual([`${accountKey}:single:${mode}:type-recovery-v1`, `${accountKey}:single:${mode}`]);
     expect(h.document.root.querySelector("[data-files]")).toBeNull();
     h.restore.complete();
     await vi.waitFor(() => expect(h.bridge.listBoundApis, h.document.root.textContent).toHaveBeenCalledOnce());
     expect(h.document.control("[data-task-field=name]").value).toBe("已保存商品");
     expect(h.document.control("[data-setting=model]").value).toBe("saved-product-image");
     expect(h.document.root.querySelector("[data-confirm]")?.checked).toBe(true);
-    expect(h.document.root.textContent).not.toContain("0/1 已完成");
-    expect(h.document.control("[data-result-phase]").textContent).toBe("设计规划预览");
+    expect(h.document.root.textContent).toContain("0/1 已完成");
     expect(h.recoveryStarted).toHaveBeenCalledOnce();expect(h.bridge.getAccountKey).toHaveBeenCalled();
     expect(h.writes).toEqual([]);
   });
@@ -401,35 +368,6 @@ describe.each(["main", "detail"] as const)("%s studio first paint and safe start
   });
 });
 
-describe("v4 startup DTO and first-paint compatibility with receipt recovery", () => {
-  it.each(["main", "detail", "ad", "batch"] as const)("reveals %s only after mandatory recovery and reuses this boot's bound API DTO", async entry => {
-    const h = harness(entry, false, new Map(), "", { holdRecovery: true });
-    const boundApis = { ok: true, accountKey, providers: [provider] };
-    h.refresh.complete({ ok: true, accountKey, boundApis });h.read.complete(h.saved);
-    await vi.waitFor(() => expect(h.recoveryStarted).toHaveBeenCalledOnce());
-    expect(h.context.SZ_LAB_FIRST_PAINT.complete).not.toHaveBeenCalled();
-    expect(h.bridge.listBoundApis).not.toHaveBeenCalled();
-    expect(h.bridge.send).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
-    h.recovery.complete();
-    await vi.waitFor(() => expect(h.document.control("[data-action=generate]").disabled).toBe(false));
-    expect(h.context.SZ_LAB_FIRST_PAINT.complete).toHaveBeenCalledOnce();
-    expect(h.context.SZ_LAB_FIRST_PAINT.complete).toHaveBeenCalledWith();
-    expect(h.bridge.listBoundApis).toHaveBeenCalledWith(boundApis);
-    expect(h.document.control("[data-task-field=name]").value).toBe("已保存商品");
-    expect(h.bridge.send).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
-  });
-
-  it.each(["main", "detail", "ad", "batch"] as const)("completes the %s shell with error while refusing a missing recovery interface", async entry => {
-    const h = harness(entry, false, new Map(), "", { omitRecovery: true });
-    h.refresh.complete({ ok: true, accountKey, boundApis: { ok: true, accountKey, providers: [provider] } });h.read.complete(h.saved);
-    await vi.waitFor(() => expect(h.context.SZ_LAB_FIRST_PAINT.complete).toHaveBeenCalledWith("error"));
-    expect(h.document.root.textContent).toContain("任务回执恢复模块未完整加载");
-    expect(h.document.root.querySelector("[data-action=generate]")).toBeNull();
-    expect(h.bridge.listBoundApis).not.toHaveBeenCalled();expect(h.bridge.send).not.toHaveBeenCalled();
-    expect(h.writes).toEqual([]);expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
-  });
-});
-
 const pendingKey = `sz_studio_genesis_pending_v1:${accountKey}`;
 const externalReceipt = { accountKey, jobId: "fixture-original-detail-job", taskId: "fixture-original-detail-task", shotId: "shot-12", batchId: "fixture-original-detail-batch", createdAt: Date.UTC(2026, 9, 10, 6, 30, 15) };
 function forbidSending(h: ReturnType<typeof harness>) {
@@ -440,18 +378,24 @@ function completeStartup(h: ReturnType<typeof harness>) {
 }
 
 describe.each(["main", "detail", "ad", "batch"] as const)("%s account-level pending startup UI", entry => {
-  it("isolates another entry's pending request while preserving its journal and enabling independent generation", async () => {
+  it("shows another entry's request before generation can unlock and preserves its journal", async () => {
     const receipt = { ...externalReceipt, providerTaskId: "private-supplier-task", apiKey: "private-supplier-key", generationRoute: "private-supplier-route" };
     const raw = JSON.stringify(receipt), storage = new Map([[pendingKey, raw]]), h = harness(entry, false, storage);
     forbidSending(h);completeStartup(h);
-    await vi.waitFor(() => expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
     expect(h.recoveryStarted).toHaveBeenCalledOnce();
-    expect(h.document.control("[data-setting=model]").disabled).toBe(false);
-    expect(h.document.control("[data-pending-receipt]").textContent).toContain("其他图片可继续生成");
-    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
-    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
-    expect(h.controller().state.pendingReceipts.some((pending: {jobId:string;taskId:string;shotId:string})=>pending.jobId===receipt.jobId&&pending.taskId===receipt.taskId&&pending.shotId===receipt.shotId)).toBe(true);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    expect(h.document.control("[data-setting=model]").disabled).toBe(true);
+    expect(h.document.control("[data-action=resolve]").disabled).toBe(true);
+    expect(h.document.control("[data-receipt-job]").textContent).toBe(externalReceipt.jobId);
+    expect(h.document.control("[data-receipt-time]").textContent).toContain("2026/10/10 14:30:15");
+    expect(h.document.control("[data-receipt-task]").textContent).toBe(externalReceipt.taskId);
+    expect(h.document.control("[data-receipt-shot]").textContent).toBe("第 12 张（shot-12）");
     for (const secret of [receipt.providerTaskId, receipt.apiKey, receipt.generationRoute]) expect(h.document.root.textContent).not.toContain(secret);
+    click(h, "generate");click(h, "resolve");
+    check(h, "[data-uncertain-confirm]", true);
+    expect(h.document.control("[data-action=resolve]").disabled).toBe(false);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     expect(storage.get(pendingKey)).toBe(raw);expect(h.writes).toEqual([]);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.bridge.analyze).not.toHaveBeenCalled();
   });
@@ -465,10 +409,7 @@ describe.each(["main", "detail", "ad", "batch"] as const)("%s account-level pend
     expect(h.bridge.listBoundApis).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
     h.recovery.complete();
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
-    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
-    expect(h.storage.has(pendingKey)).toBe(true);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
@@ -484,25 +425,16 @@ describe.each(["main", "detail", "ad", "batch"] as const)("%s account-level pend
 });
 
 describe("pending startup failure and receipt-only resolution", () => {
-  it("keeps an old request bound to its exact image without describing it as the current plan", async () => {
+  it("does not describe an old request with a label from the current edited plan", async () => {
     const h = harness("main"), task = h.saved.draft.tasks[0], receipt = { ...externalReceipt, taskId: task.id, shotId: "shot-1", batchId: "fixture-previous-detail-batch" };
     const currentLabel = (task.plan as { shots: Array<{ label: string }> }).shots[0].label;
-    const raw=JSON.stringify(receipt);h.storage.set(pendingKey, raw);forbidSending(h);completeStartup(h);
+    h.storage.set(pendingKey, JSON.stringify(receipt));forbidSending(h);completeStartup(h);
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.root.querySelector("[data-receipt-shot]")).toBeNull();
-    expect(h.document.control("[data-pending-receipt]").textContent).not.toContain(currentLabel);
-    expect(h.controller().state.uncertain.jobId).toBe(receipt.jobId);
-    expect(h.controller().state.tasks[0].slots[0].status).toBe("uncertain");
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect(h.document.control("[data-new-generation]").textContent).toContain("按当前方案生成新图");
-    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 1 张新图");
-    expect(h.document.control("[data-setting=model]").disabled).toBe(false);
-    expect(h.document.root.querySelector("[data-action=retry-slot]")).toBeNull();
-    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
-    expect(h.storage.get(pendingKey)).toBe(raw);
+    expect(h.document.control("[data-receipt-shot]").textContent).toBe("第 1 张（shot-1）");
+    expect(h.document.control("[data-receipt-shot]").textContent).not.toContain(currentLabel);
+    expect(h.document.control("[data-receipt-job]").textContent).toBe(receipt.jobId);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
   });
-
   it("allows leaving a failed corrupt snapshot startup without overwriting the original draft", async () => {
     const h = harness("main");h.saved.snapshot.version = "corrupt-snapshot";
     const original = clone(h.saved);forbidSending(h);completeStartup(h);
@@ -514,25 +446,14 @@ describe("pending startup failure and receipt-only resolution", () => {
     expect(h.recoveryStarted).not.toHaveBeenCalled();expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
-  it("retains a corrupt opposite-type snapshot unchanged while recovering fresh inputs without restoring its task state", async () => {
+  it("opposite-type corrupt snapshot preserves the untouched draft without writes", async () => {
     const h = harness("ad");Object.assign(h.saved.draft.settings, { imageType: "main", mode: "main" });h.saved.snapshot.version = "corrupt-snapshot";
     const original = clone(h.saved);forbidSending(h);completeStartup(h);
-    await vi.waitFor(() => expect(h.document.control("[data-action=config]").disabled).toBe(false));
-    expect(h.document.root.textContent).toContain("已保留旧版混合草稿");
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    expect(h.writes).toHaveLength(2);
-    expect(h.writes[0].key).toMatch(new RegExp(`^${accountKey}:single:main:ad:before-explicit-mode:`));
-    const backup=h.writes[0].value as typeof original & {revision:string};
-    expect(backup.revision).toBeTruthy();
-    expect(Object.fromEntries(Object.entries(backup).filter(([name])=>name!=='revision'))).toEqual(original);expect(h.saved).toEqual(original);
-    expect(h.writes.some(write => write.key === `${accountKey}:single:main:ad`)).toBe(false);
-    expect(h.persistedDrafts.get(`${accountKey}:single:main:ad`)).toEqual(original);
-    const recovered=h.writes[1].value as typeof original;
-    expect(h.writes[1].key).toBe(`${accountKey}:single:main:ad:type-recovery-v1`);
-    expect(recovered.draft.tasks[0].id).not.toBe(original.draft.tasks[0].id);
-    expect(recovered.draft.tasks[0]).toMatchObject({products:original.draft.tasks[0].products,plan:null,confirmed:false});
-    expect(h.controller().state.tasks).toEqual([]);
-    expect(h.recoveryStarted).toHaveBeenCalledOnce();expect(h.bridge.send).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(h.document.root.textContent).toContain("创作工作台暂未就绪"));
+    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
+    expect(h.writes).toEqual([]);
+    expect(h.saved).toEqual(original);
+    expect(h.recoveryStarted).not.toHaveBeenCalled();expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -600,7 +521,7 @@ describe("pending startup failure and receipt-only resolution", () => {
     expect(h.writes).toEqual([]);expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
-  it("restores eleven completed results and protects only the twelfth pending image without manual release", async () => {
+  it("restores eleven completed results and the twelfth receipt without sending on confirmation or release", async () => {
     const h = harness("detail"), settings = { ...h.saved.draft.settings, count: 12 }, task = h.saved.draft.tasks[0];
     task.plan = h.engine.createPlan(task, settings);h.saved.draft.settings = settings;
     const receipt = { ...externalReceipt, taskId: task.id }, originalPlan = clone(task.plan);
@@ -612,35 +533,28 @@ describe("pending startup failure and receipt-only resolution", () => {
     const completed = clone(h.saved.snapshot.tasks[0].slots.slice(0, 11));
     h.storage.set(pendingKey, JSON.stringify(receipt));forbidSending(h);completeStartup(h);
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.control("[data-pending-receipt]").textContent).toContain("1 张图片");
-    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
-    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
+    expect(h.document.control("[data-receipt-task]").textContent).toContain(task.name);
+    expect(h.document.control("[data-receipt-job]").textContent).toBe(receipt.jobId);
     expect(h.document.root.querySelectorAll("[data-action=download]")).toHaveLength(11);
     expect(h.controller().snapshot().tasks[0].slots.slice(0, 11)).toEqual(completed);
-    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("uncertain");
-    expect(h.controller().state.uncertain.jobId).toBe(receipt.jobId);
-    expect(h.document.root.querySelectorAll("[data-action=retry-slot]").some(button=>button.dataset.shotId==="shot-12")).toBe(false);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect(h.document.control("[data-new-generation]").textContent).toContain("按当前方案生成新图");
-    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 12 张新图");
-    h.dispatchWindow("focus");
-    await vi.waitFor(()=>expect(h.recoveryStarted).toHaveBeenCalledTimes(2));
-    expect(h.storage.has(pendingKey)).toBe(true);
+    check(h, "[data-uncertain-confirm]", true);
+    expect(h.storage.has(pendingKey)).toBe(true);expect(h.bridge.send).not.toHaveBeenCalled();
+    click(h, "resolve");
+    await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).toBeNull());
+    await vi.waitFor(() => expect(h.storage.has(pendingKey)).toBe(false));
     expect(h.controller().snapshot().tasks[0].slots.slice(0, 11)).toEqual(completed);
     expect(h.controller().snapshot().tasks[0].plan).toEqual(originalPlan);
-    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("uncertain");
+    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("failed");
     expect(h.document.root.querySelectorAll("[data-action=download]")).toHaveLength(11);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.bridge.analyze).not.toHaveBeenCalled();
     expect(h.writes.every(write => write.key === `${accountKey}:single:detail`)).toBe(true);
   });
-
 });
 
 type InteractionHarness = ReturnType<typeof harness>;
 type InteractionDraft = {
-  viewStep?: number;
   settings: { mode: string; count: number; moduleMode: string; modules: string[]; moduleSkills?: Record<string, string>; expertMode?: boolean; imageType?: string; adTemplate?: string; adType?: string; quality?: string; generationSpeed?: string };
-  tasks: Array<{ id: string; requirements: string; analysis?: string; products: unknown[]; plan: null | { shots: Array<{ label: string; prompt: string }> }; confirmed: boolean }>;
+  tasks: Array<{ id: string; plan: null | { shots: Array<{ label: string; prompt: string }> }; confirmed: boolean }>;
   userModules?: Array<{ id: string; name: string; skill: string; group?: string }>;
   userModuleGroups?: string[];
 };
@@ -664,7 +578,7 @@ function check(h: InteractionHarness, selector: string, checked: boolean) {
 }
 
 describe("real studio deactivation bridge", () => {
-  it.each(["main", "detail"] as const)("locks paid %s generation during durable saving while retaining idle receipts", async mode => {
+  it.each(["main", "detail"] as const)("awaits durable %s storage while retaining idle receipts and the paid generation lock", async mode => {
     const h = await ready(mode), write = deferred<void>();
     const receipt = { accountKey, jobId: "unconfirmed-local-job", taskId: "saved-product", shotId: "shot-1" };
     const receiptKey = `sz_studio_genesis_pending_v1:${accountKey}`;
@@ -672,15 +586,13 @@ describe("real studio deactivation bridge", () => {
     h.controller().state.uncertain = clone(receipt);
     h.controller().state.previousResults.push({ status: "done", item: { resultId: "retained-local-image", url: "https://fixture.test/retained.png" }, archiveOk: true });
     h.document.dispatch("cu-import-state");
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect(h.document.control("[data-new-generation]").textContent).toContain("按当前方案生成新图");
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     h.writeControl.wait = write.promise;
     let settled = false;
     const leaving = h.navigationGuard().canDeactivate().then(result => { settled = true; return result; });
     await vi.waitFor(() => expect(h.writes).toHaveLength(1));
     expect(settled).toBe(false);
     expect(h.document.control("[data-task-field=name]").disabled).toBe(true);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     click(h, "generate");expect(h.bridge.send).not.toHaveBeenCalled();
     write.complete();expect(await leaving).toEqual({ allowed: true });
     const persisted = h.writes[0].value as { draft: unknown; snapshot: { uncertain: unknown; previousResults: unknown[] } };
@@ -689,9 +601,7 @@ describe("real studio deactivation bridge", () => {
     expect(persisted.snapshot.previousResults).toHaveLength(1);
     expect(h.storage.get(receiptKey)).toBe(JSON.stringify(receipt));
     expect(h.controller().state.uncertain).toEqual(receipt);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect(h.document.control("[data-new-generation]").textContent).toContain("按当前方案生成新图");
-    expect(h.bridge.send).not.toHaveBeenCalled();
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     expect(h.beforeUnload().preventDefault).not.toHaveBeenCalled();
   });
 
@@ -866,7 +776,7 @@ describe("real studio deactivation bridge", () => {
     click(h, "generate");
     await vi.waitFor(() => expect(h.bridge.send).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(h.controller().state).toMatchObject({ busy: false, awaitingReceipt: true }));
-    const before = clone(h.controller().snapshot()), journalKey = [...h.storage.keys()].find(key=>key.startsWith(`sz_studio_genesis_pending_v2:${accountKey}:single:main:`))!, pending = h.storage.get(journalKey);
+    const before = clone(h.controller().snapshot()), journalKey = `sz_studio_genesis_pending_v2:${accountKey}:single:main:${before.uncertain.jobId}`, pending = h.storage.get(journalKey);
     expect(h.controller().hasInFlightRequest()).toBe(true);expect(pending).toBeTruthy();
     expect(await h.navigationGuard().canDeactivate()).toMatchObject({ allowed: false });
     expect(h.beforeUnload().preventDefault).toHaveBeenCalledOnce();
@@ -1015,7 +925,7 @@ describe("real studio replica control interactions", () => {
     h.refresh.complete({ ok: true, accountKey });h.read.complete(h.saved);
     await vi.waitFor(() => expect(h.bridge.listBoundApis).toHaveBeenCalledOnce());h.catalog.complete({ ok: true, accountKey, providers: [provider] });
     await vi.waitFor(() => expect(h.document.control("[data-action=config]").disabled).toBe(false));
-    expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("结果");
+    expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("完成");
     const requirements = h.document.control("[data-task-field=requirements]");requirements.value = "新的构图要求";h.document.root.dispatch("input", requirements);h.document.root.dispatch("change", requirements);
     expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("输入");
     expect(h.document.root.querySelector("[data-action=retry-slot]")).toBeNull();expect(h.document.root.textContent).toContain("历史版本");
@@ -1025,14 +935,11 @@ describe("real studio replica control interactions", () => {
     check(h, "[data-confirm]", true);
     const response = deferred<{ ok: boolean; images: string[] }>();h.bridge.send.mockImplementation(() => response.promise);
     click(h, "generate");await vi.waitFor(() => expect(h.bridge.send).toHaveBeenCalledOnce());
-    expect(h.document.control("[data-run-progress]").textContent).toContain("0/1 已生成");
-    expect(h.document.control("[data-result-phase]").textContent).toBe("生成中…");
-    expect(h.document.root.textContent).toContain("0/1 已生成");
-    expect(h.document.root.textContent).not.toContain("1/2");
+    expect(h.document.control(".sg-run-summary").textContent).toContain("0/1 已完成");expect(h.document.control(".sg-run-summary").textContent).not.toContain("1/2");
     response.complete({ ok: true, images: ["https://fixture.test/new-result.png"] });
-    await vi.waitFor(() => expect(h.document.control("[data-result-phase]").textContent).toBe("生成完成"));
+    await vi.waitFor(() => expect(h.document.control(".sg-run-summary").textContent).toContain("1/1 已完成"));
     expect(h.document.root.querySelectorAll("[data-action=download]")).toHaveLength(2);
-    expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("结果");
+    expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("完成");
   });
 
   it("binds ad quality into its approved plan and keeps unavailable fast generation disabled", async () => {
@@ -1193,176 +1100,34 @@ describe("real studio replica control interactions", () => {
     expect(JSON.parse(storage.get(`sz_studio_main_modules_v1:${accountKey}`) || "[]")).toHaveLength(1);
   });
 
-  it("protects the exact unknown image while enabling another failed image to retry without manual unlocking", async () => {
-    const h = harness("main"), task=h.saved.draft.tasks[0], settings={...h.saved.draft.settings,count:2};
-    task.plan=h.engine.createPlan(task,settings);h.saved.draft.settings=settings;
-    const receipt={jobId:"fixture-unknown-job",taskId:task.id,shotId:"shot-1",batchId:"fixture-original-batch",accountKey};
-    h.saved.snapshot.batchId=receipt.batchId;h.saved.snapshot.uncertain=receipt;
-    h.saved.snapshot.tasks[0].plan=clone(task.plan);
-    h.saved.snapshot.tasks[0].slots=(task.plan as {shots:unknown[]}).shots.map((shot,index)=>({shot:clone(shot),status:index?"failed":"uncertain",item:null,error:index?"fixture definitive failure":"",archiveOk:false,...(index?{}:{pendingReceipt:receipt})}));
-    const journalKey=`sz_studio_genesis_pending_v1:${accountKey}`,raw=JSON.stringify(receipt);
-    h.storage.set(journalKey,raw);forbidSending(h);completeStartup(h);
-    await vi.waitFor(()=>expect(h.document.control("[data-action=retry]").disabled).toBe(false));
-    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
-    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+  it("allows an explicitly checked unknown receipt to be resolved while the rest of the workspace remains locked", async () => {
+    const h = harness("main"), receipt = { jobId: "fixture-unknown-job", taskId: "saved-product", shotId: "shot-1", accountKey };
+    h.saved.snapshot.uncertain = receipt;
+    h.saved.snapshot.tasks[0].slots[0].status = "uncertain";
+    const journalKey = `sz_studio_genesis_pending_v1:${accountKey}`;
+    h.storage.set(journalKey, JSON.stringify(receipt));
+    h.refresh.complete({ ok: true, accountKey }); h.read.complete(h.saved);
+    await vi.waitFor(() => expect(h.bridge.listBoundApis).toHaveBeenCalledOnce());
+    h.catalog.complete({ ok: true, accountKey, providers: [provider] });
+    await vi.waitFor(() => expect(h.document.root.querySelector("[data-uncertain-confirm]")).not.toBeNull());
+    expect(h.document.control("[data-action=resolve]").disabled).toBe(true);
+    expect(h.document.control("[data-setting=model]").disabled).toBe(true);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    click(h, "resolve");
+    expect(h.storage.has(journalKey)).toBe(true);
+    check(h, "[data-uncertain-confirm]", true);
+    expect(h.document.control("[data-action=resolve]").disabled).toBe(false);
+    click(h, "resolve");
+    await vi.waitFor(() => expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull());
+    await vi.waitFor(() => expect(h.storage.has(journalKey)).toBe(false));
+    expect(h.document.control("[data-action=retry]").disabled).toBe(false);
     expect(h.document.control("[data-setting=model]").disabled).toBe(false);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    const retryButtons=h.document.root.querySelectorAll("[data-action=retry-slot]");
-    expect(retryButtons).toHaveLength(1);expect(retryButtons[0].dataset.shotId).toBe("shot-2");expect(retryButtons[0].disabled).toBe(false);
-    const protectedRetry=await h.controller().retrySlot(task.id,"shot-1",h.saved.draft.tasks,h.saved.draft.settings);
-    expect(protectedRetry.code).toBe("STUDIO_RECEIPT_PENDING");
-    expect(h.storage.get(journalKey)).toBe(raw);
-    const stored=await flushDraft(h),snapshot=h.controller().snapshot();
-    expect(snapshot.uncertain.jobId).toBe(receipt.jobId);
-    expect(snapshot.tasks[0].slots.map((slot:{status:string})=>slot.status)).toEqual(["uncertain","failed"]);
-    expect(stored.tasks[0].id).toBe("saved-product");expect(stored.tasks[0].plan).not.toBeNull();
-    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
+    const stored = await flushDraft(h), snapshot = (h.writes.at(-1)?.value as { snapshot: { uncertain: unknown; tasks: Array<{ slots: Array<{ status: string }> }> } }).snapshot;
+    expect(snapshot.uncertain).toBeNull();
+    expect(snapshot.tasks[0].slots[0].status).toBe("failed");
+    expect(stored.tasks[0].id).toBe("saved-product");
+    expect(stored.tasks[0].plan).not.toBeNull();
     expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-});
-
-describe("clickable studio steps and separate image purposes", () => {
-  const step = (h: InteractionHarness, index: number) => click(h, "navigate-step", button => button.dataset.step === String(index));
-  const active = (h: InteractionHarness) => h.document.control(".sg-steps").querySelector(".is-active")?.querySelector("button")?.dataset.step;
-
-  it.each(["main", "detail"] as const)("returns from the %s plan to input and back without discarding approval or submitting a request", async mode => {
-    const h = await ready(mode), original = clone(h.saved.draft.tasks[0].plan);
-    expect(active(h)).toBe("2");
-    step(h, 0);
-    expect(active(h)).toBe("0");
-    expect(h.document.root.querySelector("[data-shot]")).toBeNull();
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    const input = await flushDraft(h);
-    expect(input.viewStep).toBe(0);
-    expect(input.tasks[0]).toMatchObject({ plan: original, confirmed: true });
-    expect(input.tasks[0].products).toEqual(h.saved.draft.tasks[0].products);
-    step(h, 2);
-    expect(active(h)).toBe("2");
-    expect(h.document.control("[data-confirm]").checked).toBe(true);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
-    expect((await flushDraft(h)).tasks[0].plan).toEqual(original);
-    expect(h.bridge.analyze).not.toHaveBeenCalled();
-    expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("shows completed analysis when its step is clicked, while unreachable and processing steps cannot submit requests", async () => {
-    const h = await ready("main"), reply = deferred<{ ok: boolean; data: string }>();
-    const analysisButton = h.document.root.querySelectorAll("[data-action=navigate-step]").find(button => button.dataset.step === "1");
-    expect(analysisButton?.disabled).toBe(true);
-    step(h, 1);
-    expect(active(h)).toBe("2");
-    h.bridge.analyze.mockImplementation(() => reply.promise);
-    click(h, "analyze");
-    await vi.waitFor(() => expect(h.bridge.analyze).toHaveBeenCalledOnce());
-    expect(active(h)).toBe("1");
-    expect(h.document.control(".sg-steps").querySelectorAll("button").every(button => button.disabled)).toBe(true);
-    step(h, 0);
-    expect(active(h)).toBe("1");
-    reply.complete({ ok: true, data: "可见的棕色手提包与缝线" });
-    await vi.waitFor(() => expect(active(h)).toBe("2"));
-    step(h, 1);
-    expect(active(h)).toBe("1");
-    expect(h.document.control(".sg-analysis-details").textContent).toContain("可见的棕色手提包与缝线");
-    step(h, 0);step(h, 2);
-    expect(active(h)).toBe("2");
-    expect(h.bridge.analyze).toHaveBeenCalledOnce();
-    expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("restores each type's requirements, edited plan, approval, settings and selected step", async () => {
-    const h = await ready("main");
-    const mainPrompt = h.document.control("[data-shot]");
-    mainPrompt.value = "主图专属方案：白底完整商品";h.document.root.dispatch("input", mainPrompt);
-    check(h, "[data-confirm]", true);
-    const original = (await flushDraft(h)).tasks[0].plan;
-    step(h, 0);
-    click(h, "mode", button => button.dataset.mode === "detail");
-    await vi.waitFor(() => expect(h.document.control("[data-mode=detail]").attributes.get("aria-selected")).toBe("true"));
-    expect(h.document.control("#sgBrief").value).toBe("");
-    expect(h.document.root.querySelector("[data-shot]")).toBeNull();
-    const brief = h.document.control("#sgBrief");brief.value = "详情先展示商品，再介绍材质细节";
-    h.document.root.dispatch("input", brief);h.document.root.dispatch("change", brief);
-    click(h, "plan");
-    await vi.waitFor(() => expect(h.document.root.querySelectorAll("[data-shot]")).toHaveLength(5));
-    check(h, "[data-confirm]", true);
-    const detailPlan = (await flushDraft(h)).tasks[0].plan;
-    click(h, "mode", button => button.dataset.mode === "main");
-    await vi.waitFor(() => expect(h.document.control("[data-mode=main]").attributes.get("aria-selected")).toBe("true"));
-    expect(active(h)).toBe("0");
-    expect(h.document.control("#sgBrief").value).toBe("已保存的创作要求");
-    const main = await flushDraft(h);
-    expect(main.tasks[0]).toMatchObject({ plan: original, confirmed: true });
-    step(h, 2);
-    expect(h.document.control("[data-shot]").value).toBe("主图专属方案：白底完整商品");
-    click(h, "mode", button => button.dataset.mode === "detail");
-    await vi.waitFor(() => expect(active(h)).toBe("2"));
-    const detail = await flushDraft(h);
-    expect(detail.tasks[0]).toMatchObject({ requirements: "详情先展示商品，再介绍材质细节", plan: detailPlan, confirmed: true });
-    expect(detail.settings.mode).toBe("detail");
-    expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("puts reordered detail screens into the bound plan and invalidates approval", async () => {
-    const h = await ready("detail");
-    click(h, "module-mode", button => button.dataset.value === "custom");
-    check(h, '[data-module="首屏主视觉"]', true);
-    check(h, '[data-module="商品细节图"]', true);
-    click(h, "plan");
-    await vi.waitFor(() => expect(h.document.root.querySelectorAll("[data-shot]")).toHaveLength(2));
-    check(h, "[data-confirm]", true);
-    click(h, "module-move", button => button.dataset.index === "1" && button.dataset.delta === "-1");
-    let stored = await flushDraft(h);
-    expect(stored.settings.modules).toEqual(["商品细节图", "首屏主视觉"]);
-    expect(stored.tasks[0]).toMatchObject({ plan: null, confirmed: false });
-    expect(active(h)).toBe("0");
-    click(h, "plan");
-    await vi.waitFor(() => expect(h.document.root.querySelectorAll("[data-shot]")).toHaveLength(2));
-    stored = await flushDraft(h);
-    expect(stored.tasks[0].plan?.shots.map(shot => shot.label)).toEqual(["商品细节图", "首屏主视觉"]);
-    expect(h.engine.createPayload(stored.tasks[0].plan, "shot-1").detailScreenIndex).toBe(1);
-    expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("invalidates the edited workspace's plan after product changes while retaining another type's independent materials and approval", async () => {
-    const h = await ready("main");
-    const original=clone((await flushDraft(h)).tasks[0]);
-    click(h, "mode", button => button.dataset.mode === "detail");
-    await vi.waitFor(() => expect(h.document.control("[data-mode=detail]").attributes.get("aria-selected")).toBe("true"));
-    click(h,"plan");await vi.waitFor(()=>expect(h.document.root.querySelectorAll("[data-shot]")).toHaveLength(5));
-    check(h,"[data-confirm]",true);
-    const detailBefore=(await flushDraft(h)).tasks[0];expect(detailBefore.id).not.toBe(original.id);expect(detailBefore.confirmed).toBe(true);
-    click(h, "remove-image");
-    await vi.waitFor(() => expect(h.document.root.querySelector("[data-product-preview]")).toBeNull());
-    const detail=await flushDraft(h);
-    expect(detail.tasks[0]).toMatchObject({id:detailBefore.id,products:[],plan:null,confirmed:false,analysis:""});
-    click(h, "mode", button => button.dataset.mode === "main");
-    await vi.waitFor(() => expect(h.document.control("[data-mode=main]").attributes.get("aria-selected")).toBe("true"));
-    const stored = await flushDraft(h);
-    expect(stored.tasks[0]).toEqual(original);
-    expect(h.document.control("[data-confirm]").checked).toBe(true);
-    expect(h.document.root.querySelector("[data-product-preview]")?.attributes.get("src")).toBe("https://fixture.test/product.png");
-    expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("does not mark a failed new plan complete because an older plan has a successful image", async () => {
-    const h = harness("main"), slot = h.saved.snapshot.tasks[0].slots[0];
-    slot.status = "done";slot.item = { url: "https://fixture.test/old-success.png", resultId: "old-success", studioTaskId: "saved-product", studioGenesisPlan: clone(h.saved.draft.tasks[0].plan) };
-    h.refresh.complete({ ok: true, accountKey });h.read.complete(h.saved);
-    await vi.waitFor(() => expect(h.bridge.listBoundApis).toHaveBeenCalledOnce());h.catalog.complete({ ok: true, accountKey, providers: [provider] });
-    await vi.waitFor(() => expect(h.document.control("[data-action=config]").disabled).toBe(false));
-    step(h, 0);
-    const brief = h.document.control("#sgBrief");brief.value = "新的主图构图";h.document.root.dispatch("input", brief);h.document.root.dispatch("change", brief);
-    click(h, "plan");
-    await vi.waitFor(() => expect(h.document.root.querySelector("[data-confirm]")).not.toBeNull());check(h, "[data-confirm]", true);
-    h.bridge.send.mockResolvedValue({ ok: false, definitiveFailure: true, error: "Fixture definitive failure" });
-    click(h, "generate");
-    await vi.waitFor(() => expect(h.bridge.send).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(h.document.control("[data-action=config]").disabled).toBe(false));
-    expect(active(h)).toBe("3");
-    expect(h.document.control("[data-run-progress]").textContent).toContain("0/1 已生成");
-    expect(h.document.root.textContent).toContain("生成失败");
-    expect(h.document.root.textContent).toContain("历史版本");
-    expect(h.document.control(".sg-steps").querySelector(".is-active")?.textContent).toContain("生成任务");
   });
 });
 

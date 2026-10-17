@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
+import * as scanPaymentContract from "@/lib/model-gateway/scan-payment-contract";
 
 const exports: Record<string, unknown> = {};
 const source = ts.transpileModule(readFileSync(resolve("src/components/model-gateway/ModelGatewayConsole.tsx"), "utf8"), {
@@ -19,6 +20,7 @@ runInContext(source, createContext({ exports, module: { exports }, URLSearchPara
     if (name === "./RelaySettingsPanel") return { RelaySettingsPanel: () => null };
     if (name === "./UserSupplyPanel") return { UserSupplyPanel: () => null };
     if (name === "../creative/ScanPaymentDialog") return { ScanPaymentDialog: () => null };
+    if (name === "@/lib/model-gateway/scan-payment-contract") return scanPaymentContract;
     throw new Error(name);
   }
 }));
@@ -82,6 +84,7 @@ function paymentConsole(search: string) {
       if (name === "./RelaySettingsPanel") return { RelaySettingsPanel: "RelaySettingsPanel" };
       if (name === "./UserSupplyPanel") return { UserSupplyPanel: "UserSupplyPanel" };
       if (name === "../creative/ScanPaymentDialog") return { ScanPaymentDialog: "ScanPaymentDialog" };
+      if (name === "@/lib/model-gateway/scan-payment-contract") return scanPaymentContract;
       throw new Error(name);
     }
   }));

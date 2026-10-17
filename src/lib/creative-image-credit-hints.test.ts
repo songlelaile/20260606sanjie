@@ -4,33 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve("public/creative/labs/image-prompt-lab/promptlab.js"), "utf8");
-const quoteStart = source.indexOf("function refreshLegacyCreditHints()");
-const quoteSource = source.slice(quoteStart, source.indexOf("window.SZCreativeCreditHints?.register('legacy-image-workbench'", quoteStart));
-const studioUi = readFileSync(resolve("public/creative/labs/image-prompt-lab/studio-genesis-ui.js"), "utf8");
-function loadStudioQuotes(context: ReturnType<typeof createContext>) {
-  const slotsStart = studioUi.indexOf("function matchingSlots(entry)"), slotsEnd = studioUi.indexOf("function copyGenerationTasks(entries)", slotsStart);
-  const start = studioUi.indexOf("function renderCredits()"), end = studioUi.indexOf("window.SZCreativeCreditHints?.register('studio-genesis'", start);
-  runInContext(studioUi.slice(slotsStart, slotsEnd), context);
-  runInContext(studioUi.slice(start, end), context);
-}
-function studioQuotes(statuses: string[]) {
-  const account = "quote-owner", shots = statuses.map((_status,index)=>({id:`shot-${index+1}`}));
-  const plan = {signature:"approved",settings:{model:"approved-image-model"},shots};
-  const record = {id:"task",plan,slots:statuses.map((status,index)=>({shot:shots[index],status,item:status==="done"?{resultId:`finished-${index}`} : null}))};
-  const finishedPlan = {signature:"unrelated",settings:{model:"other-model"},shots:[{id:"shot-1"}]};
-  const finishedRecord = {id:"completed-task",plan:finishedPlan,slots:[{shot:finishedPlan.shots[0],status:"done",item:{resultId:"unrelated-complete"}}]};
-  const state = {tasks:[record,finishedRecord],pendingReceipts:shots.filter((_shot,index)=>statuses[index]==="uncertain").map(shot=>({accountKey:account,taskId:record.id,shotId:shot.id})),uncertain:null};
-  const output = new Map<string,{model:string;requests:number[];detail:string}>();
-  const buttons = new Map(["generate","retry"].map(action=>[action,{id:action,dataset:{}}]));
-  const context = createContext({
-    window:{SZCreativeCreditHints:{image:(button:{id:string},model:string,requests:number[],detail:string)=>output.set(button.id,{model,requests,detail})}},
-    root:{querySelectorAll:(selector:string)=>[...buttons].filter(([action])=>selector===`[data-action="${action}"]`).map(([,button])=>button)},
-    bridge:{config:()=>({imageModel:"current-default"})},account,modelInfo:{},
-    draft:{tasks:[{id:record.id,plan},{id:finishedRecord.id,plan:finishedPlan}]},current:()=>state
-  });
-  loadStudioQuotes(context);
-  return {state,plan,run:()=>{context.renderCredits();return output;}};
-}
+const quoteSource = source.slice(source.indexOf("function refreshLegacyCreditHints()"));
 function quotes(options: { mode?: string; count?: number; style?: boolean; formal?: boolean; product?: boolean } = {}) {
   const values = new Map<string, { id: string; value: string; dataset: Record<string, string> }>();
   const button = (id: string) => {
@@ -79,10 +53,12 @@ function quotes(options: { mode?: string; count?: number; style?: boolean; forma
 
 describe("image action hints quote the existing request shape without submitting requests", () => {
   it("labels AI brief writing by vision model and a single-image retry by its task model", () => {
+    const ui = readFileSync(resolve("public/creative/labs/image-prompt-lab/studio-genesis-ui.js"), "utf8");
+    const start = ui.indexOf("function renderCredits()"), end = ui.indexOf("window.SZCreativeCreditHints?.register('studio-genesis'", start);
     const brief = { id: "brief", dataset: {} }, retry = { id: "retry", dataset: { taskId: "task" } };
     const output = new Map<string, { kind: string; model: string; requests?: number[] }>();
-    const plan = { signature: "same", settings: { model: "frozen-task-model" }, shots: [{id:"shot-1"}] };
-    const record = { id: "task", plan, slots: [{ shot:plan.shots[0],status: "done",item:{resultId:"finished"} }] };
+    const plan = { signature: "same", settings: { model: "frozen-task-model" }, shots: [{}] };
+    const record = { id: "task", plan, slots: [{ status: "done" }] };
     const context = createContext({
       window: { SZCreativeCreditHints: {
         chat: (button: typeof brief, model: string) => output.set(button.id, { kind: "chat", model }),
@@ -90,36 +66,14 @@ describe("image action hints quote the existing request shape without submitting
       } },
       root: { querySelectorAll: (selector: string) => selector.includes('="write-brief"') ? [brief] : selector.includes('="retry-slot"') ? [retry] : [] },
       bridge: { config: () => ({ visionModel: "selected-vision-model", imageModel: "current-default-image-model" }) },
-      draft: { tasks: [{ id: "task", plan }] }, current: () => ({ tasks: [record] }), account:"quote-owner",modelInfo: {}
+      draft: { tasks: [{ id: "task", plan }] }, current: () => ({ tasks: [record] }), modelInfo: {}
     });
-    loadStudioQuotes(context);
+    const slotsStart = ui.indexOf("function matchingSlots(entry)"), slotsEnd = ui.indexOf("function activeSlots()", slotsStart);
+    runInContext(ui.slice(slotsStart, slotsEnd), context);
+    runInContext(ui.slice(start, end), context);
     context.renderCredits();
     expect(output.get("brief")).toEqual({ kind: "chat", model: "selected-vision-model" });
     expect(output.get("retry")).toEqual({ kind: "image", model: "frozen-task-model", requests: [1] });
-  });
-
-  it.each([["uncertain"],["done","uncertain"]])("quotes every planned new image when only unknown receipts remain (%j)",(...statuses)=>{
-    const h=studioQuotes(statuses),original=JSON.stringify(h.state),q=h.run();
-    expect(q.get("generate")).toMatchObject({model:"approved-image-model",requests:Array(h.plan.shots.length).fill(1)});
-    expect(q.get("generate")?.requests.length).toBeGreaterThan(0);
-    expect(q.get("generate")?.detail).toContain(`本次 ${h.plan.shots.length} 张新图；原请求继续保留`);
-    expect(q.get("retry")?.requests).toEqual([]);
-    expect(JSON.stringify(h.state)).toBe(original);
-  });
-
-  it("continues to quote only eligible ready images while preserving pending and completed images",()=>{
-    const q=studioQuotes(["done","ready","uncertain"]).run();
-    expect(q.get("generate")).toMatchObject({model:"approved-image-model",requests:[1]});
-    expect(q.get("generate")?.detail).toContain("本次 1 张待生成图片");
-    expect(q.get("retry")?.requests).toEqual([]);
-  });
-
-  it("keeps ordinary failed-image retry quantities and does not turn a retry into full-plan generation",()=>{
-    const q=studioQuotes(["done","failed","uncertain"]).run();
-    expect(q.get("generate")?.requests).toEqual([]);
-    expect(q.get("generate")?.detail).not.toContain("新图");
-    expect(q.get("retry")).toMatchObject({model:"approved-image-model",requests:[1]});
-    expect(q.get("retry")?.detail).toContain("本次 1 张失败项重试");
   });
   it("only registers API submissions and leaves navigation, downloads and unknown controls untouched", () => {
     const buttons = [

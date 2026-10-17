@@ -50,7 +50,7 @@ describe("DMP growth report shared viewer contract", () => {
   it("uses one report viewer for both the report-center preview and public share page", () => {
     expect(workspaceSource).toContain('from "@/components/tools/DmpReportViewer"');
     expect(sharedPageSource).toContain('from "@/components/tools/DmpReportViewer"');
-    expect(workspaceSource).toMatch(/<DmpReportViewer\b[^>]*record=\{selectedRecord\}[^>]*variant="preview"/s);
+    expect(workspaceSource).toMatch(/<DmpReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s);
     expect(sharedPageSource).toMatch(/<DmpReportViewer\b[^>]*record=\{record\}[^>]*variant="shared"/s);
 
     // The public wrapper keeps anonymous propagation tracking while delegating
@@ -90,27 +90,36 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain("少壮AI自动化 · shaozhuangai.com");
     expect(viewerSource).toContain('const displayTitle = model.kind === "growth"');
     expect(viewerSource).toContain('"达摩盘商品成长竞品对标报告｜少壮AI自动化"');
-    expect(viewerSource).toContain('"达摩盘竞争态势分析报告｜少壮AI自动化"');
-    expect(viewerSource).toContain('<h1>{displayTitle}</h1>');
+    expect(viewerSource).toContain('"店铺对标分析报告｜少壮AI自动化"');
+    expect(viewerSource).toContain('<h1>{shopVersus || displayTitle}</h1>');
+    expect(viewerSource).toContain('const shopShorts = model.kind === "competition"');
+    expect(viewerSource).toContain('(model.shopObjects ?? []).map((object) => abbreviateShopName(object.name)).filter(Boolean)');
+    expect(viewerSource).toContain('const shopVersus = shopShorts.length >= 2 ? shopShorts.join(" VS ") : "";');
     expect(viewerSource).not.toContain('<h1>{model.title}</h1>');
     expect(viewerSource).toContain("data-report-shop-signature");
     expect(viewerSource).toContain("店铺署名：{record.shopName}");
     expect(viewerSource).toContain('record.shopName ? `${record.shopName} · ` : ""');
     expect(viewerSource).toContain("ref={hideAlreadyBrokenImage}");
     expect(viewerSource).toContain("image?.complete && image.naturalWidth === 0");
-    expect(viewerSource).toContain("styles.dataNotice");
-    expect(viewerSource).toContain("数据说明|花费覆盖|取数时段提示");
-    expect(viewerCss).toContain(".dataNotice");
+    expect(viewerSource).not.toContain("styles.dataNotice");
+    expect(viewerCss).not.toContain(".dataNotice");
     expect(viewerSource).toContain("data-overview-metric={metric.label}");
-    expect(viewerSource).toContain("data-overview-scope");
+    expect(viewerSource).not.toContain("data-overview-scope");
     expect(viewerSource).toContain("formatViewerCell(metric.subject, metric.label)");
     expect(viewerSource).toContain("formatViewerCell(metric.competitor, metric.label)");
-    expect(viewerCss).toContain(".metricScope");
-    expect(viewerSource).toContain('data-report-quality="partial"');
-    expect(viewerSource).toContain("model.quality.notice");
-    expect(viewerSource).toContain("data-report-supplement");
-    expect(viewerSource).toContain("继续补采");
-    expect(viewerCss).toContain(".qualityBanner");
+    expect(viewerCss).not.toContain(".metricScope");
+    expect(viewerSource).toContain('<p className={styles.sectionNote}>{block?.note}</p>');
+    expect(viewerCss).toContain(".sectionNote {");
+    expect(viewerSource).not.toContain('data-report-quality="partial"');
+    expect(viewerSource).not.toContain("model.quality.notice");
+    expect(viewerSource).not.toContain("data-report-supplement");
+    expect(viewerCss).not.toContain(".qualityBanner");
+    const shopNotesSection = viewerSource.match(/\/\*\* 数据说明与待补项。 \*\/\nfunction ShopNotesSection\b[\s\S]*?\n\}/)?.[0] ?? "";
+    expect(shopNotesSection).not.toBe("");
+    expect(viewerSource.replace(shopNotesSection, shopNotesSection.replaceAll("数据说明", ""))).not.toMatch(/部分数据报告|缺失字段|继续补采|数据说明|花费覆盖|取数时段提示|工程计算|计算逻辑|错误代码/);
+    expect(viewerSource).toContain('function ShopNotesSection({ notes, number }: { notes: DmpShopNote[]; number: string }) {');
+    expect(viewerSource).toContain('id="shop-notes" data-report-section="数据说明" data-shop-block="08" data-track-section="shop-notes"');
+    expect(viewerSource).toContain('const pending = notes.filter((note) => note.kind === "缺").length;');
     expect(viewerSource).not.toContain("dangerouslySetInnerHTML");
     expect(viewerSource).toContain('typeof value === "number" && Number.isFinite(value)');
     expect(viewerSource).not.toContain("isExactNumber(value)");
@@ -158,15 +167,19 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerCss).toMatch(/\.tableShell th\s*\{[^}]*print-color-adjust:\s*exact;/s);
     expect(viewerCss).toMatch(/\.tableShell thead \.stickyColumn\s*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
     expect(viewerCss).toMatch(/\.tableShell thead th\.subject,[\s\S]*\.tableShell thead th\.competitor,[\s\S]*\.tableShell thead th\.difference[\s\S]*\{[^}]*background:\s*#0d716b\s*!important;[^}]*color:\s*#fff\s*!important;/s);
-    expect(viewerCss).toMatch(/\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
-    expect(viewerCss).toMatch(/\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\.subject\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;[^}]*color:\s*var\(--dmp-subject-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\.competitor\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;[^}]*color:\s*var\(--dmp-competitor-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\.subjectRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-subject\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\.competitorRow\s*>\s*td\s*\{[^}]*background-color:\s*var\(--dmp-competitor\)\s*!important;/s);
   });
 
   it("isolates every data cell from the dark AppShell table palette", () => {
-    expect(viewerCss).toMatch(/\.tableShell\s*\{[^}]*background:\s*#fff;[^}]*color-scheme:\s*light;/s);
-    expect(viewerCss).toMatch(/\.tableShell table\s*\{[^}]*background:\s*#fff;/s);
-    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\s*\{[^}]*background-color:\s*#fff;/s);
-    expect(viewerCss).toMatch(/\.tableShell tbody tr:nth-child\(even\)\s*>\s*td\s*\{[^}]*background-color:\s*#f9fbfb;/s);
+    expect(viewerCss).toMatch(/\.root\s*\{[^}]*color-scheme:\s*light\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell\s*\{[^}]*background:\s*#edf5f3;[^}]*color-scheme:\s*light\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell table\s*\{[^}]*background:\s*#edf5f3;/s);
+    expect(viewerCss).toMatch(/\.tableShell th,\s*\.tableShell td\s*\{[^}]*border-top:\s*0\s*!important;[^}]*color:\s*var\(--dmp-ink\)\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody\s*>\s*tr\s*>\s*td\s*\{[^}]*background-color:\s*#edf5f3\s*!important;/s);
+    expect(viewerCss).toMatch(/\.tableShell tbody tr:nth-child\(even\)\s*>\s*td\s*\{[^}]*background-color:\s*#f9fbfb\s*!important;/s);
   });
 
   it("does not right-align numeric-string identifiers while keeping business metrics right-aligned", () => {
@@ -286,6 +299,24 @@ describe("DMP growth report viewer projection", () => {
     expect(model.quality.notice).toContain("缺失值未按0计入");
   });
 
+  it("removes engineering diagnostics without changing explicit zero, missing values or business status", () => {
+    const table = sanitizeViewerTable({
+      name: "经营指标",
+      columns: ["指标", "主体值", "关注状态", "工程计算逻辑", "错误代码"],
+      rows: [
+        ["总GMV", "0", "已关注", "仅供内部", ""],
+        ["缺失字段：推广消耗", "—", "未关注", "", "E100"],
+        ["客单价", "—", "未关注", "", ""]
+      ]
+    });
+
+    expect(table?.columns).toEqual(["指标", "主体值", "关注状态"]);
+    expect(table?.rows).toEqual([
+      ["总GMV", "0", "已关注"],
+      ["客单价", "—", "未关注"]
+    ]);
+  });
+
   it("prefers scoped overview rows and falls back one side at a time without replacing explicit zero", () => {
     const record = growthRecord();
     const partialScope = "对手已返回29/30日（2026-07-20 至 2026-08-17）";
@@ -317,23 +348,37 @@ describe("DMP growth report viewer projection", () => {
     });
   });
 
-  it("maps the shared spend, ROI and PPC aliases when those values were already uploaded", () => {
+  it("keeps paid-GMV, ROI and paid-PPC intervals visible without an exact relative difference", () => {
     const record = growthRecord();
-    replaceTable(record, snapshot("报告总览", ["项目", "主体", "对手", "范围"], [
-      ["商品ID", "768239824008", "563697874317", ""],
-      ["总GMV", "1000", "2000", "30日"],
-      ["推广花费", "100", "200", "30日"],
-      ["广告费比", "10%", "20%", "30日"],
-      ["投入产出比", "3", "4", "30日"],
-      ["点击单价", "2", "2.5", "30日"]
+    replaceTable(record, snapshot("对标总表", [
+      "页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"
+    ], [
+      ["投放", "付费成交额", "234237.29", "800000.00~900000.00", "-70.72%"],
+      ["投放", "ROI", "4.53", "10~11.25", "-59.73%"],
+      ["投放", "付费PPC", "1.81", "1.59~2.12", "13.84%"],
+      ["投放", "费比", "9.32%", "2.62%~3.10%", "6.22%~6.70%"]
+    ]));
+    replaceTable(record, snapshot("基础指标对比", [
+      "指标", "本品值", "目标对手值", "主体相对对手"
+    ], [
+      ["付费成交额", "234237.29", "800000.00~900000.00", "-70.72%"]
     ]));
 
-    const metrics = new Map(projectDmpReportForViewer(record).kpis.map((metric) => [metric.label, metric]));
-
-    expect(metrics.get("推广消耗")?.subject).toBe("100");
-    expect(metrics.get("费比")?.subject).toBe("10%");
-    expect(metrics.get("ROI")?.subject).toBe("3");
-    expect(metrics.get("PPC")?.subject).toBe("2");
+    const model = projectDmpReportForViewer(record);
+    const benchmark = model.tables.find((table) => table.name === "对标总表");
+    expect(benchmark?.rows).toEqual([
+      ["投放", "付费成交额", "234237.29", "800000.00~900000.00", ""],
+      ["投放", "ROI", "4.53", "10~11.25", ""],
+      ["投放", "付费PPC", "1.81", "1.59~2.12", ""],
+      ["投放", "费比", "9.32%", "2.62%~3.10%", "6.22%~6.70%"],
+      ["投放", "付费金额占比", 2.558876, "3.5238~3.964275", ""]
+    ]);
+    expect(model.tables.find((table) => table.name === "基础指标对比")?.rows[0]).toEqual([
+      "付费成交额", "234237.29", "800000.00~900000.00", ""
+    ]);
+    const kpis = new Map(model.kpis.map((metric) => [metric.label, metric]));
+    expect(kpis.get("ROI")?.competitor).toBe("10~11.25");
+    expect(kpis.get("PPC")?.competitor).toBe("1.59~2.12");
   });
 
   it("shows a non-empty optional price-band module and treats score columns as numeric", () => {
@@ -513,13 +558,13 @@ describe("DMP growth report viewer projection", () => {
     expect(JSON.stringify(sanitized)).not.toMatch(/方法与证据|校验状态|GMV指数/);
   });
 
-  it("keeps the same disclosed data notices as the opened local HTML", () => {
+  it("keeps engineering coverage notices out of the business report", () => {
     const sanitized = sanitizeViewerTable({
       name: "报告总览",
       columns: ["项目", "主体", "对手"],
       rows: [["花费覆盖", "已返回29天", "平台少1天"]]
     });
-    expect(sanitized?.rows).toEqual([["花费覆盖", "已返回29天", "平台少1天"]]);
+    expect(sanitized?.rows).toEqual([]);
   });
 
   it("does not promote unsafe product media into an image or detail link", () => {
@@ -593,6 +638,73 @@ describe("DMP growth report viewer projection", () => {
       ["主体", "1", "人群推广", "", "", "300", "60"],
       ["对手", "1", "人群推广", "", "372", "1200", "400"]
     ]);
+  });
+
+  it("promotes a closed sparse subject scene set without zero-filling its blank sibling", () => {
+    const record = growthRecord();
+    replaceTable(record, snapshot("报告总览", ["项目", "主体", "对手", "范围"], [
+      ["总GMV", "524423.76", "2977439.42", "30日严格同周期"],
+      ["营销推广点击量", "28502", "", "30日严格同周期"],
+      ["付费成交额", "", "", "30日严格同周期"],
+      ["推广消耗", "", "406056.15", "30日严格同周期"],
+      ["费比", "", "", "30日严格同周期"],
+      ["ROI", "", "", "30日严格同周期"],
+      ["PPC", "", "", "30日严格同周期"],
+      ["付费金额占比", "", "", "30日严格同周期"],
+      ["全域ROAS", "", "", "30日严格同周期"]
+    ]));
+    replaceTable(record, snapshot("周期汇总", [
+      "商品ID", "对象", "周期开始", "周期结束", "天数", "成交笔数", "笔单价", "总GMV",
+      "付费成交额", "广告消耗", "费比", "全域ROAS", "付费金额占比", "日均消耗"
+    ], [["768239824008", "主体", "2026-07-20", "2026-08-18", "30", "509", "1030.3", "524423.76", "", "", "", "", "", ""]]));
+    replaceTable(record, snapshot("对标总表", [
+      "页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"
+    ], [
+      ["投放", "付费成交额", "", "", ""], ["投放", "推广消耗", "", "406056.15", ""],
+      ["投放", "费比", "", "", ""], ["投放", "ROI", "", "", ""],
+      ["投放", "PPC", "", "", ""], ["投放", "付费金额占比", "", "", ""],
+      ["投放", "全域ROAS", "", "", ""]
+    ]));
+    replaceTable(record, snapshot("基础指标对比", ["指标", "主体值", "对手值", "主体相对对手"], [
+      ["付费成交额", "", "", ""], ["广告/推广消耗", "", "406056.15", ""],
+      ["费比", "", "", ""], ["ROI", "", "", ""], ["PPC", "", "", ""],
+      ["付费金额占比", "", "", ""], ["全域ROAS", "", "", ""]
+    ]));
+    replaceTable(record, snapshot("一级场景", [
+      "对象", "层级", "一级场景", "二级场景", "场景编号", "消耗", "消耗占比", "分配后消耗",
+      "展现", "点击", "CTR", "CPC", "直接成交金额", "直接ROI"
+    ], [
+      ["主体", "1", "人群推广", "", "372", "17918.49", "34.81%", "17918.49", "", "10745", "", "1.67", "58811.56", "3.28"],
+      ["主体", "1", "线索推广", "", "395", "1785.41", "3.47%", "1785.41", "", "2902", "", "0.62", "12005.62", "6.72"],
+      ["主体", "1", "关键词推广", "", "371", "31770.42", "61.72%", "31770.42", "", "14843", "", "2.14", "154925.82", "4.88"],
+      ["主体", "1", "货品全站推", "", "435", "", "", "", "", "", "", "", "", ""],
+      ["对手", "1", "货品全站推", "", "435", "100", "10%", "100", "1000", "100", "10%", "1", "200", "2"]
+    ]));
+    replaceTable(record, snapshot("渠道花费", [
+      "渠道", "页面指标", "对手30日消耗", "对手30日占比", "主体30日消耗", "主体30日占比"
+    ], [
+      ["人群推广", "", "", "", "", ""],
+      ["线索推广", "", "", "", "", ""],
+      ["关键词推广", "", "", "", "", ""],
+      ["货品全站推", "", "100", "10%", "", ""],
+      ["合计", "", "", "", "", ""]
+    ]));
+
+    const model = projectDmpReportForViewer(record);
+    const kpis = new Map(model.kpis.map((metric) => [metric.label, metric.subject]));
+    expect(kpis.get("推广消耗")).toBe(51474.32);
+    expect(kpis.get("付费成交额")).toBe(225743);
+    expect(kpis.get("ROI")).toBe(4.39);
+    expect(kpis.get("PPC")).toBe(1.81);
+    expect(kpis.get("费比")).toBe(0.098154);
+    expect(kpis.get("全域ROAS")).toBe(10.1881);
+    const scene = model.tables.find((table) => table.name === "一级场景");
+    const blank = scene?.rows.find((row) => row[0] === "主体" && row[2] === "货品全站推");
+    expect(blank?.[5]).toBe("");
+    expect(blank?.[7]).toBe("");
+    const channel = model.tables.find((table) => table.name === "渠道花费");
+    expect(channel?.rows.find((row) => row[0] === "合计")?.[4]).toBe(51474.32);
+    expect(channel?.rows.find((row) => row[0] === "货品全站推")?.[4]).toBe("");
   });
 
   it("projects legacy keyword role rows into same-dimension subject and competitor columns", () => {

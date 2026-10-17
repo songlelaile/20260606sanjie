@@ -4,7 +4,6 @@
   var Contract = globalThis.SZEcommerceVideoContract;
   var Store = globalThis.SZEcommerceVideoStore;
   var Production = globalThis.SZEcommerceVideoProduction;
-  var Narration = globalThis.SZEcommerceVideoNarration;
 
   if (!Contract || !Store) {
     document.addEventListener('DOMContentLoaded', function showBootstrapFailure() {
@@ -91,13 +90,11 @@
       resolution: '720p',
       ratio: '9:16',
       durationSeconds: 15,
-      audioMode: 'narration',
+      audioMode: 'sound_only',
       narrationLanguage: 'zh-CN'
     },
-    productionOptions: { mode: 'quality', totalDurationSeconds: 15, hybridAiSeconds: 15, budgetYuan: 30, maxAttempts: 1 },
+    productionOptions: { mode: 'economic', totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 },
     productionAudio: { sourceAudioVolume: 0 },
-    narrationCapability: null,
-    narrationCapabilitySequence: 0,
     legacySingle: false,
     productionRun: null,
     productionBusy: false,
@@ -111,6 +108,7 @@
     credentialAvailable: null,
     credentialStatus: null,
     analysisAvailable: null,
+    analysisBillingChannel: 'external_key', analysisModel: '',
     analysisStatus: null,
     modelCatalog: defaultModelCatalog(),
     actionPending: false,
@@ -187,10 +185,9 @@
       'toggle-hidden-history', 'load-more-history', 'result-dialog', 'result-media', 'result-details',
       'toast-region', 'production-modes', 'production-duration', 'production-ai-seconds', 'production-ai-wrap',
       'production-budget', 'production-attempts', 'production-estimate', 'production-note', 'production-panel',
-      'production-model-wrap', 'production-model', 'production-model-help',
-      'production-run-summary', 'production-resume', 'production-stop', 'production-new-plan', 'production-shot-list', 'production-run-notice',
+      'production-run-summary', 'production-resume', 'production-stop', 'production-shot-list', 'production-run-notice',
       'audio-upload-label', 'production-final-audio', 'production-source-volume', 'production-source-volume-output',
-      'production-audio-summary', 'production-narration-capability', 'supplier-audio-fieldset'
+      'production-audio-summary', 'supplier-audio-fieldset'
     ].forEach(function byId(id) {
       dom[toCamel(id)] = document.getElementById(id);
     });
@@ -479,6 +476,8 @@
         ? payload.credentialStatus
         : null;
       state.analysisAvailable = payload.analysisAvailable === true;
+      state.analysisBillingChannel = payload.analysisBillingChannel === 'platform_wallet' ? 'platform_wallet' : 'external_key';
+      state.analysisModel = cleanText(payload.analysisModel || '');
       state.analysisStatus = payload.analysisStatus && typeof payload.analysisStatus === 'object' ? payload.analysisStatus : null;
       state.modelCatalog = normalizeModelCatalog(payload);
       state.capabilityError = '';
@@ -510,46 +509,6 @@
     renderAssets();
     renderReadiness();
     updateEstimate();
-    await refreshNarrationCapabilities();
-  }
-
-  function narrationCapabilityText(capability) {
-    if (!capability) return '配音能力尚未读取；点击“刷新能力”可核对当前供货、模型、音色和计价。';
-    var label = cleanText(capability.providerLabel || (capability.provider === 'fish' ? 'Fish Audio' : capability.provider) || '脚本配音');
-    var parts = [label, '模型 ' + (cleanText(capability.model) || '未配置'), '音色 ' + (cleanText(capability.referenceId || capability.voice) || '未配置')];
-    var rate = capability.rate;
-    if (rate && rate.currency === 'CNY' && Number.isSafeInteger(rate.perUnits) && rate.perUnits > 0 && (rate.unit === 'utf8_bytes' || rate.unit === 'characters') && Number.isFinite(rate.centsPerUnit) && rate.centsPerUnit >= 0) {
-      parts.push('¥' + Number((rate.centsPerUnit / 100).toFixed(6)) + ' / ' + (rate.perUnits === 1000000 ? '100万' : rate.perUnits) + ' ' + (rate.unit === 'utf8_bytes' ? 'UTF-8 字节' : '字符'));
-    } else parts.push('计价未配置');
-    if (capability.available !== true) {
-      var missingLabels = { enabled: '配音启用', apiKey: 'API Key', model: '模型', referenceId: '音色 ID', reference_id: '音色 ID', voice: '音色', rate: '人民币计价', billingRate: '人民币计价', storage: '回执存储', storageDir: '回执存储' };
-      var missing = (Array.isArray(capability.missing) ? capability.missing : []).map(function (key) { return missingLabels[key] || ''; }).filter(Boolean);
-      parts.push(missing.length ? '待配置：' + missing.join('、') : cleanText(capability.message) || '供货尚未就绪');
-    } else parts.push('供货已配置，按确认台词生成新配音');
-    return parts.join(' · ');
-  }
-  function renderNarrationCapability() {
-    if (!dom.productionNarrationCapability) return;
-    var status = state.narrationCapability;
-    dom.productionNarrationCapability.textContent = status && status.loading ? '正在读取脚本配音能力…' : status && status.error ? status.error : narrationCapabilityText(status && status.data);
-    dom.productionNarrationCapability.className = 'field-help' + (status && (status.error || status.data && status.data.available !== true) ? ' is-error' : status && status.data && status.data.available === true ? ' is-success' : '');
-  }
-  async function refreshNarrationCapabilities() {
-    var sequence = ++state.narrationCapabilitySequence, accountKey = state.accountKey;
-    if (!accountKey || !Narration || typeof Narration.capabilities !== 'function') {
-      state.narrationCapability = { error: !accountKey ? '登录并刷新能力后可核对 Fish Audio 的模型、音色及计价。' : '脚本配音模块未加载，请刷新工作台。' };
-      renderNarrationCapability(); return;
-    }
-    state.narrationCapability = { loading: true }; renderNarrationCapability();
-    try {
-      var capability = await Narration.capabilities({ accountKey: accountKey, requireAvailable: false });
-      if (sequence !== state.narrationCapabilitySequence || accountKey !== state.accountKey) return;
-      state.narrationCapability = { data: capability };
-    } catch (error) {
-      if (sequence !== state.narrationCapabilitySequence || accountKey !== state.accountKey) return;
-      state.narrationCapability = { error: safeErrorMessage(error, '暂时无法读取脚本配音能力，请刷新后核对。') };
-    }
-    renderNarrationCapability();
   }
 
   async function openVideoApiSettings() {
@@ -647,7 +606,9 @@
       base.minDuration = clamp(itemLimits.minDuration || itemLimits.minDurationSeconds || base.minDuration || 4, 4, 30);
       base.maxDuration = clamp(itemLimits.maxDuration || itemLimits.maxDurationSeconds || base.maxDuration || 15, base.minDuration, 30);
       base.nativePlatform = item.nativePlatform === true && (source.provider || capabilities.provider) === 'shaozhuang-native';
-      base.reservationCents = base.nativePlatform && Number.isSafeInteger(item.reservationCents) && item.reservationCents > 0 ? item.reservationCents : null;
+      base.billingMode = base.nativePlatform && (item.billingMode === 'prepaid_quote' || source.billingMode === 'prepaid_quote' || capabilities.billingMode === 'prepaid_quote') ? 'prepaid_quote' : base.nativePlatform && (['prepaid_quote', 'direct_usage'].indexOf(item.billingMode) >= 0 || ['prepaid_quote', 'direct_usage'].indexOf(source.billingMode) >= 0 || ['prepaid_quote', 'direct_usage'].indexOf(capabilities.billingMode) >= 0) ? 'direct_usage' : '';
+      base.submissionQuotes = base.nativePlatform && Array.isArray(item.submissionQuotes) ? item.submissionQuotes.slice() : [];
+      base.reservationCents = ['prepaid_quote', 'direct_usage'].indexOf(base.billingMode) >= 0 ? 0 : base.nativePlatform && Number.isSafeInteger(item.reservationCents) && item.reservationCents > 0 ? item.reservationCents : null;
       base.allowedDurations = base.nativePlatform && Array.isArray(itemLimits.durations)
         ? Array.from(new Set(itemLimits.durations.filter(function (value) { return Number.isInteger(value) && value >= base.minDuration && value <= base.maxDuration; }))).sort(function (a, b) { return a - b; }) : [];
       base.generateAudio = !base.nativePlatform || itemLimits.generateAudio !== false;
@@ -718,7 +679,7 @@
       dom.modelHelp.textContent = selected.displayName + ' 已由后台映射；' +
         (selected.nativePlatform ? selected.allowedDurations.join(' / ') : selected.minDuration + '–' + selected.maxDuration) + ' 秒，' + selected.resolutions.join(' / ') +
         '，素材上限 ' + selected.imageMax + ' 图 / ' + selected.videoMax + ' 视频 / ' + selected.audioMax + ' 音频。' +
-        (selected.nativePlatform && !selected.generateAudio ? (usingProductionPlan() ? ' 画面供应为无声视频，口播按确认脚本独立配音。' : ' 当前供应仅支持无声生成。') : '');
+        (selected.nativePlatform && !selected.generateAudio ? ' 当前供应仅支持无声生成。' : '');
       dom.modelHelp.className = 'field-help is-success';
     }
   }
@@ -779,11 +740,10 @@
     state.settings.durationSeconds = snapDuration(state.settings.durationSeconds, model, minDuration, maxDuration);
     writeDurationControl();
     document.querySelectorAll('input[name="audio-mode"]').forEach(function audioControl(input) {
-      input.disabled = !usingProductionPlan() && model.nativePlatform && !model.generateAudio && input.value !== 'silent';
-      if (usingProductionPlan() && input.value === 'sound_only') { input.disabled = true; input.closest('label').hidden = true; }
+      input.disabled = model.nativePlatform && !model.generateAudio && input.value !== 'silent';
       input.closest('label').classList.toggle('is-disabled', input.disabled);
     });
-    if (!usingProductionPlan() && model.nativePlatform && !model.generateAudio) {
+    if (model.nativePlatform && !model.generateAudio) {
       state.settings.audioMode = 'silent'; state.settings.narrationLanguage = '';
       dom.narrationSettings.hidden = true; dom.audioConstraintNote.hidden = true;
     }
@@ -821,6 +781,8 @@
   }
 
   function localUploadSupported(kind) {
+    if (usingProductionPlan() && kind === 'audio') return true;
+    if (usingProductionPlan() && state.productionOptions.mode === 'economic') return true;
     if (!state.backendConnected || !state.capabilities || !Array.isArray(state.capabilities.localAssets)) {
       return kind !== 'video';
     }
@@ -828,18 +790,38 @@
     return values.indexOf(kind) >= 0 || values.indexOf(kind + '-data-url') >= 0;
   }
 
+  function submissionQuote(model, request) {
+    if (!model || !model.nativePlatform || !Array.isArray(model.submissionQuotes)) return null;
+    request = request || state.settings;
+    var hasVideoInput = Array.isArray(request.videos) ? request.videos.length > 0 : state.assets.video.length > 0;
+    var matched = model.submissionQuotes.find(function (quote) { return quote && quote.duration === Number(request.durationSeconds) &&
+      quote.resolution === request.resolution && quote.ratio === request.ratio && quote.hasVideoInput === hasVideoInput && Number.isSafeInteger(quote.quoteCents) && quote.quoteCents > 0; });
+    return matched ? matched.quoteCents : null;
+  }
+
   function updateEstimate() {
     renderProductionOptions();
     updateCreditAnnotations();
     if (usingProductionPlan()) {
-      {
+      if (state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) {
+        dom.creditEstimate.textContent = '本地合成';
+        dom.estimateNote.textContent = '使用已有素材，在本地剪辑与合成。';
+      } else {
         try {
           var productionPlan = previewProductionPlan();
           var holds = productionPlan.shots.filter(function (shot) { return shot.kind === 'ai'; }).map(function (shot) { return state.modelCatalog.find(function (entry) { return entry.productKey === shot.productKey; }); });
-          var knownHolds = holds.length > 0 && holds.every(function (entry) { return entry && entry.nativePlatform && Number.isSafeInteger(entry.reservationCents) && entry.reservationCents > 0; });
-          dom.creditEstimate.textContent = knownHolds ? '每个 AI 镜头预占最高 ' + (Math.max.apply(null, holds.map(function (entry) { return entry.reservationCents; })) / 10) + ' 积分' : '每镜平台预占以能力回执为准';
-          dom.estimateNote.textContent = '按镜头依次生成；每镜完成后按实际用量结算并释放剩余预占，预占不代表最终费用。上游人民币预算另列。';
-        } catch (_) { dom.creditEstimate.textContent = '成片费用待确认'; dom.estimateNote.textContent = '先补齐方案素材与参数，再核对每镜预占积分及上游人民币预算。'; }
+          var directUsage = holds.length > 0 && holds.every(function (entry) { return entry && entry.nativePlatform && ['prepaid_quote', 'direct_usage'].indexOf(entry.billingMode) >= 0; });
+          var knownHolds = holds.length > 0 && holds.every(function (entry) { return entry && entry.nativePlatform && entry.billingMode === 'reservation' && Number.isSafeInteger(entry.reservationCents) && entry.reservationCents > 0; });
+          var quotes = productionPlan.shots.filter(function (shot) { return shot.kind === 'ai'; }).map(function (shot) { return submissionQuote(state.modelCatalog.find(function (entry) { return entry.productKey === shot.productKey; }), shot.request); });
+          var totalQuote = quotes.length > 0 && quotes.every(function (quote) { return quote !== null; }) ? quotes.reduce(function (sum, quote) { return sum + quote; }, 0) : null;
+          dom.creditEstimate.textContent = directUsage ? totalQuote !== null ? '生成 · ' + (totalQuote / 10) + ' 积分' : '提交时扣报价积分' : knownHolds ? '每个 AI 镜头预占最高 ' + (Math.max.apply(null, holds.map(function (entry) { return entry.reservationCents; })) / 10) + ' 积分' : '每镜平台预占以能力回执为准';
+          dom.estimateNote.textContent = directUsage ? '按镜头依次生成，每镜提交时扣其报价积分；失败镜头退回，取消不退。'
+            : '按镜头依次生成；每镜完成后按实际用量结算并释放剩余预占，预占不代表最终费用。上游人民币预算另列。';
+        } catch (_) {
+          var selected = getSelectedModel();
+          dom.creditEstimate.textContent = selected && selected.nativePlatform && ['prepaid_quote', 'direct_usage'].indexOf(selected.billingMode) >= 0 ? '提交时扣报价积分' : '成片费用待确认';
+          dom.estimateNote.textContent = selected && selected.nativePlatform && ['prepaid_quote', 'direct_usage'].indexOf(selected.billingMode) >= 0 ? '先补齐方案素材与参数，再核对本次报价；提交时扣积分，失败退回，取消不退。' : '先补齐方案素材与参数，再核对每镜预占积分及上游人民币预算。';
+        }
       }
       return;
     }
@@ -857,12 +839,16 @@
       return;
     }
     if (model.nativePlatform) {
-      if (Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0) {
+      if (['prepaid_quote', 'direct_usage'].indexOf(model.billingMode) >= 0) {
+        var quoted = submissionQuote(model);
+        dom.creditEstimate.textContent = quoted !== null ? '生成 · ' + (quoted / 10) + ' 积分' : '提交时扣报价积分';
+        dom.estimateNote.textContent = '提交时扣本次报价积分；生成失败退回，取消不退';
+      } else if (model.billingMode === 'reservation' && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0) {
         dom.creditEstimate.textContent = '预占 ' + (model.reservationCents / 10) + ' 积分';
         dom.estimateNote.textContent = '提交时预占，完成后按实际用量结算并释放剩余；预占不代表最终费用。';
       } else {
-        dom.creditEstimate.textContent = '预占积分待确认';
-        dom.estimateNote.textContent = '等待平台返回预占金额，最终费用按实际用量结算。';
+        dom.creditEstimate.textContent = '本次报价待确认';
+        dom.estimateNote.textContent = '等待平台返回本次报价，提交时扣积分；生成失败退回，取消不退。';
       }
       return;
     }
@@ -878,19 +864,24 @@
 
   function videoCreditSpec(extraAnalysis) {
     var model = state.modelCatalog.find(function (item) { return item.productKey === state.settings.productKey; });
+    var nativePlatform = !!(model && model.nativePlatform);
+    var billingMode = model && model.billingMode;
     return { kind: 'video', model: model && model.providerModelConfigured ? model.providerModel : '',
-      count: 1, channel: model && model.nativePlatform ? 'platform_wallet' : 'external_key', extraAnalysis: !!extraAnalysis,
-      reservationPoints: model && model.nativePlatform && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0 ? model.reservationCents / 10 : undefined };
+      count: 1, channel: nativePlatform ? 'platform_wallet' : 'external_key', extraAnalysis: !!extraAnalysis,
+      nativePlatform: nativePlatform, billingMode: billingMode, quoteCents: submissionQuote(model),
+      reservationPoints: nativePlatform && billingMode === 'reservation' && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0 ? model.reservationCents / 10 : undefined };
   }
 
   function retryCreditSpec(run) {
     if (!run) return { kind: 'local' };
-    var model = state.modelCatalog.find(function (item) { return item.productKey === run.productKey && item.providerModel === run.providerModel; });
+    var model = state.modelCatalog.find(function (item) { return item.productKey === run.productKey; });
     var nativePlatform = run.nativePlatform === true || run.provider === 'shaozhuang-native' || run.adapter === 'sanjie-native';
-    return { kind: run && run.purpose === 'analysis' ? 'chat' : 'video', model: cleanText(run && run.providerModel),
+    var billingMode = nativePlatform && model && model.billingMode;
+    return { kind: run.purpose === 'analysis' ? 'chat' : 'video', model: cleanText(run.providerModel),
       count: 1, channel: nativePlatform ? 'platform_wallet' : 'external_key',
-      reservationPoints: nativePlatform && model && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0 ? model.reservationCents / 10 : undefined,
-      detail: '重新提交原任务；最终费用以实际用量结算为准' };
+      nativePlatform: nativePlatform, billingMode: billingMode,
+      reservationPoints: nativePlatform && billingMode === 'reservation' && model && model.providerModel === run.providerModel && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0 ? model.reservationCents / 10 : undefined,
+      detail: ['prepaid_quote', 'direct_usage'].indexOf(billingMode) >= 0 ? '重新提交原任务；提交时按新报价扣积分，生成失败退回，取消不退' : '重新提交原任务；最终费用以实际用量结算为准' };
   }
 
   function productionCreditSpec(plan, shots) {
@@ -900,12 +891,16 @@
     var first = models[0];
     var sameModel = first && models.every(function (model) { return model && model.providerModel === first.providerModel; });
     var nativePlatform = models.every(function (model) { return model && model.nativePlatform; });
-    var knownReservations = nativePlatform && models.every(function (model) { return Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0; });
+    var directUsage = nativePlatform && models.every(function (model) { return ['prepaid_quote', 'direct_usage'].indexOf(model.billingMode) >= 0; });
+    var hasDirectUsage = models.some(function (model) { return model && model.nativePlatform && ['prepaid_quote', 'direct_usage'].indexOf(model.billingMode) >= 0; });
+    var knownReservations = nativePlatform && !hasDirectUsage && models.every(function (model) { return model.billingMode === 'reservation' && Number.isSafeInteger(model.reservationCents) && model.reservationCents > 0; });
     return { kind: 'video', count: ai.length, model: sameModel && first.providerModelConfigured ? first.providerModel : '',
       channel: nativePlatform ? 'platform_wallet' : 'external_key',
+      nativePlatform: nativePlatform, billingMode: directUsage ? 'prepaid_quote' : knownReservations ? 'reservation' : '',
+      quoteCents: directUsage && ai.every(function (shot, index) { return submissionQuote(models[index], shot.request) !== null; }) ? ai.reduce(function (sum, shot, index) { return sum + submissionQuote(models[index], shot.request); }, 0) : undefined,
       reservationPoints: knownReservations ? Math.max.apply(null, models.map(function (model) { return model.reservationCents; })) / 10 : undefined,
-      perRequestReservation: ai.length > 1,
-      detail: '将提交 ' + ai.length + ' 个 AI 镜头' + (nativePlatform ? '，逐镜预占并结算；预占不代表最终费用' : '') };
+      perRequestReservation: knownReservations && ai.length > 1,
+      detail: '将提交 ' + ai.length + ' 个 AI 镜头' + (directUsage ? '，每镜提交时扣其报价积分，生成失败退回，取消不退' : nativePlatform && !hasDirectUsage ? '，逐镜预占并结算；预占不代表最终费用' : '') };
   }
 
   function productionRunCreditSpec(run, retryShotId) {
@@ -926,19 +921,24 @@
   function updateCreditAnnotations() {
     var credits = globalThis.SZCreativeCredits;
     if (!credits) return;
-    var localProduction = false;
+    var localProduction = usingProductionPlan() && state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0;
     var goesToReview = state.mode !== 'direct' && (state.review.state === 'editing' || state.review.state === 'confirmed');
     var generationSpec = videoCreditSpec(false);
     if (usingProductionPlan()) {
       try { generationSpec = productionCreditSpec(previewProductionPlan()); }
-      catch (_) { var selected = getSelectedModel(); generationSpec = localProduction ? { kind: 'local' } : { kind: 'video', channel: selected && selected.nativePlatform ? 'platform_wallet' : 'external_key' }; }
+      catch (_) {
+        var selected = getSelectedModel();
+        generationSpec = localProduction ? { kind: 'local' } : { kind: 'video',
+          channel: selected && selected.nativePlatform ? 'platform_wallet' : 'external_key',
+          nativePlatform: !!(selected && selected.nativePlatform), billingMode: selected && selected.billingMode };
+      }
     }
     credits.annotate(dom.primaryAction, localProduction || goesToReview ? { kind: 'local' }
       : state.mode === 'direct' ? generationSpec
-      : { kind: 'chat', model: '', channel: 'external_key', detail: '脚本分析按实际用量计费' });
+      : { kind: 'chat', model: state.analysisModel, channel: state.analysisBillingChannel, detail: state.analysisBillingChannel === 'platform_wallet' ? '本次脚本分析提交时按报价扣积分，失败退回，取消不退' : '脚本分析由自有 API 服务计费' });
     credits.annotate(dom.confirmReview, generationSpec);
     credits.annotate(dom.retryJob, retryCreditSpec(state.activeRun));
-    credits.annotate(dom.reanalyze, { kind: 'chat', model: '', channel: 'external_key', detail: '重新分析按实际用量计费' });
+    credits.annotate(dom.reanalyze, { kind: 'chat', model: state.analysisModel, channel: state.analysisBillingChannel, detail: state.analysisBillingChannel === 'platform_wallet' ? '重新分析提交时按本次报价扣积分，失败退回，取消不退' : '重新分析由自有 API 服务计费' });
     ['resetDraft', 'addShot', 'viewResult', 'openApiSettings', 'refreshCapabilities', 'refreshHistory'].forEach(function (key) {
       credits.annotate(dom[key], { kind: 'local' });
     });
@@ -975,8 +975,7 @@
     var maxDuration = clamp(Number(limits.maxDuration || 15), minDuration, 30);
     var rawDuration = raw.durationSeconds == null ? 15 : Number(raw.durationSeconds);
     var audioMode = Contract.AUDIO_MODES[raw.audioMode] ? raw.audioMode : 'sound_only';
-    if (model && model.nativePlatform && model.generateAudio === false && options.productionPlan !== true) audioMode = 'silent';
-    if (options.productionPlan === true && audioMode === 'sound_only') audioMode = 'narration';
+    if (model && model.nativePlatform && model.generateAudio === false) audioMode = 'silent';
     var creativeRoute = cleanText(raw.creativeRoute || raw.route);
     if (!routeSupportsMode(creativeRoute, mode)) creativeRoute = defaultRouteForMode(mode);
     var styleProfile = cleanText(raw.styleProfile || raw.visualStyle);
@@ -1006,7 +1005,6 @@
     });
     state.settings = normalizeSettingsSnapshot(requested, {
       mode: state.mode,
-      productionPlan: usingProductionPlan(),
       modelCatalog: state.modelCatalog
     });
     dom.durationOutput.textContent = state.settings.durationSeconds + ' 秒';
@@ -1031,7 +1029,6 @@
       durationSeconds: readDurationControl()
     }), {
       mode: state.mode,
-      productionPlan: usingProductionPlan(),
       modelCatalog: state.modelCatalog
     });
     writeDurationControl();
@@ -1228,11 +1225,11 @@
       resolution: '720p',
       ratio: '9:16',
       durationSeconds: 15,
-      audioMode: 'narration',
+      audioMode: 'sound_only',
       narrationLanguage: 'zh-CN'
     };
 
-    state.productionOptions = { mode: 'quality', totalDurationSeconds: 15, hybridAiSeconds: 15, budgetYuan: 30, maxAttempts: 1 };
+    state.productionOptions = { mode: 'economic', totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 };
     state.productionAudio = { sourceAudioVolume: 0 };
     state.legacySingle = false;
     var record = null;
@@ -1244,8 +1241,8 @@
       state.prompt = cleanText(draft.prompt);
       state.expertEnabled = draft.expertEnabled === true;
       state.expertRequirements = cleanText(draft.expertRequirements);
-      state.legacySingle = draft.productionOptions ? draft.legacySingle === true : true;
       state.settings = normalizeDraftSettings(draft.settings);
+      state.legacySingle = draft.productionOptions ? draft.legacySingle === true : true;
       state.productionOptions = normalizeProductionOptions(draft.productionOptions || { mode: 'quality', totalDurationSeconds: 15, budgetYuan: 10, maxAttempts: 1 });
       state.productionAudio = normalizeProductionAudio(draft.productionAudio);
       state.assets.image = await hydrateList(draft.assets && draft.assets.image);
@@ -1369,7 +1366,6 @@
   function normalizeDraftSettings(raw) {
     return normalizeSettingsSnapshot(raw, {
       mode: state.mode,
-      productionPlan: usingProductionPlan(),
       modelCatalog: state.modelCatalog
     });
   }
@@ -1388,7 +1384,7 @@
   }
 
   function trimDisallowedAssetsForMode() {
-    if (usingProductionPlan()) return; // Preserve imported assets; validation explains incompatible references.
+    if (usingProductionPlan() && state.productionOptions.mode === 'economic') return;
     var limits = effectiveLimits(state.mode, state.settings.productKey);
     state.assets.image = state.assets.image.slice(0, limits.imageMax || 0);
     state.assets.video = state.assets.video.slice(0, limits.videoMax || 0);
@@ -1441,8 +1437,7 @@
       expertEnabled: state.expertEnabled,
       expertRequirements: state.expertEnabled ? state.expertRequirements : '',
       assets: assetRightsFingerprint(),
-      settings: state.settings,
-      productionTimelineSeconds: usingProductionPlan() ? creativeTimelineSeconds() : null
+      settings: state.settings
     }, 'analysis_');
   }
 
@@ -1535,7 +1530,7 @@
     var limits = effectiveLimits(state.mode, state.settings.productKey);
     dom.modeDescription.textContent = MODE_COPY[state.mode].description;
     dom.referenceSection.hidden = state.mode !== 'remix';
-    dom.videoUploadTile.hidden = limits.videoMax === 0 || state.mode === 'remix';
+    dom.videoUploadTile.hidden = usingProductionPlan() && state.productionOptions.mode === 'economic' ? false : limits.videoMax === 0 || state.mode === 'remix';
     dom.videoUploadTile.classList.toggle('is-disabled', !localUploadSupported('video'));
     dom.videoInput.disabled = dom.videoUploadTile.hidden || !localUploadSupported('video');
     dom.videoUploadTile.title = !dom.videoUploadTile.hidden && !localUploadSupported('video')
@@ -1547,12 +1542,12 @@
     audioTile.hidden = usingProductionPlan() ? false : limits.audioMax === 0;
     audioTile.classList.toggle('is-disabled', !localUploadSupported('audio'));
     dom.audioInput.disabled = audioTile.hidden || !localUploadSupported('audio');
-    if (dom.audioUploadLabel) dom.audioUploadLabel.textContent = '声音参考';
+    if (dom.audioUploadLabel) dom.audioUploadLabel.textContent = usingProductionPlan() ? '最终口播 / 背景音乐' : '配乐 / 音效';
     dom.expertModeBlock.hidden = state.mode === 'direct';
     dom.expertRequirementsWrap.hidden = state.mode === 'direct' || !state.expertEnabled;
 
     dom.assetHelp.textContent = '当前组合最多 ' + limits.imageMax + ' 张图片、' +
-      limits.videoMax + ' 个生成参考视频、' + limits.audioMax + ' 个声音参考。上传音频供对照参考，不直接混入；口播以确认台词为准。' +
+      limits.videoMax + ' 个生成参考视频、' + (usingProductionPlan() ? '10 个本地成片音频（可选，不作为供应商参考）' : limits.audioMax + ' 个音频。') +
       (!localUploadSupported('video') && limits.videoMax ? (getSelectedModel() && getSelectedModel().nativePlatform
         ? ' 生成参考视频仅接受可访问的 HTTPS 地址；本地视频可在参考重构中提取关键帧分析。' : ' 本地视频未开放上传，只接受已导入的远程素材。') : '');
     renderCreativeOptions();
@@ -1566,6 +1561,7 @@
     } else if (state.mode !== 'direct' && state.review.state === 'stale') {
       label = '重新分析脚本';
     }
+    if (usingProductionPlan() && state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) label = '用已有素材合成';
     if (!state.actionPending) dom.primaryActionLabel.textContent = label;
     updateCreditAnnotations();
   }
@@ -1591,6 +1587,8 @@
   }
 
   function maxForKind(kind) {
+    if (usingProductionPlan() && kind === 'audio') return 10;
+    if (usingProductionPlan() && state.productionOptions.mode === 'economic') return kind === 'image' ? 30 : 10;
     var limits = effectiveLimits(state.mode, state.settings.productKey);
     if (kind === 'image') return limits.imageMax || 0;
     if (kind === 'video') return limits.videoMax || 0;
@@ -1638,6 +1636,7 @@
         }));
         var hydrated = await hydrateAsset(summary);
         if (!hydrated) throw new Error('素材写入后无法从本地库读取。');
+        if (usingProductionPlan() && kind === 'audio') { hydrated.finalAudioRole = 'narration'; hydrated.finalAudioVolume = 1; hydrated.finalAudioLoop = false; }
         state.assets[kind].push(hydrated);
         added += 1;
       } catch (error) {
@@ -1870,7 +1869,12 @@
     }
     if (kind === 'video' || kind === 'audio') {
       var model = getSelectedModel();
-      var maxDuration = Number(model && model.maxDuration || 15);
+      if (usingProductionPlan() && kind === 'audio') {
+        var audioDuration = Number(metadata.durationSec);
+        if (!Number.isFinite(audioDuration) || audioDuration <= 0 || audioDuration > 3600) throw new Error('本地成片音频需有有效时长且不超过 3600 秒；最终口播须完整放入成片。');
+        return;
+      }
+      var maxDuration = usingProductionPlan() && state.productionOptions.mode === 'economic' ? 3600 : Number(model && model.maxDuration || 15);
       var duration = Number(metadata.durationSec || 0);
       if (!duration || duration < 2 || duration > maxDuration) {
         throw new Error(kindLabel(kind) + '单段时长需为 2–' + maxDuration + ' 秒。');
@@ -2067,10 +2071,10 @@
     });
     role.value = asset.role || defaultAssetRole(asset.kind, 0);
     info.append(name, details);
-    info.appendChild(role);
-    if (asset.kind === 'audio') {
-      var audioNote = document.createElement('small'); audioNote.textContent = '声音参考；口播按已确认脚本生成。'; info.appendChild(audioNote);
-    }
+    if (asset.kind === 'audio' && usingProductionPlan()) {
+      card.classList.add('final-audio-card');
+      appendFinalAudioControls(info, asset);
+    } else info.appendChild(role);
 
     var remove = document.createElement('button');
     remove.className = 'remove-asset';
@@ -2187,11 +2191,15 @@
         statementVersion: 'ASSET_RIGHTS_V2'
       }
     };
-    if (stage === 'draft' && usingProductionPlan()) raw.productionTimelineSeconds = creativeTimelineSeconds();
+    if (usingProductionPlan()) {
+      raw.audios = []; raw.audioMode = 'silent'; raw.narrationLanguage = '';
+      if (raw.creativeRoute === 'audio_visual') raw.creativeRoute = 'storyboard_direct';
+      raw.rights.assetFingerprint = Contract.assetRightsFingerprint(raw);
+    }
     if (stage === 'submit' && state.mode !== 'direct' && state.review.storyboard.length) {
       raw.storyboard = storyboardForRequest();
       var canonicalStoryboard = Contract.normalizeStoryboard(raw.storyboard, {
-        durationSeconds: creativeTimelineSeconds()
+        durationSeconds: state.settings.durationSeconds
       });
       raw.reviewFingerprint = Contract.reviewFingerprint(raw.script, canonicalStoryboard);
       raw.reviewConfirmedAt = state.review.confirmedAt;
@@ -2244,8 +2252,9 @@
   function baseChecks() {
     if (usingProductionPlan()) {
       var errors = productionValidationErrors({ requireReview: false });
-      var analysisError = state.mode !== 'direct' ? analysisRequestError() : '';
-      return { backend: state.backendConnected, model: !errors.some(function (message) { return /模型|API|能力/.test(message); }), input: !analysisError && !errors.some(function (message) { return /素材|创作|预算|方案/.test(message); }), rights: !errors.some(function (message) { return /权利/.test(message); }) };
+      var localOnly = state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0;
+      var analysisError = !localOnly && state.mode !== 'direct' ? analysisRequestError() : '';
+      return { backend: localOnly || state.backendConnected, model: localOnly || !errors.some(function (message) { return /模型|API|能力/.test(message); }), input: !analysisError && !errors.some(function (message) { return /素材|创作|预算|方案/.test(message); }), rights: !errors.some(function (message) { return /权利/.test(message); }) };
     }
     var model = getSelectedModel();
     var inputOkay = !!state.prompt;
@@ -2365,9 +2374,8 @@
         total += duration;
       }
     });
-    var timelineSeconds = creativeTimelineSeconds();
-    if (state.review.storyboard.length && Math.abs(total - timelineSeconds) > 0.15) {
-      errors.push('分镜总时长为 ' + (Math.round(total * 10) / 10) + ' 秒，需与设置的 ' + timelineSeconds + ' 秒一致。');
+    if (state.review.storyboard.length && Math.abs(total - state.settings.durationSeconds) > 0.15) {
+      errors.push('分镜总时长为 ' + (Math.round(total * 10) / 10) + ' 秒，需与设置的 ' + state.settings.durationSeconds + ' 秒一致。');
     }
     return errors;
   }
@@ -2535,6 +2543,7 @@
 
   async function handlePrimaryAction() {
     if (state.actionPending) return;
+    if (usingProductionPlan() && state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) { await startGeneration(); return; }
     if (state.mode !== 'direct' &&
         (state.review.state === 'editing' || state.review.state === 'confirmed')) {
       dom.reviewPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -2751,7 +2760,7 @@
     var total = state.review.storyboard.reduce(function sum(value, shot) {
       return value + (Number(shot.durationSeconds) || 0);
     }, 0);
-    var remaining = Math.min(15, Math.max(0, creativeTimelineSeconds() - total));
+    var remaining = Math.max(0, state.settings.durationSeconds - total);
     state.review.storyboard.push({
       id: makeId('shot'),
       visual: '',
@@ -2819,8 +2828,6 @@
   }
 
   function usingProductionPlan() { return !!Production && state.legacySingle !== true; }
-  function creativeTimelineSeconds() { return usingProductionPlan() ? Number(state.productionOptions.totalDurationSeconds || 15) : state.settings.durationSeconds; }
-  function isDynamicProductionPlan(plan) { return !!plan && Number(plan.version) >= 2 && Array.isArray(plan.shots) && plan.shots.length > 0 && plan.shots.every(function (shot) { return shot.kind === 'ai'; }); }
   function productionModeLabel(mode) { return { economic: '经济', balanced: '均衡', quality: '质量' }[mode] || '质量'; }
   function normalizeProductionAudio(raw) {
     var volume = raw && raw.sourceAudioVolume != null ? Number(raw.sourceAudioVolume) : 0;
@@ -2871,24 +2878,23 @@
     raw = raw || {};
     if (raw.maxAttempts != null && (!Number.isInteger(Number(raw.maxAttempts)) || Number(raw.maxAttempts) < 1 || Number(raw.maxAttempts) > 2)) throw makeStudioError('PRODUCTION_ATTEMPTS_INVALID', '每镜最多尝试 1–2 次。');
     if (raw.hybridAiSeconds != null && [0, 5, 10, 15].indexOf(Number(raw.hybridAiSeconds)) < 0) throw makeStudioError('PRODUCTION_AI_DURATION_INVALID', '经济方案 AI 时长只能为 0 / 5 / 10 / 15 秒。');
-    var options = Object.assign({ totalDurationSeconds: 15, budgetYuan: 30, maxAttempts: 1 }, raw, { mode: 'quality', hybridAiSeconds: 15 });
-    if (Production) return Production.normalizeOptions(options);
-    return options;
+    if (Production) return Production.normalizeOptions(Object.assign({ totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 }, raw));
+    return Object.assign({ mode: 'quality', totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 }, raw);
   }
   function productionTemplate(options) {
     options = options || {};
     // The planner owns the long timeline. The legacy request snapshot remains within its model's limit.
     var request = {
       mode: state.mode, productKey: state.settings.productKey, durationSeconds: state.settings.durationSeconds,
-      resolution: state.settings.resolution, ratio: state.settings.ratio, audioMode: state.settings.audioMode,
+      resolution: '720p', ratio: state.settings.ratio, audioMode: state.settings.audioMode,
       narrationLanguage: state.settings.narrationLanguage, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, script: state.mode === 'direct' ? state.prompt : (state.review.script || state.prompt),
       goal: state.prompt, supplementalRequirements: state.expertEnabled ? state.expertRequirements : '',
       scriptConfirmed: state.review.confirmed, storyboard: state.review.storyboard,
-      images: state.assets.image.map(assetForRequest), videos: state.assets.video.map(assetForRequest), audios: state.assets.audio.map(assetForRequest),
+      images: state.assets.image.map(assetForRequest), videos: state.assets.video.map(assetForRequest), audios: [],
       rights: { confirmed: state.rightsConfirmed, confirmedAt: state.rightsConfirmedAt, fingerprint: state.rightsFingerprint }
     };
-    if (!options.confirmed) { request.mode = 'direct'; request.storyboard = []; }
+    if (!options.confirmed || (state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0)) { request.mode = 'direct'; request.storyboard = []; }
     else if (request.mode !== 'direct') {
       var storyboard = Contract.normalizeStoryboard(request.storyboard);
       request.storyboard = storyboard; request.reviewConfirmedAt = state.review.confirmedAt;
@@ -2900,11 +2906,16 @@
   function previewProductionPlan(options) {
     if (!Production) throw makeStudioError('PRODUCTION_UNAVAILABLE', '成片方案模块未加载，请刷新工作台。');
     var plan = Production.buildPlan(productionTemplate(options), state.productionOptions);
-    if (options && options.confirmed && Number(plan.version) >= 2) {
-      if (!Narration || typeof Narration.buildPlan !== 'function') throw makeStudioError('PRODUCTION_NARRATION_UNAVAILABLE', '脚本配音模块未加载，请刷新工作台后重试。');
-      plan = Object.assign({}, plan, { narration: Narration.buildPlan(plan) });
-    }
-    return plan;
+    return Object.assign({}, plan, { finalAudio: snapshotProductionAudio(plan.totalSeconds) });
+  }
+  function productionUsesPlatform(plan, run) {
+    function native(item) { return !!item && (item.nativePlatform === true || item.provider === 'shaozhuang-native' || item.adapter === 'sanjie-native' || /^nv_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.providerTaskId || '')); }
+    if (native(run) || run && (run.shotRuns || []).some(function (shot) { return native(shot) || (shot.attempts || []).some(native); })) return true;
+    if (!state.backendConnected || state.credentialAvailable !== true || native(state.capabilities)) return true;
+    var ai = plan && (plan.shots || []).filter(function (shot) { return shot.kind === 'ai'; });
+    if (ai && ai.length) return ai.some(function (shot) { var model = state.modelCatalog.find(function (item) { return item.productKey === shot.productKey; }); return !model || model.nativePlatform === true; });
+    var selected = getSelectedModel();
+    return !state.backendConnected || !!(selected && selected.nativePlatform);
   }
   function analysisRequestError() {
     if (state.mode === 'remix') {
@@ -2922,7 +2933,8 @@
     if (!state.prompt) errors.push('请填写创作要求。');
     var hasAssets = state.assets.image.length || state.assets.video.length || state.assets.audio.length || state.reference;
     if (hasAssets && (!state.rightsConfirmed || state.rightsFingerprint !== assetRightsFingerprint())) errors.push('请确认素材权利，素材变化后需要重新确认。');
-    if (state.mode !== 'direct' && !options.requireReview) {
+    var localOnly = state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0;
+    if (state.mode !== 'direct' && !options.requireReview && !localOnly) {
       var analysisError = analysisRequestError();
       if (analysisError) errors.push(analysisError);
     }
@@ -2935,63 +2947,54 @@
       if (ai.length && analyzing && state.analysisAvailable === false) errors.push('脚本分析不可用，请先配置分析 API。');
       if (ai.length && (!analyzing || options.requireReview)) ai.forEach(function (shot) {
         var model = state.modelCatalog.find(function (item) { return item.productKey === shot.productKey; });
-        var shotResolution = shot.request && shot.request.resolution || plan.resolution;
-        if (!model || !model.configured || model.resolutions.indexOf(shotResolution) < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(shot.durationSeconds) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 ' + shotResolution + ' / ' + shot.durationSeconds + ' 秒。');
+        if (!model || !model.configured || model.resolutions.indexOf('720p') < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 720p / 5 秒。');
       });
       var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
-      if (reserve > state.productionOptions.budgetYuan + 0.00001) errors.push('首轮参考费用含 10% 预留超出估算预算，请调整方案或预算。');
+      if (reserve > state.productionOptions.budgetYuan + 0.00001) errors.push(productionUsesPlatform(plan) ? '本次生成已达到预算限制，请调整成片方案。' : '首轮参考费用含 10% 预留超出估算预算，请调整方案或预算。');
       if (ai.length && options.requireReview && state.mode !== 'direct' && !state.review.confirmed) errors.push('请确认脚本与分镜后生成。');
     }
     return Array.from(new Set(errors));
   }
-  function renderProductionModelChoice() {
-    if (!dom.productionModel || !dom.productionModelWrap) return;
-    dom.productionModelWrap.hidden = true;
-    dom.productionModel.disabled = true;
-  }
-  function productionModelLabel(plan, fallback) {
-    if (plan && Number(plan.version) >= 2) return Contract.MODEL_DISPLAY_NAMES[plan.request && plan.request.productKey || fallback] || fallback;
-    if (!plan || plan.aiSeconds === 0) return '本地素材合成';
-    var options = plan.options || {};
-    var budgetName = Contract.MODEL_DISPLAY_NAMES[options.budgetProductKey || 'seedance-2.0-mini'];
-    if (options.mode === 'balanced') return budgetName + ' + Seedance 2.0';
-    if (options.mode === 'economic') return '素材 + ' + budgetName;
-    return Contract.MODEL_DISPLAY_NAMES[fallback] || fallback;
-  }
   function renderProductionOptions() {
     if (!dom.productionModes) return;
-    dom.productionModes.hidden = !state.legacySingle;
     dom.productionModes.querySelectorAll('[data-production-mode]').forEach(function (button) {
       button.setAttribute('aria-pressed', String(button.dataset.productionMode === state.productionOptions.mode));
       button.disabled = state.actionPending;
     });
     dom.productionDuration.value = String(state.productionOptions.totalDurationSeconds || 15);
     dom.productionAiSeconds.value = String(state.productionOptions.hybridAiSeconds || 0);
-    dom.productionAiWrap.hidden = true;
+    dom.productionAiWrap.hidden = state.productionOptions.mode !== 'economic';
     dom.productionBudget.value = String(state.productionOptions.budgetYuan);
     dom.productionAttempts.value = String(state.productionOptions.maxAttempts);
     [dom.productionDuration, dom.productionAiSeconds, dom.productionBudget, dom.productionAttempts].forEach(function (input) { input.disabled = state.actionPending; });
     var legacy = state.legacySingle;
-    renderProductionModelChoice();
     if (dom.productionFinalAudio) dom.productionFinalAudio.hidden = legacy || !Production;
-    renderNarrationCapability();
-    if (dom.supplierAudioFieldset) dom.supplierAudioFieldset.hidden = false;
-    if (!legacy && Production) { dom.narrationSettings.hidden = state.settings.audioMode !== 'narration'; dom.audioConstraintNote.hidden = true; }
+    if (dom.supplierAudioFieldset) dom.supplierAudioFieldset.hidden = !legacy && !!Production;
+    if (!legacy && Production) { dom.narrationSettings.hidden = true; dom.audioConstraintNote.hidden = true; }
     if (dom.productionSourceVolume) { dom.productionSourceVolume.value = String(state.productionAudio.sourceAudioVolume); dom.productionSourceVolume.disabled = state.actionPending; dom.productionSourceVolumeOutput.textContent = Math.round(state.productionAudio.sourceAudioVolume * 100) + '%'; }
     if (dom.assetList) dom.assetList.querySelectorAll('[data-final-audio-role], [data-final-audio-gain], [data-final-audio-loop]').forEach(function (input) { input.disabled = state.actionPending; });
     if (dom.durationInput && dom.durationInput.closest('.duration-group')) dom.durationInput.closest('.duration-group').hidden = !legacy && !!Production;
     var selected = getSelectedModel();
-    dom.modelSelect.disabled = state.actionPending;
+    var platform = productionUsesPlatform(null);
+    var budgetField = dom.productionBudget.closest('label');
+    function budgetVisibility(hide) {
+      if (budgetField) { budgetField.hidden = hide; budgetField.style.display = hide ? 'none' : ''; }
+      dom.productionEstimate.hidden = hide; dom.productionEstimate.style.display = hide ? 'none' : '';
+    }
+    budgetVisibility(platform);
+    if (!legacy && state.productionOptions.mode !== 'quality') dom.modelSelect.disabled = true;
+    else dom.modelSelect.disabled = state.actionPending;
     try {
       if (legacy) {
         dom.productionEstimate.textContent = '旧草稿 · 保留原单片参数';
-        dom.productionNote.textContent = '原草稿参数已保留；点击“按脚本生成动态视频”创建连续动态镜头。';
+        dom.productionNote.textContent = '原模型、时长、清晰度和声音选择继续使用；点击任一方案后才转为 5 秒镜头合成。';
       } else {
         var plan = previewProductionPlan();
-        if (dom.productionAudioSummary) dom.productionAudioSummary.textContent = state.settings.audioMode === 'silent' ? '已选择无声音。' : '口播使用已确认的分镜台词重新配音；上传音频只作为声音参考。';
+        platform = productionUsesPlatform(plan); budgetVisibility(platform);
+        if (dom.productionAudioSummary) dom.productionAudioSummary.textContent = plan.finalAudio.tracks.length ? plan.finalAudio.tracks.map(function (track) { var asset = plan.finalAudio.assets.find(function (item) { return item.id === track.assetId; }); return (track.role === 'narration' ? '完整口播 ' : '背景音乐 ') + formatDuration(asset.durationSec) + ' · 音量 ' + Math.round(track.volume * 100) + '%' + (track.loop ? ' · 循环' : ''); }).join('；') : '未选择最终音轨；按已有视频原声音量输出。';
         var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
         dom.productionEstimate.textContent = '首轮上游估算 ¥' + Number(plan.estimateYuan).toFixed(2) + ' · 含预留 ¥' + reserve.toFixed(2) + ' / 预算 ¥' + Number(state.productionOptions.budgetYuan).toFixed(2);
-        dom.productionNote.textContent = plan.totalSeconds + ' 秒动态视频 · ' + (Contract.MODEL_DISPLAY_NAMES[plan.request.productKey] || plan.request.productKey) + ' · ' + plan.resolution + '。镜头按分镜动作连续生成，费用以回执为准；失败镜头可单独处理。';
+        dom.productionNote.textContent = plan.aiSeconds + ' 秒 AI + ' + plan.localSeconds + ' 秒素材；统一 720p。' + (platform ? plan.aiSeconds ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。失败镜头仅手动重试，成功但不采用仍计费。' : '使用已有素材在本地合成。' : '超过估算预算停止后续镜头；自有 API 费用由对应服务计费。失败镜头仅手动重试，成功但不采用仍计成本。');
       }
     } catch (error) {
       dom.productionEstimate.textContent = '先补齐方案素材';
@@ -3006,27 +3009,18 @@
       if (!button || state.actionPending) return;
       state.legacySingle = false;
       state.productionOptions = normalizeProductionOptions(Object.assign({}, state.productionOptions, { mode: button.dataset.productionMode }));
+      state.settings.resolution = '720p';
       applySettingsToDom(); renderMode(); renderAssets(); updateEstimate(); renderReadiness(); scheduleDraftSave();
     });
     [dom.productionDuration, dom.productionAiSeconds, dom.productionBudget, dom.productionAttempts].forEach(function (input) {
       input.addEventListener('change', function () {
         try {
-          var previousTotalSeconds = creativeTimelineSeconds();
           state.productionOptions = normalizeProductionOptions({ mode: state.productionOptions.mode,
-            budgetProductKey: state.productionOptions.budgetProductKey,
             totalDurationSeconds: Number(dom.productionDuration.value), hybridAiSeconds: Number(dom.productionAiSeconds.value),
             budgetYuan: Number(dom.productionBudget.value), maxAttempts: Number(dom.productionAttempts.value) });
-          if (previousTotalSeconds !== creativeTimelineSeconds()) invalidateReviewForSourceChange('成片时长已变化，请按新时间轴重新分析并确认分镜。');
           updateEstimate(); renderReadiness(); scheduleDraftSave();
         } catch (error) { setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); }
       });
-    });
-    if (dom.productionModel) dom.productionModel.addEventListener('change', function () {
-      if (state.actionPending) return;
-      try {
-        state.productionOptions = normalizeProductionOptions(Object.assign({}, state.productionOptions, { budgetProductKey: dom.productionModel.value }));
-        updateEstimate(); renderReadiness(); scheduleDraftSave();
-      } catch (error) { setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); }
     });
     dom.productionBudget.addEventListener('input', function () {
       var raw = dom.productionBudget.value;
@@ -3042,20 +3036,11 @@
       renderProductionOptions(); scheduleDraftSave();
     });
     dom.productionResume.addEventListener('click', function () { if (!state.productionStarting && state.productionRun) executeProductionRun(state.productionRun); });
-    if (dom.productionNewPlan) dom.productionNewPlan.addEventListener('click', function () {
-      if (state.productionBusy || state.productionStarting) return;
-      state.productionRun = null; state.legacySingle = false;
-      state.productionOptions = normalizeProductionOptions(state.productionOptions);
-      renderProductionRun(); renderProductionOptions(); renderReadiness(); scheduleDraftSave();
-      setNotice(dom.composerValidation, '旧任务、回执和素材已保留在生成历史。请检查脚本台词与分镜，再创建动态视频计划。', 'success');
-    });
     if (dom.productionStop) dom.productionStop.addEventListener('click', function () {
       if (state.productionAbortController) state.productionAbortController.abort();
       setNotice(dom.productionRunNotice, '已请求停止本地合成，已生成镜头和费用记录保留。', 'error');
     });
     dom.productionShotList.addEventListener('click', function (event) {
-      var narrationRetry = event.target.closest('[data-production-narration-retry]');
-      if (narrationRetry) { retryProductionNarration(state.productionRun, narrationRetry.dataset.productionNarrationRetry); return; }
       var button = event.target.closest('[data-production-shot-action]');
       if (!button || state.productionBusy || state.productionStarting || !state.productionRun) return;
       var shot = state.productionRun.shotRuns.find(function (item) { return item.id === button.dataset.shotId; });
@@ -3119,16 +3104,15 @@
     var run = state.productionRun;
     dom.productionPanel.hidden = !run;
     if (!run) return;
-    var dynamic = isDynamicProductionPlan(run.plan);
-    dom.productionResume.disabled = state.productionBusy || state.productionStarting || run.status === 'succeeded' || !dynamic;
-    if (dom.productionNewPlan) { dom.productionNewPlan.hidden = dynamic; dom.productionNewPlan.disabled = state.productionBusy || state.productionStarting; }
+    dom.productionResume.disabled = state.productionBusy || state.productionStarting || run.status === 'succeeded';
     if (globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(dom.productionResume, productionRunCreditSpec(run));
     if (dom.productionStop) { dom.productionStop.hidden = !state.productionBusy || run.phase !== 'rendering'; dom.productionStop.disabled = !state.productionAbortController; }
     var costs = productionCostSummary(run);
+    var platform = productionUsesPlatform(run.plan, run);
     var receipt = costs.unsettledCount ? '实际费用未结算（' + costs.unsettledCount + ' 次提交，暂按含 10% 预留占用 ¥' + costs.reservedYuan.toFixed(2) + '）' : costs.settledCount ? '回执已结算 ¥' + costs.settledYuan.toFixed(2) : run.plan.aiSeconds === 0 ? '本地合成，未调用上游' : '尚无未结算的 AI 提交';
     if (costs.unsettledCount && costs.settledCount) receipt += '；另有回执已结算 ¥' + costs.settledYuan.toFixed(2);
     if (costs.unknownReservationCount) receipt += '；预留金额缺失，预算暂锁待核对';
-    dom.productionRunSummary.textContent = (dynamic ? '动态视频' : productionModeLabel(run.plan.options.mode)) + ' · ' + run.durationSeconds + ' 秒 · 画面预算占用 ¥' + costs.committedYuan.toFixed(2) + ' / 估算预算 ¥' + Number(run.plan.options.budgetYuan).toFixed(2) + ' · ' + receipt + (dynamic && run.plan.narrationRequired ? ' · 脚本配音单列计费' : '');
+    dom.productionRunSummary.textContent = productionModeLabel(run.plan.options.mode) + ' · ' + run.durationSeconds + ' 秒 · ' + (run.plan.aiSeconds === 0 ? '本地合成' : platform ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。' : '预算占用 ¥' + costs.committedYuan.toFixed(2) + ' / 估算预算 ¥' + Number(run.plan.options.budgetYuan).toFixed(2) + ' · ' + receipt);
     dom.productionShotList.replaceChildren();
     run.shotRuns.forEach(function (shot) {
       var definition = run.plan.shots.find(function (item) { return item.id === shot.id; });
@@ -3140,29 +3124,18 @@
       var actions = document.createElement('div'); actions.className = 'production-shot-actions';
       function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
       var retryButton;
-      if (dynamic && shot.status === 'failed' && shot.attempts.length < run.plan.options.maxAttempts) retryButton = action('仅重试此镜', 'retry');
-      if (dynamic && shot.status === 'succeeded') action(shot.adoptionStatus === 'rejected' ? '采用此镜' : '标记不采用', 'adopt');
+      if (shot.status === 'failed' && shot.attempts.length < run.plan.options.maxAttempts) retryButton = action('仅重试此镜', 'retry');
+      if (shot.status === 'succeeded') action(shot.adoptionStatus === 'rejected' ? '采用此镜' : '标记不采用', 'adopt');
       row.appendChild(actions); dom.productionShotList.appendChild(row);
       if (retryButton && globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(retryButton, productionRunCreditSpec(run, shot.id));
     });
-    (run.narrationRuns || []).forEach(function (segment, index) {
-      var row = document.createElement('div'); row.className = 'production-shot-row is-' + segment.status;
-      var info = document.createElement('div'), title = document.createElement('strong'), note = document.createElement('small');
-      title.textContent = '脚本配音 ' + (index + 1);
-      note.textContent = ({ pending: '待配音', submitting: '提交中', unknown: '接收状态待核对', succeeded: '配音已保存', failed: '配音失败' }[segment.status] || segment.status) + (segment.error ? ' · ' + safeErrorMessage(segment.error) : '');
-      info.append(title, note); row.appendChild(info);
-      if (segment.status === 'failed' && segment.definitiveFailure === true) {
-        var retry = document.createElement('button'); retry.type = 'button'; retry.className = 'button button-secondary button-small'; retry.textContent = '仅重试此段配音'; retry.dataset.productionNarrationRetry = segment.id; retry.disabled = state.productionBusy || state.productionStarting; row.appendChild(retry);
-      }
-      dom.productionShotList.appendChild(row);
-    });
-    setNotice(dom.productionRunNotice, !dynamic ? '这是旧版素材合成计划，原任务与结果已保留。请新建动态视频计划，按当前脚本生成动作和口播。' : run.error || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), dynamic && run.status === 'succeeded' ? 'success' : 'error');
+    setNotice(dom.productionRunNotice, run.error || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
   }
   async function startProductionGeneration() {
     if (state.productionBusy || state.productionStarting) return;
     var errors = productionValidationErrors({ requireReview: true });
     if (errors.length) { setNotice(dom.composerValidation, errors.join(' '), 'error'); return; }
-    if (state.productionRun && isDynamicProductionPlan(state.productionRun.plan) && state.productionRun.status !== 'succeeded') {
+    if (state.productionRun && state.productionRun.status !== 'succeeded') {
       setNotice(dom.composerValidation, '已有未完成的成片计划，请使用“继续 / 核对已提交镜头”；改方案不会重复提交旧镜头。', 'error');
       renderProductionRun(); return;
     }
@@ -3173,23 +3146,12 @@
     plan = Object.assign({}, plan, { id: makeId('production') });
     var run = { id: plan.id, taskId: plan.id, purpose: 'production', accountKey: state.accountKey,
       mode: state.mode, status: 'queued', phase: 'planned', plan: plan, durationSeconds: plan.totalSeconds,
-      resolution: plan.resolution, ratio: plan.ratio, productKey: plan.request.productKey, creativeRoute: state.settings.creativeRoute,
+      resolution: '720p', ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, prompt: state.prompt, createdAt: new Date().toISOString(),
       resultUrls: [], shotRuns: plan.shots.map(function (shot) { return { id: shot.id, status: shot.kind === 'local' ? 'ready' : 'pending', adoptionStatus: 'accepted', attempts: [], taskId: '', resultAssetId: '' }; }) };
     await persistProductionRun(run);
     await executeProductionRun(run);
-    } catch (error) { setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); showToast(safeErrorMessage(error), 'error'); }
-    finally { state.productionStarting = false; if (!state.productionBusy) setPending(false); }
-  }
-  async function retryProductionNarration(run, segmentId) {
-    if (!run || state.productionBusy || state.productionStarting || !isDynamicProductionPlan(run.plan)) return;
-    if (!Narration || typeof Narration.retrySegment !== 'function') { showToast('脚本配音模块未加载，请刷新后重试。', 'error'); return; }
-    state.productionStarting = true; setPending(true, '正在处理此段脚本配音…');
-    try {
-      run.generatedAudio = await Narration.retrySegment(run, segmentId, { store: Store, persist: function () { return persistProductionRun(run); }, assertAccount: function () { assertProductionAccount(run); } });
-      await persistProductionRun(run);
-    } catch (error) { run.error = safeErrorMessage(error); await persistProductionRun(run); showToast(run.error, 'error'); }
-    finally { state.productionStarting = false; setPending(false); renderProductionRun(); }
+    } finally { state.productionStarting = false; if (!state.productionBusy) setPending(false); }
   }
   async function productionSourceAsset(run, id, options) {
     assertProductionAccount(run);
@@ -3197,7 +3159,7 @@
     assertProductionAssetAccount(run, asset);
     if (asset && asset.blob) return asset;
     var request = run.plan.request || {};
-    var remote = [].concat(request.images || [], request.videos || [], request.audios || [], run.generatedAudio && run.generatedAudio.assets || [], run.plan.finalAudio && run.plan.finalAudio.assets || []).find(function (item) { return item.id === id; });
+    var remote = [].concat(request.images || [], request.videos || [], request.audios || [], run.plan.finalAudio && run.plan.finalAudio.assets || []).find(function (item) { return item.id === id; });
     if (!remote || !/^https:/.test(remote.remoteUrl || '')) throw makeStudioError('PRODUCTION_ASSET_MISSING', '镜头素材无法读取，请恢复原素材：' + id);
     var response = await globalThis.fetch(remote.remoteUrl, { cache: 'no-store', signal: options && options.signal });
     if (!response.ok) throw makeStudioError('PRODUCTION_ASSET_FETCH', '镜头素材下载失败（HTTP ' + response.status + '）。');
@@ -3239,75 +3201,20 @@
     shot.resultAssetId = asset.id; shot.status = 'succeeded'; shot.error = '';
     await persistProductionRun(run);
   }
-  async function extractProductionTailFrame(blob, durationSeconds) {
-    var video = document.createElement('video'), url = URL.createObjectURL(blob);
-    video.preload = 'auto'; video.muted = true; video.playsInline = true;
-    try {
-      await new Promise(function (resolve, reject) {
-        var timer = globalThis.setTimeout(function () { finish(new Error('读取上一镜尾帧超时，已保留上一镜，请稍后继续。')); }, 15000);
-        function finish(error) { globalThis.clearTimeout(timer); video.onloadeddata = null; video.onerror = null; if (error) reject(error); else resolve(); }
-        video.onloadeddata = function () { finish(); };
-        video.onerror = function () { finish(new Error('上一镜视频无法解码，不能提交不连续的下一镜。')); };
-        video.src = url; video.load();
-      });
-      var duration = Number.isFinite(video.duration) ? video.duration : Number(durationSeconds);
-      if (!video.videoWidth || !video.videoHeight || !Number.isFinite(duration) || duration <= 0) throw new Error('上一镜缺少有效画面与时长，不能提取连续动作尾帧。');
-      var timeSec = Math.max(0, Math.min(duration, Number(durationSeconds) || duration) - 0.06);
-      await seekVideo(video, timeSec);
-      var scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
-      var canvas = document.createElement('canvas'); canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
-      var context = canvas.getContext('2d', { alpha: false });
-      if (!context) throw new Error('无法创建连续动作尾帧，请更换支持 Canvas 的浏览器。');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return { blob: await canvasToBlob(canvas, 'image/jpeg', 0.9), width: canvas.width, height: canvas.height, timeSec: timeSec };
-    } finally {
-      video.pause(); video.removeAttribute('src'); try { video.load(); } catch (_) {} URL.revokeObjectURL(url);
-    }
-  }
-  async function productionContinuityRequest(run, shot, definition) {
-    var request = JSON.parse(JSON.stringify(definition.request));
-    var continuity = definition.continuity;
-    if (!continuity || !continuity.required) return request;
-    var previous = run.shotRuns.find(function (item) { return item.id === continuity.previousShotId; });
-    if (!previous || previous.status !== 'succeeded' || !previous.resultAssetId || previous.adoptionStatus === 'rejected') throw makeStudioError('PRODUCTION_CONTINUITY_PREVIOUS_REQUIRED', '上一镜尚未成功采用，先核对上一镜后再生成连续动作。');
-    var model = state.modelCatalog.find(function (item) { return item.productKey === request.productKey; });
-    var imageMax = Number(model && model.imageMax || effectiveLimits('direct', request.productKey).imageMax);
-    if ((request.images || []).length >= imageMax) throw makeStudioError('PRODUCTION_CONTINUITY_IMAGE_LIMIT', '当前参考图片已达到模型上限，请为上一镜连续动作尾帧预留 1 个图片位置；原素材已保留。');
-    var frame;
-    if (shot.continuityAssetId && shot.continuitySourceAssetId === previous.resultAssetId) {
-      frame = await Store.getAsset(shot.continuityAssetId); assertProductionAssetAccount(run, frame);
-      if (!frame || !frame.blob) throw makeStudioError('PRODUCTION_CONTINUITY_ASSET_MISSING', '已保存的连续动作尾帧缺失，请恢复该素材后继续；不会重新生成上一镜。');
-    } else {
-      var previousAsset = await Store.getAsset(previous.resultAssetId); assertProductionAssetAccount(run, previousAsset);
-      if (!previousAsset || !previousAsset.blob) throw makeStudioError('PRODUCTION_CONTINUITY_SOURCE_MISSING', '上一镜已生成视频缺失，请恢复原视频后继续。');
-      var previousDefinition = run.plan.shots.find(function (item) { return item.id === previous.id; });
-      var extracted = await extractProductionTailFrame(previousAsset.blob, previousDefinition.durationSeconds);
-      assertProductionAccount(run);
-      frame = await Store.saveAsset(extracted.blob, { id: makeId('continuity'), expectedAccountKey: run.accountKey, kind: 'image', role: 'motion', name: '上一镜连续动作尾帧.jpg', mimeType: 'image/jpeg', width: extracted.width, height: extracted.height, timeSec: extracted.timeSec, sourceResultAssetId: previous.resultAssetId });
-      assertProductionAssetAccount(run, frame);
-      shot.continuityAssetId = frame.id; shot.continuitySourceAssetId = previous.resultAssetId;
-      await persistProductionRun(run);
-    }
-    request.images = (request.images || []).concat([{ id: frame.id, kind: 'image', role: 'motion', name: '上一镜连续动作尾帧', mimeType: 'image/jpeg', rightsConfirmed: true, storageRef: { dbName: Store.DB_NAME, storeName: Store.ASSET_STORE, id: frame.id } }]);
-    request.supplementalRequirements = [request.supplementalRequirements || '', '图片 ' + request.images.length + ' 是上一镜最后时刻的动作尾帧。从此人物姿态、商品位置、运动方向和机位继续执行当前分镜动作；保持时间连续，避免跳回初始姿态或静止图片。'].filter(Boolean).join('\n');
-    request.rights = Object.assign({}, request.rights, { fingerprint: Contract.assetRightsFingerprint(request) });
-    return request;
-  }
   async function submitProductionShot(run, shot, definition) {
     if (shot.status !== 'pending') return;
     var attemptNumber = shot.attempts.length + 1;
     if (attemptNumber > run.plan.options.maxAttempts) throw makeStudioError('PRODUCTION_ATTEMPTS', '此镜头已达到尝试上限。');
     var reservation = Math.ceil(Number(definition.estimatedYuan) * 110) / 100;
     if (!Number.isFinite(reservation) || reservation < 0) throw makeStudioError('PRODUCTION_PRICE_UNKNOWN', '镜头价格未知，禁止提交。');
-    if (productionCommitments(run) + reservation > run.plan.options.budgetYuan + 0.00001) throw makeStudioError('PRODUCTION_BUDGET', '剩余上游估算预算不足，停止后续镜头；已成功或状态未知的镜头预算占用仍保留，实际结算以回执为准。');
-    var request = await productionContinuityRequest(run, shot, definition);
+    if (productionCommitments(run) + reservation > run.plan.options.budgetYuan + 0.00001) throw makeStudioError('PRODUCTION_BUDGET', productionUsesPlatform(run.plan, run) ? '本次生成已达到预算限制，停止后续镜头；已提交镜头按原报价处理，失败退回，取消不退，成功不调差额。' : '剩余自有 API 估算预算不足，停止后续镜头；已成功或状态未知的镜头预算占用仍保留，费用由对应服务计费。');
     var stableId = run.id + ':' + shot.id + ':' + attemptNumber;
     shot.attempts.push({ requestId: stableId, reservedYuan: reservation, estimatedYuan: Number(definition.estimatedYuan), createdAt: new Date().toISOString() });
     shot.status = 'submitting';
     // Persist the reservation and identity before the first potentially paid network operation.
     await persistProductionRun(run);
     try {
-      var response = await sendRuntimeMessage(MESSAGE.START, payloadForRequest(request, { requestId: stableId, idempotencyKey: stableId,
+      var response = await sendRuntimeMessage(MESSAGE.START, payloadForRequest(definition.request, { requestId: stableId, idempotencyKey: stableId,
         production: { planId: run.id, shotId: shot.id, budgetYuan: run.plan.options.budgetYuan, maxAttempts: run.plan.options.maxAttempts, attempt: attemptNumber } }), RUNTIME_TIMEOUT_MS.start);
       var task = extractTask(responsePayload(response));
       if (!task || !taskIdOf(task)) throw makeStudioError('PRODUCTION_START_UNKNOWN', '未收到稳定任务编号，保留预算并核对提交状态。');
@@ -3332,7 +3239,6 @@
   }
   async function retryProductionShot(run, shotId) {
     if (state.productionBusy || state.productionStarting) return;
-    if (!isDynamicProductionPlan(run && run.plan)) { showToast('旧计划已保留，请新建动态视频计划。', 'error'); return; }
     var shot = run.shotRuns.find(function (item) { return item.id === shotId; });
     if (!shot || shot.status !== 'failed' || shot.attempts.length >= run.plan.options.maxAttempts) return;
     state.productionStarting = true; setPending(true, '正在保存镜头重试…');
@@ -3343,21 +3249,11 @@
   }
   async function executeProductionRun(run) {
     if (state.productionBusy || !run || run.purpose !== 'production') return;
-    if (!isDynamicProductionPlan(run.plan)) {
-      state.productionRun = run; renderProductionRun();
-      showToast('旧计划已保留，请新建动态视频计划，按脚本重新生成动作与口播。', 'error');
-      return run;
-    }
     state.productionBusy = true; setPending(true, '正在执行镜头计划…');
     var productionController;
     run.error = ''; run.status = 'processing';
     try {
       await persistProductionRun(run);
-      if (!Narration || typeof Narration.ensureRun !== 'function') throw makeStudioError('PRODUCTION_NARRATION_UNAVAILABLE', '脚本配音模块未加载，请刷新后继续；镜头与原素材已保留。');
-      productionController = new AbortController(); state.productionAbortController = productionController;
-      run.phase = 'narration'; await persistProductionRun(run);
-      run.generatedAudio = await Narration.ensureRun(run, { store: Store, persist: function () { return persistProductionRun(run); }, assertAccount: function () { assertProductionAccount(run); }, signal: productionController.signal });
-      assertProductionAccount(run); await persistProductionRun(run);
       for (var i = 0; i < run.plan.shots.length; i += 1) {
         var definition = run.plan.shots[i], shot = run.shotRuns.find(function (item) { return item.id === definition.id; });
         if (definition.kind === 'local') { await productionSourceAsset(run, definition.sourceAssetId); continue; }
@@ -3373,6 +3269,8 @@
         if (shot.status === 'succeeded') await storeProductionShotResult(run, shot);
       }
       if (run.shotRuns.some(function (shot) { return shot.adoptionStatus === 'rejected'; })) throw makeStudioError('PRODUCTION_NOT_ADOPTED', '有成功镜头被标记不采用，费用仍保留；采用所需镜头后可继续合成。');
+      productionController = new AbortController();
+      state.productionAbortController = productionController;
       run.phase = 'rendering'; await persistProductionRun(run);
       var rendered = await Production.renderTimeline(run.plan, Object.assign({
         signal: productionController.signal,
@@ -3381,16 +3279,16 @@
         onProgress: function (progress) { run.progress = Math.round(Number(progress && progress.progress != null ? progress.progress : progress) * 100); if (dom.productionRunNotice) setNotice(dom.productionRunNotice, '正在本地合成，请保持页面打开。', 'success'); }
       }, productionAudioRenderOptions(run)));
       if (productionController.signal.aborted) throw makeStudioError('PRODUCTION_RENDER_ABORTED', '本地合成已停止，已生成镜头和费用记录保留。');
-      if (run.generatedAudio && run.generatedAudio.tracks.length && !rendered.audioMix) throw makeStudioError('PRODUCTION_AUDIO_MIX_RECEIPT', '脚本配音尚未确认混入成片，请刷新声音模块后继续；已生成画面和配音不会重新生成。');
+      if (run.plan.finalAudio && run.plan.finalAudio.tracks.length && !rendered.audioMix) throw makeStudioError('PRODUCTION_AUDIO_MIX_RECEIPT', '最终音轨尚未确认混入成片，请刷新声音模块后继续本地合成；已生成画面不会重生。');
       assertProductionAccount(run);
       run.phase = 'saving'; await persistProductionRun(run);
-      var asset = await Store.saveAsset(rendered.blob, { id: run.id + '_final', expectedAccountKey: run.accountKey, kind: 'video', name: '动态视频.' + (rendered.mimeType.indexOf('webm') >= 0 ? 'webm' : 'mp4'), mimeType: rendered.mimeType, durationSec: rendered.durationSeconds, width: rendered.width, height: rendered.height });
+      var asset = await Store.saveAsset(rendered.blob, { id: run.id + '_final', expectedAccountKey: run.accountKey, kind: 'video', name: productionModeLabel(run.plan.options.mode) + '成片.' + (rendered.mimeType.indexOf('webm') >= 0 ? 'webm' : 'mp4'), mimeType: rendered.mimeType, durationSec: rendered.durationSeconds, width: rendered.width, height: rendered.height });
       run.resultAssetId = asset.id; run.status = 'succeeded'; run.phase = 'succeeded'; run.progress = 100; run.finishedAt = new Date().toISOString(); run.error = '';
       if (rendered.audioMix) run.audioMix = rendered.audioMix;
       await persistProductionRun(run); await openResultDialog(run);
     } catch (error) {
       run.error = safeErrorMessage(error);
-      run.status = run.shotRuns.concat(run.narrationRuns || []).some(function (item) { return item.status === 'unknown' || item.status === 'submitting'; }) ? 'unknown' : 'failed';
+      run.status = run.shotRuns.some(function (shot) { return shot.status === 'unknown' || shot.status === 'submitting'; }) ? 'unknown' : 'failed';
       if (!run.accountKey || run.accountKey === state.accountKey) {
         try { await persistProductionRun(run); } catch (saveError) { run.error = safeErrorMessage(saveError); }
       }
@@ -3399,11 +3297,6 @@
     return run;
   }
   function productionAudioRenderOptions(run) {
-    if (isDynamicProductionPlan(run.plan)) {
-      var generated = run.generatedAudio || { tracks: [] };
-      return { generatedAudio: true, audioTracks: generated.tracks || [], sourceAudioVolume: 0,
-        resolveAudio: function (track, options) { return productionSourceAsset(run, track.assetId || track.id, options); } };
-    }
     if (!run.plan.finalAudio) return {};
     return { audioTracks: run.plan.finalAudio.tracks, sourceAudioVolume: run.plan.finalAudio.sourceAudioVolume,
       resolveAudio: function (track, options) { return productionSourceAsset(run, track.assetId || track.id, options); } };
@@ -3824,6 +3717,7 @@
   }
 
   function canHideHistoryRun(run) {
+    if (!cleanText(state.accountKey) || cleanText(run && run.accountKey) !== cleanText(state.accountKey)) return false;
     if (!run || TERMINAL_STATES.indexOf(run.status) < 0 || submissionStateUncertain(run) || run.stateUncertain === true || run.cancelPending) return false;
     // Unfinished plans retain their recovery entry, including failed/unknown shot receipts.
     if (run.purpose === 'production' && (run.status !== 'succeeded' || (run.shotRuns || []).concat(run.narrationRuns || []).some(function unresolved(shot) {
@@ -3925,8 +3819,7 @@
     var signature = JSON.stringify(visible.map(function displayFields(run) {
       return [run.id, run.purpose, run.prompt, run.mode, run.creativeRoute, run.productKey, run.resolution, run.ratio,
         run.status, isActiveStatus(run.status) && Number.isFinite(Number(run.progress)) ? Math.round(run.progress) : formatDate(run.updatedAt), formatDate(run.createdAt), run.durationSeconds, canHideHistoryRun(run),
-        state.hiddenHistoryIds.has(run.id), submissionStateUncertain(run), run.purpose === 'production' ? productionModelLabel(run.plan, run.productKey) : '',
-        run.purpose === 'production' && isDynamicProductionPlan(run.plan), run.plan && run.plan.options && run.plan.options.mode,
+        state.hiddenHistoryIds.has(run.id), submissionStateUncertain(run), run.purpose === 'production' ? [run.plan && run.plan.aiSeconds, run.plan && run.plan.options && run.plan.options.mode] : '',
         globalThis.SZCreativeCredits && run.purpose === 'production' && run.status !== 'succeeded' ? productionRunCreditSpec(run) : null,
         globalThis.SZCreativeCredits && run.purpose !== 'production' && (run.status === 'failed' || run.status === 'cancelled') ? retryCreditSpec(run) : null];
     }));
@@ -3952,7 +3845,7 @@
     main.className = 'history-main';
     var title = document.createElement('strong');
     var route = routeDefinition(run.creativeRoute);
-    title.textContent = (run.purpose === 'production' ? (isDynamicProductionPlan(run.plan) ? '动态视频' : productionModeLabel(run.plan && run.plan.options.mode) + '成片') + ' · ' : run.purpose === 'analysis' ? '脚本分析 · ' : '') +
+    title.textContent = (run.purpose === 'production' ? productionModeLabel(run.plan && run.plan.options.mode) + '成片 · ' : run.purpose === 'analysis' ? '脚本分析 · ' : '') +
       (route && route.label ? route.label : ((Contract.MODES[run.mode] && Contract.MODES[run.mode].label) || run.mode)) + ' · ' +
       (cleanText(run.prompt).slice(0, 36) || '未命名任务');
     title.title = cleanText(run.prompt) || run.id;
@@ -3961,7 +3854,7 @@
     main.append(title, id);
 
     var modelCell = historyCell(
-      run.purpose === 'production' ? productionModelLabel(run.plan, run.productKey) : Contract.MODEL_DISPLAY_NAMES[run.productKey] || run.productKey || '—',
+      run.purpose === 'production' ? (run.plan.aiSeconds === 0 ? '本地素材合成' : run.plan.options.mode === 'balanced' ? 'Mini + 标准模型' : run.plan.options.mode === 'economic' ? '素材 + Mini' : Contract.MODEL_DISPLAY_NAMES[run.productKey] || run.productKey) : Contract.MODEL_DISPLAY_NAMES[run.productKey] || run.productKey || '—',
       (run.resolution || '—') + ' · ' + (run.ratio || '—')
     );
     var modeCell = historyCell(
@@ -3974,7 +3867,7 @@
 
     var actions = document.createElement('div');
     actions.className = 'history-actions';
-    if (run.purpose === 'production' && run.status !== 'succeeded') actions.appendChild(historyButton(isDynamicProductionPlan(run.plan) ? '继续计划' : '查看旧计划', 'status', run.id));
+    if (run.purpose === 'production' && run.status !== 'succeeded') actions.appendChild(historyButton('继续计划', 'status', run.id));
     else if (isActiveStatus(run.status) || submissionStateUncertain(run) || run.stateUncertain === true) actions.appendChild(historyButton('查询', 'status', run.id));
     if (run.purpose !== 'production' && !submissionStateUncertain(run) && (run.status === 'failed' || run.status === 'cancelled')) {
       actions.appendChild(historyButton('重试', 'retry', run.id));
@@ -4134,7 +4027,7 @@
     }
     [
       ['模式', (Contract.MODES[run.mode] && Contract.MODES[run.mode].label) || run.mode],
-      ['模型', run.purpose === 'production' ? productionModelLabel(run.plan, run.productKey) : Contract.MODEL_DISPLAY_NAMES[run.productKey] || run.productKey],
+      ['模型', run.purpose === 'production' && run.plan.aiSeconds === 0 ? '本地素材合成' : run.purpose === 'production' && run.plan.options.mode === 'balanced' ? 'Mini + 标准模型' : Contract.MODEL_DISPLAY_NAMES[run.productKey] || run.productKey],
       ['参数', (run.resolution || '—') + ' · ' + (run.ratio || '—') + ' · ' + (run.durationSeconds || '—') + ' 秒']
     ].concat(run.purpose === 'production' && run.audioMix ? [['最终声音', run.audioMix.tracks.length ? run.audioMix.tracks.map(function (track) { return (track.role === 'narration' ? '完整口播 ' : '背景音乐 ') + formatDuration(track.durationSeconds) + ' · ' + Math.round(track.volume * 100) + '%' + (track.loop ? ' · 循环' : ''); }).join('；') : run.audioMix.outputAudioTracks ? '已有视频原声' : '静音成片']] : []).forEach(function detail(pair) {
       var cell = document.createElement('div');
@@ -4438,29 +4331,22 @@
       hydrateAsset: hydrateAsset,
       normalizeImportedRemoteAsset: normalizeImportedRemoteAsset,
       mergeRemoteAssetLists: mergeRemoteAssetLists,
+      renderHistory: renderHistory, clearEndedHistory: clearEndedHistory, loadMoreHistory: loadMoreHistory, toggleHiddenHistory: toggleHiddenHistory,
+      setHistoryRunHidden: setHistoryRunHidden, releaseResultPreview: releaseResultPreview, openResultDialog: openResultDialog,
       assetForRequest: assetForRequest,
       buildRequest: buildRequest,
       claimStartupMediaImport: claimStartupMediaImport,
       normalizeSettingsSnapshot: normalizeSettingsSnapshot,
+      normalizeModelCatalog: normalizeModelCatalog, updateEstimate: updateEstimate, submissionQuote: submissionQuote,
       normalizeProductionOptions: normalizeProductionOptions, productionValidationErrors: productionValidationErrors,
       startProductionGeneration: startProductionGeneration, executeProductionRun: executeProductionRun,
       productionCommitments: productionCommitments, productionCostSummary: productionCostSummary, retryProductionShot: retryProductionShot,
       snapshotProductionAudio: snapshotProductionAudio, productionAudioRenderOptions: productionAudioRenderOptions,
       localUploadSupported: localUploadSupported, maxForKind: maxForKind, validateAssetMetadata: validateAssetMetadata,
       productionTemplate: productionTemplate, state: state, renderProductionRun: renderProductionRun,
-      isDynamicProductionPlan: isDynamicProductionPlan, productionContinuityRequest: productionContinuityRequest, extractProductionTailFrame: extractProductionTailFrame,
       cacheDom: cacheDom, bindProductionEvents: bindProductionEvents, restoreDraft: restoreDraft, draftSnapshot: draftSnapshot, persistProductionRun: persistProductionRun,
       bindRuntimeEvents: bindRuntimeEvents, fetchResult: fetchResult,
-      normalizeModelCatalog: normalizeModelCatalog, renderProductionModelChoice: renderProductionModelChoice,
-      previewProductionPlan: previewProductionPlan, productionModelLabel: productionModelLabel,
-      creativeTimelineSeconds: creativeTimelineSeconds, validateStoryboard: validateStoryboard, storyboardForRequest: storyboardForRequest, analysisFingerprint: analysisFingerprint,
-      narrationCapabilityText: narrationCapabilityText, refreshNarrationCapabilities: refreshNarrationCapabilities, renderNarrationCapability: renderNarrationCapability,
-      assetRightsFingerprint: assetRightsFingerprint, renderAssets: renderAssets, renderReadiness: renderReadiness, renderProductionOptions: renderProductionOptions,
-      updateEstimate: updateEstimate, updateCreditAnnotations: updateCreditAnnotations,
-      videoCreditSpec: videoCreditSpec, retryCreditSpec: retryCreditSpec,
-      productionCreditSpec: productionCreditSpec, productionRunCreditSpec: productionRunCreditSpec, renderHistory: renderHistory,
-      clearEndedHistory: clearEndedHistory, loadMoreHistory: loadMoreHistory, toggleHiddenHistory: toggleHiddenHistory,
-      setHistoryRunHidden: setHistoryRunHidden, releaseResultPreview: releaseResultPreview, openResultDialog: openResultDialog
+      assetRightsFingerprint: assetRightsFingerprint, renderAssets: renderAssets, renderReadiness: renderReadiness, renderProductionOptions: renderProductionOptions
     });
   }
 

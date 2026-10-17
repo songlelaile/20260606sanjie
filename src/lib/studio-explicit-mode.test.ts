@@ -138,42 +138,18 @@ function harness(mode: "main" | "detail", options: { savedMode?: "main" | "detai
     modelInfo: vi.fn(() => ({ ready: true, supportsReference: true, provider: provider.provider, model: provider.imageModel })),
     setApiBusy: vi.fn(), openConfig: vi.fn(), analyze: vi.fn(), send: vi.fn()
   };
-  const persistedDrafts=new Map<string,unknown>();let initialDraftSeeded=false,transactionQueue=Promise.resolve();
-  const initialDraftKey=`${accountKey}:single:${mode}`;
   const db = {
     transaction: (_store: string, access?: string) => {
-      if(access&&!["readwrite","readonly"].includes(access))throw new Error(`Unexpected access: ${access}`);
-      const prior=transactionQueue;let release!:()=>void;transactionQueue=new Promise<void>(resolve=>{release=resolve;});
-      const pendingWrites=new Map<string,unknown>();let pending=0,finished=false;
-      const finish=(aborted=false)=>{
-        if(finished)return;finished=true;
-        if(!aborted)pendingWrites.forEach((value,key)=>persistedDrafts.set(key,clone(value)));
-        release();queueMicrotask(()=>aborted?tx.onabort?.():tx.oncomplete?.());
-      };
-      const idle=()=>queueMicrotask(()=>{if(!pending&&!finished)finish();});
-      const tx = { oncomplete: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: null as Error|null, abort:()=>finish(true),objectStore: () => ({
+      const tx = { oncomplete: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: new Error("fixture backup quota exceeded"), objectStore: () => ({
         get: (key: string) => {
           reads.push(key);
           const request = { result: undefined as unknown, onsuccess: undefined as undefined | (() => void) };
-          pending++;
-          prior.then(()=>read.promise).then(value=>{
-            if(finished)return;
-            if(!initialDraftSeeded){initialDraftSeeded=true;if(value!==undefined)persistedDrafts.set(initialDraftKey,clone(value));}
-            const saved=pendingWrites.has(key)?pendingWrites.get(key):persistedDrafts.get(key);
-            request.result=saved===undefined?undefined:clone(saved);request.onsuccess?.();
-          }).finally(()=>{pending--;idle();});
+          read.promise.then(value => { request.result = clone(value); request.onsuccess?.(); });
           return request;
         },
-        put: (value: unknown, key: string) => {
-          const captured=clone(value);writes.push({key,value:captured});pending++;
-          prior.then(()=>{
-            if(finished)return;
-            if(options.failBackup&&key.includes(":before-explicit-mode:")){tx.error=new Error("fixture backup quota exceeded");finish(true);}
-            else pendingWrites.set(key,captured);
-          }).finally(()=>{pending--;idle();});
-        }
+        put: (value: unknown, key: string) => { writes.push({ key, value: clone(value) }); queueMicrotask(() => options.failBackup && key.includes(":before-explicit-mode:") ? tx.onabort?.() : tx.oncomplete?.()); }
       }) };
-      prior.then(idle);
+      if (access && access !== "readwrite") throw new Error(`Unexpected access: ${access}`);
       return tx;
     }
   };
@@ -219,7 +195,7 @@ function harness(mode: "main" | "detail", options: { savedMode?: "main" | "detai
     for (const listener of windowListeners.get("beforeunload") || []) listener(event);
     return event;
   };
-  return { document, bridge, engine, refresh, catalog, read, restore, restoreStarted, reads, writes, saved, beforeUnload, persistedDrafts };
+  return { document, bridge, refresh, catalog, read, restore, restoreStarted, reads, writes, saved, beforeUnload };
 }
 
 
@@ -228,17 +204,6 @@ async function completeBoot(h: ReturnType<typeof harness>) {
   await vi.waitFor(() => expect(h.bridge.listBoundApis, h.document.root.textContent).toHaveBeenCalledOnce());
   h.catalog.complete({ ok: true, accountKey, providers: [provider] });
   await vi.waitFor(() => expect(h.document.control("[data-setting=model]").disabled).toBe(false));
-}
-
-function expectOriginalBackup(h:ReturnType<typeof harness>,original:ReturnType<typeof harness>["saved"],mode:"main"|"detail") {
-  const prefix=`${accountKey}:single:${mode}:before-explicit-mode:`;
-  const backups=h.writes.filter(write=>write.key.startsWith(prefix));expect(backups).toHaveLength(1);
-  const backup=backups[0];
-  expect(backup.key.startsWith(prefix)).toBe(true);
-  expect(backup.key.slice(prefix.length)).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
-  const value=backup.value as typeof original & {revision:string};
-  expect(value.revision).toMatch(/^[a-f0-9-]{36}$/);
-  expect(Object.fromEntries(Object.entries(value).filter(([name])=>name!=="revision"))).toEqual(original);
 }
 
 describe("explicit official module entries retain account materials and prior work", () => {
@@ -250,69 +215,33 @@ describe("explicit official module entries retain account materials and prior wo
     expect(tab.attributes.get("aria-selected")).toBe("true");
     expect(h.document.root.textContent).toContain(mode === "main" ? "主图生图实验室" : "详情生图实验室");
     expect(h.document.control("[data-task-field=name]").value).toBe("已保存商品");
-    expect(h.document.control("[data-task-field=requirements]").textContent).toBe("");
+    expect(h.document.control("[data-task-field=requirements]").textContent).toBe("已保存的创作要求");
     expect(h.document.control("[data-setting=model]").value).toBe("saved-product-image");
     expect(h.document.root.querySelector("[data-product-preview]")?.attributes.get("src")).toBe("https://fixture.test/product.png");
     expect(h.document.root.querySelector("[data-confirm]")).toBeNull();
     expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    expect(h.document.root.textContent).toContain("已保留旧版混合草稿");
-    expect(h.document.control("[data-action=legacy-tasks]").textContent).toBe("查看保留的旧任务");
-    expectOriginalBackup(h,original,mode);
-    expect(h.writes).toHaveLength(2);
-    expect(h.persistedDrafts.get(h.writes[0].key)).toEqual(h.writes[0].value);
-    expect(h.persistedDrafts.get(`${accountKey}:single:${mode}`)).toEqual(original);
+    expect(h.writes).toEqual([{ key: `${accountKey}:single:${mode}:before-explicit-mode:${original.savedAt}`, value: original }]);
     expect(h.saved).toEqual(original);
     expect(h.bridge.send).not.toHaveBeenCalled(); expect(h.bridge.analyze).not.toHaveBeenCalled();
     h.beforeUnload();
-    await vi.waitFor(() => expect(h.writes).toHaveLength(3));
-    const current = h.writes[2].value as typeof original;
-    expect(h.writes[2].key).toBe(`${accountKey}:single:${mode}:type-recovery-v1`);
+    await vi.waitFor(() => expect(h.writes).toHaveLength(2));
+    const current = h.writes[1].value as typeof original;
+    expect(h.writes[1].key).toBe(`${accountKey}:single:${mode}`);
     expect(current.draft.settings.mode).toBe(mode);
     expect(current.draft.tasks[0].products).toEqual(original.draft.tasks[0].products);
-    expect(current.draft.tasks[0].id).not.toBe(original.draft.tasks[0].id);
-    expect(current.draft.tasks[0].requirements).toBe("");
+    expect(current.draft.tasks[0].requirements).toBe(original.draft.tasks[0].requirements);
     expect(current.draft.tasks[0].confirmed).toBe(false); expect(current.draft.tasks[0].plan).toBeNull();
     expect(current.snapshot.accountKey).toBe(original.snapshot.accountKey);
-    expect(current.snapshot.previousResults).toEqual([]);
-    expect(current.snapshot.tasks).toEqual([]);
-    expect(h.persistedDrafts.get(`${accountKey}:single:${mode}`)).toEqual(original);
-    expectOriginalBackup(h,original,mode);
+    expect(current.snapshot.previousResults).toEqual(original.snapshot.previousResults);
+    expect(current.snapshot.tasks.map((entry: { id: string; plan: unknown; slots: Array<{shot: unknown; item: unknown; status: string}> }) => ({id: entry.id, plan: entry.plan, slots: entry.slots.map(({shot,item,status}) => ({shot,item,status}))}))).toEqual(original.snapshot.tasks.map((entry: { id: string; plan: unknown; slots: Array<{shot: unknown; item: unknown; status: string}> }) => ({id: entry.id, plan: entry.plan, slots: entry.slots.map(({shot,item,status}) => ({shot,item,status}))})));
   });
 
-  it("opens the default main workspace for an old bookmark while retaining the opposite-mode record", async () => {
+  it("keeps the existing preference for an old bookmark without explicit mode", async () => {
     const h = harness("main", { savedMode: "detail", explicit: false });
-    const original=clone(h.saved);
     await completeBoot(h);
-    expect(h.document.root.querySelector("[data-mode=main]")?.attributes.get("aria-selected")).toBe("true");
-    expect(h.document.root.querySelector("[data-confirm]")).toBeNull();
-    expect(h.document.root.textContent).toContain("已保留旧版混合草稿");
-    expectOriginalBackup(h,original,"main");
-    expect(h.persistedDrafts.get(`${accountKey}:single:main`)).toEqual(original);
-    expect(h.writes).toHaveLength(2);expect(h.bridge.send).not.toHaveBeenCalled();
-  });
-
-  it("restores the requested type's inputs under a new identity while retaining its formerly approved plan in the original record", async () => {
-    const h = harness("main", { savedMode: "detail" });
-    const settings = { ...h.engine.defaults("main"), model: "saved-product-image" };
-    const mainTask = { ...clone(h.saved.draft.tasks[0]), requirements: "主图独立要求 A", analysis: "主图独立分析 A", plan: null as unknown, confirmed: true };
-    mainTask.plan = h.engine.createPlan(mainTask, settings);
-    Object.assign(h.saved.draft, { typeSettings: { main: settings }, typeSteps: { main: 2 } });
-    Object.assign(h.saved.draft.tasks[0], { typeDrafts: { main: { requirements: mainTask.requirements, analysis: mainTask.analysis, plan: mainTask.plan, overrides: null, confirmed: true } } });
-    const original=clone(h.saved);
-    await completeBoot(h);
-    expect(h.document.control("[data-task-field=requirements]").textContent).toBe("主图独立要求 A");
-    expect(h.document.root.querySelector("[data-confirm]")).toBeNull();
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    h.beforeUnload();
-    await vi.waitFor(() => expect(h.writes).toHaveLength(3));
-    const restored = h.writes[2].value as typeof h.saved;
-    expect(h.writes[2].key).toBe(`${accountKey}:single:main:type-recovery-v1`);
-    expect(restored.draft.tasks[0].id).not.toBe(mainTask.id);
-    expect(restored.draft.tasks[0]).toMatchObject({plan:null,confirmed:false,analysis:mainTask.analysis});
-    expect(restored.draft.tasks[0].requirements).toBe("主图独立要求 A");
-    expect(h.persistedDrafts.get(`${accountKey}:single:main`)).toEqual(original);
-    expectOriginalBackup(h,original,"main");
-    expect(h.bridge.send).not.toHaveBeenCalled();expect(h.bridge.analyze).not.toHaveBeenCalled();
+    expect(h.document.root.querySelector("[data-mode=detail]")?.attributes.get("aria-selected")).toBe("true");
+    expect(h.document.root.querySelector("[data-confirm]")?.checked).toBe(true);
+    expect(h.writes).toEqual([]); expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
   it("does not rewrite a matching explicit module draft", async () => {
@@ -329,9 +258,7 @@ describe("explicit official module entries retain account materials and prior wo
     await vi.waitFor(() => expect(h.document.root.textContent).toContain("fixture backup quota exceeded"));
     expect(h.document.root.textContent).toContain("创作工作台暂未就绪");
     expect(h.document.root.querySelector("[data-action=generate]")).toBeNull();
-    expectOriginalBackup(h,original,"main");
-    expect(h.persistedDrafts.has(h.writes[0].key)).toBe(false);
-    expect(h.persistedDrafts.get(`${accountKey}:single:main`)).toEqual(original);
+    expect(h.writes).toEqual([{ key: `${accountKey}:single:main:before-explicit-mode:${original.savedAt}`, value: original }]);
     expect(h.saved).toEqual(original);
     expect(h.bridge.listBoundApis).not.toHaveBeenCalled(); expect(h.bridge.send).not.toHaveBeenCalled();
     h.beforeUnload(); await new Promise(resolve => setTimeout(resolve, 1));

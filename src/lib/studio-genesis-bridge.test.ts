@@ -13,7 +13,6 @@ interface AnalysisPayload {
   category: string;
   requiredFacts: string[];
   studioContext?: boolean;
-  _jobId?: string;
 }
 interface Envelope { provider: string; payload: AnalysisPayload }
 interface Bridge {
@@ -22,20 +21,16 @@ interface Bridge {
   modelInfo(): { qualityOptions: string[]; generationSpeeds: string[]; imageAdapter: string };
 }
 
-function installConfigGuards(script: string, context: ReturnType<typeof createContext>) {
-  const start=script.indexOf("var configApplySeq = 0;"), end=script.indexOf("\nfunction applyCfg(cfg)",start);
-  if(start<0||end<0)throw new Error("Production configuration ownership guards were not found");
-  runInContext(script.slice(start,end),context,{filename:"promptlab-production-config-guards.js"});
-}
-
 // Execute the actual production bridge object with isolated collaborators. No
 // provider request or synthetic replacement of its analyze/edit handlers runs.
 function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
   const script = source("promptlab.js"), start = script.indexOf("window.SZ_CREATIVE_TOOLS_BRIDGE = {");
   const end = script.indexOf("\n  };", start);
   if (start < 0 || end < 0) throw new Error("Production creative bridge was not found");
+  const credentialStart = script.indexOf("function creativeUsesPlatformWallet(cfg, kind) {"), credentialEnd = script.indexOf("\nfunction creativeSupplyChannel", credentialStart);
+  if (credentialStart < 0 || credentialEnd < 0) throw new Error("Production creative credential helpers were not found");
   const calls: Array<{ type: string; envelope: Envelope }> = [];
-  const openEditor = vi.fn((item: Record<string, unknown>) => { void item;return { ok: true }; });
+  const openEditor = vi.fn((_item: Record<string, unknown>) => ({ ok: true }));
   const context = createContext({
     cfgFromForm: () => ({ provider: "fixture-provider", apiKey: key, imageAdapter }),
     send: async (type: string, envelope: Envelope) => { calls.push({ type, envelope: clone(envelope) }); return { ok: true }; },
@@ -44,20 +39,10 @@ function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
     creativeWebListBoundApis: vi.fn(), creativeWebSelectBoundApi: vi.fn(), creativeWebBusy: {},
     newJobId: vi.fn(), registerGenerationJob: vi.fn(), unregisterGenerationJob: vi.fn(),
     creativeWebIsBusy: () => false, openConfigModal: vi.fn(), openArchiveHistory: vi.fn(),
-    creativeUsesPlatformWallet: () => false,
     cloneGuideValue: clone, $: () => null, openGuideRegenerateModal: openEditor
   });
   context.window = context;
-  installConfigGuards(script,context);
-  const busyStart=script.indexOf("var creativeWebBusy = Object.create(null);"),busyEnd=script.indexOf("\nfunction creativeWebProfile",busyStart);
-  if(busyStart<0||busyEnd<0)throw new Error("Production configuration busy helper was not found");
-  runInContext(script.slice(busyStart,busyEnd),context,{filename:"promptlab-production-config-busy.js"});
-  // The restored v4 bridge depends on this real credential helper. Execute it
-  // alongside the isolated bridge, retaining the configured/unconfigured cases.
-  const credentialStart = script.indexOf("function creativeHasApiCredential(cfg, kind) {");
-  const credentialEnd = script.indexOf("\nfunction creativeSupplyChannel", credentialStart);
-  if (credentialStart < 0 || credentialEnd < 0) throw new Error("Production credential helper was not found");
-  runInContext(script.slice(credentialStart, credentialEnd), context, { filename: "promptlab-production-credential.js" });
+  runInContext(script.slice(credentialStart, credentialEnd), context, { filename: "promptlab-production-credentials.js" });
   runInContext(script.slice(start, end + "\n  };".length), context, { filename: "promptlab-production-bridge.js" });
   return { bridge: context.SZ_CREATIVE_TOOLS_BRIDGE as Bridge, calls, openEditor };
 }
@@ -68,112 +53,23 @@ function backgroundHarness() {
   if (start < 0 || end < 0) throw new Error("Production subject analyzer was not found");
   const evidenceStart = script.indexOf("function productEvidenceItems(payload) {"), evidenceEnd = script.indexOf("\nfunction productEvidenceNote", evidenceStart);
   const localizationStart = script.indexOf("function localizePromptProductImages(payload) {"), localizationEnd = script.indexOf("\nfunction imagePartForGemini", localizationStart);
-  const signalStart = script.indexOf("function signalForPayload(payload) {"), signalEnd = script.indexOf("\nfunction beginLegacyPromptJob", signalStart);
-  if ([evidenceStart, evidenceEnd, localizationStart, localizationEnd, signalStart, signalEnd].some(index => index < 0)) throw new Error("Production evidence/localization/signal helpers were not found");
+  if ([evidenceStart, evidenceEnd, localizationStart, localizationEnd].some(index => index < 0)) throw new Error("Production evidence/localization helpers were not found");
   const requests: Array<Array<{ role: string; content: unknown }>> = [];
-  const requestSignals: Array<AbortSignal | null | undefined> = [];
-  const activeJobs: Record<string, AbortController> = Object.create(null);
   const context = createContext({
     DEFAULT_CFG: { visionModel: "fixture-vision" },
-    activeJobs, imageRequestSignals: new WeakMap(), legacyPromptRequestSignals: new WeakMap(), sceneExtensionRequestSignals: new WeakMap(),
     fetchPromptImageAsDataUrl: async (image: string) => ({ ok: true, dataUrl: image, localized: false }),
     classifyPromptFailure: (failure: unknown) => failure,
     clampStyleRefreshScore: (value: number) => Math.max(0, Math.min(100, Number(value) || 0)),
-    chatJson: async (_cfg: unknown, messages: Array<{ role: string; content: unknown }>, _model: unknown,
-      _temperature: unknown, _timeout: unknown, _budget: unknown, signal?: AbortSignal | null) => {
+    chatJson: async (_cfg: unknown, messages: Array<{ role: string; content: unknown }>) => {
       requests.push(clone(messages));
-      requestSignals.push(signal);
       return { ok: true, data: { productName: "原图商品", identityPoints: ["正面纹理清晰"], confidence: 90, unsupportedClaim: "未确认的宣传事实" } };
     }
   });
-  runInContext(script.slice(signalStart, signalEnd), context, { filename: "background-production-request-signal.js" });
   runInContext(script.slice(evidenceStart, evidenceEnd), context, { filename: "background-production-evidence.js" });
   runInContext(script.slice(localizationStart, localizationEnd), context, { filename: "background-production-localization.js" });
   runInContext(script.slice(start, end), context, { filename: "background-production-subject-analysis.js" });
-  return { analyze: context.analyzeSubjectAsset as (cfg: object, payload: AnalysisPayload) => Promise<{ ok: boolean; data: Record<string, unknown>; imageInputMeta: { count: number } }>, requests, requestSignals, activeJobs };
+  return { analyze: context.analyzeSubjectAsset as (cfg: object, payload: AnalysisPayload) => Promise<{ ok: boolean; data: Record<string, unknown>; imageInputMeta: { count: number } }>, requests };
 }
-
-interface CatalogSnapshot {
-  ok: boolean;
-  accountKey: string;
-  providers: Array<{ provider: string }>;
-}
-interface ProfileSnapshot {
-  ok: boolean;
-  accountKey: string;
-  config: Record<string, unknown>;
-  boundApis: CatalogSnapshot;
-}
-interface ConfigBridge {
-  creativeWebRefresh(options?: { deferArchive: boolean }): Promise<{ ok: boolean; accountKey: string; boundApis: CatalogSnapshot }>;
-  creativeWebAccountKey(): Promise<string>;
-  creativeWebListBoundApis(snapshot?: CatalogSnapshot): Promise<{ ok: boolean; accountKey?: string; providers?: CatalogSnapshot["providers"]; error?: string }>;
-}
-
-function configBridgeHarness(accountKey = "fixture-account", initialAccountKey = accountKey) {
-  const script = source("promptlab.js"), start = script.indexOf("var creativeWebBusy = Object.create(null);");
-  const end = script.indexOf("\nfunction creativeWebSelectBoundApi", start);
-  if (start < 0 || end < 0) throw new Error("Production configuration bridge was not found");
-  const state = { archiveAccountKey: initialAccountKey };
-  const boundApis: CatalogSnapshot = { ok: true, accountKey, providers: [{ provider: "fixture-provider" }] };
-  const profile: ProfileSnapshot = { ok: true, accountKey, config: { provider: "fixture-provider", imageModel: "fixture-image" }, boundApis };
-  const send = vi.fn(async (type: string, payload: { provider?: string }) => { void payload; return type === "GET_BOUND_IMAGE_APIS" ? boundApis : profile; });
-  const applyCfg = vi.fn();
-  const setArchiveAccountKey = vi.fn(async (key: string, options: { refresh: boolean; deferArchive: boolean }) => { void options; state.archiveAccountKey = key; });
-  const context = createContext({ send, state, applyCfg, setArchiveAccountKey });
-  installConfigGuards(script,context);
-  runInContext(script.slice(start, end), context, { filename: "promptlab-production-config-bridge.js" });
-  return { bridge: context as unknown as ConfigBridge, state, boundApis, profile, send, applyCfg, setArchiveAccountKey };
-}
-
-describe("restored V4 configuration snapshot protocol", () => {
-  it("requests a fresh startup DTO once and reuses its bound API catalog within the same refresh", async () => {
-    const h = configBridgeHarness();
-    const ready = await h.bridge.creativeWebRefresh({ deferArchive: true });
-    expect(h.send.mock.calls).toEqual([["GET_STUDIO_CONFIG_SNAPSHOT", { provider: "" }]]);
-    expect(h.applyCfg).toHaveBeenCalledWith(h.profile.config);
-    expect(h.setArchiveAccountKey).toHaveBeenCalledWith("fixture-account", { refresh: false, deferArchive: true });
-    expect(ready.boundApis).toBe(h.boundApis);
-    expect(await h.bridge.creativeWebListBoundApis(ready.boundApis)).toEqual({ ok: true, accountKey: "fixture-account", providers: h.boundApis.providers });
-    expect(h.send).toHaveBeenCalledTimes(1);
-    expect(await h.bridge.creativeWebAccountKey()).toBe("fixture-account");
-    expect(h.send.mock.calls[1]).toEqual(["GET_CONFIG_PROFILE", { provider: "" }]);
-    expect(await h.bridge.creativeWebListBoundApis()).toMatchObject({ ok: true, accountKey: "fixture-account" });
-    expect(h.send.mock.calls[2]).toEqual(["GET_BOUND_IMAGE_APIS", {}]);
-  });
-
-  it("rejects a local identity before changing configuration or restoring an account archive", async () => {
-    const h = configBridgeHarness("local","fixture-previous");
-    await expect(h.bridge.creativeWebRefresh({ deferArchive: true })).rejects.toThrow("请先登录账号");
-    expect(h.applyCfg).not.toHaveBeenCalled();
-    expect(h.setArchiveAccountKey).not.toHaveBeenCalled();
-    expect(h.state.archiveAccountKey).toBe("fixture-previous");
-  });
-
-  it("rejects a different account's startup snapshot before applying its configuration",async()=>{
-    const h=configBridgeHarness("fixture-other-account","fixture-account");
-    await expect(h.bridge.creativeWebRefresh({deferArchive:true})).rejects.toThrow("账号已变化");
-    expect(h.applyCfg).not.toHaveBeenCalled();expect(h.setArchiveAccountKey).not.toHaveBeenCalled();
-    expect(h.state.archiveAccountKey).toBe("fixture-account");
-  });
-
-  it("rejects an old startup DTO after an account switch without another implicit catalog request", async () => {
-    const h = configBridgeHarness();
-    const ready = await h.bridge.creativeWebRefresh({ deferArchive: true });
-    h.state.archiveAccountKey = "fixture-other-account";
-    expect(await h.bridge.creativeWebListBoundApis(ready.boundApis)).toMatchObject({ ok: false, error: expect.stringContaining("账号已变化") });
-    expect(h.send).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects a fresh catalog response when the account changes while the read is pending", async () => {
-    const h = configBridgeHarness();
-    await h.bridge.creativeWebRefresh({ deferArchive: true });
-    const pending = h.bridge.creativeWebListBoundApis();
-    h.state.archiveAccountKey = "fixture-other-account";
-    expect(await pending).toMatchObject({ ok: false, error: expect.stringContaining("账号已变化") });
-    expect(h.send.mock.calls[1]).toEqual(["GET_BOUND_IMAGE_APIS", {}]);
-  });
-});
 
 describe("studio analysis and editing bridge", () => {
   it("exposes provider quality capability without advertising an unsupported fast mode", () => {
@@ -241,21 +137,5 @@ describe("studio analysis and editing bridge", () => {
     await backend.analyze({ provider: "fixture-provider" }, { productImages: images, category: "", requiredFacts: [] });
     const other = backend.requests[1][1].content as Array<{ type: string }>;
     expect(other.filter(part => part.type === "image_url")).toHaveLength(3);
-  });
-
-  it("passes the captured subject job signal through image localization into the text request", async () => {
-    const backend = backgroundHarness(), controller = new AbortController();
-    backend.activeJobs["subject-analysis"] = controller;
-    const pending = backend.analyze({ provider: "fixture-provider" }, {
-      productImages: images, category: "", requiredFacts: [], _jobId: "subject-analysis"
-    });
-    // The analyzer captures the original controller before localization. A
-    // replacement job cannot change which request is cancelled afterward.
-    backend.activeJobs["subject-analysis"] = new AbortController();
-    controller.abort();
-    await pending;
-    expect(backend.requestSignals).toHaveLength(1);
-    expect(backend.requestSignals[0]).toBe(controller.signal);
-    expect(backend.requestSignals[0]?.aborted).toBe(true);
   });
 });

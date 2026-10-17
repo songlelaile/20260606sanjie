@@ -44,7 +44,6 @@ describe("retention policy", () => {
     expect(pruned.some((version) => version.shopId === "shop-0")).toBe(false);
   });
 
-
 });
 
 function createVersion(input: { id: string; shopId: string; createdAt: string }): VersionSnapshot {

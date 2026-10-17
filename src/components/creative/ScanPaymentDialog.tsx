@@ -3,7 +3,7 @@
 import { Check, Clock3, LoaderCircle, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { centsToPoints } from "@/lib/model-gateway/billing-contract";
+import { AWAITING_CREDIT_ALLOCATION_LABEL, isGatewayOrderAwaitingCapacity } from "@/lib/model-gateway/scan-payment-contract";
 import styles from "./ScanPaymentDialog.module.css";
 
 export type ScanPaymentPlan = { code: string; name: string; priceCents: number; creditCents: number };
@@ -11,6 +11,7 @@ export type ScanPaymentProvider = "alipay" | "wechat";
 export type ScanCheckoutOrder = {
   id: string; planCode: string; planName: string; amountCents: number; creditCents: number;
   paymentProvider: string; status: string; paymentUrl: string; qrCodeDataUrl: string | null;
+  creditAllocationState?: string;
   expiresAt: string | null; paidAt: string | null; createdAt: string;
   checkoutMode?: "qr" | "alipay_page"; cashierUrl?: string | null; fallbackCashierUrl?: string | null;
 };
@@ -22,7 +23,8 @@ type Props = {
 const providerNames = { alipay: "支付宝", wechat: "微信支付" };
 const providerList: ScanPaymentProvider[] = ["alipay", "wechat"];
 const money = (cents: number) => (cents / 100).toFixed(2);
-const points = (cents: number) => centsToPoints(cents).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
+// Display only: wallet and order values continue to use integer RMB cents.
+const points = (cents: number) => (cents / 10).toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 
 export function paymentTimeRemaining(expiresAt: string | null, now: number) {
   if (!expiresAt) return null;
@@ -105,12 +107,13 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
   const plan = plans.find(value => value.code === planCode) || plans[0];
   const resumeTarget = resumeActive ? resumeOrderId : undefined;
   const remaining = order ? paymentTimeRemaining(order.expiresAt, now) : null;
-  const paid = order?.status === "paid";
-  const expired = !paid && !!order && (order.status === "expired" || remaining === 0);
+  const awaitingCapacity = isGatewayOrderAwaitingCapacity(order);
+  const paid = order?.status === "paid" && !awaitingCapacity;
+  const expired = !paid && !awaitingCapacity && !!order && (order.status === "expired" || remaining === 0);
   const closed = !paid && !!order && ["closed", "cancelled", "failed"].includes(order.status);
   const manual = !!order && !providerList.includes(order.paymentProvider as ScanPaymentProvider);
-  const qrCode = order?.qrCodeDataUrl && /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/.test(order.qrCodeDataUrl) ? order.qrCodeDataUrl : null;
-  const alipayPage = order?.paymentProvider === "alipay" && order.checkoutMode === "alipay_page";
+  const qrCode = !awaitingCapacity && order?.qrCodeDataUrl && /^data:image\/(?:png|webp|jpeg);base64,[A-Za-z0-9+/=]+$/.test(order.qrCodeDataUrl) ? order.qrCodeDataUrl : null;
+  const alipayPage = !awaitingCapacity && order?.paymentProvider === "alipay" && order.checkoutMode === "alipay_page";
   const cashierUrl = alipayPage ? officialAlipayCashierUrl(order?.cashierUrl) : null;
   const fallbackCashierUrl = alipayPage ? officialAlipayCashierUrl(order?.fallbackCashierUrl) || cashierUrl : null;
   const cashierStatus = cashierLoad?.url === cashierUrl ? cashierLoad?.status : "loading";
@@ -146,7 +149,7 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
 
   const acceptOrder = useCallback((next: ScanCheckoutOrder) => {
     setOrder(next); setNow(Date.now());
-    if (next.status !== "paid" || settledIds.current.has(next.id)) return;
+    if (next.status !== "paid" || isGatewayOrderAwaitingCapacity(next) || settledIds.current.has(next.id)) return;
     settledIds.current.add(next.id);
     window.dispatchEvent(new CustomEvent("sanjie:payment-paid", { detail: { orderId: next.id } }));
     void refreshPaidAccount(next);
@@ -230,7 +233,7 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
       if (!response.ok || !body?.data?.order) throw new Error(body?.error || "支付结果查询失败，请稍后重试。");
       if (body.data.order.id !== current.id) throw new Error("订单信息不一致，请重新查询。");
       setAuthRequired(false); acceptOrder(body.data.order); setError("");
-      if (userInitiated && body.data.order.status === "pending") setNotice(route === "orders" ? "尚未确认到账，请联系管理员核对付款凭证。" : "尚未收到支付确认，请稍后重试。");
+      if (userInitiated && body.data.order.status === "pending" && !isGatewayOrderAwaitingCapacity(body.data.order)) setNotice(route === "orders" ? "尚未确认到账，请联系管理员核对付款凭证。" : "尚未收到支付确认，请稍后重试。");
     } catch (failure) {
       if (!abort.signal.aborted && orderGeneration.current === generation) setError(failure instanceof Error ? failure.message : "支付结果查询失败，请稍后重试。");
     } finally {
@@ -240,12 +243,12 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
 
   useEffect(() => {
     const current = order || (resumeTarget ? { id: resumeTarget, paymentProvider: "alipay" } : null);
-    if (!open || !current || (order && !["pending", "expired"].includes(order.status)) || closed || manual || authRequired) return;
+    if (!open || !current || (order && !["pending", "expired", "awaiting_capacity"].includes(order.status)) || closed || manual || authRequired) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "hidden") void queryOrder(current);
-    }, expired ? 15000 : 5000);
+    }, expired || awaitingCapacity ? 15000 : 5000);
     return () => window.clearInterval(timer);
-  }, [open, order?.id, order?.status, order?.paymentProvider, resumeTarget, expired, closed, manual, authRequired, queryOrder]);
+  }, [open, order?.id, order?.status, order?.paymentProvider, resumeTarget, expired, awaitingCapacity, closed, manual, authRequired, queryOrder]);
 
   useEffect(() => {
     if (!open || paid || closed || manual) return;
@@ -290,7 +293,7 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
       <div className={styles.content}>
         <p className={styles.planName}>三阶引擎 · {order?.planName || plan?.name || "充值"}</p>
         <p className={styles.amount}><span>¥</span>{money(order?.amountCents ?? plan?.priceCents ?? 0)}</p>
-        <p className={styles.credit}>到账 {points(order?.creditCents ?? plan?.creditCents ?? 0)} 积分</p>
+        <p className={styles.credit}>{awaitingCapacity ? "待分配" : "到账"} {points(order?.creditCents ?? plan?.creditCents ?? 0)} 积分</p>
         {authRequired && !paid ? <div className={styles.result} role="status"><Clock3 size={36} /><h3>登录已失效</h3><p>暂时无法核验支付结果，请勿重复付款。在新窗口登录同一网站账号后，返回此页将自动查询。</p>{order || resumeTarget ? <p>订单号 <code>{order?.id || resumeTarget}</code></p> : null}<a className={styles.cashierFallback} href="/login" target="_blank" rel="noopener noreferrer">在新窗口重新登录</a></div> : !order && resumeTarget ? <div className={styles.result} role="status"><Clock3 size={36} /><h3>正在恢复原订单</h3><p>核验订单 <code>{resumeTarget}</code>，请勿重复付款。</p><button type="button" className={styles.primary} disabled={querying} onClick={() => void queryOrder({ id: resumeTarget, paymentProvider: "alipay" }, true)}>{querying ? "查询中…" : "重新查询原订单"}</button><button type="button" className={styles.manual} disabled={querying} onClick={leaveOrder}>退出此订单恢复</button></div> : !order ? <>
           {plans.length > 1 ? <label className={styles.planPicker}>充值套餐<select aria-label="充值套餐" value={plan?.code || ""} disabled={busy || querying} onChange={event => setPlanCode(event.target.value)}>{plans.map(item => <option key={item.code} value={item.code}>{item.name} · ¥{money(item.priceCents)}</option>)}</select></label> : null}
           <div className={styles.channels} aria-label="支付方式">
@@ -304,7 +307,7 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
           {!loading && !providers.some(item => item.available) ? <p className={styles.hint}>扫码支付暂未开通，可联系管理员人工充值。</p> : <p className={styles.hint}>选择支付方式，使用对应 App 扫码。</p>}
           <button type="button" className={styles.primary} disabled={!provider || busy || querying || loading || !plan} onClick={() => void createOrder()}>{busy ? <><LoaderCircle size={16} className={styles.spinning} />正在生成订单…</> : provider ? `生成${providerNames[provider]}收款码` : "请选择支付方式"}</button>
           <button type="button" className={styles.manual} disabled={busy || querying || !plan} onClick={() => void createOrder(true)}>联系管理员 · 创建人工充值订单</button>
-        </> : paid ? <div className={styles.result} role="status"><span className={styles.successIcon}><Check size={28} /></span><h3>支付成功</h3><p>积分已到账，刷新账户后将自动返回。</p>{notice.includes("刷新失败") ? <button type="button" className={styles.primary} disabled={refreshingAccount} onClick={() => void refreshPaidAccount(order)}>重试刷新账户</button> : <button type="button" className={styles.primary} onClick={onClose}>完成</button>}</div> : expired || closed ? <div className={styles.result} role="status"><Clock3 size={36} /><h3>{expired ? "二维码已过期" : "订单已关闭"}</h3><p>{expired ? "付款入口已关闭，仍会自动核验此订单。已付款请勿重复下单。" : "订单已关闭，已付款可查询支付结果。"}</p><button type="button" className={styles.primary} disabled={querying} onClick={leaveOrder}>重新选择支付方式</button></div> : manual ? <div className={styles.manualOrder}><h3>人工充值 · 等待确认</h3><p>请联系管理员获取收款方式，付款后提供订单号和付款凭证。</p>{order.paymentUrl && /^https:\/\//i.test(order.paymentUrl) ? <a href={order.paymentUrl} target="_blank" rel="noopener noreferrer">打开收款页面</a> : null}<p>订单号<code>{order.id}</code></p></div> : <>
+        </> : awaitingCapacity ? <div className={styles.result} role="status"><Clock3 size={36} /><h3>{AWAITING_CREDIT_ALLOCATION_LABEL}</h3><p>此订单已核验收款，积分暂未计入余额。请勿再次付款；可查询原订单的分配状态，或联系管理员核对。</p><p>订单号 <code>{order.id}</code></p><button type="button" className={styles.primary} onClick={onClose}>关闭</button></div> : paid ? <div className={styles.result} role="status"><span className={styles.successIcon}><Check size={28} /></span><h3>支付成功</h3><p>积分已到账，刷新账户后将自动返回。</p>{notice.includes("刷新失败") ? <button type="button" className={styles.primary} disabled={refreshingAccount} onClick={() => void refreshPaidAccount(order)}>重试刷新账户</button> : <button type="button" className={styles.primary} onClick={onClose}>完成</button>}</div> : expired || closed ? <div className={styles.result} role="status"><Clock3 size={36} /><h3>{expired ? "二维码已过期" : "订单已关闭"}</h3><p>{expired ? "付款入口已关闭，仍会自动核验此订单。已付款请勿重复下单。" : "订单已关闭，已付款可查询支付结果。"}</p><button type="button" className={styles.primary} disabled={querying} onClick={leaveOrder}>重新选择支付方式</button></div> : manual ? <div className={styles.manualOrder}><h3>人工充值 · 等待确认</h3><p>请联系管理员获取收款方式，付款后提供订单号和付款凭证。</p>{order.paymentUrl && /^https:\/\//i.test(order.paymentUrl) ? <a href={order.paymentUrl} target="_blank" rel="noopener noreferrer">打开收款页面</a> : null}<p>订单号<code>{order.id}</code></p></div> : <>
           {alipayPage ? <>
             <div className={`${styles.qrFrame} ${styles.cashierFrame}`}>
               {cashierUrl && cashierStatus !== "failed" ? <iframe key={cashierUrl} src={cashierUrl} title="支付宝官方收银台二维码" width={240} height={280}
@@ -327,7 +330,7 @@ export function ScanPaymentDialog({ open, plans, initialPlanCode, resumeOrderId,
         {notice && !paid ? <p className={styles.notice} role="status">{notice}</p> : null}
         {notice && paid && notice.includes("刷新失败") ? <p className={styles.notice} role="status">{notice}</p> : null}
       </div>
-      <div className={styles.footer}>{order && !paid ? <><span><Clock3 size={12} />{expired ? "已过期" : closed ? "已关闭" : manual ? "人工确认到账" : remaining == null ? "等待支付" : `${Math.floor(remaining / 60).toString().padStart(2, "0")}:${(remaining % 60).toString().padStart(2, "0")}`}</span><button type="button" onClick={() => void queryOrder(order, true)} disabled={querying}><RefreshCw size={12} className={querying ? styles.spinning : ""} />{querying ? "查询中…" : "我已完成支付"}</button></> : <span className={styles.secure}><ShieldCheck size={13} />三阶引擎 · 账户充值</span>}</div>
+      <div className={styles.footer}>{order && !paid ? <><span><Clock3 size={12} />{awaitingCapacity ? "积分待分配" : expired ? "已过期" : closed ? "已关闭" : manual ? "人工确认到账" : remaining == null ? "等待支付" : `${Math.floor(remaining / 60).toString().padStart(2, "0")}:${(remaining % 60).toString().padStart(2, "0")}`}</span><button type="button" onClick={() => void queryOrder(order, true)} disabled={querying}><RefreshCw size={12} className={querying ? styles.spinning : ""} />{querying ? "查询中…" : awaitingCapacity ? "查询分配状态" : "我已完成支付"}</button></> : <span className={styles.secure}><ShieldCheck size={13} />三阶引擎 · 账户充值</span>}</div>
     </div>
   </div>, document.body);
 }

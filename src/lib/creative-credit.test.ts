@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GatewayModel } from "./model-gateway/catalog";
 
-const mocks = vi.hoisted(() => ({ transaction: vi.fn(), wallet: vi.fn(), snapshot: vi.fn(), catalog: vi.fn(), ledger: vi.fn() }));
+const mocks = vi.hoisted(() => ({ transaction: vi.fn(), wallet: vi.fn(), snapshot: vi.fn(), catalog: vi.fn(), ledger: vi.fn(), available: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ prisma: { $transaction: mocks.transaction } }));
+vi.mock("@/lib/model-gateway/billing-hold", () => ({ getGatewayAvailableBalance: mocks.available }));
 vi.mock("@/lib/model-gateway/billing", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/model-gateway/billing")>();
   return { getGatewayBillingSnapshot: mocks.snapshot, listGatewayBillingLedger: mocks.ledger, safeGatewayBillingError: original.safeGatewayBillingError };
@@ -20,13 +21,14 @@ beforeEach(() => {
   mocks.transaction.mockImplementation((work) => work({ gatewayWallet: { findUnique: mocks.wallet } }));
   mocks.snapshot.mockResolvedValue({ userId: "owner", tenantId: "tenant", username: "owner", userName: "用户", planCode: "growth", planName: "增长版", multiplierBps: 12500, ruleVersion: 3, quotedAt: new Date().toISOString() });
   mocks.wallet.mockResolvedValue({ balanceCents: 1003 });
+  mocks.available.mockResolvedValue({ balanceCents: 1003, availableCents: 703, reservedCents: 300 });
   mocks.catalog.mockResolvedValue([model]);
 });
 
 describe("read-only creative credit account DTO", () => {
   it("returns precise balance/current rule and only whitelisted model fields", async () => {
     const result = await getCreativeCredits("owner");
-    expect(result).toMatchObject({ wallet: { balanceCents: 1003, balancePoints: 100.3, exists: true }, plan, catalogError: null, centsPerPoint: 10 });
+    expect(result).toMatchObject({ wallet: { balanceCents: 1003, balancePoints: 100.3, exists: true, availableCents: 703, availablePoints: 70.3, reservedCents: 300, reservedPoints: 30 }, plan, catalogError: null, centsPerPoint: 10 });
     expect(result.models[0]).toMatchObject({ id: model.id, upstreamModel: model.upstreamModel, imageCents: 51, unitCents: 64, unitPoints: 6.4, pricingStatus: "priced" });
     expect(mocks.wallet).toHaveBeenCalledWith({ where: { userId: "owner" }, select: { balanceCents: true } });
     expect(mocks.transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: "RepeatableRead" });
@@ -35,7 +37,8 @@ describe("read-only creative credit account DTO", () => {
   });
   it("reports absent wallet with zero precise balance without opening it", async () => {
     mocks.wallet.mockResolvedValue(null);
-    expect((await getCreativeCredits("owner")).wallet).toEqual({ balanceCents: 0, balancePoints: 0, exists: false });
+    mocks.available.mockResolvedValue({ balanceCents: 0, availableCents: 0, reservedCents: 0 });
+    expect((await getCreativeCredits("owner")).wallet).toEqual({ balanceCents: 0, balancePoints: 0, exists: false, availableCents: 0, availablePoints: 0, reservedCents: 0, reservedPoints: 0 });
     expect(mocks.transaction).toHaveBeenCalledTimes(1);
   });
   it("keeps account balance/rule and an explicit error when runtime catalog fails", async () => {
@@ -72,7 +75,7 @@ describe("own-account ledger DTO", () => {
       apiKeyId: "private-key-id", keyPrefix: "private-key-prefix", actorId: "private-admin-id", reason: "private-internal-note", metadata: { baseUrl: "private-url" }
     }] });
     const result = await getCreativeCreditLedger("owner", 2);
-    expect(mocks.ledger).toHaveBeenCalledWith({ userId: "owner", page: 2, pageSize: 20 });
+    expect(mocks.ledger).toHaveBeenCalledWith({ userId: "owner", page: 2, pageSize: 20, excludeSupplierUsage: true });
     expect(result.items[0]).toMatchObject({ error: "upstream_error", deltaPoints: -6.4, chargedPoints: 6.4, balanceBeforePoints: 100.3, balanceAfterPoints: 93.9 });
     expect(JSON.stringify(result)).not.toContain("private");
   });

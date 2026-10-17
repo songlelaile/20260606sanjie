@@ -9,8 +9,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function createEcommerceVideoStore(root) {
   'use strict';
 
-  var LOGICAL_DB_NAME = 'sz_ecommerce_video_studio';
-  var DB_NAME = LOGICAL_DB_NAME + (root.__SANJIE_ENVIRONMENT ? ':environment:' + encodeURIComponent(String(root.__SANJIE_ENVIRONMENT)) : '');
+  var DB_NAME = 'sz_ecommerce_video_studio';
   var DB_VERSION = 1;
   var ASSET_STORE = 'assets';
   var DRAFT_STORE = 'drafts';
@@ -83,28 +82,12 @@
     return dbPromise;
   }
 
-  function currentAccount() {
-    return root.SZ_WEB_ACCOUNT ? root.SZ_WEB_ACCOUNT.require() : Promise.resolve('');
-  }
-
-  function owned(record, account) {
-    return !!record && (!root.SZ_WEB_ACCOUNT || record.accountKey === account);
-  }
-
-  function referencesAsset(value, id) {
-    if (!value || typeof value !== 'object') return false;
-    if (value.storageRef && value.storageRef.id === id) return true;
-    return Object.keys(value).some(function (key) { return key !== 'blob' && referencesAsset(value[key], id); });
-  }
-
-  function legacyAssetOwned(id, account) {
-    return transact(RUN_STORE, 'readonly', function (store) { return store.getAll(); }).then(function (runs) {
-      return (runs || []).some(function (run) { return owned(run, account) && referencesAsset(run, id); });
-    });
-  }
-
-  function transact(storeName, mode, work) {
-    return open().then(function withDb(db) { return currentAccount().then(function (account) {
+  function transact(storeName, mode, work, expectedAccountKey) {
+    return open().then(function withDb(db) {
+      var accountCheck = expectedAccountKey && root.SZ_WEB_ACCOUNT
+        ? root.SZ_WEB_ACCOUNT.require() : Promise.resolve(expectedAccountKey || '');
+      return accountCheck.then(function checked(account) {
+      if (expectedAccountKey && account !== expectedAccountKey) throw new Error('账号已切换，请切回原账号后继续此视频计划。');
       return new Promise(function transactionPromise(resolve, reject) {
         var tx = db.transaction(storeName, mode);
         var store = tx.objectStore(storeName);
@@ -151,7 +134,8 @@
           fail(tx.error || new Error('本地数据操作已中止。'));
         };
       });
-    }); });
+      });
+    });
   }
 
   function saveAsset(file, metadata) {
@@ -178,46 +162,38 @@
     };
 
     return transact(ASSET_STORE, 'readwrite', function put(store, _tx, account) {
-      if (meta.expectedAccountKey && account !== meta.expectedAccountKey) throw new Error('账号已切换，请切回原账号后继续此视频计划。');
-      if (root.SZ_WEB_ACCOUNT) record.accountKey = account;
+      if (meta.expectedAccountKey) record.accountKey = account;
       return store.put(record);
-    }).then(function saved() {
+    }, meta.expectedAccountKey || '').then(function saved() {
       return toAssetSummary(record);
     });
   }
 
   function getAsset(id) {
-    return currentAccount().then(function (account) {
-      return transact(ASSET_STORE, 'readonly', function get(store) { return store.get(String(id)); }).then(function (record) {
-        if (!root.SZ_WEB_ACCOUNT || !record || owned(record, account)) return record;
-        if (record.accountKey) return undefined;
-        // Old website assets were unowned. Only a run explicitly owned by this
-        // account may establish ownership, and the original record is retained.
-        return legacyAssetOwned(String(id), account).then(function (hasOwner) { return hasOwner ? record : undefined; });
-      });
+    return transact(ASSET_STORE, 'readonly', function get(store) {
+      return store.get(String(id));
     });
   }
 
   function deleteAsset(id) {
-    return getAsset(id).then(function (record) {
-      if (!record) throw new Error('当前账号没有这份素材。');
-      return transact(ASSET_STORE, 'readwrite', function remove(store) { return store.delete(String(id)); });
+    return transact(ASSET_STORE, 'readwrite', function remove(store) {
+      return store.delete(String(id));
     }).then(function removed() { return true; });
   }
 
   function listAssets(options) {
     var opts = options || {};
-    return currentAccount().then(function (account) { return transact(ASSET_STORE, 'readonly', function all(store) {
+    return transact(ASSET_STORE, 'readonly', function all(store) {
       return opts.kind ? store.index('kind').getAll(String(opts.kind)) : store.getAll();
     }).then(function listed(records) {
-      var items = (records || []).filter(function (record) { return owned(record, account); }).sort(function byCreated(a, b) {
+      var items = (records || []).sort(function byCreated(a, b) {
         return String(b.createdAt).localeCompare(String(a.createdAt));
       });
       if (Number.isFinite(Number(opts.limit)) && Number(opts.limit) > 0) {
         items = items.slice(0, Number(opts.limit));
       }
       return opts.includeBlob ? items : items.map(toAssetSummary);
-    }); });
+    });
   }
 
   function toAssetSummary(record) {
@@ -237,7 +213,7 @@
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       storageRef: {
-        dbName: LOGICAL_DB_NAME,
+        dbName: DB_NAME,
         storeName: ASSET_STORE,
         id: record.id
       }
@@ -247,26 +223,27 @@
   function saveDraft(mode, draft) {
     var key = String(mode || '').trim();
     if (!key) return Promise.reject(new TypeError('草稿 mode 不能为空。'));
-    return currentAccount().then(function (account) {
-      var record = { mode: root.SZ_WEB_ACCOUNT ? account + ':' + key : key, data: clonePlain(draft || {}), updatedAt: nowIso() };
-      if (root.SZ_WEB_ACCOUNT) record.accountKey = account;
-      return transact(DRAFT_STORE, 'readwrite', function put(store) { return store.put(record); }).then(function () { return clonePlain(record); });
-    });
+    var record = {
+      mode: key,
+      data: clonePlain(draft || {}),
+      updatedAt: nowIso()
+    };
+    return transact(DRAFT_STORE, 'readwrite', function put(store) {
+      return store.put(record);
+    }).then(function saved() { return clonePlain(record); });
   }
 
   function getDraft(mode) {
-    return currentAccount().then(function (account) {
-      var key = root.SZ_WEB_ACCOUNT ? account + ':' + String(mode) : String(mode);
-      return transact(DRAFT_STORE, 'readonly', function get(store) { return store.get(key); }).then(function (record) {
-        return record && owned(record, account) ? clonePlain(record) : null;
-      });
+    return transact(DRAFT_STORE, 'readonly', function get(store) {
+      return store.get(String(mode));
+    }).then(function loaded(record) {
+      return record ? clonePlain(record) : null;
     });
   }
 
   function deleteDraft(mode) {
-    return currentAccount().then(function (account) {
-      var key = root.SZ_WEB_ACCOUNT ? account + ':' + String(mode) : String(mode);
-      return transact(DRAFT_STORE, 'readwrite', function remove(store) { return store.delete(key); });
+    return transact(DRAFT_STORE, 'readwrite', function remove(store) {
+      return store.delete(String(mode));
     }).then(function removed() { return true; });
   }
 
@@ -276,45 +253,40 @@
     record.id = String(record.id);
     record.updatedAt = nowIso();
     if (!record.createdAt) record.createdAt = record.updatedAt;
-    return transact(RUN_STORE, 'readwrite', function put(store, _tx, account) {
-      if (root.SZ_WEB_ACCOUNT && record.accountKey && record.accountKey !== account) throw new Error('视频记录属于其他账号。');
-      if (root.SZ_WEB_ACCOUNT) record.accountKey = account;
+    return transact(RUN_STORE, 'readwrite', function put(store) {
       return store.put(record);
-    }).then(function saved() { return clonePlain(record); });
+    }, record.purpose === 'production' ? record.accountKey : '').then(function saved() { return clonePlain(record); });
   }
 
   function getRun(id) {
-    return currentAccount().then(function (account) {
-      return transact(RUN_STORE, 'readonly', function get(store) { return store.get(String(id)); }).then(function (record) {
-        return owned(record, account) ? clonePlain(record) : undefined;
-      });
-    });
+    return transact(RUN_STORE, 'readonly', function get(store) {
+      return store.get(String(id));
+    }).then(clonePlain);
   }
 
   function listRuns(options) {
     var opts = options || {};
-    return currentAccount().then(function (account) { return transact(RUN_STORE, 'readonly', function all(store) {
+    return transact(RUN_STORE, 'readonly', function all(store) {
       return opts.status ? store.index('status').getAll(String(opts.status)) : store.getAll();
     }).then(function listed(records) {
-      var items = (records || []).filter(function (record) { return owned(record, account); }).sort(function byUpdated(a, b) {
+      var items = (records || []).sort(function byUpdated(a, b) {
         return String(b.updatedAt).localeCompare(String(a.updatedAt));
       });
       if (Number.isFinite(Number(opts.limit)) && Number(opts.limit) > 0) {
         items = items.slice(0, Number(opts.limit));
       }
       return clonePlain(items);
-    }); });
+    });
   }
 
   function deleteRun(id) {
-    return getRun(id).then(function (record) {
-      if (!record) throw new Error('当前账号没有这条视频记录。');
-      return transact(RUN_STORE, 'readwrite', function remove(store) { return store.delete(String(id)); });
+    return transact(RUN_STORE, 'readwrite', function remove(store) {
+      return store.delete(String(id));
     }).then(function removed() { return true; });
   }
 
   return Object.freeze({
-    DB_NAME: LOGICAL_DB_NAME,
+    DB_NAME: DB_NAME,
     DB_VERSION: DB_VERSION,
     ASSET_STORE: ASSET_STORE,
     DRAFT_STORE: DRAFT_STORE,

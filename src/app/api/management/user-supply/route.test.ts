@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ user: vi.fn(), list: vi.fn(), backfill: vi.fn(), provisioning: vi.fn(), save: vi.fn(), ProvisionError: class extends Error {
+const mocks = vi.hoisted(() => ({ user: vi.fn(), list: vi.fn(), backfill: vi.fn(), reset: vi.fn(), provisioning: vi.fn(), save: vi.fn(), ProvisionError: class extends Error {
   constructor(message: string, readonly status = 503, readonly code = "supply_provisioning_failed") { super(message); }
 } }));
 vi.mock("@/lib/server-session", () => ({ getCurrentUser: mocks.user }));
-vi.mock("@/lib/model-gateway/user-supply", () => ({ listUserSupplyStatus: mocks.list, backfillUserSupplyKeys: mocks.backfill }));
+vi.mock("@/lib/model-gateway/user-supply", () => ({ listUserSupplyStatus: mocks.list, backfillUserSupplyKeys: mocks.backfill, resetUserSupplyProvisioningFailures: mocks.reset }));
 vi.mock("@/lib/model-gateway/sub2api-provisioner", () => ({ getSub2ApiProvisioningView: mocks.provisioning, saveSub2ApiProvisionConfig: mocks.save, Sub2ApiProvisionError: mocks.ProvisionError }));
 import { GET, POST, PUT } from "./route";
 
@@ -31,6 +31,7 @@ describe("administrator user supply management", () => {
     mocks.provisioning.mockReturnValue({ configured: true, missing: [] });
     mocks.backfill.mockResolvedValue(receipt);
     mocks.save.mockResolvedValue(configView);
+    mocks.reset.mockResolvedValue(undefined);
   });
   afterEach(() => vi.unstubAllEnvs());
 
@@ -50,6 +51,7 @@ describe("administrator user supply management", () => {
     expect(mocks.provisioning).not.toHaveBeenCalled();
     expect(mocks.backfill).not.toHaveBeenCalled();
     expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.reset).not.toHaveBeenCalled();
   });
 
   it("projects status fields and never returns stored or provider credentials", async () => {
@@ -165,10 +167,28 @@ describe("administrator user supply management", () => {
     expect(response.status).toBe(200);
     expectPrivate(response);
     expect(mocks.save).toHaveBeenCalledExactlyOnceWith(config);
-    expect(await response.json()).toEqual({ data: configView });
+    expect(await response.json()).toEqual({ data: { ...configView, retryReset: "ready" } });
+    expect(mocks.reset).toHaveBeenCalledOnce();
     expect(mocks.backfill).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
     expect(mocks.provisioning).not.toHaveBeenCalled();
+  });
+
+  it.each(["supply_provisioning_rate_limited", "supply_provisioning_key_count_limit", "supply_provisioning_key_count_exceeded"])("retains the upstream retry limit code %s without exposing provider payloads", async (code) => {
+    mocks.backfill.mockResolvedValue({ ...receipt, failed: 1, errors: [{ userId: "user-1", code, providerResponse: "private-secret" }] });
+    const response = await POST(request());
+    const json = await response.json();
+    expect(json.data.errors).toEqual([{ userId: "user-1", code }]);
+    expect(JSON.stringify(json)).not.toContain("private-secret");
+  });
+
+  it("retains the configuration save receipt when resetting previous failed rows is unavailable", async () => {
+    mocks.reset.mockRejectedValue(new Error("database private-secret"));
+    const response = await PUT(configRequest());
+    expect(response.status).toBe(200);
+    expectPrivate(response);
+    expect(await response.json()).toEqual({ data: { ...configView, retryReset: "unavailable" } });
+    expect(mocks.save).toHaveBeenCalledExactlyOnceWith(config);
   });
 
   it.each([

@@ -1,6 +1,6 @@
 import "server-only";
 import { postJsonToSafeAiEndpoint } from "@/lib/ai-endpoint";
-import { resolveAiProviderModel, resolveHostedUpstreamModel } from "@/lib/ai-provider-catalog";
+import { resolveAiProviderModel } from "@/lib/ai-provider-catalog";
 import type { AiProvider } from "@/lib/types/domain";
 
 export interface AiChatMessage {
@@ -69,7 +69,6 @@ export async function requestAiChat(
   const apiKey = config.apiKey?.trim() ?? "";
   const baseUrl = config.baseUrl.trim();
   const model = resolveAiProviderModel(config.provider, config.model, baseUrl);
-  const upstreamModel = resolveHostedUpstreamModel(config.provider, model, baseUrl);
   if (!apiKey) throw new AiChatServiceError("AI API Key 尚未保存", "config");
   if (!baseUrl) throw new AiChatServiceError("AI Base URL 尚未配置", "config");
   if (!model) throw new AiChatServiceError("AI 模型名称尚未配置", "config");
@@ -86,7 +85,7 @@ export async function requestAiChat(
           "content-type": "application/json"
         },
         body: JSON.stringify({
-          model: upstreamModel,
+          model,
           messages: request.messages,
           ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
           ...(typeof request.maxTokens === "number" ? { max_tokens: request.maxTokens } : {})

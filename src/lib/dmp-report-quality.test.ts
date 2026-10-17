@@ -81,52 +81,6 @@ describe("DMP effective report quality", () => {
     expect(result.missing).toEqual([]);
   });
 
-  it("audits same-ID subject and competitor period rows by role without borrowing the other side", () => {
-    const itemId = "593063365092";
-    const sameIdentity: DmpCanonicalReport = {
-      schema_version: "3.0",
-      title: "同商品双角色报告",
-      item_id: itemId,
-      period: "2026-08-01 至 2026-08-02",
-      tables: [
-        {
-          name: "报告总览",
-          columns: ["项目", "主体", "对手", "范围"],
-          rows: [{ cells: ["商品ID", itemId, itemId, ""] }]
-        },
-        {
-          name: "商品与成功品",
-          columns: ["角色", "商品ID", "商品标题"],
-          rows: [
-            { cells: ["主体", itemId, "主体口径"] },
-            { cells: ["目标对手", itemId, "对手口径"] }
-          ]
-        },
-        {
-          name: "周期汇总",
-          columns: ["商品ID", "对象", "总GMV", "付费成交额", "推广消耗", "费比", "ROI", "PPC", "付费金额占比", "全域ROAS"],
-          rows: [
-            { cells: [itemId, "主体", "100", "50", "10", "0.1", "5", "2", "0.5", "10"] },
-            { cells: [itemId, "目标对手", "200", "80", "20", "0.1", "4", "", "0.4", "10"] }
-          ]
-        },
-        {
-          name: "日GMV与费比",
-          columns: ["日期", "主体日GMV", "对手日GMV"],
-          rows: [
-            { cells: ["2026-08-01", "50", "100"] },
-            { cells: ["2026-08-02", "50", "100"] }
-          ]
-        }
-      ]
-    };
-
-    const result = assessDmpEffectiveReportQuality(sameIdentity, "complete");
-
-    expect(result.effectiveQuality).toBe("partial");
-    expect(result.missing.map(({ role, label }) => `${role}${label}`)).toEqual(["对手PPC"]);
-  });
-
   it("never mutates legacy report text while evaluating its effective quality", () => {
     const legacy = report(completeRows.slice(0, 3));
     const before = JSON.stringify(legacy);

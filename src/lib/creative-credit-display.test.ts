@@ -43,7 +43,7 @@ class Node {
   setAttribute(name: string, value: string) { this.attributes[name] = value; }
   getAttribute(name: string) { return this.attributes[name] ?? null; }
 }
-type Spec = { kind: string; model?: string; count?: number; requests?: number[]; channel?: string; extraAnalysis?: boolean; detail?: string; reservationPoints?: number; perRequestReservation?: boolean };
+type Spec = { kind: string; model?: string; count?: number; requests?: number[]; channel?: string; extraAnalysis?: boolean; detail?: string; reservationPoints?: number; perRequestReservation?: boolean; billingMode?: string };
 type Quote = { text: string; detail: string; estimatedPoints?: number; platformPoints?: number };
 function harness(response: () => Promise<Response> = async () => Response.json({ data: fixture() })) {
   let now = 1000;
@@ -105,7 +105,7 @@ describe("creative credit display uses live prices without executing or charging
     await h.api.ready(); expect(h.fetch).toHaveBeenCalledTimes(1);
     h.advance(4999); await h.api.ready(); expect(h.fetch).toHaveBeenCalledTimes(1);
     h.advance(1); await Promise.all([h.api.ready(), h.api.ready()]);
-    expect(h.fetch).toHaveBeenCalledTimes(2); expect(note.textContent).toContain("本次预计 10 积分");
+    expect(h.fetch).toHaveBeenCalledTimes(2); expect(note.textContent).toContain("提交扣 10 积分");
     h.advance(10000); await h.api.ready(); expect(h.fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -191,9 +191,9 @@ describe("creative credit display uses live prices without executing or charging
     const chat = h.api.describe({ kind: "chat", model: "chat-public", channel: "platform_wallet" });
     expect(chat.estimatedPoints).toBeUndefined(); expect(chat.platformPoints).toBeUndefined();
     expect(chat.text).toContain("输入 0.2 / 输出 0.3 积分/千 Token");
-    expect(chat.detail).toContain("无法给出固定总积分"); expect(chat.detail).toContain("输入 0.2、输出 0.3");
+    expect(chat.detail).toContain("按输入与输出上限报价"); expect(chat.detail).toContain("输入 0.2、输出 0.3");
     const image = h.api.describe({ kind: "image", model: "image-public", count: 1, extraAnalysis: true, channel: "preview" });
-    expect(image.estimatedPoints).toBe(5.1); expect(image.detail).toContain("未计入图片或视频估算");
+    expect(image.estimatedPoints).toBe(5.1); expect(image.detail).toContain("未计入图片或视频报价");
   });
 
   it("updates one annotation in place after ready and plan changes, with safe plain text and hidden tracking", async () => {
@@ -202,7 +202,7 @@ describe("creative credit display uses live prices without executing or charging
     const small = h.api.annotate(node, { kind: "image", model: "image-public", channel: "platform_wallet", detail: "<b>分片说明</b>" });
     expect(small.textContent).toContain("本次积分待确认"); expect(node.parentNode?.style.display).toBe("none");
     expect(h.observers[0].options).toEqual({ attributes: true, attributeFilter: ["hidden", "style", "class", "aria-hidden"] });
-    await h.api.ready(); expect(small.textContent).toContain("本次预计 5.1 积分");
+    await h.api.ready(); expect(small.textContent).toContain("提交扣 5.1 积分");
     node.hidden = false; h.observers[0].callback(); expect(node.parentNode?.style.display).toBe("inline-flex");
     h.api.annotate(node, { kind: "image", model: "image-public", requests: [1, 1], channel: "preview", detail: "<b>分片说明</b>" });
     expect(host.children).toHaveLength(1); expect(node.parentNode?.children).toEqual([node, small]); expect(h.created).toHaveLength(2);
@@ -261,13 +261,13 @@ describe("creative credit display uses live prices without executing or charging
   it("keeps analysis visible when a combined action has no images left without quoting zero", async () => {
     const h = harness(); await h.api.ready();
     const quote = h.api.describe({ kind: "image", model: "image-public", requests: [], extraAnalysis: true, channel: "platform_wallet" });
-    expect(quote.text).toBe("分析按实际 Token 计费"); expect(quote.estimatedPoints).toBeUndefined();
+    expect(quote.text).toBe("分析按报价提交扣积分"); expect(quote.estimatedPoints).toBeUndefined();
   });
 
   it("shows verified native reservations without presenting them as the final charge", async () => {
     const h = harness(); await h.api.ready();
-    expect(h.api.describe({ kind: "video", channel: "platform_wallet", reservationPoints: 30 } as Spec)).toMatchObject({ text: "提交预占 30 积分" });
-    const quote = h.api.describe({ kind: "video", count: 3, channel: "platform_wallet", reservationPoints: 30, perRequestReservation: true } as Spec);
+    expect(h.api.describe({ kind: "video", channel: "platform_wallet", billingMode: "reservation", reservationPoints: 30 } as Spec)).toMatchObject({ text: "提交预占 30 积分" });
+    const quote = h.api.describe({ kind: "video", count: 3, channel: "platform_wallet", billingMode: "reservation", reservationPoints: 30, perRequestReservation: true } as Spec);
     expect(quote.text).toBe("每镜最多预占 30 积分"); expect(quote.detail).toContain("预占不代表最终费用");
     for (const reservationPoints of [0, .01, -1, Infinity, 214748365]) expect(h.api.describe({ kind: "video", channel: "platform_wallet", reservationPoints } as Spec).text).toBe("本次积分待确认");
   });
@@ -345,7 +345,7 @@ describe("video studio credit annotations follow the actual action", () => {
   });
   it("shows native reservation points next to the actual submit and removes local controls' captions", async () => {
     const { api } = await video();
-    Object.assign(api.state.modelCatalog[0], { nativePlatform: true, reservationCents: 300 });
+    Object.assign(api.state.modelCatalog[0], { nativePlatform: true, billingMode: "reservation", reservationCents: 300 });
     api.label();
     expect(api.dom.primaryAction.parentNode.children[1].textContent).toContain("提交预占 30 积分");
     expect(api.dom.confirmReview.parentNode.children[1].textContent).toContain("提交预占 30 积分");
@@ -355,7 +355,7 @@ describe("video studio credit annotations follow the actual action", () => {
   });
   it("quotes only reachable pending AI shots when continuing or retrying a production plan", async () => {
     const { h, api } = await video();
-    Object.assign(api.state.modelCatalog[0], { nativePlatform: true, reservationCents: 300 });
+    Object.assign(api.state.modelCatalog[0], { nativePlatform: true, billingMode: "reservation", reservationCents: 300 });
     const plan = { shots: [
       { id: "done", kind: "ai", productKey: "seedance-2.0" },
       { id: "failed", kind: "ai", productKey: "seedance-2.0" },
@@ -365,10 +365,10 @@ describe("video studio credit annotations follow the actual action", () => {
     const run = { plan, shotRuns: [{ id: "done", status: "succeeded" }, { id: "failed", status: "failed" }, { id: "pending", status: "pending" }] };
     expect(api.resume(run)).toEqual({ kind: "local" });
     const retry = api.resume(run, "failed");
-    expect(retry).toMatchObject({ kind: "video", count: 2, reservationPoints: 30, perRequestReservation: true });
+    expect(retry).toMatchObject({ kind: "video", count: 2, billingMode: "reservation", reservationPoints: 30, perRequestReservation: true });
     expect(h.api.describe(retry).text).toBe("每镜最多预占 30 积分");
     run.shotRuns[1].status = "succeeded";
-    expect(api.resume(run)).toMatchObject({ count: 1, reservationPoints: 30 });
+    expect(api.resume(run)).toMatchObject({ count: 1, billingMode: "reservation", reservationPoints: 30 });
     run.shotRuns[2].status = "succeeded";
     expect(api.resume(run)).toEqual({ kind: "local" });
     expect(api.production({ shots: [{ kind: "local" }] })).toEqual({ kind: "local" });

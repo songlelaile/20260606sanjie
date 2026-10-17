@@ -8,9 +8,13 @@
     /* Hosted configuration is opened from the outer account menu. */
     #openConfigBtn, [data-action="config"], [data-action="open-config"] { display: none !important; }
   </style>
+  <style id="archiveHistoryPagingStyle">
+    #archivePagination { grid-template-columns: 1fr auto; margin-top: 12px; }
+    #archivePagination[hidden] { display: none !important; }
+  </style>
   <style id="labStartupStyle">
     #labStartupStatus { display: none; }
-    html[data-lab-startup="pending"] body > :not(#labStartupStatus),
+    html[data-lab-startup="pending"] body > :not(#labStartupStatus):not(#labFirstPaintShell),
     html[data-lab-startup="error"] body > :not(#labStartupStatus) { display: none !important; }
     html[data-lab-startup="pending"] #labStartupStatus,
     html[data-lab-startup="error"] #labStartupStatus {
@@ -36,6 +40,252 @@
     html[data-studio-bootstrap="resource-error"] #labStartupStatus,
     html[data-studio-bootstrap="timeout"] #labStartupStatus { display: flex !important; background: #10170b; color: #f4f4ef; }
   </style>
+  <style id="labFirstPaintStyle">
+    #labFirstPaintShell { display:none; }
+    html[data-lab-first-paint] body > .app,
+    html[data-lab-first-paint][data-lab-startup="pending"] #labStartupStatus { display:none !important; }
+    html[data-lab-first-paint] #labFirstPaintShell { display:block; }
+    #labFirstPaintShell { width:min(1280px,calc(100vw - 48px)); margin:0 auto; padding:32px 0 60px;
+      color:var(--text,#f3edd7); font:14px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+    #labFirstPaintShell * { box-sizing:border-box; }
+    #labFirstPaintShell h1, #labFirstPaintShell h2, #labFirstPaintShell p { margin:0; }
+    #labFirstPaintShell h1 { font-size:34px; line-height:1.4; }
+    #labFirstPaintShell h2 { font-size:16px; }
+    #labFirstPaintShell p { color:var(--muted,#aaa58f); }
+    #labFirstPaintShell button { font:inherit; color:var(--muted,#aaa58f); background:var(--panel,#0d1708);
+      border:1px solid var(--border,#3e431e); border-radius:8px; padding:8px 14px; opacity:.45; }
+    #labFirstPaintShell [data-lfp-family], #labFirstPaintShell [data-lfp-route] { display:none; }
+    html[data-lab-first-paint="studio"] #labFirstPaintShell [data-lfp-family="studio"],
+    html[data-lab-first-paint="creative"] #labFirstPaintShell [data-lfp-family="creative"] { display:block; }
+    html[data-lab-first-paint-route="main"] #labFirstPaintShell [data-lfp-route~="main"],
+    html[data-lab-first-paint-route="detail"] #labFirstPaintShell [data-lfp-route~="detail"],
+    html[data-lab-first-paint-route="ad"] #labFirstPaintShell [data-lfp-route~="ad"],
+    html[data-lab-first-paint-route="batch"] #labFirstPaintShell [data-lfp-route~="batch"],
+    html[data-lab-first-paint-route="buyer"] #labFirstPaintShell [data-lfp-route~="buyer"],
+    html[data-lab-first-paint-route="clothing"] #labFirstPaintShell [data-lfp-route~="clothing"],
+    html[data-lab-first-paint-route="refinement"] #labFirstPaintShell [data-lfp-route~="refinement"] { display:block; }
+    #labFirstPaintShell .lfp-hero { min-height:154px; padding:28px 32px; border:1px solid var(--border,#3e431e);
+      border-radius:8px; background:linear-gradient(135deg,rgba(246,198,95,.12),rgba(13,23,8,.92)); }
+    #labFirstPaintShell .lfp-eyebrow { color:var(--muted,#aaa58f); font-size:11px; margin-bottom:10px; }
+    #labFirstPaintShell .lfp-subtitle { margin-top:8px; font-size:15px; }
+    #labFirstPaintShell .lfp-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; padding-top:18px; }
+    #labFirstPaintShell .lfp-tabs { display:flex; flex-wrap:wrap; gap:6px; }
+    #labFirstPaintShell .lfp-steps { display:flex; list-style:none; gap:6px; margin:20px 0; padding:0; }
+    #labFirstPaintShell .lfp-steps li { flex:1; display:flex; align-items:center; gap:10px; padding:12px;
+      border:1px solid var(--border,#3e431e); border-radius:6px; color:var(--muted,#aaa58f); background:var(--panel,#0d1708); font-size:12px; }
+    #labFirstPaintShell .lfp-steps b { flex:none; width:24px; height:24px; display:grid; place-items:center;
+      border:1px solid var(--border,#3e431e); border-radius:50%; }
+    #labFirstPaintShell .lfp-steps small { display:block; font-size:10px; }
+    #labFirstPaintShell .lfp-workspace { display:grid; grid-template-columns:minmax(320px,.39fr) minmax(0,.61fr); gap:18px; align-items:start; }
+    #labFirstPaintShell .lfp-card { border:1px solid var(--border,#3e431e); background:var(--panel,#0d1708);
+      border-radius:8px; padding:20px; margin-bottom:18px; }
+    #labFirstPaintShell .lfp-drop { border:1px dashed var(--border,#3e431e); border-radius:7px; padding:25px 12px;
+      margin-top:14px; text-align:center; background:var(--bg,#080f04); color:var(--muted,#aaa58f); }
+    #labFirstPaintShell .lfp-upload-icon { display:block; font-size:26px; line-height:1.4; margin-bottom:5px; }
+    #labFirstPaintShell .lfp-drop strong { display:block; color:var(--text,#f3edd7); font-size:13px; }
+    #labFirstPaintShell .lfp-field { color:var(--muted,#aaa58f); font-size:12px; margin-top:14px; }
+    #labFirstPaintShell .lfp-placeholder { height:40px; margin-top:6px; border:1px solid var(--border,#3e431e);
+      border-radius:7px; background:var(--panel-2,#16200d); }
+    #labFirstPaintShell .lfp-placeholder.lfp-area { height:112px; }
+    #labFirstPaintShell .lfp-result { min-height:380px; }
+    #labFirstPaintShell .lfp-empty { min-height:260px; display:grid; place-items:center; text-align:center;
+      color:var(--muted,#aaa58f); padding:35px 20px; }
+    #labFirstPaintShell .lfp-loading { padding:12px 0 0; font-size:12px; }
+    html[data-lab-first-paint="studio"] #labFirstPaintShell { max-width:1040px; padding:0 28px 32px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-hero { min-height:0; text-align:center; padding:30px 0 22px; border:0; background:none; }
+    #labFirstPaintShell [data-lfp-family="studio"] h1 { font-size:29px; font-weight:800; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-eyebrow { display:inline-block; padding:4px 12px;
+      border:1px solid var(--border,#3e431e); border-radius:20px; margin-bottom:15px; font-size:12px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-subtitle { font-size:13px; margin-top:10px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-toolbar { padding-top:0; margin-bottom:16px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-steps { justify-content:center; gap:22px; margin:0 0 28px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-steps li { max-width:126px; padding:9px 11px; border-radius:13px; font-size:11px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-workspace { grid-template-columns:minmax(290px,330px) minmax(0,1fr); align-items:stretch; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-card { border-radius:18px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-result { min-height:700px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-drop { min-height:128px; }
+    #labFirstPaintShell [data-lfp-family="studio"] .lfp-empty { min-height:420px; }
+    html[data-lab-first-paint-route="batch"] #labFirstPaintShell .lfp-workspace { grid-template-columns:1fr; }
+    html[data-lab-first-paint-route="batch"] #labFirstPaintShell .lfp-result { min-height:240px; }
+    @media(max-width:900px) {
+      #labFirstPaintShell .lfp-workspace { grid-template-columns:minmax(270px,.39fr) minmax(0,.61fr); }
+      html[data-lab-first-paint="studio"] #labFirstPaintShell { padding:0 18px 30px; }
+      #labFirstPaintShell [data-lfp-family="studio"] .lfp-workspace { grid-template-columns:minmax(270px,305px) minmax(0,1fr); }
+      #labFirstPaintShell [data-lfp-family="studio"] .lfp-steps { gap:12px; }
+    }
+    @media(max-width:650px) {
+      #labFirstPaintShell { width:calc(100vw - 24px); padding:16px 0 32px; }
+      html[data-lab-first-paint="studio"] #labFirstPaintShell { padding:0 12px 24px; }
+      #labFirstPaintShell .lfp-workspace, #labFirstPaintShell [data-lfp-family="studio"] .lfp-workspace { grid-template-columns:1fr; }
+      #labFirstPaintShell .lfp-hero { padding:22px 20px; }
+      #labFirstPaintShell h1, #labFirstPaintShell [data-lfp-family="studio"] h1 { font-size:25px; }
+      #labFirstPaintShell .lfp-steps, #labFirstPaintShell [data-lfp-family="studio"] .lfp-steps { gap:5px; }
+      #labFirstPaintShell .lfp-steps li { padding:7px 5px; gap:5px; font-size:9px; }
+      #labFirstPaintShell .lfp-steps b { width:21px; height:21px; }
+      #labFirstPaintShell [data-lfp-family="studio"] .lfp-result { min-height:350px; }
+      #labFirstPaintShell .lfp-toolbar { flex-wrap:wrap; }
+    }
+  </style>
+  <style id="labStylesGateStyle">
+    :root { color-scheme:dark; --bg:#080f04; --panel:#0d1708; --panel-2:#16200d; --panel-3:#24270e;
+      --text:#f3edd7; --muted:#aaa58f; --border:#3e431e; --accent:#f6c65f; --accent-2:#8fcf7b; --danger:#ef7c67; --on-accent:#182007; }
+    body { margin:0; color:var(--text); background:radial-gradient(circle at 16% 0%,rgba(246,198,95,.12),transparent 34%),
+      radial-gradient(circle at 92% 18%,rgba(143,207,123,.10),transparent 31%),var(--bg); }
+    html.studio-genesis-page, html.studio-genesis-page body { background:var(--bg); }
+    html[data-lab-styles="pending"] body > :not(#labStartupStatus):not(#labFirstPaintShell),
+    html[data-lab-styles="error"] body > :not(#labStartupStatus) { display:none !important; }
+    html[data-lab-styles="pending"]:not([data-lab-first-paint]) #labStartupStatus,
+    html[data-lab-styles="error"] #labStartupStatus { display:flex; min-height:240px; padding:32px; box-sizing:border-box;
+      align-items:center; justify-content:center; flex-direction:column; gap:16px;
+      color:var(--muted); font:14px/1.6 system-ui,sans-serif; text-align:center; }
+  </style>
+  <script id="labStyleReadyScript">
+    (() => {
+      const html = document.documentElement;
+      html.dataset.labStyles = 'pending';
+      let state = 'pending';
+      const waiting = [];
+      const renderError = () => {
+        if (state !== 'error') return;
+        if (window.SZ_LAB_FIRST_PAINT) window.SZ_LAB_FIRST_PAINT.styleFailed();
+        if (window.SZ_LAB_STARTUP) { window.SZ_LAB_STARTUP.fail('工作台资源加载失败，请重新加载。'); return; }
+        if (window.SZ_LAB_FIRST_PAINT) return;
+        const status = document.getElementById('labStartupStatus');
+        if (!status) return;
+        status.replaceChildren(); status.setAttribute('role', 'alert');
+        const heading = document.createElement('h2'); heading.textContent = '创作工作台暂未就绪';
+        const detail = document.createElement('p'); detail.textContent = '工作台资源加载失败，请重新加载。';
+        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新加载';
+        retry.addEventListener('click', () => location.reload()); status.append(heading, detail, retry);
+      };
+      window.SZ_LAB_STYLES = Object.freeze({
+        isReady() { return state === 'ready'; },
+        whenReady(callback) { if (state === 'ready') callback(); else if (state === 'pending') waiting.push(callback); },
+        loaded(link) {
+          if (state !== 'pending' || link !== document.getElementById('labWorkspaceStyles') || link.rel !== 'stylesheet') return;
+          link.media = 'all';
+          state = 'ready'; html.dataset.labStyles = 'ready';
+          for (const callback of waiting.splice(0)) callback();
+          // CSS-only hidden controls may have been annotated while the sheet was pending.
+          // This existing display refresh does not submit a model request.
+          if (window.SZCreativeCreditHints && typeof window.SZCreativeCreditHints.refresh === 'function') window.SZCreativeCreditHints.refresh();
+        },
+        failed(link) {
+          if (state !== 'pending' || link !== document.getElementById('labWorkspaceStyles')) return;
+          state = 'error'; waiting.length = 0; html.dataset.labStyles = 'error'; renderError();
+        },
+        bodyReady: renderError
+      });
+    })();
+  </script>
+  <script id="labFirstPaintScript">
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const studio = params.get('studio') === '1';
+      const creative = !studio && params.get('mode') === 'creative';
+      if (!studio && !creative) return;
+      const tools = { clothing:'DIY成图', buyer:'买家秀', refinement:'产品精修' };
+      const route = studio ? params.get('batch') === '1' ? 'batch' : params.get('type') === 'ad' ? 'ad'
+        : params.get('mode') === 'detail' ? 'detail' : 'main'
+        : Object.hasOwn(tools, params.get('tool')) ? params.get('tool') : 'clothing';
+      const titles = { main:'主图生图实验室', detail:'详情生图实验室', ad:'超现实广告图实验室', batch:'批量任务', ...tools };
+      const html = document.documentElement;
+      html.dataset.labFirstPaint = studio ? 'studio' : 'creative';
+      html.dataset.labFirstPaintRoute = route;
+      document.title = '少壮AI · ' + titles[route];
+      let measurementScheduled = false;
+      let completed = false;
+      let waitingForStyles = false;
+      let restoredOutcome;
+      let startupTimer;
+      let failureKind = '';
+      let failureMessage = '';
+      const renderFailure = () => {
+        if (!failureKind) return;
+        const status = document.getElementById('labStartupStatus');
+        if (!status) return;
+        status.replaceChildren();
+        status.setAttribute('role', 'alert');
+        const heading = document.createElement('h2'); heading.textContent = titles[route] + '暂未就绪';
+        const detail = document.createElement('p'); detail.textContent = failureMessage;
+        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新加载';
+        retry.addEventListener('click', () => location.reload());
+        status.append(heading, detail, retry);
+      };
+      const fail = (message, kind) => {
+        if (completed || failureKind === 'fatal' && kind === 'timeout') return;
+        clearTimeout(startupTimer);
+        failureKind = kind;
+        failureMessage = message;
+        html.dataset.labFirstPaintFailure = kind;
+        html.dataset.labStartup = 'error';
+        renderFailure();
+      };
+      window.SZ_LAB_FIRST_PAINT = Object.freeze({
+        styleFailed() { fail('工作台资源加载失败，请重新加载。', 'fatal'); },
+        bodyReady() {
+          renderFailure();
+          this.measure();
+        },
+        measure() {
+          if (measurementScheduled || completed || typeof requestAnimationFrame !== 'function') return;
+          measurementScheduled = true;
+          requestAnimationFrame(() => {
+            if (!completed && !failureKind && html.dataset.labStartup !== 'error' && document.getElementById('labFirstPaintShell')) html.dataset.labShellPaintMs = performance.now().toFixed(1);
+          });
+        },
+        complete(outcome = 'restored') {
+          if (completed) return true;
+          if (failureKind === 'fatal') return false;
+          restoredOutcome = outcome;
+          if (window.SZ_LAB_STYLES && !window.SZ_LAB_STYLES.isReady()) {
+            if (!waitingForStyles) {
+              waitingForStyles = true;
+              window.SZ_LAB_STYLES.whenReady(() => this.complete(restoredOutcome));
+            }
+            return false;
+          }
+          clearTimeout(startupTimer);
+          completed = true;
+          html.dataset.labWorkspaceMs = performance.now().toFixed(1);
+          html.dataset.labWorkspaceState = outcome === 'error' ? 'error' : 'restored';
+          if (studio && failureKind === 'timeout' && html.dataset.labStartup === 'error') delete html.dataset.labStartup;
+          delete html.dataset.labFirstPaintFailure;
+          delete html.dataset.labFirstPaint;
+          delete html.dataset.labFirstPaintRoute;
+          const shell = document.getElementById('labFirstPaintShell');
+          if (shell) shell.remove();
+          return true;
+        }
+      });
+      // Product-first routes have their own restoration flow. Keep the static
+      // presentation bounded even when its deferred view module never executes.
+      if (studio) {
+        const ownedResource = (value, extension) => {
+          if (typeof value !== 'string' || !value.trim()) return false;
+          try {
+            const root = new URL('../../', location.href), resource = new URL(value, location.href);
+            return resource.protocol === root.protocol && resource.host === root.host
+              && resource.pathname.startsWith(root.pathname) && extension.test(resource.pathname);
+          } catch (_) { return false; }
+        };
+        window.addEventListener('error', event => {
+          const target = event.target;
+          const script = target && target.tagName === 'SCRIPT' && ownedResource(target.src, /\.js$/i);
+          const stylesheet = target && target.tagName === 'LINK'
+            && String(target.rel || '').toLowerCase().split(/\s+/).includes('stylesheet') && ownedResource(target.href, /\.css$/i);
+          const runtime = target === window && ownedResource(event.filename, /\.js$/i);
+          if (script || stylesheet || runtime) fail('工作台资源加载失败，请重新加载。', 'fatal');
+        }, true);
+        document.addEventListener('DOMContentLoaded', () => {
+          renderFailure();
+          // Resource downloads finish before restoration starts. A slow parser
+          // must not consume the account/draft restoration deadline.
+          if (!completed && !failureKind) startupTimer = setTimeout(() => fail('工作台加载超时，请重新加载。', 'timeout'), 30000);
+        }, { once:true });
+      }
+    })();
+  </script>
   <script id="labStartupScript">
     (() => {
       const params = new URLSearchParams(location.search);
@@ -78,7 +328,16 @@
         status.append(heading, detail, retry);
       };
       let waitingForConfig = false;
-      const finish = () => { if (!canFinish()) return; clearTimeout(timer); failureKind = ''; html.dataset.labStartup = 'ready'; };
+      let waitingForStyles = false;
+      const finish = () => {
+        if (!canFinish()) return;
+        if (window.SZ_LAB_STYLES && !window.SZ_LAB_STYLES.isReady()) {
+          if (!waitingForStyles) { waitingForStyles = true; window.SZ_LAB_STYLES.whenReady(finish); }
+          return;
+        }
+        clearTimeout(timer); failureKind = ''; html.dataset.labStartup = 'ready';
+        if (window.SZ_LAB_FIRST_PAINT) window.SZ_LAB_FIRST_PAINT.complete();
+      };
       window.SZ_LAB_STARTUP = {
         ready() {
           if (!canFinish()) return;
@@ -193,29 +452,57 @@
         if (failure) renderFailure();
         else if (html.dataset.studioBootstrap === 'pending') renderPending();
       }, { once: true });
-      // Start before external requests: a blocked tail script can delay DCL.
-      startTimer();
+      // Preserve the live restoration deadline after scripts and parser complete.
+      document.addEventListener('DOMContentLoaded', () => {
+        if (html.dataset.studioBootstrap === 'pending') startTimer();
+      }, { once: true });
     })();
   </script>
-  <script src="/creative/web-chrome.js?v=20261017-studio-optimize-v2"></script>
-  <link rel="stylesheet" href="promptlab.css?v=20261016-task-status-v2">
-  <link rel="stylesheet" href="reference-detail-blueprint.css?v=20260902-reference-detail-autonomous-release-v1">
-  <link rel="stylesheet" href="aesthetic-mirror.css?v=20261014-v1">
-  <link rel="stylesheet" href="link-image.css?v=task-list-cleanup-20261016-v1">
-  <script>if(new URLSearchParams(location.search).get('mode')==='mirror')document.documentElement.classList.add('aesthetic-mirror-page');</script>
-  <link rel="stylesheet" href="creative-tools.css?v=20261001-web-creative-tools-v1">
-  <link rel="stylesheet" href="studio-genesis.css?v=task-list-cleanup-20261016-v1">
-  <link rel="stylesheet" href="scene-extension.css?v=20261002-scene-v1">
-  <link rel="stylesheet" href="studio-legacy-layout.css?v=20261017-studio-optimize-v1">
-  <link rel="stylesheet" href="image-upload.css?v=20261002-upload-v4">
-  <link rel="stylesheet" href="viral-workflow-layout.css?v=20261017-studio-optimize-v1">
-  <link rel="stylesheet" href="creative-credit-hints.css?v=20261010-api-credit-v1">
-  <link rel="stylesheet" href="sku-region-ui.css?v=20261012-sku-region-v1">
-  <link rel="stylesheet" href="./workspace-ux.css?v=20261017-studio-optimize-v3">
+  <link rel="preload" as="script" href="/creative/web-chrome.js?v=20261017-studio-optimize-v2" fetchpriority="high">
+  <link rel="preload" as="script" href="studio-prerequisites-20261009-v1.js?v=20261017-image-studio-optimize-v1">
+  <link rel="preload" as="script" href="viral-series-contract.js?v=20260721-v1875-viral-20">
+  <link rel="preload" as="script" href="studio-runtime-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1">
+  <link rel="preload" as="script" href="promptlab.js?v=20261017-image-studio-optimize-v1">
+  <link rel="preload" as="script" href="studio-views-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1">
+  <link id="labWorkspaceStyles" rel="stylesheet" href="studio-workspace-20261009-v1.css?v=20261017-image-studio-optimize-v1" media="print" fetchpriority="high" onload="window.SZ_LAB_STYLES.loaded(this)" onerror="window.SZ_LAB_STYLES.failed(this)">
+  <noscript><link rel="stylesheet" href="studio-workspace-20261009-v1.css?v=20261017-image-studio-optimize-v1"></noscript>
   <script>if(new URLSearchParams(location.search).get('studio')==='1')document.documentElement.classList.add('studio-genesis-page');</script>
+  <link rel="stylesheet" href="sku-region-ui.css?v=20261012-sku-region-v1">
+  <link rel="stylesheet" href="aesthetic-mirror.css?v=20261014-mirror-v2">
+  <link rel="stylesheet" href="link-image.css?v=task-list-cleanup-20261016-v1">
+  <link rel="stylesheet" href="./workspace-ux.css?v=20261017-studio-optimize-v3">
+  <script>if(new URLSearchParams(location.search).get("mode")==="mirror")document.documentElement.classList.add("aesthetic-mirror-page");</script>
 </head>
 <body class="main-lab-mode">
   <div id="labStartupStatus" role="status" aria-live="polite">正在打开创作工作台…</div>
+  <!-- Presentation only: no draft values, material inputs or generation handlers. -->
+  <section id="labFirstPaintShell" inert aria-busy="true" aria-label="正在恢复创作工作台">
+    <div data-lfp-family="studio">
+      <header class="lfp-hero"><div class="lfp-eyebrow">✧ AI 主图 · 详情页 · 广告图</div>
+        <h1 data-lfp-route="main">主图生图实验室</h1><h1 data-lfp-route="detail">详情生图实验室</h1>
+        <h1 data-lfp-route="ad">超现实广告图实验室</h1><h1 data-lfp-route="batch">批量任务</h1>
+        <p class="lfp-subtitle" data-lfp-route="main detail ad">上传产品图，AI 智能分析并帮写拍摄需求，生成多角度、多场景的电商图片</p>
+        <p class="lfp-subtitle" data-lfp-route="batch">一次创建多个商品任务，按各自方案生成。</p>
+      </header>
+      <div class="lfp-toolbar"><div class="lfp-tabs"><button type="button" disabled>生成记录</button></div></div>
+      <ol class="lfp-steps" aria-label="创作步骤"><li><b>1</b><div><small>STEP 01</small>输入</div></li><li><b>2</b><div><small>STEP 02</small>分析中</div></li><li><b>3</b><div><small>STEP 03</small>确认规划</div></li><li><b>4</b><div><small>STEP 04</small>生成中</div></li><li><b>5</b><div><small>STEP 05</small>完成</div></li></ol>
+      <div class="lfp-workspace"><div><section class="lfp-card"><h2>产品图</h2><p>上传清晰的产品图片</p><div class="lfp-drop" aria-disabled="true"><span class="lfp-upload-icon" aria-hidden="true">⇧</span><strong>点击或拖入产品图</strong><small>正在恢复当前账号的产品素材…</small></div></section>
+        <section class="lfp-card"><div class="lfp-tabs"><button type="button" disabled>主图</button><button type="button" disabled>详情图</button><button type="button" disabled>广告图</button></div><div class="lfp-field">图片要求<div class="lfp-placeholder lfp-area" aria-hidden="true"></div></div><div class="lfp-field">生成设置<div class="lfp-placeholder" aria-hidden="true"></div></div></section></div>
+        <section class="lfp-card lfp-result"><h2>生成结果</h2><p>核对每张图片的画面方案后生成</p><div class="lfp-empty" role="status">正在恢复当前账号的草稿与生成方案…</div></section></div>
+    </div>
+    <div data-lfp-family="creative">
+      <header class="lfp-hero"><div class="lfp-eyebrow">少壮图片实验室 · CREATIVE STUDIO</div><h1 data-lfp-route="buyer">买家秀</h1><h1 data-lfp-route="clothing">DIY成图</h1><h1 data-lfp-route="refinement">产品精修</h1>
+        <p class="lfp-subtitle" data-lfp-route="buyer">参考真实商品、模特和场景，制作自然的买家秀图片。</p><p class="lfp-subtitle" data-lfp-route="clothing">从服装原图到试穿与详情套图，逐张确认方案后生成。</p><p class="lfp-subtitle" data-lfp-route="refinement">批量整理产品画面，保留款式、颜色、结构与细节。</p></header>
+      <div class="lfp-toolbar"><div class="lfp-tabs"><button type="button" disabled>DIY成图</button><button type="button" disabled>买家秀</button><button type="button" disabled>产品精修</button></div><p class="lfp-loading" role="status">正在读取统一 API 配置…</p></div>
+      <ol class="lfp-steps" aria-label="创作步骤"><li><b>1</b>上传素材</li><li><b>2</b>整理方案</li><li><b>3</b>确认方案</li><li><b>4</b>生成中</li><li><b>5</b>查看结果</li></ol>
+      <div class="lfp-workspace"><div><section class="lfp-card"><h2 data-lfp-route="buyer clothing">上传同款产品多角度图</h2><h2 data-lfp-route="refinement">上传待精修产品图</h2><div class="lfp-drop" aria-disabled="true"><span class="lfp-upload-icon" aria-hidden="true">⇧</span><strong>点击或拖入产品图</strong><small>正在恢复当前账号的产品素材…</small></div></section>
+        <div data-lfp-route="buyer clothing"><section class="lfp-card"><h2>模特参考图</h2><div class="lfp-drop" aria-disabled="true">正在恢复模特素材…</div></section><section class="lfp-card"><h2>场景参考图</h2><div class="lfp-drop" aria-disabled="true">正在恢复场景素材…</div></section></div>
+        <section class="lfp-card"><h2>生成设置</h2><div class="lfp-field">项目名称<div class="lfp-placeholder" aria-hidden="true"></div></div><div class="lfp-field">生成要求<div class="lfp-placeholder lfp-area" aria-hidden="true"></div></div></section></div>
+        <section class="lfp-card lfp-result"><h2>创作方案与生成结果</h2><div class="lfp-empty" role="status">正在恢复当前账号的草稿与生成方案…</div></section></div>
+    </div>
+  </section>
+  <script id="labFirstPaintMeasure">if (window.SZ_LAB_STYLES) window.SZ_LAB_STYLES.bodyReady(); if (window.SZ_LAB_FIRST_PAINT) window.SZ_LAB_FIRST_PAINT.bodyReady();</script>
+  <script src="/creative/web-chrome.js?v=20261017-studio-optimize-v2"></script>
   <main class="app">
     <header class="hero">
       <div class="hero-brand-block">
@@ -236,7 +523,6 @@
       </div>
       <div class="hero-actions">
         <button id="openArchiveBtn" class="btn ghost archive-entry-btn" type="button" title="查看当前账号保存在这台电脑上的生成记录">生成记录 · 0</button>
-        <button id="openKnowledgeBtn" class="btn ghost knowledge-link" type="button" title="当前账号共享的业务知识库">知识库 · 未导入</button>
         <button id="loadSampleBtn" class="btn ghost" type="button">载入示例</button>
         <button id="openConfigBtn" class="btn primary" type="button" title="在插件启动界面统一管理主图、详情页、SKU 与链接清单的 API">统一 API 设置</button>
       </div>
@@ -500,7 +786,6 @@
         <section id="subjectOrchestrationPanel" class="subject-orchestration-panel" hidden>
           <div class="subject-orchestration-head">
             <div><strong>商品主体子批次</strong><span id="subjectOrchestrationSummary"></span></div>
-            <button id="openProductFitLabBtn" class="btn ghost" type="button">打开商品承接工作台</button>
           </div>
           <label>当前生产主体
             <select id="subjectBatchSelect"></select>
@@ -1438,8 +1723,8 @@
       <div id="archiveLocalRule" class="archive-local-rule">生成结果会自动写入本机档案。回收站保留 7 天，超期自动从本机永久删除；已下载到普通文件夹的副本不受影响。</div>
       <div id="archiveBatchList" class="archive-batch-list" aria-busy="false"></div>
       <div id="archivePagination" class="archive-pagination" hidden>
-        <span id="archivePageStatus"></span>
-        <button id="archiveLoadMoreBtn" class="btn ghost" type="button">加载更多记录</button>
+        <span id="archivePageStatus" role="status" aria-live="polite"></span>
+        <button id="archiveLoadMoreBtn" class="btn ghost" type="button" data-credit-local="true">加载更多记录</button>
       </div>
       <div id="archiveEmpty" class="archive-empty" hidden>
         <strong>正在读取生成记录…</strong>
@@ -1800,7 +2085,7 @@
             <span class="config-dot"></span>
             <div>
               <strong id="configProviderName">少壮托管 / Auto Mode</strong>
-              <span id="configSummaryText">未填写 API Key · 文本：chatGPT5.5 · 生图：image2</span>
+              <span id="configSummaryText">平台供应 · 按积分结算 · 文本：chatGPT5.5 · 生图：image2</span>
             </div>
           </div>
           <div id="configModelChips" class="config-model-chips"></div>
@@ -1820,7 +2105,8 @@
             </select>
           </label>
           <label>API Key
-            <input id="apiKey" type="password" placeholder="托管模型填专属网关 Key；直连模型填对应平台 Key">
+            <input id="apiKey" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off" data-lpignore="true" data-1p-ignore="true" readonly placeholder="网站少壮托管无需填写；自有接口填写对应 Key">
+            <button id="editApiKeyBtn" class="btn secondary" type="button">修改 Key</button>
           </label>
           <label>生图适配器
             <select id="imageAdapter">
@@ -1949,42 +2235,19 @@
       </div>
     </div>
   </div>
-  <script src="../../src/local-import.js"></script>
-  <script src="../../src/business-knowledge.js"></script>
-  <script src="../../src/knowledge-output-contract.js?v=20261012-local-knowledge-v1"></script>
-  <script src="../../src/subject-orchestration.js"></script>
-  <script src="../../src/subject-assets.js"></script>
-  <script src="../../src/reference-detail-contract.js?v=20261012-reference-screenshots-v1"></script>
-  <script src="reference-detail-blueprint.js?v=20261012-reference-screenshots-v1"></script>
-  <script src="reference-detail-batch.js?v=20261002-list-workspace-v1"></script>
-  <script src="image-archive-store.js?v=20261017-studio-optimize-v2"></script>
-  <script src="guide-model-profile.js?v=20261009-sunburst-guide-v1"></script>
+  <script src="studio-prerequisites-20261009-v1.js?v=20261017-image-studio-optimize-v1"></script>
   <script src="viral-series-contract.js?v=20260721-v1875-viral-20"></script>
-  <script src="style-refresh-contract.js?v=20260905-nutrition-catalog-r1"></script>
-  <script src="../../src/reference-detail-interceptor.js"></script>
-  <script src="../../src/reference-detail-background.js?v=20261009-sunburst-guide-v1"></script>
-  <script src="../../src/taobao-sku-background.js"></script>
-  <script src="creative-tools-contract.js?v=20261014-mirror-v1"></script>
-  <script src="aesthetic-mirror-contract.js?v=20261014-v1"></script>
-  <script src="studio-genesis-contract.js?v=20261012-continue-recovery-v2"></script>
-  <script src="scene-extension-contract.js?v=20261002-list-workspace-v1"></script>
-  <script src="/creative/labs/image-prompt-lab/background.js?v=20261017-studio-optimize-v2"></script>
-  <script src="image-upload.js?v=20261002-upload-v3"></script>
-  <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
-  <script src="creative-credit-hints.js?v=20261010-api-credit-v1"></script>
+  <script src="studio-runtime-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1"></script>
   <script src="sku-region-ui.js?v=20261012-sku-region-v1"></script>
   <script src="sku-delivery-store.js?v=20261013-sku-delivery-v1"></script>
-  <script src="sku-durable-receipt.js?v=20261013-sku-durable-v1"></script>
-  <script src="promptlab.js?v=20261017-studio-optimize-v2"></script>
-  <script src="aesthetic-mirror-ui.js?v=20261014-v1"></script>
+  <script src="sku-durable-receipt.js?v=20261013-sku-paid-workspace-v8c"></script>
+  <script src="promptlab.js?v=20261017-image-studio-optimize-v1"></script>
+  <script src="studio-views-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1"></script>
+  <script src="aesthetic-mirror-contract.js?v=20261014-mirror-v2"></script>
+  <script src="aesthetic-mirror-ui.js?v=20261014-mirror-v2"></script>
   <script src="link-list-import.js?v=20261015-v1"></script>
   <script src="link-image-contract.js?v=20261015-v1"></script>
+  <script src="link-image-result-actions.js?v=20261016-shell-v1"></script>
   <script src="link-image-ui.js?v=task-list-cleanup-20261016-v1"></script>
-  <script src="creative-tools-ui.js?v=20261002-credit-hints-v1"></script>
-  <script src="studio-genesis-ui.js?v=20261017-studio-optimize-v2"></script>
-  <script src="scene-extension-ui.js?v=20261002-credit-hints-v1"></script>
-  <script src="studio-legacy-layout.js?v=20261002-list-workspace-v1"></script>
-  <script src="viral-workflow-layout.js?v=20261002-viral-split-v1"></script>
-  <script src="viral-workflow-bridge.js?v=20261002-viral-split-v1"></script>
 </body>
 </html>

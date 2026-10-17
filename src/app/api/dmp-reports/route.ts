@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { ACTIVE_SHOP_COOKIE } from "@/lib/auth";
 import { dmpCanonicalReportIdentity } from "@/lib/dmp-report-library";
 import { toOfficialDmpReportUrl } from "@/lib/dmp-public-origin";
 import {
   assignDmpBusinessReportsShop,
   deleteDmpBusinessReport,
+  getDmpDefaultArchiveShop,
   getDmpBusinessReport,
+  getDmpReportAccess,
+  getDmpReportAccessFromToken,
   listDmpBusinessReportArchivePair,
-  listDmpBusinessReportSummaries,
-  resolveDmpReportRequestContext,
+  listDmpBusinessReports,
   saveDmpBusinessReport,
   DMP_REPORT_ARCHIVE_MAX_BODY_BYTES,
   validCategoryId,
@@ -33,54 +34,65 @@ export function OPTIONS() {
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url);
   const id = requestUrl.searchParams.get("id")?.trim() ?? "";
-  const resolvesArchiveShop = requestUrl.searchParams.get("scope") === "archive-shop";
-  if (resolvesArchiveShop && id) {
+  const scope = requestUrl.searchParams.get("scope")?.trim() ?? "";
+  const resolvesArchiveShop = scope === "archive-shop";
+  const resolvesArchivePair = scope === "archive-pair";
+  if ((resolvesArchiveShop || resolvesArchivePair) && id) {
     return NextResponse.json(
-      { error: "默认归档店铺解析请求不能同时读取报告正文", code: "INVALID_ARCHIVE_SHOP_SCOPE" },
+      {
+        error: resolvesArchiveShop
+          ? "默认归档店铺解析请求不能同时读取报告正文"
+          : "店铺内商品对查询不能同时读取指定报告正文",
+        code: resolvesArchiveShop ? "INVALID_ARCHIVE_SHOP_SCOPE" : "INVALID_ARCHIVE_PAIR_SCOPE"
+      },
       { status: 400, headers: CORS }
     );
   }
-  if (resolvesArchiveShop && !request.headers.get("x-sanjie-session")?.trim()) {
+  const extensionToken = request.headers.get("x-sanjie-session")?.trim() ?? "";
+  if ((resolvesArchiveShop || resolvesArchivePair) && !extensionToken) {
     return NextResponse.json(
-      { error: "默认归档店铺仅供已登录扩展解析", code: "UNAUTHORIZED" },
+      {
+        error: resolvesArchiveShop
+          ? "默认归档店铺仅供已登录扩展解析"
+          : "店铺内商品对查询仅供已登录扩展使用",
+        code: "UNAUTHORIZED"
+      },
       { status: 401, headers: CORS }
     );
   }
-  const context = await resolveRequestContext(request, { resolveExtensionDefaultShop: resolvesArchiveShop });
-  if (!context.ok) return requestContextError(context);
-  if (!id) {
-    if (resolvesArchiveShop) {
-      return NextResponse.json({ data: { shop: context.shop } }, { headers: CORS });
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
+  if (resolvesArchiveShop) {
+    const shop = await getDmpDefaultArchiveShop(access);
+    if (!shop) {
+      return NextResponse.json(
+        { error: "当前登录账号没有可用的默认店铺", code: "SHOP_REQUIRED" },
+        { status: 400, headers: CORS }
+      );
     }
-    if (requestUrl.searchParams.get("scope") === "archive-pair") {
-      const pair = parseArchivePairQuery(requestUrl.searchParams);
-      if (!pair.ok) return NextResponse.json({ error: pair.error }, { status: 400, headers: CORS });
-      const reports = await listDmpBusinessReportArchivePair(context.access, {
-        shopId: context.shop.id,
-        ...pair.value
-      });
-      return NextResponse.json({ data: { reports } }, { headers: CORS });
-    }
-    const listed = await listDmpBusinessReportSummaries(context.access, {
-      shopId: context.shop.id,
-      page: Number(requestUrl.searchParams.get("page") ?? ""),
-      pageSize: Number(requestUrl.searchParams.get("pageSize") ?? "")
-    });
-    return NextResponse.json({
-      data: {
-        reports: listed.summaries,
-        pagination: {
-          page: listed.page,
-          pageSize: listed.pageSize,
-          total: listed.total,
-          totalPages: listed.totalPages,
-          hasNext: listed.hasNext
-        }
-      }
-    }, { headers: CORS });
+    return NextResponse.json({ data: { shop } }, { headers: CORS });
   }
+  if (resolvesArchivePair) {
+    const pair = parseArchivePairQuery(requestUrl.searchParams);
+    if (!pair.ok) {
+      return NextResponse.json(
+        { error: pair.error, code: "INVALID_ARCHIVE_PAIR_SCOPE" },
+        { status: 400, headers: CORS }
+      );
+    }
+    const shopId = request.headers.get("x-sanjie-shop")?.trim() ?? "";
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(shopId)) {
+      return NextResponse.json(
+        { error: "店铺内商品对查询缺少有效的冻结店铺", code: "SHOP_REQUIRED" },
+        { status: 400, headers: CORS }
+      );
+    }
+    const reports = await listDmpBusinessReportArchivePair(access, { shopId, ...pair.value });
+    return NextResponse.json({ data: { reports } }, { headers: CORS });
+  }
+  if (!id) return NextResponse.json({ data: { reports: await listDmpBusinessReports(access) } }, { headers: CORS });
 
-  const report = await getDmpBusinessReport(context.access, id, context.shop.id);
+  const report = await getDmpBusinessReport(access, id);
   if (!report) return NextResponse.json({ error: "报告不存在或无权访问" }, { status: 404, headers: CORS });
   const format = requestUrl.searchParams.get("format");
   if (format === "xlsx" || format === "csv" || format === "html") {
@@ -93,8 +105,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const context = await resolveRequestContext(request);
-  if (!context.ok) return requestContextError(context);
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
   let rawBody: unknown;
   try {
     rawBody = await readJsonWithLimit(request, DMP_REPORT_ARCHIVE_MAX_BODY_BYTES);
@@ -112,25 +124,15 @@ export async function POST(request: Request) {
         quality?: unknown;
         sourceVersion?: unknown;
         sourceShop?: unknown;
-        expectedShop?: unknown;
         archiveMode?: unknown;
         replaceReportId?: unknown;
+        replaceReportCreatedAt?: unknown;
         absorbedReportIds?: unknown;
       }
     | null;
   const sourceShop = parseSourceShop(body?.sourceShop);
   if (!sourceShop.ok) {
     return NextResponse.json({ error: sourceShop.error }, { status: 400, headers: CORS });
-  }
-  const expectedShop = parseExpectedShop(body?.expectedShop);
-  if (!expectedShop.ok) {
-    return NextResponse.json({ error: expectedShop.error, code: "DMP_REPORT_SHOP_MISMATCH" }, { status: 400, headers: CORS });
-  }
-  if (expectedShop.officialShopId !== context.shop.id || sourceShop.value?.shopId !== context.shop.id) {
-    return NextResponse.json(
-      { error: "请求店铺、冻结店铺与报告来源店铺不一致", code: "DMP_REPORT_SHOP_MISMATCH" },
-      { status: 409, headers: CORS }
-    );
   }
   const replacement = parseArchiveReplacement(body);
   if (!replacement.ok) {
@@ -163,11 +165,13 @@ export async function POST(request: Request) {
       error: marketReport ? "类目 ID 或类目范围无效" : competitionReport ? "本店与竞店 ID 无效" : "主体商品与对标商品 ID 无效"
     }, { status: 400, headers: CORS });
   }
+  if (!marketReport && competitorIds.includes(subjectItemId)) {
+    return NextResponse.json({ error: competitionReport ? "本店与竞店 ID 不能相同" : "主体商品与对标商品 ID 不能相同" }, { status: 400, headers: CORS });
+  }
   let report;
   try {
     report = await saveDmpBusinessReport({
-      access: context.access,
-      shopId: context.shop.id,
+      access,
       report: checked.report,
       subjectItemId,
       competitorItemId,
@@ -177,8 +181,14 @@ export async function POST(request: Request) {
       ...(replacement.value ?? {})
     });
   } catch (error) {
-    if (isAtomicReplaceConflict(error) || isHistoryStaleConflict(error)) {
+    if (isHistoryStaleConflict(error)) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 409, headers: CORS });
+    }
+    if (isReportTargetStaleConflict(error)) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 409, headers: CORS });
+    }
+    if (isAtomicReplaceConflict(error)) {
+      return NextResponse.json({ error: error.message }, { status: 409, headers: CORS });
     }
     if (isSourceShopArchiveError(error)) {
       return NextResponse.json({ error: error.message }, { status: error.status, headers: CORS });
@@ -186,12 +196,6 @@ export async function POST(request: Request) {
     throw error;
   }
   const { retention, ...storedReport } = report;
-  if (storedReport.shopId !== context.shop.id) {
-    return NextResponse.json(
-      { error: "保存后的报告店铺与冻结目标不一致", code: "DMP_REPORT_SHOP_MISMATCH" },
-      { status: 409, headers: CORS }
-    );
-  }
   const reportUrl = toOfficialDmpReportUrl(storedReport.id);
   return NextResponse.json({
     data: {
@@ -204,70 +208,83 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const context = await resolveRequestContext(request);
-  if (!context.ok) return requestContextError(context);
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
   const body = await request.json().catch(() => null) as
-    | {
-        reportIds?: unknown;
-        sourceShopId?: unknown;
-        targetShopId?: unknown;
-        reportType?: unknown;
-        subjectItemId?: unknown;
-        competitorItemId?: unknown;
-      }
+    | { reportIds?: unknown; shopId?: unknown }
     | null;
   const reportIds = Array.isArray(body?.reportIds) ? body.reportIds.map(String) : [];
-  const sourceShopId = String(body?.sourceShopId ?? "").trim();
-  if (sourceShopId !== context.shop.id) {
-    return NextResponse.json(
-      { error: "仅可调整当前冻结店铺内的报告", code: "DMP_REPORT_SHOP_MISMATCH" },
-      { status: 409, headers: CORS }
-    );
-  }
   const result = await assignDmpBusinessReportsShop({
-    access: context.access,
-    sourceShopId,
-    targetShopId: String(body?.targetShopId ?? ""),
-    ...(reportIds.length ? { reportIds } : {}),
-    reportType: parseReportType(body?.reportType),
-    subjectItemId: String(body?.subjectItemId ?? ""),
-    competitorItemId: String(body?.competitorItemId ?? "")
+    access,
+    reportIds,
+    shopId: String(body?.shopId ?? "")
   });
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status, headers: CORS });
   return NextResponse.json({ data: { assignment: result } }, { headers: CORS });
 }
 
 export async function DELETE(request: Request) {
-  const context = await resolveRequestContext(request);
-  if (!context.ok) return requestContextError(context);
+  const access = await resolveAccess(request);
+  if (!access) return unauthorized();
   const id = new URL(request.url).searchParams.get("id")?.trim() ?? "";
   if (!id) return NextResponse.json({ error: "缺少报告编号" }, { status: 400, headers: CORS });
-  const deleted = await deleteDmpBusinessReport(context.access, id, context.shop.id);
+  const deleted = await deleteDmpBusinessReport(access, id);
   if (!deleted) return NextResponse.json({ error: "报告不存在或无权删除" }, { status: 404, headers: CORS });
   return NextResponse.json({ data: { id } }, { headers: CORS });
 }
 
-async function resolveRequestContext(
-  request: Request,
-  options: { resolveExtensionDefaultShop?: boolean } = {}
-) {
-  const extensionToken = request.headers.get("x-sanjie-session")?.trim() ?? "";
-  const headerShopId = request.headers.get("x-sanjie-shop")?.trim() ?? "";
-  const cookieShopId = readCookie(request.headers.get("cookie"), ACTIVE_SHOP_COOKIE);
-  const allowDefaultShop = Boolean(extensionToken && options.resolveExtensionDefaultShop);
-  return resolveDmpReportRequestContext({
-    ...(extensionToken ? { extensionToken } : {}),
-    ...(allowDefaultShop ? { allowDefaultShop: true } : {}),
-    // 专用 GET 仅按登录账号解析默认店铺，不能借旧 header 改选；其他扩展请求必须携带已冻结的店铺。
-    // 扩展令牌绝不能借浏览器 cookie 选店；官网 header 与 cookie 同时出现时由严格 resolver 校验一致。
-    ...(extensionToken
-      ? { shopId: allowDefaultShop ? "" : headerShopId }
-      : { browserHeaderShopId: headerShopId, browserCookieShopId: cookieShopId })
-  });
+async function resolveAccess(request: Request) {
+  const extensionToken = request.headers.get("x-sanjie-session");
+  return extensionToken ? getDmpReportAccessFromToken(extensionToken) : getDmpReportAccess();
 }
 
-function requestContextError(context: Extract<Awaited<ReturnType<typeof resolveRequestContext>>, { ok: false }>) {
-  return NextResponse.json({ error: context.error, code: context.code }, { status: context.status, headers: CORS });
+function unauthorized() {
+  return NextResponse.json({ error: "请先登录并开通达摩盘报告权限" }, { status: 401, headers: CORS });
+}
+
+function parseArchivePairQuery(searchParams: URLSearchParams):
+  | {
+      ok: true;
+      value: {
+        reportType: "growth" | "competition" | "market";
+        subjectItemId: string;
+        competitorItemId: string;
+        quality: "complete" | "partial";
+      };
+    }
+  | { ok: false; error: string } {
+  const reportTypeValue = searchParams.get("reportType")?.trim() ?? "";
+  const reportType = reportTypeValue === "growth" || reportTypeValue === "competition" || reportTypeValue === "market"
+    ? reportTypeValue
+    : undefined;
+  const subjectItemId = searchParams.get("subjectItemId")?.trim() ?? "";
+  const competitorItemId = searchParams.get("competitorItemId")?.trim() ?? "";
+  const qualityValue = searchParams.get("quality")?.trim() ?? "";
+  const quality = qualityValue === "complete" || qualityValue === "partial" ? qualityValue : undefined;
+  const competitorIds = competitorItemId.split(",").map((value) => value.trim()).filter(Boolean);
+  const validIdentity = reportType === "market"
+    ? validCategoryId(subjectItemId) && competitorIds.length === 0
+    : reportType === "competition"
+      ? validItemId(subjectItemId)
+        && competitorIds.length >= 1
+        && competitorIds.length <= 3
+        && competitorIds.every(validItemId)
+      : reportType === "growth"
+        && validItemId(subjectItemId)
+        && competitorIds.length === 1
+        && competitorIds.every(validItemId);
+  if (!reportType || !quality || !validIdentity) {
+    return { ok: false, error: "报告类型、商品对或质量参数无效" };
+  }
+  return {
+    ok: true,
+    value: {
+      reportType,
+      subjectItemId,
+      competitorItemId: reportType === "competition" ? competitorIds.join(",") : competitorItemId,
+      quality
+    }
+  };
 }
 
 function parseSourceShop(value: unknown):
@@ -299,82 +316,10 @@ function parseSourceShop(value: unknown):
   };
 }
 
-function parseExpectedShop(value: unknown):
-  | { ok: true; officialShopId: string }
-  | { ok: false; error: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return { ok: false, error: "缺少冻结的官网店铺信息" };
-  }
-  const officialShopId = String((value as { officialShopId?: unknown }).officialShopId ?? "").trim();
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(officialShopId)) {
-    return { ok: false, error: "冻结的官网店铺编号无效" };
-  }
-  return { ok: true, officialShopId };
-}
-
-function parseArchivePairQuery(searchParams: URLSearchParams):
-  | {
-      ok: true;
-      value: {
-        reportType: "growth" | "competition" | "market";
-        subjectItemId: string;
-        competitorItemId: string;
-        quality?: "complete" | "partial";
-      };
-    }
-  | { ok: false; error: string } {
-  const reportType = parseReportType(searchParams.get("reportType"));
-  const subjectItemId = searchParams.get("subjectItemId")?.trim() ?? "";
-  const competitorItemId = searchParams.get("competitorItemId")?.trim() ?? "";
-  const qualityValue = searchParams.get("quality")?.trim() ?? "";
-  const quality = qualityValue === "complete" || qualityValue === "partial" ? qualityValue : undefined;
-  const competitorIds = competitorItemId.split(",").map((id) => id.trim()).filter(Boolean);
-  const validIdentity = reportType === "market"
-    ? validCategoryId(subjectItemId) && competitorIds.length === 0
-    : reportType === "competition"
-      ? validItemId(subjectItemId)
-        && competitorIds.length >= 1
-        && competitorIds.length <= 3
-        && competitorIds.every(validItemId)
-      : reportType === "growth"
-        && validItemId(subjectItemId)
-        && competitorIds.length === 1
-        && competitorIds.every(validItemId);
-  if (!reportType || !validIdentity || (qualityValue && !quality)) {
-    return { ok: false, error: "报告类型、商品对或质量参数无效" };
-  }
-  return {
-    ok: true,
-    value: {
-      reportType,
-      subjectItemId,
-      competitorItemId: reportType === "competition" ? competitorIds.join(",") : competitorItemId,
-      ...(quality ? { quality } : {})
-    }
-  };
-}
-
-function parseReportType(value: unknown) {
-  return value === "growth" || value === "competition" || value === "market" ? value : undefined;
-}
-
-function readCookie(rawCookie: string | null, name: string) {
-  const prefix = `${name}=`;
-  for (const part of String(rawCookie ?? "").split(";")) {
-    const cookie = part.trim();
-    if (!cookie.startsWith(prefix)) continue;
-    try {
-      return decodeURIComponent(cookie.slice(prefix.length)).trim();
-    } catch {
-      return "";
-    }
-  }
-  return "";
-}
-
 function parseArchiveReplacement(body: {
   archiveMode?: unknown;
   replaceReportId?: unknown;
+  replaceReportCreatedAt?: unknown;
   absorbedReportIds?: unknown;
 } | null):
   | {
@@ -383,17 +328,50 @@ function parseArchiveReplacement(body: {
         archiveMode: "replace-latest-pair";
         replaceReportId: string;
         absorbedReportIds: string[];
+      } | {
+        archiveMode: "replace-current-report";
+        replaceReportId: string;
+        replaceReportCreatedAt: string;
       };
     }
   | { ok: false; error: string } {
   const mode = body?.archiveMode;
   if (mode == null || mode === "") {
-    if (body?.replaceReportId != null || body?.absorbedReportIds != null) {
+    if (
+      body?.replaceReportId != null
+      || body?.replaceReportCreatedAt != null
+      || body?.absorbedReportIds != null
+    ) {
       return { ok: false, error: "缺少原子替换模式" };
     }
     return { ok: true };
   }
+  if (mode === "replace-current-report") {
+    if (
+      typeof body?.replaceReportId !== "string"
+      || typeof body?.replaceReportCreatedAt !== "string"
+      || body?.absorbedReportIds != null
+    ) {
+      return { ok: false, error: "当前报告替换目标或版本无效" };
+    }
+    const replaceReportId = body.replaceReportId.trim();
+    const replaceReportCreatedAt = body.replaceReportCreatedAt.trim();
+    if (
+      !replaceReportId
+      || replaceReportId.length > 100
+      || !isCanonicalIsoTimestamp(replaceReportCreatedAt)
+    ) {
+      return { ok: false, error: "当前报告替换目标或版本无效" };
+    }
+    return {
+      ok: true,
+      value: { archiveMode: mode, replaceReportId, replaceReportCreatedAt }
+    };
+  }
   if (mode !== "replace-latest-pair") return { ok: false, error: "报告归档模式无效" };
+  if (body?.replaceReportCreatedAt != null) {
+    return { ok: false, error: "同商品对合并模式不能携带当前报告版本" };
+  }
   if (typeof body?.replaceReportId !== "string" || !Array.isArray(body.absorbedReportIds)) {
     return { ok: false, error: "原子替换目标或吸收报告清单无效" };
   }
@@ -418,6 +396,12 @@ function parseArchiveReplacement(body: {
   };
 }
 
+function isCanonicalIsoTimestamp(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+}
+
 function isSourceShopArchiveError(error: unknown): error is Error & { status: 400 | 404 } {
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
@@ -425,14 +409,20 @@ function isSourceShopArchiveError(error: unknown): error is Error & { status: 40
     && (candidate.status === 400 || candidate.status === 404);
 }
 
-function isAtomicReplaceConflict(error: unknown): error is Error & { status: 409; code: "DMP_REPORT_REPLACE_CONFLICT" } {
+function isAtomicReplaceConflict(error: unknown): error is Error & { status: 409 } {
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
   return candidate.code === "DMP_REPORT_REPLACE_CONFLICT" && candidate.status === 409;
 }
 
-function isHistoryStaleConflict(error: unknown): error is Error & { status: 409; code: "DMP_REPORT_HISTORY_STALE" } {
+function isHistoryStaleConflict(error: unknown): error is Error & { code: "DMP_REPORT_HISTORY_STALE"; status: 409 } {
   if (!(error instanceof Error)) return false;
   const candidate = error as Error & { code?: unknown; status?: unknown };
   return candidate.code === "DMP_REPORT_HISTORY_STALE" && candidate.status === 409;
+}
+
+function isReportTargetStaleConflict(error: unknown): error is Error & { code: "DMP_REPORT_TARGET_STALE"; status: 409 } {
+  if (!(error instanceof Error)) return false;
+  const candidate = error as Error & { code?: unknown; status?: unknown };
+  return candidate.code === "DMP_REPORT_TARGET_STALE" && candidate.status === 409;
 }

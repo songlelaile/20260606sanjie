@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { parseEcbXml } from "./exchange-rate-core.mjs";
 import { tmpdir } from "node:os";
 
 const network = vi.hoisted(() => ({ assertPublicRelayUrl: vi.fn(), relayFetch: vi.fn() }));
@@ -26,6 +27,8 @@ describe("relay server-only configuration", () => {
     directory = await mkdtemp(path.join(tmpdir(), "gateway-relay-test-"));
     vi.stubEnv("MODEL_GATEWAY_CONFIG_FILE", path.join(directory, "private", "relay.json"));
     vi.stubEnv("MODEL_GATEWAY_SHAOZHUANG_API_KEY", "");
+    vi.stubEnv("MODEL_GATEWAY_FX_AUTOMATIC", "0");
+    vi.stubEnv("MODEL_GATEWAY_FX_CACHE_FILE", path.join(directory,"fx.json"));
     vi.stubEnv("MODEL_GATEWAY_SHAOZHUANG_BASE_URL", "");
     network.assertPublicRelayUrl.mockReset().mockResolvedValue({ address: { address: "1.1.1.1", family: 4 } });
     network.relayFetch.mockReset().mockImplementation(async () => Response.json({ data: [{ id: "gpt-5.6-sol" }, { id: "new-unknown" }] }));
@@ -180,4 +183,26 @@ describe("relay server-only configuration", () => {
     await expect(saveRelaySettings({ baseUrl: "http://localhost", apiKey: secret })).rejects.toThrow("HTTPS");
     await expect(stat(getRelayConfigPath())).rejects.toMatchObject({ code: "ENOENT" });
   });
+  it("returns automatic effective FX while preserving the saved manual rate and credential", async () => {
+    await saveRelaySettings({apiKey:secret,usdCnyRate:7.2});
+    const now=new Date();const date=now.toISOString().slice(0,10);
+    const xml=`<gesmes:Envelope xmlns:gesmes="http://www.gesmes.org/xml/2002-08-01" xmlns="http://www.ecb.int/vocabulary/2002-08-01/eurofxref"><gesmes:subject>Reference rates</gesmes:subject><gesmes:Sender><gesmes:name>European Central Bank</gesmes:name></gesmes:Sender><Cube><Cube time="${date}"><Cube currency="USD" rate="1"/><Cube currency="CNY" rate="6.9"/></Cube></Cube></gesmes:Envelope>`;
+    const cache=parseEcbXml(xml,now);await writeFile(process.env.MODEL_GATEWAY_FX_CACHE_FILE!,JSON.stringify(cache));vi.stubEnv("MODEL_GATEWAY_FX_AUTOMATIC","1");
+    expect(await getRelaySettings()).toMatchObject({usdCnyRate:6.9,exchangeRate:{mode:"automatic",status:"ready",id:cache.id}});
+    expect(await getRelayRuntime()).toMatchObject({usdCnyRate:6.9,apiKey:secret});
+    await expect(saveRelaySettings({usdCnyRate:7.5})).rejects.toThrow("不接受手动覆盖");
+    await saveRelaySettings({usdCnyRate:6.9,apiKey:"",baseUrl:"https://relay.example.com/v1"});
+    const disk=JSON.parse(await readFile(getRelayConfigPath(),"utf8"));expect(disk).toMatchObject({usdCnyRate:7.2,apiKey:secret});
+    await saveRelaySettings({models:[manual]});expect(JSON.parse(await readFile(getRelayConfigPath(),"utf8"))).toMatchObject({usdCnyRate:7.2,apiKey:secret});
+    expect(JSON.stringify(await getRelaySettings())).not.toContain(secret);
+    const next=parseEcbXml(xml.replace('rate="6.9"','rate="7.1"'),new Date());await writeFile(process.env.MODEL_GATEWAY_FX_CACHE_FILE!,JSON.stringify(next));
+    expect(await getRelayRuntime()).toMatchObject({usdCnyRate:7.1,exchangeRate:{id:next.id}});
+    expect(network.relayFetch).not.toHaveBeenCalled();
+  });
+  it("shows unavailable automatic FX without falling back to a stored manual rate",async()=>{
+    await saveRelaySettings({apiKey:secret,usdCnyRate:7.2});vi.stubEnv("MODEL_GATEWAY_FX_AUTOMATIC","1");
+    expect(await getRelaySettings()).toMatchObject({usdCnyRate:null,exchangeRate:{mode:"automatic",status:"unavailable"}});
+    await saveRelaySettings({models:[manual]});expect(JSON.parse(await readFile(getRelayConfigPath(),"utf8"))).toMatchObject({usdCnyRate:7.2,apiKey:secret});
+  });
+
 });

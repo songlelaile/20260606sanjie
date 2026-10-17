@@ -15,109 +15,116 @@ const reportPageSource = readFileSync(
 );
 
 describe("DMP report-center workspace layout", () => {
-  it("keeps the existing compact library, card and viewer presentation", () => {
-    for (const className of [
-      "styles.library",
-      "styles.libraryHeader",
-      "styles.headerCopy",
-      "styles.toolbar",
-      "styles.shopManager",
-      "styles.shopSection",
-      "styles.reportGroup",
-      "styles.reportGrid",
-      "styles.reportCard",
-      "styles.reportMain",
-      "styles.cardActions",
-      "styles.searchField"
-    ]) expect(workspaceSource).toContain(className);
-    expect(workspaceSource).toContain('aria-label="店铺档案"');
+  it("removes the explanatory path and three-column introduction completely", () => {
+    expect(workspaceSource).not.toMatch(/dmp-report-path|dmp-business-strip/);
+    expect(workspaceSource).not.toMatch(/使用路径|达摩盘\s*→\s*打爆路径/);
+    expect(workspaceSource).not.toMatch(/双报告归档|统一保存打爆路径与竞争态势分析结果/);
+    expect(workspaceSource).not.toMatch(/公开只读分享|任何拿到链接的人无需登录/);
+    expect(workspaceSource).not.toMatch(/管理员传播分析|传播来源、阅读深度与关注度/);
+    expect(reportPageSource).not.toContain(
+      "统一沉淀打爆路径与竞争态势分析结果"
+    );
+  });
+
+  it("keeps a compact, bounded and scrollable report library", () => {
+    expect(workspaceSource).toContain("styles.library");
+    expect(workspaceSource).toContain("styles.libraryHeader");
+    expect(workspaceSource).toContain("styles.headerCopy");
+    expect(workspaceSource).toContain("styles.toolbar");
+    expect(workspaceSource).toContain("styles.reportGrid");
+    expect(workspaceSource).toContain("styles.reportCard");
+    expect(workspaceSource).toContain("styles.reportMain");
+    expect(workspaceSource).toContain("styles.cardActions");
+    expect(workspaceSource).toContain("styles.searchField");
+    expect(workspaceSource).toMatch(/const \[query, setQuery\] = useState\(""\)/);
+    expect(workspaceSource).toMatch(/const visibleReports = useMemo[\s\S]*reports\.filter/);
     expect(workspaceSource).toContain('type="search"');
-    expect(workspaceSource).toContain('variant="preview"');
-    expect(workspaceSource).toContain("group.subjectThumbnail.url");
-    expect(workspaceSource).toContain('referrerPolicy="no-referrer"');
+    expect(workspaceSource).toContain("onChange={(event) => setQuery(event.target.value)}");
 
     expect(workspaceCss).toMatch(/\.workspace\s*\{[^}]*max-width\s*:/s);
     expect(workspaceCss).toMatch(/\.reportGroups\s*\{[^}]*max-height\s*:/s);
     expect(workspaceCss).toMatch(/\.reportGroups\s*\{[^}]*overflow-y\s*:\s*auto/s);
     expect(workspaceCss).toMatch(/\.reportGrid\s*\{[^}]*grid-template-columns\s*:/s);
     expect(workspaceCss).toMatch(/\.reportMain\s*\{[^}]*text-align\s*:\s*left/s);
+    expect(workspaceCss).toMatch(/\.cardActions\s*\{[^}]*display\s*:\s*(?:flex|grid)/s);
+  });
+
+  it("retains report selection, refresh, sharing and deletion controls", () => {
+    expect(workspaceSource).toContain("onClick={() => selectReport(record)}");
+    expect(workspaceSource).toContain("aria-pressed={activeRecord?.id === record.id}");
+    expect(workspaceSource).toContain("onClick={() => void refreshReports()}");
+    expect(workspaceSource).toMatch(/刷新(?:历史)?/);
+    expect(workspaceSource).toContain("onClick={() => void createShare(selectedRecord)}");
+    expect(workspaceSource).toContain("onClick={() => void createShare(record)}");
+    expect(workspaceSource).toContain("复制分享链接");
+    expect(workspaceSource).toContain("onClick={() => void deleteReport(record)}");
+    expect(workspaceSource).toContain('aria-label="删除报告"');
+  });
+
+  it("keeps the unified latest viewer below the compact library", () => {
+    expect(workspaceSource).toContain(
+      'from "@/components/tools/DmpReportViewer"'
+    );
+    expect(workspaceSource).toMatch(
+      /selectedViewRecord\s*\?\s*<DmpReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s
+    );
+  });
+
+  it("loads an explicit reportId exactly and uses the not-found boundary instead of latest fallback", () => {
+    expect(reportPageSource).toContain("getDmpBusinessReport");
+    expect(reportPageSource).toContain("resolveDmpReportPageSelection");
+    expect(reportPageSource).toContain("requestedReportId && !listedRequestedReport");
+    expect(reportPageSource).toContain("if (!selection) notFound()");
+    expect(reportPageSource).toContain("initialReports={selection.reports}");
+    expect(reportPageSource).toContain("initialSelectedId={selection.selectedReportId}");
+    expect(workspaceSource).toContain("reports.find((record) => record.id === selectedId) ?? null");
+    expect(workspaceSource).not.toContain("reports.find((record) => record.id === selectedId) ?? reports[0]");
+  });
+
+  it("shows the persisted subject thumbnail in both each report card and its canonical group card", () => {
+    expect(workspaceSource).toContain("group.subjectThumbnail.url");
+    expect(workspaceSource).toContain("group.subjectThumbnail.title");
+    expect(workspaceSource).toContain("dmpReportSubjectThumbnail(record)");
+    expect(workspaceSource).toContain("styles.groupThumbnail");
+    expect(workspaceSource).toContain('referrerPolicy="no-referrer"');
     expect(workspaceCss).toMatch(/\.groupThumbnail\s*\{[^}]*height\s*:\s*32px[^}]*width\s*:\s*32px/s);
   });
 
-  it("loads summary page one on every library visit and never selects the first report implicitly", () => {
-    expect(reportPageSource).toContain("listDmpBusinessReportSummaries");
-    expect(reportPageSource).toContain("page: 1");
-    expect(reportPageSource).toContain("pageSize: REPORT_PAGE_SIZE");
-    expect(reportPageSource).toContain("initialReports={listed.summaries}");
-    expect(reportPageSource).toMatch(/requestedReportId\s*\?\s*getDmpBusinessReport\(context\.access, requestedReportId, context\.shop\.id\)\s*:\s*Promise\.resolve\(null\)/s);
-    expect(reportPageSource).toContain('focusReport={query.view === "report"}');
-    expect(reportPageSource).not.toContain("listDmpBusinessReports");
-    expect(reportPageSource).not.toContain("resolveDmpReportPageSelection");
-    expect(workspaceSource).toContain('useState(initialSelectedReport?.id ?? "")');
-    expect(workspaceSource).not.toMatch(/initialReports\[0\]|reports\[0\]/);
-  });
-
-  it("loads one selected body with an exact shop header and lets the latest click win", () => {
-    expect(workspaceSource).toContain('fetch(`/api/dmp-reports?id=${encodeURIComponent(record.id)}`');
-    expect(workspaceSource).toContain('headers: { "x-sanjie-shop": activeShopId }');
-    expect(workspaceSource).toContain("detailRequestSequence.current = requestSequence");
-    expect(workspaceSource).toContain("detailAbortController.current?.abort()");
-    expect(workspaceSource).toContain("signal: controller.signal");
-    expect(workspaceSource).toContain("requestSequence !== detailRequestSequence.current || controller.signal.aborted");
-    expect(workspaceSource).toContain("result.data.report.shopId !== activeShopId");
-    expect(workspaceSource).toContain("正在加载报告正文");
-    expect(workspaceSource).toMatch(/selectedRecord\s*\?\s*<DmpReportViewer\b[^>]*record=\{selectedRecord\}/s);
-    expect(workspaceSource).not.toContain("mergeDmpReportGroupDaily");
-  });
-
-  it("uses an explicit active shop and never falls back to the first shop", () => {
-    expect(reportPageSource).toContain("getActiveShopCookie");
-    expect(reportPageSource).toContain("resolveDmpReportRequestContext({ shopId: activeShopId })");
-    expect(reportPageSource).toContain("activeShopId={context.shop.id}");
-    expect(reportPageSource).not.toContain("shopData.activeShopId");
-    expect(workspaceSource).toContain("initialShops.find((shop) => shop.id === activeShopId) ?? null");
-    expect(workspaceSource).toContain("nextShops.find((shop) => shop.id === activeShopId)");
-    expect(workspaceSource).not.toMatch(/initialShops\[0\]|nextShops\[0\]/);
-  });
-
-  it("paginates summaries without changing the report-card layout", () => {
-    expect(workspaceSource).toContain("initialPagination");
-    expect(workspaceSource).toContain("pagination.hasNext");
-    expect(workspaceSource).toContain("loadMoreReports");
-    expect(workspaceSource).toContain("加载更多");
-    expect(workspaceSource).toContain("已加载 ${reports.length} / 共 ${pagination.total} 份");
-    expect(workspaceSource).toContain("styles.loadMoreRow");
-    expect(workspaceCss).toContain(".loadMoreRow");
-    expect(workspaceSource).not.toContain("!nextReports.some((record) => record.id === selectedId)");
-  });
-
-  it("keeps refresh, share, delete, search and shop-profile controls", () => {
-    expect(workspaceSource).toContain("onClick={() => void refreshReports()}");
-    expect(workspaceSource).toContain("onClick={() => void createShare(selectedRecord)}");
-    expect(workspaceSource).toContain("onClick={() => void createShare(record)}");
-    expect(workspaceSource).toContain("onClick={() => void deleteReport(record)}");
-    expect(workspaceSource).toContain('aria-label="删除报告"');
-    expect(workspaceSource).toContain("saveShopProfile");
+  it("maintains shop profiles, partitions history by shop and lets a canonical group change ownership", () => {
+    expect(workspaceSource).toContain("groupDmpBusinessReportsByShop");
     expect(workspaceSource).toContain("visibleShopGroups.map");
+    expect(workspaceSource).toContain('aria-label="店铺档案"');
+    expect(workspaceSource).toContain("saveShopProfile");
+    expect(workspaceSource).toContain('fetch("/api/dmp-reports"');
+    expect(workspaceSource).toContain('method: "PATCH"');
+    expect(workspaceSource).toContain("dmpReportGroupIdsByShopAndIdentity");
+    expect(workspaceSource).toContain("assignGroupToShop(completeReportIds");
+    expect(workspaceSource).not.toContain("assignGroupToShop(group.records.map");
+    expect(workspaceSource).toContain("shopGroup.shopName");
+    expect(workspaceSource).toContain("styles.groupAssignment");
+    expect(workspaceCss).toMatch(/\.shopManager\s*\{[^}]*grid-template-columns/s);
+    expect(workspaceCss).toMatch(/\.shopSectionHeader\s*\{[^}]*display\s*:\s*flex/s);
+  });
+
+  it("shows each identity group's merged business-date coverage without duplicating the merge path", () => {
+    expect(workspaceSource).toContain("function mergedGroupDateRange");
+    expect(workspaceSource).toContain("mergeDmpReportGroupDaily(records)");
     expect(workspaceSource).toContain("mergedGroupDateRange(group.records)");
+    expect(workspaceSource).toContain("styles.groupCoverage");
+    expect(workspaceCss).toMatch(/\.groupHeader \.groupCoverage\s*\{[^}]*font-variant-numeric\s*:\s*tabular-nums/s);
+    expect(workspaceSource).toMatch(/selectedViewRecord[\s\S]*mergeDmpReportGroupDaily\(group\.records, activeRecord\?\.id\)/);
   });
 
-  it("moves a whole identity group with the lightweight atomic request", () => {
-    expect(workspaceSource).toContain("sourceShopId: activeShopId");
-    expect(workspaceSource).toContain("targetShopId");
-    expect(workspaceSource).toContain("reportType: group.reportType");
-    expect(workspaceSource).toContain("subjectItemId: group.subjectItemId");
-    expect(workspaceSource).toContain("competitorItemId: group.competitorItemId");
-    expect(workspaceSource).toContain("current.filter((record) => summaryGroupKey(record) !== group.key)");
-    expect(workspaceSource).toContain("Math.max(assignedIds.size, Number(assignment.count))");
-    expect(workspaceSource).not.toContain("reportIds, shopId");
-    expect(workspaceSource).not.toContain("dmpReportGroupIdsByShopAndIdentity");
-  });
-
-  it("retains responsive rules for the library, toolbar and cards", () => {
+  it("has explicit responsive rules for the library, toolbar and report grid", () => {
     expect(workspaceCss).toMatch(/@media\s*\(max-width:\s*\d+px\)/);
-    expect(workspaceCss).toMatch(/@media\s*\(max-width:[^)]+\)[\s\S]*\.libraryHeader\s*,\s*\.focusToolbar\s*\{[^}]*flex-direction\s*:\s*column/s);
-    expect(workspaceCss).toMatch(/@media\s*\(max-width:[^)]+\)[\s\S]*\.reportGrid\s*\{[^}]*grid-template-columns\s*:\s*1fr/s);
-    expect(workspaceCss).toMatch(/@media\s*\(max-width:[^)]+\)[\s\S]*\.toolbar\s*\{/s);
+    expect(workspaceCss).toMatch(
+      /@media\s*\(max-width:[^)]+\)[\s\S]*\.libraryHeader\s*,\s*\.focusToolbar\s*\{[^}]*flex-direction\s*:\s*column/s
+    );
+    expect(workspaceCss).toMatch(
+      /@media\s*\(max-width:[^)]+\)[\s\S]*\.reportGrid\s*\{[^}]*grid-template-columns\s*:\s*1fr/s
+    );
+    expect(workspaceCss).toMatch(
+      /@media\s*\(max-width:[^)]+\)[\s\S]*\.toolbar\s*\{/s
+    );
   });
 });

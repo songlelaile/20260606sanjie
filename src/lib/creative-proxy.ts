@@ -24,9 +24,7 @@ const READ_HOST_SUFFIXES = [
   ".qpic.cn",
   ".googleusercontent.com",
   ".openai.com",
-  ".oaistatic.com",
-  ".alicdn.com",
-  ".tbcdn.cn"
+  ".oaistatic.com"
 ];
 
 function isPrivateIp(address: string) {

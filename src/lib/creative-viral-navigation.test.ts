@@ -43,9 +43,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function bridge() {
-  const state = { busy: false, pendingReceiptCount: 0 };
+  const state = { busy: false };
   return { state, canDeactivate: vi.fn<DeactivationBridge["canDeactivate"]>(() => ({ allowed: !state.busy, reason: state.busy ? "任务仍在执行" : undefined })),
-    getTaskState: vi.fn(() => ({ ready: true, busy: state.busy, activeCount: state.busy ? 1 : 0, pendingReceiptCount: state.pendingReceiptCount })),
     activate: vi.fn(async () => ({ ok: true })) };
 }
 
@@ -100,7 +99,7 @@ function harness(initial: Props = { kind: "image", initialSurface: "viral-case" 
   const jsx = (type: unknown, nodeProps: Record<string, unknown>, key?: unknown): JsxNode => ({ type, props: nodeProps, key });
   const exports: Record<string, unknown> = {};
   const mockStyles = new Proxy({}, { get: (_target, name) => String(name) });
-  const context = createContext({ exports, module: { exports }, console, AbortController, setTimeout, clearTimeout,
+  const context = createContext({ exports, module: { exports }, console, AbortController,
     require(name: string) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
@@ -163,7 +162,7 @@ function harness(initial: Props = { kind: "image", initialSurface: "viral-case" 
     tree = Component(props); reconcile();
     for (const entry of pending) { entry.slot.cleanup?.(); entry.slot.cleanup = entry.callback(); }
   }
-  async function flush(rounds = 32) {
+  async function flush(rounds = 12) {
     for (let count = 0; count < rounds; count++) { await Promise.resolve(); if (dirty && !unmounted) render(); }
   }
   const text = (value: RenderValue): string => children(value).map(child => typeof child === "object" && child ? text((child as JsxNode).props.children as RenderValue) : String(child)).join("");
@@ -214,7 +213,7 @@ describe("actual CreativeStudio async navigation and cached iframe lifetime", ()
     expect(h.frames.get("viral-case")).toBe(caseFrame); expect(caseFrame.draft).toBe("案例草稿甲");
     expect(h.frames.get("viral-style")).toBe(styleFrame); expect(styleFrame.draft).toBe("自由共创描述乙");
     expect(h.frames.get("viral-scene")).toBe(sceneFrame); expect(sceneFrame.draft).toBe("场景多角度素材丙");
-    expect(h.frames.size).toBe(4); expect(h.frames.get("main")?.hidden).toBe(true);
+    expect(h.frames.size).toBe(3);
     for (const surface of CREATIVE_VIRAL_SURFACES) expect(h.frames.get(surface.id)?.src).toBe(surface.src);
     expect(caseFrame.hidden).toBe(false); expect(styleFrame.hidden).toBe(true); expect(sceneFrame.hidden).toBe(true);
     expect(styleFrame.tabIndex).toBe(-1); expect(sceneFrame.tabIndex).toBe(-1);
@@ -394,98 +393,67 @@ describe("actual CreativeStudio main/detail/ad and batch request protection", ()
     { id: "batch", label: "批量任务", props: { kind: "image", initialSurface: "main", initialBatch: true } }
   ] satisfies Array<{ id: string; label: string; props: Props }>;
 
-  it.each(cases)("preserves the $id execution frame while internal workspaces remain navigable", async ({ id, props }) => {
+  it.each(cases)("preserves the $id frame while a request is executing", async ({ id, label, props }) => {
     const h = harness(props), frame = [...h.frames.values()].find(item => item.src.includes("studio=1"))!;
     frame.draft = "当前商品与未完成方案"; h.studioDefaults.get(id)!.state.busy = true;
-    for (const target of ["案例裂变", "详情", id === "batch" ? "主图" : "批量任务"]) {
+    for (const target of ["案例裂变", "详情", "生成视频", id === "batch" ? "返回单个创作" : "批量任务"]) {
       h.click(target); await h.flush();
       expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.draft).toBe("当前商品与未完成方案");
-      expect(h.selected(target)).toBe(true); expect(h.router.push).not.toHaveBeenCalled();
-      expect(h.studioDefaults.get(id)!.canDeactivate).not.toHaveBeenCalled(); expect(h.alert()).toBe("");
+      expect(h.selected(label)).toBe(true); expect(h.router.push).not.toHaveBeenCalled(); expect(h.router.replace).not.toHaveBeenCalled();
+      expect(h.alert()).toContain("任务仍在执行");
     }
-    expect(h.studioDefaults.get(id)!.state.busy).toBe(true);
-    // A late callback still owns the same retained execution frame.
-    frame.draft = "原任务生成完成"; expect(h.frames.get(frame.identity)?.draft).toBe("原任务生成完成");
-    h.click("生成视频"); await h.flush();
-    expect(h.router.push).not.toHaveBeenCalled(); expect(h.alert()).toContain("任务仍在执行");
-    h.unmount();
   });
 
-  it("retains an uncertain receipt without stopping navigation or dispatching it again", async () => {
+  it("keeps an uncertain receipt visible and presents its required next action", async () => {
     const h = harness({ kind: "image", initialSurface: "ad" });
-    const frame = h.frames.get("ad")!, task = h.studioDefaults.get("ad")!;
-    frame.draft = "原请求回执"; task.state.pendingReceiptCount = 1;
-    task.canDeactivate.mockReturnValue({ allowed: false, reason: "上一请求回执尚未确认，请先核对服务商任务记录。" });
+    h.studioDefaults.get("ad")!.canDeactivate.mockReturnValue({ allowed: false, reason: "上一请求回执尚未确认，请先核对服务商任务记录。" });
     h.click("主图"); await h.flush();
-    expect(h.selected("主图")).toBe(true); expect(h.frames.get("ad")).toBe(frame); expect(frame.hidden).toBe(true);
-    expect(task.canDeactivate).not.toHaveBeenCalled(); expect(task.activate).not.toHaveBeenCalled();
-    h.click("广告图"); await h.flush();
-    expect(h.selected("广告图")).toBe(true); expect(frame.draft).toBe("原请求回执");
-    expect(task.state.pendingReceiptCount).toBe(1); expect(task.activate).toHaveBeenCalledOnce();
-    expect(task.canDeactivate).not.toHaveBeenCalled(); expect(h.alert()).toBe("");
-    h.unmount();
+    expect(h.selected("广告图")).toBe(true); expect(h.alert()).toContain("先核对服务商任务记录");
+    expect(h.router.replace).not.toHaveBeenCalled();
   });
 
-  it("retains the latest idle draft in its live iframe without invoking an unload save", async () => {
+  it("awaits the latest idle draft save before changing the iframe", async () => {
     const h = harness({ kind: "image", initialSurface: "main" }), frame = [...h.frames.values()][0];
-    frame.draft = "最新商品草稿";
     const waiting = deferred<Permission>(); h.studioDefaults.get("main")!.canDeactivate.mockImplementationOnce(() => waiting.promise);
-    h.click("详情"); await h.flush();
-    expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.hidden).toBe(true); expect(h.selected("详情")).toBe(true);
-    expect(frame.draft).toBe("最新商品草稿"); expect(h.studioDefaults.get("main")!.canDeactivate).not.toHaveBeenCalled();
+    h.click("详情"); await h.flush(3);
+    expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.inert).toBe(true); expect(h.selected("主图")).toBe(true);
+    expect(h.router.replace).not.toHaveBeenCalled();
     waiting.resolve({ allowed: true }); await h.flush(20);
-    expect(h.selected("详情")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame);
+    expect(h.selected("详情")).toBe(true); expect(h.frames.has(frame.identity)).toBe(false);
     expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=detail", { scroll: false });
-    h.unmount();
+    expect(h.studioDefaults.get("main")!.canDeactivate).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the current draft when the asynchronous save cannot complete", async () => {
     const h = harness({ kind: "image", initialSurface: "main" }), frame = [...h.frames.values()][0];
     h.studioDefaults.get("main")!.canDeactivate.mockResolvedValue({ allowed: false, reason: "保存草稿失败，请检查本机存储空间后重试。" });
-    h.click("生成视频"); await h.flush();
+    h.click("批量任务"); await h.flush();
     expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.inert).toBe(false); expect(h.selected("主图")).toBe(true);
     expect(h.alert()).toContain("保存草稿失败"); expect(h.router.replace).not.toHaveBeenCalled();
   });
 
-  it.each(cases)("retains $id while opening and permits other internal workspaces", async ({ props }) => {
+  it.each(cases)("requires the $id guard while opening and allows leaving a startup error", async ({ label, props }) => {
     const h = harness(props), frame = [...h.frames.values()].find(item => item.src.includes("studio=1"))!;
     delete frame.contentWindow.SanjieStudioGenesisBridge; frame.contentDocument.documentElement.dataset.labStartup = "pending";
     h.click("案例裂变"); await h.flush();
-    expect(h.selected("案例裂变")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.hidden).toBe(true);
-    expect(h.alert()).toBe("");
+    expect(h.selected(label)).toBe(true); expect(h.frames.has("viral-case")).toBe(false); expect(h.alert()).toContain("正在打开");
     frame.contentDocument.documentElement.dataset.labStartup = "error";
-    h.click("生成视频"); await h.flush();
-    expect(h.router.push).toHaveBeenCalledWith("/dashboards/operating-network/video");
-    h.unmount();
+    h.click("案例裂变"); await h.flush();
+    expect(h.selected("案例裂变")).toBe(true);
   });
 
   it("does not apply an asynchronous guard answer after component unmount", async () => {
-    const h = harness({ kind: "image", initialSurface: "main" }), waiting = deferred<{ ok: boolean }>();
-    h.click("详情"); await h.flush(); h.router.replace.mockClear();
-    h.studioDefaults.get("main")!.activate.mockImplementation(() => waiting.promise);
-    h.click("主图"); await h.flush(3); h.unmount(); waiting.resolve({ ok: true }); await h.flush();
+    const h = harness({ kind: "image", initialSurface: "main" }), waiting = deferred<Permission>();
+    h.studioDefaults.get("main")!.canDeactivate.mockImplementation(() => waiting.promise);
+    h.click("详情"); await h.flush(3); h.unmount(); waiting.resolve({ allowed: true }); await h.flush();
     expect(h.router.replace).not.toHaveBeenCalled(); expect(h.router.push).not.toHaveBeenCalled(); expect(h.updatesAfterUnmount()).toBe(0);
   });
 
-  it("allows back/forward to another studio while retaining the original request", async () => {
+  it("restores the active studio URL when back/forward tries to leave a request", async () => {
     const h = harness({ kind: "image", initialSurface: "main" }); h.studioDefaults.get("main")!.state.busy = true;
-    const frame = h.frames.get("main");
     h.render({ kind: "image", initialSurface: "ad" }); await h.flush();
-    expect(h.selected("主图")).toBe(false); expect(h.selected("广告图")).toBe(true);
-    expect(h.frames.get("main")).toBe(frame); expect(frame?.hidden).toBe(true);
-    expect(h.studioDefaults.get("main")!.canDeactivate).not.toHaveBeenCalled();
-    expect(h.router.replace).not.toHaveBeenCalled(); h.unmount();
-  });
-
-  it("keeps a cached studio hidden when its activation rejects an account change", async () => {
-    const h = harness({ kind: "image", initialSurface: "detail" });
-    const frame = h.frames.get("detail")!; frame.draft = "原账号商品";
-    h.click("主图"); await h.flush();
-    h.studioDefaults.get("detail")!.activate.mockResolvedValue({ ok: false, error: "当前账号已变更，请重新打开工作台。" } as { ok: boolean });
-    h.click("详情"); await h.flush();
-    expect(h.selected("主图")).toBe(true); expect(h.frames.get("detail")).toBe(frame); expect(frame.hidden).toBe(true);
-    expect(frame.draft).toBe("原账号商品"); expect(h.alert()).toContain("当前账号已变更");
-    h.unmount();
+    expect(h.selected("主图")).toBe(true); expect(h.selected("广告图")).toBe(false);
+    expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=main", { scroll: false });
   });
 });
 

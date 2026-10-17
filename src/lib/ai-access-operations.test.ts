@@ -14,8 +14,9 @@ vi.mock("@/lib/db", () => ({ prisma: { shop: { findMany: mocks.shops, findFirst:
 vi.mock("@/lib/ai-access", () => ({ AIAccessError: mocks.Error, setAIAccessActiveShop: mocks.setShop }));
 vi.mock("@/lib/creative-entitlements", () => ({ getCreativeAccessForSession: mocks.creative }));
 vi.mock("@/lib/tool-entitlements", () => ({ getDmpAutomationAccessForSession: mocks.entitlement }));
-vi.mock("@/lib/dmp-report-store", () => ({ getDmpBusinessReport: mocks.report, listDmpBusinessReportSummaries: mocks.summaries }));
-vi.mock("@/lib/model-gateway/runtime-catalog", () => ({ listAvailableGatewayModels: mocks.models }));
+vi.mock("@/lib/ai-access-production-reports", () => ({ getDmpBusinessReport: mocks.report, listDmpBusinessReportSummaries: mocks.summaries }));
+const modelData = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
+vi.mock("@/lib/model-gateway/catalog", () => ({ get GATEWAY_MODELS() { mocks.models(); return modelData.rows; } }));
 import { executeAiAccessOperation } from "./ai-access-operations";
 
 const auth: AIAccessAuthorization = { grantId: "grant-a", userId: "user-a", username: "admin-a", tenantId: "tenant-a", scope: "action", activeShopId: "shop-a" };
@@ -64,9 +65,9 @@ describe("AI operations dispatch to scoped services without a credential proxy",
   });
 
   it("filters model output to public IDs and labels, removing upstream keys, env names and URLs", async () => {
-    mocks.models.mockResolvedValue([{ id: "model-a", label: "模型甲", kind: "image", provider: "shaozhuang", upstreamModel: "private-upstream-model",
+    modelData.rows = [{ id: "model-a", label: "模型甲", kind: "image", provider: "shaozhuang", upstreamModel: "private-upstream-model",
       apiKeyEnv: "PRIVATE_PROVIDER_API_KEY", baseUrlEnv: "PRIVATE_PROVIDER_BASE_URL", defaultBaseUrl: "https://private-provider.test/v1",
-      apiKey: "private-api-key", key: "private-key", config: { token: "private-config-token" } }]);
+      apiKey: "private-api-key", key: "private-key", config: { token: "private-config-token" } }];
     const result = await executeAiAccessOperation(operation("GET", "/api/v1/models"), auth);
     expect(result).toEqual({ models: [{ id: "model-a", label: "模型甲", kind: "image", provider: "shaozhuang" }] });
     expect(JSON.stringify(result)).not.toMatch(/private|PRIVATE|upstream|apiKey|baseUrl|config/);

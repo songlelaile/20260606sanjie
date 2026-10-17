@@ -19,7 +19,7 @@ export async function GET(request: Request): Promise<NextResponse> {
         where, skip: (page - 1) * pageSize, take: pageSize,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         select: { id: true, planName: true, amountCents: true, creditCents: true,
-          status: true, paymentProvider: true, createdAt: true, paidAt: true }
+          status: true, creditAllocationState: true, paymentProvider: true, createdAt: true, paidAt: true }
       }),
       prisma.gatewayOrder.count({ where })
     ]);

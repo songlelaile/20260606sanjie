@@ -4,11 +4,10 @@ import { AppShell } from "@/components/AppShell";
 import { SESSION_COOKIE, parseSession } from "@/lib/auth";
 import { getShopSwitcherData } from "@/lib/store/runtime-store";
 import "./globals.css";
-import { createUatEnvironmentScript } from "@/lib/uat-environment";
 import { getCurrentUser } from "@/lib/server-session";
 
 export const metadata: Metadata = {
-  title: "少壮 AI · 作图与视频",
+  title: "三阶引擎 SaaS",
   description: "少壮 AI 作图与视频工作台、AI 工具、购买积分与三阶数据报告"
 };
 
@@ -21,11 +20,9 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
   return (
     <html lang="zh-CN">
-      <head>{process.env.SANJIE_TEST_ENVIRONMENT ? <script dangerouslySetInnerHTML={{ __html: createUatEnvironmentScript(process.env.SANJIE_TEST_ENVIRONMENT) }} /> : null}</head>
       <body>
         {session && shopSwitcher ? (
-          <AppShell role={session.role} userName={currentUser?.name || session.name} userEmail={currentUser?.email || undefined} shopSwitcher={shopSwitcher}
-            testLabel={process.env.SANJIE_TEST_RELEASE_LABEL} testExitUrl={process.env.SANJIE_TEST_EXIT_URL}>
+          <AppShell role={session.role} userName={currentUser?.name || session.name} userEmail={currentUser?.email || undefined} shopSwitcher={shopSwitcher}>
             {children}
           </AppShell>
         ) : (

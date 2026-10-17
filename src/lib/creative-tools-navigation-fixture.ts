@@ -247,3 +247,4 @@ export async function bootCreativeToolsFixture(tool: Tool, options: Parameters<t
   expect(h.forbidden).not.toHaveBeenCalled();
   return h;
 }
+

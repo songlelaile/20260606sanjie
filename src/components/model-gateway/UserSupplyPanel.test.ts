@@ -178,4 +178,33 @@ describe("registered user supply management panel", () => {
     expect(button(fresh, "补齐主备 Key").props.disabled).toBe(false);
     expect(text(fresh)).toContain("配发账号配置已保存");
   });
+
+  it.each([
+    ["supply_provisioning_rate_limited", "请至少 1 小时后"],
+    ["supply_provisioning_key_count_limit", "24 小时后"],
+    ["supply_provisioning_key_count_exceeded", "24 小时后"]
+  ])("shows a deferred retry and prevents immediate additional batches for %s", async (code, hint) => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(overview()));
+    const { tree } = await mount();
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { processed: 0, ready: 0, failed: 0, remaining: 25, errors: [{ userId: "user-a", code }] } })).mockResolvedValueOnce(response(overview()));
+    await click(tree);
+    const fresh = render();
+    expect(text(fresh)).toContain(hint);
+    expect(elements(fresh).some((element) => element.props.role === "alert")).toBe(true);
+    expect(button(fresh, "补齐主备 Key").props.disabled).toBe(true);
+    await click(fresh);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("reports a saved configuration even if resetting failed rows is unavailable", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(overview(false)));
+    const { tree } = await mount();
+    change(tree, "上游分组 ID", "3"); change(tree, "每 Key 上游额度", "0"); change(tree, "配发账号密码", "private-secret");
+    vi.mocked(fetch).mockResolvedValueOnce(response({ data: { configured: true, missing: [], groupId: "3", quotaUsd: 0, retryReset: "unavailable" } }));
+    await click(render(), "保存配发账号配置");
+    const fresh = render();
+    expect(text(fresh)).toContain("配置已保存，重试状态暂未恢复");
+    expect(input(fresh, "配发账号密码").props.value).toBe("");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
 });

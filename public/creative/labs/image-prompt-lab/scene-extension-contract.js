@@ -263,7 +263,7 @@
     var mixed = Object.keys(payload).some(function (key) {
       return /^(?:viral|caseFission|styleRefresh|referenceDetail|approvedBundle|sku|guide)/i.test(key) && populated(payload[key]);
     });
-    if (mixed) return fail('SCENE_ROUTE_MIXED', '场景延展不能混入案例裂变、风格焕新、清单成详、SKU 或引导重生的合同标识。');
+    if (mixed) return fail('SCENE_ROUTE_MIXED', '场景延展不能混入案例裂变、风格焕新、参考成详、SKU 或引导重生的合同标识。');
     var foreignImage = Object.keys(payload).some(function (key) {
       return /^(?:editBase|editMask|requiredMask|allowedMask|mask|sourceImage|inputImage|imageUrl|baseImage)/i.test(key) && populated(payload[key]);
     });

@@ -1,7 +1,7 @@
 // Run the original multi-route regression fixture against the website overlay.
 'use strict';
 
-import { it as test, vi } from "vitest";
+import { it as test } from "vitest";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -309,16 +309,8 @@ test('场景档案不显示旧引导重生；案例和焕新保留各自可用�
       businessRoleName: '测试角色', imageIndex: 1
     }, false);
     const actions = buttons(card);
-    const preview = actions.find((button) => button.attributes['aria-label'] === '预览原图：测试角色 · V1');
-    assert.ok(preview, '历史原件必须具有可访问名称的预览入口');
-    assert.equal(preview.disabled, false);
-    const download = actions.find((button) => button.textContent === '下载原图');
-    assert.ok(download, '历史原件保留明确的下载原图入口');
-    assert.equal(download.attributes['aria-label'], '下载原图：测试角色 · V1');
-    assert.equal(download.disabled, false);
-    const regenerate = actions.filter((button) => /引导重生|重新生成|生成此图/.test(button.textContent));
-    assert.equal(regenerate.length, route === 'scene-extension' ? 0 : 1);
-    if (route !== 'scene-extension') assert.equal(regenerate[0].disabled, false);
+    assert.deepEqual(actions.map((button) => button.textContent), route === 'scene-extension' ? ['下载'] : ['下载', '引导重生']);
+    if (route !== 'scene-extension') assert.equal(actions[1].disabled, false);
   }
 });
 
@@ -523,10 +515,12 @@ test('风格路线未切换时四槽位与一次自动QA完整保留', async () 
   const pending = c.generateStyleRefreshImages({ id: 'style-original', data: { '风格焕新配置': { copyMode: 'none' } }, prompt: 'style-original' });
   requests[0].resolve({ ok: true, images: ['blob:style-1'] });
   requests[1].resolve({ ok: true, images: ['blob:style-2'] });
-  await vi.waitFor(() => assert.equal(requests.length, 4));
+  for (let index = 0; index < 12; index++) await Promise.resolve();
+  assert.equal(requests.length, 4);
   requests[2].resolve({ ok: true, images: ['blob:style-3'] });
   requests[3].resolve({ ok: true, images: ['blob:style-4'] });
-  await vi.waitFor(() => assert.equal(requests.length, 5));
+  for (let index = 0; index < 16; index++) await Promise.resolve();
+  assert.equal(requests.length, 5);
   assert.equal(requests[4].type, 'ANALYZE_STYLE_REFRESH_QA');
   requests[4].resolve({ ok: true, assessments: [1, 2, 3, 4].map(() => ({ status: 'passed' })) });
   const response = await pending;

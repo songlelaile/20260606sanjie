@@ -23,10 +23,19 @@ describe("supply failover", () => {
       .mockResolvedValueOnce(Response.json({ data: [{ b64_json: "image" }] }));
     expect(await runSupplyWithFailover(credentials, send)).toMatchObject({ attempts: 2, credentialId: "credential-b" });
   });
-  it.each(["USER_INACTIVE", "USER_NOT_FOUND", "API_KEY_EXPIRED"])("does not infer a per-Key failover from Sub2API account or unsupported code %s", async (code) => {
-    const send = vi.fn().mockResolvedValue(Response.json({ code, message: "Rejected" }, { status: code === "API_KEY_EXPIRED" ? 403 : 401 }));
+  it.each(["USER_INACTIVE", "USER_NOT_FOUND"])("does not infer a per-Key failover from Sub2API account code %s", async (code) => {
+    const send = vi.fn().mockResolvedValue(Response.json({ code, message: "Rejected" }, { status: 401 }));
     expect(await runSupplyWithFailover(credentials, send)).toMatchObject({ attempts: 1 });
     expect(send).toHaveBeenCalledOnce();
+  });
+  it("uses the backup only for the verified exact top-level API_KEY_EXPIRED 403",async()=>{
+    const send=vi.fn().mockResolvedValueOnce(Response.json({code:"API_KEY_EXPIRED",message:"API key 已过期"},{status:403}))
+      .mockResolvedValueOnce(Response.json({data:[{b64_json:"image"}]}));
+    expect(await runSupplyWithFailover(credentials,send)).toMatchObject({attempts:2,credentialId:"credential-b"});
+  });
+  it.each([{error:{code:"API_KEY_EXPIRED",message:"Expired"}},{code:"API_KEY_EXPIRED",message:"Expired",data:[]},{code:"API_KEY_EXPIRED",message:"Expired",status:"pending"},{code:"INSUFFICIENT_BALANCE",message:"Rejected"},{code:"USER_INACTIVE",message:"Rejected"},{code:"API_KEY_EXPIRED",message:"Expired",error:{}}])("rejects unverified or ambiguous 403 shapes %j",async(body)=>{
+    const send=vi.fn().mockResolvedValue(Response.json(body,{status:403}));
+    expect(await runSupplyWithFailover(credentials,send)).toMatchObject({attempts:1});expect(send).toHaveBeenCalledOnce();
   });
   it.each([429, 500, 502, 503, 504, 403, 200])("never resubmits for ambiguous HTTP %i", async (status) => {
     const send = vi.fn().mockResolvedValue(Response.json({ error: { code: "invalid_api_key" } }, { status }));

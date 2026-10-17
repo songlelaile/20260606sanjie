@@ -32,9 +32,7 @@ describe("creative proxy policy", () => {
     }
   });
 
-  it("reads product reference images without permitting CDN writes or alternate ports", () => {
-    expect(evaluateCreativeProxy("https://img.alicdn.com/image.jpg", "GET").ok).toBe(true);
-    expect(evaluateCreativeProxy("https://img.alicdn.com/image.jpg", "POST").ok).toBe(false);
+  it("rejects alternate upstream ports and lookalike CDN hosts", () => {
     expect(evaluateCreativeProxy("https://sub.shaozhuangai.com:8443/v1/images/generations", "POST").ok).toBe(false);
     expect(evaluateCreativeProxy("https://img.alicdn.com.evil.test/image.jpg", "GET").ok).toBe(false);
   });

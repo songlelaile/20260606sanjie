@@ -1,12 +1,10 @@
 import { redirect } from "next/navigation";
-import { headers } from "next/headers";
 import { getSowerWorkAccess } from "@/lib/sower-work-access";
 import { SowerWorkStudio } from "@/components/sower-work/SowerWorkStudio";
 
 export const dynamic = "force-dynamic";
 
 export default async function SowerWorkPage() {
-  if ((await headers()).get("host") === "www.shaozhuangai.com") redirect("https://shaozhuangai.com/sower-work");
   const access = await getSowerWorkAccess();
   if (!access.allowed) {
     if (access.status === 401) redirect("/login");

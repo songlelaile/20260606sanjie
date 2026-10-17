@@ -38,8 +38,10 @@ export type GatewayCreditGiftView = {
   createdAt: string;
 };
 
+export type GatewayCreditPoolState = "uninitialized" | "pending" | "invalid" | "ready";
+
 export type GatewayCreditGiftOverview = {
-  pool: { ready: boolean; balanceCents: number | null; balancePoints: number | null };
+  pool: { state: GatewayCreditPoolState; ready: boolean; balanceCents: number | null; balancePoints: number | null; refreshOnSubmitAvailable: boolean };
   gifts: GatewayCreditGiftView[];
 };
 

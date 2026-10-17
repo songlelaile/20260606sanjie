@@ -22,6 +22,7 @@ export function prepareRelaySettingsUpdate(input: {
   clearKey: boolean;
   models: RelayModel[];
   usdCnyRate?: string;
+  usdCnyAutomatic?: boolean;
   shopKeys?: RelayShopKeyDraft[];
 }): { input: RelaySettingsUpdate; error?: never } | { input?: never; error: string } {
   const baseUrl = input.baseUrl.trim();
@@ -51,7 +52,7 @@ export function prepareRelaySettingsUpdate(input: {
   }
   const apiKey = input.apiKey.trim();
   let usdCnyRate: number | null | undefined;
-  if (input.usdCnyRate !== undefined) {
+  if (!input.usdCnyAutomatic && input.usdCnyRate !== undefined) {
     const text = input.usdCnyRate.trim();
     if (!text) usdCnyRate = null;
     else {

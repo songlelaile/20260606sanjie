@@ -1,9 +1,9 @@
 export const DMP_AUTOMATION_TOOL_CODE = "dmp-automation";
-export const DMP_AUTOMATION_VERSION = "2.3.55";
+export const DMP_AUTOMATION_VERSION = "2.4.11";
 export const DMP_AUTOMATION_ACCESS_DAYS = 30;
 export const DMP_AUTOMATION_BRAND = "少壮AI自动化";
-export const DMP_AUTOMATION_NAME = `达摩盘一体化自动取数｜${DMP_AUTOMATION_BRAND}`;
-export const DMP_AUTOMATION_DOWNLOAD_NAME = `达摩盘一体化自动取数-v${DMP_AUTOMATION_VERSION}｜${DMP_AUTOMATION_BRAND}.zip`;
+export const DMP_AUTOMATION_NAME = "少壮AI自动化-数据报告";
+export const DMP_AUTOMATION_DOWNLOAD_NAME = `少壮AI自动化-数据报告-v${DMP_AUTOMATION_VERSION}.zip`;
 export const DMP_AUTOMATION_PACKAGE_PARTS = [
   "private-assets",
   "dmp",

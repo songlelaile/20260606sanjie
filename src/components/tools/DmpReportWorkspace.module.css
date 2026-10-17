@@ -62,12 +62,6 @@
   margin: 5px 0 0;
 }
 
-.loadingNotice {
-  color: var(--muted);
-  font-size: 12px;
-  margin: 5px 0 0;
-}
-
 .toolbar {
   align-items: center;
   display: flex;
@@ -224,29 +218,6 @@
   padding: 1px 6px 1px 1px;
   scrollbar-color: #67743c rgba(255, 255, 255, 0.04);
   scrollbar-width: thin;
-}
-
-.loadMoreRow {
-  display: flex;
-  justify-content: center;
-  padding-top: 12px;
-}
-
-.loadMoreRow button {
-  background: #17220f;
-  border: 1px solid #48552b;
-  border-radius: 7px;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 750;
-  min-height: 36px;
-  min-width: 132px;
-  padding: 0 18px;
-}
-
-.loadMoreRow button:hover:not(:disabled) {
-  border-color: var(--brand);
-  color: var(--brand);
 }
 
 .shopSection {

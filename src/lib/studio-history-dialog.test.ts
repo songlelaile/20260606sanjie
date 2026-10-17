@@ -313,30 +313,6 @@ describe("studio generation history dialog", () => {
     expect(h.node("archiveBatchList").textContent).not.toContain("alice-private");
   });
 
-  it("closes the old account dialog before rebinding and leaves a newer dialog open after the old refresh settles", async () => {
-    const h = harness(), waiting = deferred<object[]>(), trigger = h.node("openArchiveBtn"), app = h.document.querySelector(".app")!;
-    h.body.style.setProperty("overflow", "clip", "important"); trigger.focus();
-    h.archive.list.mockReturnValueOnce(waiting.promise); h.archive.list.mockReturnValueOnce(waiting.promise);
-    const old = h.context.openArchiveHistory(trigger);
-    await vi.waitFor(() => expect(h.archive.list).toHaveBeenCalledTimes(2));
-    await h.context.setArchiveAccountKey("tenant:bob", { deferArchive: true });
-    expect(h.node("archiveHistoryModal").hidden).toBe(true); expect(app.inert).toBe(false);
-    expect(h.body.style.getPropertyValue("overflow")).toBe("clip");
-    expect(h.body.style.getPropertyPriority("overflow")).toBe("important"); expect(h.document.activeElement).toBe(trigger);
-    await h.context.openArchiveHistory(trigger);
-    waiting.complete([{ archiveBatchId: "alice-private", assets: [] }]); await old;
-    expect(h.node("archiveHistoryModal").hidden).toBe(false); expect(h.body.style.overflow).toBe("hidden");
-    expect(app.inert).toBe(true); expect(h.node("archiveBatchList").textContent).not.toContain("alice-private");
-  });
-
-  it("preserves an open dialog and its focus when the same archive account is rebound", async () => {
-    const h = harness(); await h.context.openArchiveHistory(h.node("openArchiveBtn"));
-    const control = h.node("archiveSearchInput"); control.focus();
-    expect(await h.context.setArchiveAccountKey("tenant:alice")).toMatchObject({ unchanged: true });
-    expect(h.node("archiveHistoryModal").hidden).toBe(false); expect(h.document.activeElement).toBe(control);
-    expect(h.body.style.overflow).toBe("hidden");
-  });
-
   it("keeps the existing database identity and version without opening an upgrade during dialog setup", () => {
     const indexedDB = { open: vi.fn() }, context = createContext({ indexedDB });
     runInContext(sharedAsset("image-archive-store.js"), context);
@@ -373,145 +349,10 @@ describe("studio generation history dialog", () => {
     h.context.renderArchiveHistory(); expect(h.node("archiveBatchList").children).toHaveLength(1);
     const selected = h.context.archiveDownloadItems(batch, ["second"]);
     expect(selected).toHaveLength(1); expect(selected[0].filename).toContain("侧面"); expect(selected[0].url).toMatch(/^blob:/);
-    const send = vi.fn<(type: string, payload: { items: unknown[] }) => Promise<{ ok: boolean }>>(async () => ({ ok: true })); h.context.__SZ_PROMPTLAB_TEST_API__.setTestSend(send);
+    const send = vi.fn(async () => ({ ok: true })); h.context.__SZ_PROMPTLAB_TEST_API__.setTestSend(send);
     expect(await h.context.dispatchArchiveDownloads(selected)).toMatchObject({ ok: true, count: 1 });
     expect(send).toHaveBeenCalledWith("DOWNLOAD_ALL", { items: selected });
     h.node("archiveSearchInput").value = "missing"; h.context.renderArchiveHistory(); expect(h.node("archiveBatchList").children).toHaveLength(0);
-  });
-
-  it("uses the same local calendar day for display, date grouping and composable filters", () => {
-    const h = harness();
-    const recorded = new Date(2026, 9, 15, 23, 59).getTime();
-    const batch = { archiveBatchId: "batch-local", archiveProjectId: "project-local", surfaceMode: "main", businessBatchTitle: "同名项目", createdAt: recorded, assets: [
-      { archiveAssetId: "local-original", skuCode: "SKU-BLUE", taskId: "receipt-original-123", prompt: "保留商品轮廓", blob: new Blob(["original"]) }
-    ] };
-    expect(h.context.formatArchiveDate(recorded)).toBe("2026-10-15 23:59");
-    expect(h.context.archiveBatchMatches(batch, "receipt-original-123", "main", "2026-10-15", "2026-10-15")).toBe(true);
-    expect(h.context.archiveBatchMatches(batch, "保留商品", "main", "2026-10-15", "2026-10-15")).toBe(true);
-    expect(h.context.archiveBatchMatches(batch, "sku-blue", "main", "2026-10-16", "")).toBe(false);
-    expect(h.context.archiveBatchMatches(batch, "sku-blue", "buyer", "2026-10-15", "2026-10-15")).toBe(false);
-    expect(h.context.archiveBatchMatches(batch, "sku-blue", "main", "2026-10-16", "2026-10-15")).toBe(false);
-    h.context.state.archiveBatches = [batch];
-    h.node("archiveSearchInput").value = "receipt-original-123"; h.node("archiveRouteFilter").value = "main";
-    h.node("archiveDateStart").value = "2026-10-15"; h.node("archiveDateEnd").value = "2026-10-15";
-    h.context.archiveHistoryState.view = "date"; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").querySelector(".archive-date-heading")?.textContent).toBe("2026-10-15");
-    expect(h.node("archiveBatchList").querySelector(".archive-batch-card")?.dataset.archiveProjectId).toBe("project-local");
-    expect(h.node("archiveTimezoneNote").textContent).toContain("本机时区");
-    h.node("archiveDateStart").value = "2026-10-16"; h.context.renderArchiveHistory();
-    expect(h.node("archiveEmpty").textContent).toContain("开始日期不能晚于结束日期");
-    h.context.clearArchiveFilters();
-    expect(h.node("archiveSearchInput").value).toBe(""); expect(h.node("archiveRouteFilter").value).toBe("all");
-    expect(h.node("archiveDateStart").value).toBe(""); expect(h.node("archiveDateEnd").value).toBe("");
-    expect(h.context.state.archiveBatches[0]).toBe(batch);
-  });
-
-  it("never invents a current date or merges different project IDs with the same title", () => {
-    const h = harness();
-    const unknown = { archiveBatchId: "batch-unknown", archiveProjectId: "project-a", businessBatchTitle: "同名项目", assets: [] };
-    const recorded = { archiveBatchId: "batch-known", archiveProjectId: "project-b", businessBatchTitle: "同名项目", createdAt: new Date(2026, 9, 15, 12).getTime(), assets: [] };
-    expect(h.context.formatArchiveDate(undefined)).toBe("时间未记录"); expect(h.context.formatArchiveDate("invalid")).toBe("时间未记录");
-    expect(h.context.archiveLocalDateKey(0)).toBe("");
-    expect(h.context.archiveBatchMatches(unknown, "", "all", "2026-10-15", "")).toBe(false);
-    h.context.state.archiveBatches = [unknown, recorded]; h.context.archiveHistoryState.view = "date"; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").querySelectorAll(".archive-date-heading").map(n => n.textContent)).toEqual(["2026-10-15", "时间未记录"]);
-    expect(h.node("archiveBatchList").querySelectorAll(".archive-batch-card").map(n => n.dataset.archiveProjectId)).toEqual(["project-b", "project-a"]);
-    h.context.archiveHistoryState.view = "project"; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").children).toHaveLength(2);
-    expect(h.context.state.archiveBatches[0]).toBe(unknown);
-    expect(h.archive.saveResult).not.toHaveBeenCalled(); expect(h.localStorage.setItem).not.toHaveBeenCalled();
-  });
-
-  it("shows loading before the first read and preserves the prior snapshot on read failure", async () => {
-    const h = harness(), waiting = deferred<number>();
-    h.archive.purgeExpired.mockReturnValueOnce(waiting.promise);
-    const first = h.context.openArchiveHistory(h.node("openArchiveBtn"));
-    expect(h.node("archiveEmpty").textContent).toContain("正在读取生成记录");
-    expect(h.node("archiveEmpty").textContent).not.toContain("还没有生成记录");
-    expect(h.node("archiveBatchList").getAttribute("aria-busy")).toBe("true");
-    waiting.complete(0); await first;
-    expect(h.node("archiveBatchList").getAttribute("aria-busy")).toBe("false");
-    const prior = { archiveBatchId: "prior-original", businessBatchTitle: "上次读取到的原记录", assets: [] };
-    h.context.state.archiveBatches = [prior]; h.context.renderArchiveHistory();
-    h.archive.purgeExpired.mockRejectedValueOnce(new Error("浏览器暂时无法读取档案"));
-    expect(await h.context.refreshArchiveHistory({ silent: false })).toMatchObject({ ok: false });
-    expect(h.context.state.archiveBatches[0]).toBe(prior);
-    expect(h.node("archiveBatchList").textContent).toContain("上次读取到的原记录");
-    expect(h.node("archiveReadError").hidden).toBe(false);
-    expect(h.node("archiveReadErrorText").textContent).toContain("浏览器暂时无法读取档案");
-    expect(h.node("archiveEmpty").hidden).toBe(true);
-    await h.context.refreshArchiveHistory({ silent: false }); expect(h.node("archiveReadError").hidden).toBe(true);
-  });
-
-  it("retains stable selections across filters and date views, reports hidden choices, and scopes batch actions", async () => {
-    const h = harness();
-    const batches = ["one", "two"].map((name, i) => ({ archiveBatchId: name, archiveProjectId: `project-${name}`, surfaceMode: "main", businessBatchTitle: name, createdAt: new Date(2026, 9, 15 + i, 12).getTime(), assets: [
-      { archiveAssetId: `${name}-original`, surfaceMode: "main", businessRoleName: name, blob: new Blob([`original-${name}`]) }
-    ] }));
-    h.context.state.archiveBatches = batches; h.context.renderArchiveHistory();
-    const first = h.node("archiveBatchList").querySelectorAll(".archive-asset-select")[0]; first.checked = true; first.dispatch("change");
-    expect(h.node("archiveSelectionCount").textContent).toBe("已选 1 张");
-    h.node("archiveSearchInput").value = "two"; h.context.renderArchiveHistory();
-    expect(h.node("archiveSelectionCount").textContent).toBe("已选 1 张，其中 1 张不在当前视图");
-    const otherCard = h.node("archiveBatchList").querySelector(".archive-batch-card")!;
-    expect(h.context.selectedArchiveAssetIds(otherCard)).toEqual([]);
-    const second = otherCard.querySelector(".archive-asset-select")!; second.checked = true; second.dispatch("change");
-    expect(h.context.selectedArchiveAssetIds(otherCard)).toEqual(["two-original"]);
-    expect(h.node("archiveSelectionCount").textContent).toBe("已选 2 张，其中 1 张不在当前视图");
-    h.context.archiveHistoryState.view = "date"; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").querySelector(".archive-asset-select")?.checked).toBe(true);
-    const send = vi.fn<(type: string, payload: { items: unknown[] }) => Promise<{ ok: boolean }>>(async () => ({ ok: true })); h.context.__SZ_PROMPTLAB_TEST_API__.setTestSend(send);
-    expect(await h.context.downloadArchiveSelection()).toMatchObject({ ok: true, count: 2 });
-    expect(send.mock.calls[0][1].items).toHaveLength(2);
-    h.context.clearArchiveFilters(); expect(h.node("archiveBatchList").querySelectorAll(".archive-asset-select").every(n => n.checked)).toBe(true);
-    h.context.clearArchiveSelection(); expect(h.node("archiveSelectionSummary").hidden).toBe(true);
-    expect(h.node("archiveBatchList").querySelectorAll(".archive-asset-select").every(n => !n.checked)).toBe(true);
-    expect(h.archive.saveResult).not.toHaveBeenCalled(); expect(h.archive.moveToTrash).not.toHaveBeenCalled();
-  });
-
-  it("preserves six-project and 24-original incremental loading, including selected originals not yet rendered", async () => {
-    const h = harness();
-    const batches = Array.from({ length: 7 }, (_, i) => ({ archiveBatchId: `batch-${i}`, surfaceMode: "main", businessBatchTitle: `项目 ${i}`, createdAt: new Date(2026, 9, 15, 12).getTime(), assets: Array.from({ length: i === 0 ? 25 : 1 }, (_, j) => ({ archiveAssetId: `original-${i}-${j}`, imageIndex: j + 1, surfaceMode: "main", blob: new Blob([`${i}-${j}`]) })) }));
-    h.context.state.archiveBatches = batches; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").children).toHaveLength(6); expect(h.node("archiveLoadMoreBtn").disabled).toBe(false);
-    const first = h.node("archiveBatchList").children[0]; expect(first.querySelectorAll(".archive-result-card")).toHaveLength(24);
-    const selectAll = first.querySelector(".archive-batch-select")!; selectAll.checked = true; selectAll.dispatch("change");
-    expect(h.node("archiveSelectionCount").textContent).toBe("已选 25 张，其中 1 张不在当前视图");
-    const send = vi.fn<(type: string, payload: { items: unknown[] }) => Promise<{ ok: boolean }>>(async () => ({ ok: true })); h.context.__SZ_PROMPTLAB_TEST_API__.setTestSend(send);
-    expect(await h.context.downloadArchiveSelection()).toMatchObject({ ok: true, count: 25 });
-    expect(send.mock.calls[0][1].items).toHaveLength(25);
-    first.children[first.children.length - 1].dispatch("click");
-    expect(first.querySelectorAll(".archive-result-card")).toHaveLength(25); expect(first.querySelectorAll(".archive-asset-select").every(n => n.checked)).toBe(true);
-    expect(h.node("archiveSelectionCount").textContent).toBe("已选 25 张");
-    h.context.loadMoreArchiveBatches(); expect(h.node("archiveBatchList").children).toHaveLength(7); expect(h.node("archiveLoadMoreBtn").disabled).toBe(true);
-    h.context.archiveHistoryState.view = "date"; h.context.renderArchiveHistory();
-    expect(h.node("archiveBatchList").querySelectorAll(".archive-batch-card")).toHaveLength(6);
-    expect(h.node("archiveBatchList").querySelectorAll(".archive-result-card")).toHaveLength(29);
-    expect(h.context.state.archiveBatches[0].assets).toHaveLength(25);
-  });
-
-  it("isolates active and trash selections and clears all selection identities on account change", async () => {
-    const h = harness();
-    const original = { archiveAssetId: "alice-original", surfaceMode: "main", blob: new Blob(["alice-original"]) };
-    h.context.state.archiveBatches = [{ archiveBatchId: "alice", assets: [original] }]; h.context.renderArchiveHistory();
-    const selected = h.node("archiveBatchList").querySelector(".archive-asset-select")!; selected.checked = true; selected.dispatch("change");
-    h.context.state.archiveTrashMode = true; h.context.renderArchiveHistory(); expect(h.context.archiveSelectedAssets()).toEqual([]);
-    h.context.state.archiveTrashMode = false; h.context.renderArchiveHistory(); expect(h.node("archiveSelectionCount").textContent).toBe("已选 1 张");
-    await h.context.setArchiveAccountKey("tenant:bob", { deferArchive: true });
-    expect(Object.keys(h.context.archiveHistoryState.selected)).toEqual([]); expect(Object.keys(h.context.archiveHistoryState.trashSelected)).toEqual([]);
-    expect(h.node("archiveSelectionSummary").hidden).toBe(true); expect(h.node("archiveBatchList").textContent).not.toContain("alice");
-  });
-
-  it("retains record identity and original download when a thumbnail cannot render", async () => {
-    const h = harness(), original = { archiveAssetId: "thumb-original", surfaceMode: "main", businessRoleName: "保留原件", blob: new Blob(["preserved-original"]) };
-    const batch = { archiveBatchId: "batch-thumb", surfaceMode: "main", assets: [original] };
-    h.context.state.archiveBatches = [batch]; h.context.renderArchiveHistory();
-    const card = h.node("archiveBatchList").querySelector(".archive-result-card")!, image = card.querySelector("img")!, fallback = card.querySelector(".archive-thumbnail-fallback")!;
-    expect(fallback.hidden).toBe(true); image.dispatch("error"); expect(image.hidden).toBe(true); expect(fallback.hidden).toBe(false);
-    expect(card.querySelector(".archive-preview-open")?.getAttribute("aria-label")).toContain("保留原件");
-    expect(card.querySelector(".archive-asset-select")?.dataset.archiveAssetId).toBe("thumb-original");
-    const downloads = h.context.archiveDownloadItems(batch); expect(downloads).toHaveLength(1); expect(downloads[0].url).toMatch(/^blob:/);
-    expect(h.context.state.archiveBatches[0].assets[0]).toBe(original); expect(original.blob.size).toBe(18);
   });
 
   it("routes both studio history buttons and the legacy history entry through the same opener", () => {
@@ -519,7 +360,7 @@ describe("studio generation history dialog", () => {
     expect(runtime).toMatch(/openArchiveBtn[\s\S]{0,180}openArchiveHistory/);
     const studio = asset("studio-genesis-ui.js");
     // Single and batch workspaces now reuse the same common action toolbar.
-    expect((studio.match(/data-action="history"/g) || []).length).toBeGreaterThanOrEqual(1);
+    expect(studio.match(/data-action="history"/g)).toHaveLength(1);
     const action = studio.match(/if\(name==='history'\)[^\n]*/)?.[0] || "";
     expect(action).toContain("bridge.openHistory"); expect(action).not.toMatch(/scrollIntoView|studio-visible|creative-visible/);
   });

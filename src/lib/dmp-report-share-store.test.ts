@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   shareGroupBy: vi.fn(),
   shareFindMany: vi.fn(),
   heatGroupBy: vi.fn(),
+  lockDmpReportTargets: vi.fn(),
+  reportFindFirstTx: vi.fn(),
   getDmpBusinessReport: vi.fn(),
   validateDmpCanonicalReport: vi.fn()
 }));
@@ -49,11 +51,13 @@ vi.mock("@/lib/db", () => ({
   }
 }));
 vi.mock("@/lib/dmp-report-store", () => ({
+  lockDmpReportTargets: mocks.lockDmpReportTargets,
   getDmpBusinessReport: mocks.getDmpBusinessReport,
   validateDmpCanonicalReport: mocks.validateDmpCanonicalReport
 }));
 
 import {
+  createDmpReportShare,
   getPublicDmpSharedReport,
   getDmpReportShareManagementAnalytics,
   hashDmpReportShareToken,
@@ -89,6 +93,7 @@ describe("DMP public report bearer-token storage boundary", () => {
     mocks.shareGroupBy.mockResolvedValue([]);
     mocks.shareFindMany.mockResolvedValue([]);
     mocks.heatGroupBy.mockResolvedValue([]);
+    mocks.lockDmpReportTargets.mockResolvedValue(undefined);
     mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work({
       dmpReportShareEvent: { createMany: mocks.eventCreateMany },
       dmpReportShareSession: {
@@ -96,10 +101,60 @@ describe("DMP public report bearer-token storage boundary", () => {
         findUnique: mocks.sessionFindUniqueTx,
         update: mocks.sessionUpdate
       },
-      dmpReportShare: { update: mocks.shareUpdate },
+      dmpBusinessReport: { findFirst: mocks.reportFindFirstTx },
+      dmpReportShare: { create: mocks.create, update: mocks.shareUpdate },
       dmpReportHeatBucket: { upsert: mocks.heatUpsert },
       $executeRaw: mocks.executeRaw
     }));
+  });
+
+  it("locks the report, rechecks ownership, and creates the share in one transaction", async () => {
+    const access = { tenantId: "tenant-a", userId: "user-a" };
+    mocks.reportFindFirstTx.mockResolvedValue({
+      id: "report-a",
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093",
+      report: CANONICAL_REPORT
+    });
+    mocks.validateDmpCanonicalReport.mockReturnValue({ report: CANONICAL_REPORT });
+    mocks.create.mockResolvedValue({ id: "share-a", createdAt: new Date("2026-08-29T00:00:00.000Z") });
+
+    await expect(createDmpReportShare(access, " report-a ")).resolves.toMatchObject({
+      id: "share-a",
+      path: expect.stringMatching(/^\/shared\/dmp-reports\/[a-f0-9]{64}$/),
+      createdAt: "2026-08-29T00:00:00.000Z"
+    });
+    expect(mocks.lockDmpReportTargets).toHaveBeenCalledWith(expect.any(Object), access, ["report-a"]);
+    expect(mocks.reportFindFirstTx).toHaveBeenCalledWith({
+      where: { id: "report-a", tenantId: "tenant-a", userId: "user-a" },
+      select: { id: true, subjectItemId: true, competitorItemId: true, report: true }
+    });
+    expect(mocks.create).toHaveBeenCalledWith({
+      data: { reportId: "report-a", tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      select: { id: true, createdAt: true }
+    });
+    expect(mocks.lockDmpReportTargets.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.reportFindFirstTx.mock.invocationCallOrder[0]);
+    expect(mocks.reportFindFirstTx.mock.invocationCallOrder[0])
+      .toBeLessThan(mocks.create.mock.invocationCallOrder[0]);
+  });
+
+  it("does not create a share when the locked report is missing, foreign, or no longer valid", async () => {
+    const access = { tenantId: "tenant-a", userId: "user-a" };
+    mocks.reportFindFirstTx.mockResolvedValueOnce(null);
+    await expect(createDmpReportShare(access, "foreign-report")).resolves.toBeNull();
+
+    mocks.reportFindFirstTx.mockResolvedValueOnce({
+      id: "invalid-report",
+      subjectItemId: "593063365092",
+      competitorItemId: "593063365093",
+      report: CANONICAL_REPORT
+    });
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ error: "报告结构无效" });
+    await expect(createDmpReportShare(access, "invalid-report")).resolves.toBeNull();
+
+    expect(mocks.lockDmpReportTargets).toHaveBeenCalledTimes(2);
+    expect(mocks.create).not.toHaveBeenCalled();
   });
 
   it("looks up a public report by token hash and excludes revoked links without owner scope", async () => {
