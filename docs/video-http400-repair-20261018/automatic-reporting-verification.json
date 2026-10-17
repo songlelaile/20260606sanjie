@@ -11,7 +11,7 @@
   "checks": {
     "vitest": {
       "files": 13,
-      "passed": 298,
+      "passed": 301,
       "skipped": 53,
       "skipReason": "disposable PostgreSQL integration environment absent"
     },
@@ -19,7 +19,7 @@
       "passed": 75
     },
     "typecheck": "passed",
-    "productionBuild": "passed; existing warnings remain",
+    "productionBuild": "passed; final public JS notice and test-only delta rechecked with Vitest/typecheck/syntax",
     "syntax": "passed",
     "diffWhitespace": "passed",
     "independentReview": "passed"
@@ -47,6 +47,23 @@
   "productionEvidenceSeparate": {
     "existingStaticRepair": "previous r3 remains deployed",
     "ordinaryProductVideoRun": "production-0fe5e9c4-13c9-4a34-81e2-8c32852928d5",
-    "ordinaryProductVideoStatus": "in progress after explicit new plan using two product images; no portrait reference"
+    "ordinaryProductVideoStatus": "succeeded; three shots transferred and final rendered in deployed r3 runtime",
+    "durationSeconds": 15,
+    "dimensions": [
+      720,
+      1280
+    ],
+    "container": "webm",
+    "videoCodec": "VP9",
+    "audioCodec": "Opus",
+    "fileSizeBytes": 6720866,
+    "file": "/Users/shaozhuang/Downloads/video_production-0fe5e9c4-13c9-4a34-81e2-8c32852928d5.webm",
+    "browserPlaybackVerified": true,
+    "browserMediaError": null,
+    "referenceImageCount": 2,
+    "removedPortraitReferenceUsed": false,
+    "actualProviderBillingSettled": false,
+    "estimateWithReserveCny": "16.41",
+    "userBudgetCny": "17.00"
   }
 }

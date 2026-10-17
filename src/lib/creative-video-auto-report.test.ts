@@ -3,7 +3,7 @@ import vm from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type RuntimePayload = { assets: Array<{ id: string; libraryId?: string; dataUrl?: string; registrationKind?: string; portraitSessionId?: string }>; rightsConfirmed?: boolean; portraitSessionId?: string; idempotencyKey?: string };
-type ProductionFixture = { buildPlan(request: unknown, options: unknown): { shots: Array<{ request: { images: Array<{ remoteUrl: string; registration?: unknown }> } }> } };
+type ProductionFixture = { buildPlan(request: unknown, options: unknown): { shots: Array<{ id: string; request: { images: Array<{ remoteUrl: string; registration?: unknown }> } }> } };
 class Element {
   hidden = false; disabled = false; textContent = ""; className = ""; value = ""; src = ""; href = "";
   dataset: Record<string, string> = {}; children: Element[] = []; style = { display: "", setProperty: vi.fn() };
@@ -267,5 +267,46 @@ describe("explicit image classification and automatic supplier reporting", () =>
     const h = harness(); await h.api.associateTrustedPortrait(h.image().id, "asset-existing-person"); h.rights();
     expect(h.api.materialKind(h.image())).toBe("real"); expect(await h.api.prepareVideoAssets()).toBe(true);
     expect(h.api.buildRequest("submit").images[0].remoteUrl).toBe("asset://asset-existing-person"); expect(h.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("failed production plan source-change notice", () => {
+  async function failedPlan() {
+    const h = harness(); await h.api.setMaterialKind(h.image().id, "ordinary");
+    h.api.state.assets.image.push({ ...h.image(), id: "second-image" }); h.rights();
+    h.api.state.legacySingle = false;
+    h.api.state.productionOptions = { mode: "quality", totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 17, maxAttempts: 1 };
+    const plan = h.production.buildPlan(h.api.productionTemplate({ confirmed: true }), h.api.state.productionOptions);
+    const run = { id: "old-plan", purpose: "production", accountKey, status: "failed", durationSeconds: 15, plan,
+      shotRuns: plan.shots.map((shot, index) => ({ id: shot.id, status: index === 0 ? "failed" : "pending", attempts: [] })) };
+    h.api.state.productionRun = run;
+    return { ...h, run };
+  }
+  it("warns prominently when current images differ without changing the old snapshot or either action", async () => {
+    const h = await failedPlan(), before = JSON.stringify(h.run);
+    h.api.state.assets.image = []; h.api.renderProductionRun();
+    expect(h.nodes.get("production-new-plan-help")!.textContent).toBe("当前素材已变更，旧计划仍使用提交时的素材。请先点『新建成片计划』，再生成。");
+    expect(h.nodes.get("production-new-plan-help")!.className).toBe("inline-notice is-error");
+    expect(h.nodes.get("production-new-plan-help")!.hidden).toBe(false);
+    expect(h.nodes.get("production-resume")!.disabled).toBe(false); expect(h.nodes.get("production-new-plan")!.hidden).toBe(false);
+    expect(h.api.state.productionRun).toBe(h.run); expect(JSON.stringify(h.run)).toBe(before); expect(h.run).not.toHaveProperty("newPlanRequestedAt");
+    expect(h.runtime.sendMessage).not.toHaveBeenCalled();
+  });
+  it("compares sets rather than order, ignores deselected images, and clears an earlier warning when the original selection is restored", async () => {
+    const h = await failedPlan(), original = [...h.api.state.assets.image];
+    h.api.state.assets.image = []; h.api.renderProductionRun();
+    h.api.state.assets.image = [original[1], original[0], { ...original[0], id: "deselected-extra", selected: false }];
+    h.api.renderProductionRun();
+    expect(h.nodes.get("production-new-plan-help")!.className).toBe("section-note");
+    expect(h.nodes.get("production-new-plan-help")!.textContent).not.toContain("当前素材已变更");
+  });
+  it("does not suggest replacing a plan containing successful, processing, or unknown shots", async () => {
+    const h = await failedPlan(); h.api.state.assets.image = [];
+    for (const status of ["succeeded", "processing", "unknown"]) {
+      h.run.shotRuns[0].status = status; h.api.renderProductionRun();
+      expect(h.nodes.get("production-new-plan-help")!.hidden).toBe(true);
+      expect(h.nodes.get("production-new-plan-help")!.textContent).not.toContain("当前素材已变更");
+      expect(h.nodes.get("production-new-plan")!.hidden).toBe(true); expect(h.api.state.productionRun).toBe(h.run);
+    }
   });
 });

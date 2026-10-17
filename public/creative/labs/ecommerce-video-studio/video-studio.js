@@ -3473,7 +3473,13 @@
       dom.productionNewPlan.hidden = !!run.newPlanRequestedAt || !canStartNewProductionPlan(run);
       dom.productionNewPlan.disabled = state.actionPending || state.productionBusy || state.productionStarting;
     }
-    if (dom.productionNewPlanHelp) dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+    if (dom.productionNewPlanHelp) {
+      dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+      function imageIds(images) { return Array.from(new Set((images || []).filter(function (asset) { return asset && asset.selected !== false; }).map(function (asset) { return cleanText(asset.id); }))).sort().join('\n'); }
+      var changedImages = canStartNewProductionPlan(run) && imageIds(run.plan.request && run.plan.request.images) !== imageIds(state.assets.image);
+      dom.productionNewPlanHelp.className = changedImages ? 'inline-notice is-error' : 'section-note';
+      dom.productionNewPlanHelp.textContent = changedImages ? '当前素材已变更，旧计划仍使用提交时的素材。请先点『新建成片计划』，再生成。' : '保留原计划与费用记录，继续编辑当前素材和方案；点击生成后才会创建新计划。';
+    }
     if (globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(dom.productionResume, productionRunCreditSpec(run));
     if (dom.productionStop) { dom.productionStop.hidden = !state.productionBusy || run.phase !== 'rendering'; dom.productionStop.disabled = !state.productionAbortController; }
     var costs = productionCostSummary(run);
