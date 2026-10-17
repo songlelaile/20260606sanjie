@@ -1,0 +1,54 @@
+{
+ "finalCommit": "e6dd218d4496f0761258ccc87a9f7e8101ff5ce1",
+ "exitCodes": {
+  "01-vitest": 0,
+  "02-audit": 0,
+  "03-lint": 0,
+  "04-typecheck": 0,
+  "05-build": 0
+ },
+ "environment": {
+  "node": "v24.12.0",
+  "npm": "11.6.2",
+  "platform": "darwin-arm64",
+  "installedFrom": "npm ci against snapshot package-lock.json (private node_modules)",
+  "baselineCommit": "fd3b9dc",
+  "versions": {
+   "next": "15.5.19",
+   "react": "19.2.7",
+   "react-dom": "19.2.7",
+   "vitest": "4.1.8",
+   "typescript": "5.9.3",
+   "eslint": "9.39.4",
+   "eslint-config-next": "15.5.19",
+   "prisma": "5.22.0",
+   "@prisma/client": "5.22.0",
+   "tsx": "4.22.4",
+   "server-only": "0.0.1"
+  },
+  "productionReference": {
+   "next": "15.5.19",
+   "react": "19.2.7"
+  },
+  "notes": [
+   "Original production results ran on linux with node_modules from /opt/sanjie-releases/submission-billing-20261011-v1; this run uses macOS + Node v24.12.0"
+  ]
+ },
+ "artifactSha256": {
+  "01-vitest.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "01-vitest.log": "2d62c223fc78774dcc1967a2481419a8830f307eb084f476df9eb11aa0db7d0a",
+  "02-audit.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "02-audit.json": "7ebedd5ada6f75c13d939ca21474871dc5cef3b9ee6b6812369cf2d6d28e57ac",
+  "02-audit.stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "03-lint.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "03-lint.log": "d8e39b2b7e10525ec90218690785fbf269d19bf01624ceab54e182199434f868",
+  "04-typecheck.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "04-typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "05-build.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "05-build.log": "0eef65cee7a82050cf5284013d918f8840cd38a64dec7339a5c6e831ccf7ff1e",
+  "commit.txt": "c712d1b3cb822b715cd2307553bfbdfa8e4377caad401b2f148992a07d32efca",
+  "failure-classification.json": "a9b37b22f09d3b9974ada8fb2d9ff114db7485fa28942dc7af9fc5b195487d45",
+  "final-tests.json": "3f5da7d5fa4763f55179c51608262fbbbb320d666377f95fa0613b234291f827",
+  "regression-identity-mapping.json": "bd90940962b25a7b10b20684b63f44531ea04a706cad4a05102e719811dda9b2"
+ }
+}

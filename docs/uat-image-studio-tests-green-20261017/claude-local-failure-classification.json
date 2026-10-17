@@ -1,0 +1,1827 @@
+{
+ "baselineCommit": "fd3b9dc",
+ "finalCommit": "e6dd218d4496f0761258ccc87a9f7e8101ff5ce1",
+ "identityCounts": {
+  "assertion_failures": 135,
+  "suite_load_errors": 3
+ },
+ "classificationSummary": {
+  "broken_historical_fixture": 89,
+  "build_raw_frozen_coherence": 8,
+  "obsolete_expectation_with_source_evidence": 41
+ },
+ "actualProductionFunctionalityBugsAmongOriginalFailures": 0,
+ "cases": [
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests labels AI brief writing by vision model and a single-image retry by its task model",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests labels AI brief writing by vision model and a single-image retry by its task model"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests uses four-image chunks for generic main generation and four one-image directions for batch",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests uses four-image chunks for generic main generation and four one-image directions for batch"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests hides request hints when cached prompts, retries, and subject actions will not call a model",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests hides request hints when cached prompts, retries, and subject actions will not call a model"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests only prices style recommendations when product images are sent for analysis",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests only prices style recommendations when product images are sent for analysis"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests quotes the first link's vision model and leaves mixed model batches without a misleading unit rate",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests quotes the first link's vision model and leaves mixed model batches without a misleading unit rate"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests reads freshly typed links without changing remembered state and counts the requested prompt mode",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests reads freshly typed links without changing remembered state and counts the requested prompt mode"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests keeps visual evidence on the vision model and matches the detail primary action's link batch route",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests keeps visual evidence on the vision model and matches the detail primary action's link batch route"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests uses the frozen guide and resume configs for the quoted model and payment channel",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests uses the frozen guide and resume configs for the quoted model and payment channel"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests waits for automatic analysis before quoting an absent or stale prompt's request grouping",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests waits for automatic analysis before quoting an absent or stale prompt's request grouping"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests splits confirmed per-image plans into separate requests and avoids extra analysis for current prompts",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests splits confirmed per-image plans into separate requests and avoids extra analysis for current prompts"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests uses valid selected link prompts, then only failed keys for a compatible resume",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests uses valid selected link prompts, then only failed keys for a compatible resume"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests never silently caps large batches to a lower quote",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests never silently caps large batches to a lower quote"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests SKU retry matches its automatic failed-task selection instead of current checkboxes",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests SKU retry matches its automatic failed-task selection instead of current checkboxes"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests style continuation quotes only missing images, and a QA-only retry remains token-based",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests style continuation quotes only missing images, and a QA-only retry remains token-based"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-credit-hints.test.ts",
+   "fullName": "image action hints quote the existing request shape without submitting requests formal details start a new target-by-screen batch, while resume excludes completed and failed screens",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction ran past refreshLegacyCreditHints into unrelated bootstrap; studio renderCredits now uses real pricing helpers. Bounded extraction, real helpers.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-credit-hints.test.ts",
+    "fullName": "image action hints quote the existing request shape without submitting requests formal details start a new target-by-screen batch, while resume excludes completed and failed screens"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "image studio background and UI coexistence loads all HTML scripts in order and retains explicit shared exports",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "image studio background and UI coexistence loads all HTML scripts in order and retains explicit shared exports"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "image studio background and UI coexistence opens API settings through one message and the current authenticated UI bridge without recursion",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "image studio background and UI coexistence opens API settings through one message and the current authenticated UI bridge without recursion"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "image studio background and UI coexistence routes link prompt messages to background validation after the UI is loaded",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "image studio background and UI coexistence routes link prompt messages to background validation after the UI is loaded"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "website guide model dispatch sends gpt-image-2 main guide through GENERATE_IMAGE with its own strategy and parent",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "website guide model dispatch sends gpt-image-2 main guide through GENERATE_IMAGE with its own strategy and parent"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "website guide model dispatch sends gpt-image-2 detail guide through GENERATE_IMAGE with its own strategy and parent",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "website guide model dispatch sends gpt-image-2 detail guide through GENERATE_IMAGE with its own strategy and parent"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "website guide model dispatch sends gpt-image-2.5-sunburst main guide through GENERATE_IMAGE with its own strategy and parent",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "website guide model dispatch sends gpt-image-2.5-sunburst main guide through GENERATE_IMAGE with its own strategy and parent"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "website guide model dispatch sends gpt-image-2.5-sunburst detail guide through GENERATE_IMAGE with its own strategy and parent",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "website guide model dispatch sends gpt-image-2.5-sunburst detail guide through GENERATE_IMAGE with its own strategy and parent"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-image-runtime.test.ts",
+   "fullName": "website guide model dispatch captures the current configured model on opening and leaves a prior snapshot immutable",
+   "classification": "build_raw_frozen_coherence",
+   "evidence": "Raw==loaded byte assumption contradicts 5 reviewed published drifts and omitted knowledge-output-contract leaf; replaced by pinned dual-hash inventory, loaded bytes executed.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-image-runtime.test.ts",
+    "fullName": "website guide model dispatch captures the current configured model on opening and leaves a prior snapshot immutable"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-video-byok-priority.test.ts",
+   "fullName": "fresh production video credential priority keeps script analysis separate from the saved Doubao video key",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "web-video-host analysis path reads billing mode then analysis profile (2 reads); wallet path 1 read; identity rechecked after each.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-video-byok-priority.test.ts",
+    "fullName": "fresh production video credential priority keeps script analysis separate from the saved Doubao video key"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio async navigation and cached iframe lifetime loads a dedicated iframe only on its first visit and retains all three live instances",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio async navigation and cached iframe lifetime loads a dedicated iframe only on its first visit and retains all three live instances"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'main' frame while a request is executing",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'main' frame while a request is executing"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'detail' frame while a request is executing",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'detail' frame while a request is executing"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'ad' frame while a request is executing",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'ad' frame while a request is executing"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'batch' frame while a request is executing",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection preserves the 'batch' frame while a request is executing"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection keeps an uncertain receipt visible and presents its required next action",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection keeps an uncertain receipt visible and presents its required next action"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection awaits the latest idle draft save before changing the iframe",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection awaits the latest idle draft save before changing the iframe"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection keeps the current draft when the asynchronous save cannot complete",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection keeps the current draft when the asynchronous save cannot complete"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'main' guard while opening and allows leaving a startup error",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'main' guard while opening and allows leaving a startup error"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'detail' guard while opening and allows leaving a startup error",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'detail' guard while opening and allows leaving a startup error"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'ad' guard while opening and allows leaving a startup error",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'ad' guard while opening and allows leaving a startup error"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'batch' guard while opening and allows leaving a startup error",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection requires the 'batch' guard while opening and allows leaving a startup error"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection does not apply an asynchronous guard answer after component unmount",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection does not apply an asynchronous guard answer after component unmount"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/creative-viral-navigation.test.ts",
+   "fullName": "actual CreativeStudio main/detail/ad and batch request protection restores the active studio URL when back/forward tries to leave a request",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "CreativeStudio keeps cached task frames alive on internal switches (currentPreserved); guards run on unmounting exits. Harness also lacked setTimeout/window/document collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/creative-viral-navigation.test.ts",
+    "fullName": "actual CreativeStudio main/detail/ad and batch request protection restores the active studio URL when back/forward tries to leave a request"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-explicit-mode.test.ts",
+   "fullName": "explicit official module entries retain account materials and prior work opens the explicit main module while retaining the old opposite-mode draft",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "loadWorkspace migration: canonical row untouched, UUID backup + type-recovery-v1, fresh unconfirmed tasks; fixture also lacked keyed IDB/DOM collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-explicit-mode.test.ts",
+    "fullName": "explicit official module entries retain account materials and prior work opens the explicit main module while retaining the old opposite-mode draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-explicit-mode.test.ts",
+   "fullName": "explicit official module entries retain account materials and prior work opens the explicit detail module while retaining the old opposite-mode draft",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "loadWorkspace migration: canonical row untouched, UUID backup + type-recovery-v1, fresh unconfirmed tasks; fixture also lacked keyed IDB/DOM collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-explicit-mode.test.ts",
+    "fullName": "explicit official module entries retain account materials and prior work opens the explicit detail module while retaining the old opposite-mode draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-explicit-mode.test.ts",
+   "fullName": "explicit official module entries retain account materials and prior work keeps the existing preference for an old bookmark without explicit mode",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "loadWorkspace migration: canonical row untouched, UUID backup + type-recovery-v1, fresh unconfirmed tasks; fixture also lacked keyed IDB/DOM collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-explicit-mode.test.ts",
+    "fullName": "explicit official module entries retain account materials and prior work opens an old bookmark without an explicit mode as main while retaining its detail draft"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-explicit-mode.test.ts",
+   "fullName": "explicit official module entries retain account materials and prior work does not rewrite a matching explicit module draft",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "loadWorkspace migration: canonical row untouched, UUID backup + type-recovery-v1, fresh unconfirmed tasks; fixture also lacked keyed IDB/DOM collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-explicit-mode.test.ts",
+    "fullName": "explicit official module entries retain account materials and prior work does not rewrite a matching explicit module draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-explicit-mode.test.ts",
+   "fullName": "explicit official module entries retain account materials and prior work leaves the original draft untouched when the safety backup cannot be saved",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "loadWorkspace migration: canonical row untouched, UUID backup + type-recovery-v1, fresh unconfirmed tasks; fixture also lacked keyed IDB/DOM collaborators.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-explicit-mode.test.ts",
+    "fullName": "explicit official module entries retain account materials and prior work leaves the original draft untouched when the safety backup cannot be saved"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-generation-slots.test.ts",
+   "fullName": "shared studio browser concurrency slots reads and clears an exact concurrent receipt without clearing another job or workspace",
+   "classification": "broken_historical_fixture",
+   "evidence": "Extraction marker function journal() no longer matched journal(scope=workspaceScope); bounded real helper.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-generation-slots.test.ts",
+    "fullName": "shared studio browser concurrency slots reads and clears an exact concurrent receipt without clearing another job or workspace"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge exposes provider quality capability without advertising an unsupported fast mode",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge exposes provider quality capability without advertising an unsupported fast mode"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge binds six product images and the current creation intent to the existing safe analysis route",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge binds six product images and the current creation intent to the existing safe analysis route"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge makes brief intent explicit and retains the three-image behavior of other tools",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge makes brief intent explicit and retains the three-image behavior of other tools"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge fails before dispatch when the account has no configured API",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge fails before dispatch when the account has no configured API"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge edits studio results with originals preserved and incompatible generation contracts removed",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge edits studio results with originals preserved and incompatible generation contracts removed"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-bridge.test.ts",
+   "fullName": "studio analysis and editing bridge honors the six-image studio context in the actual analyzer without widening other analysis inputs",
+   "classification": "broken_historical_fixture",
+   "evidence": "Bridge slice references production creativeWebSetApiBusy and signal registries; real helpers loaded from promptlab.js/background.js.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-bridge.test.ts",
+    "fullName": "studio analysis and editing bridge honors the six-image studio context in the actual analyzer without widening other analysis inputs"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-contract.test.ts",
+   "fullName": "actual website background product route rejects changed plans, unsupported models and link/reference route mixing before provider",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Same knowledge-gate removal as scene-background.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-contract.test.ts",
+    "fullName": "actual website background product route rejects changed plans, unsupported models and link/reference route mixing before provider"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup restores the account draft before rendering, without waiting for the API catalog",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup restores the account draft before rendering, without waiting for the API catalog"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup locks uploads, settings and generation while the rendered workspace loads its catalog",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup locks uploads, settings and generation while the rendered workspace loads its catalog"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup shows a catalog failure instead of silently converting it to an empty provider list",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup shows a catalog failure instead of silently converting it to an empty provider list"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup rejects a catalog from another account before accepting its models",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup rejects a catalog from another account before accepting its models"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup retains the restored draft and reports a rejected catalog request",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup retains the restored draft and reports a rejected catalog request"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup blocks navigation during catalog loading while account checks still protect draft saves",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup blocks navigation during catalog loading while account checks still protect draft saves"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main studio first paint and safe startup accepts the configured model only after the catalog succeeds for a new draft",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main studio first paint and safe startup accepts the configured model only after the catalog succeeds for a new draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup restores the account draft before rendering, without waiting for the API catalog",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup restores the account draft before rendering, without waiting for the API catalog"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup locks uploads, settings and generation while the rendered workspace loads its catalog",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup locks uploads, settings and generation while the rendered workspace loads its catalog"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup shows a catalog failure instead of silently converting it to an empty provider list",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup shows a catalog failure instead of silently converting it to an empty provider list"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup rejects a catalog from another account before accepting its models",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup rejects a catalog from another account before accepting its models"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup retains the restored draft and reports a rejected catalog request",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup retains the restored draft and reports a rejected catalog request"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup blocks navigation during catalog loading while account checks still protect draft saves",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup blocks navigation during catalog loading while account checks still protect draft saves"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail studio first paint and safe startup accepts the configured model only after the catalog succeeds for a new draft",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail studio first paint and safe startup accepts the configured model only after the catalog succeeds for a new draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "main account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "main account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "detail account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "detail account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "ad account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "ad account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "ad account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "ad account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "ad account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "ad account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "batch account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "batch account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "batch account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "batch account-level pending startup UI waits for account journal recovery before rendering controls even if the catalog is ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "batch account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "batch account-level pending startup UI unlocks the approved local draft when the account journal has no pending receipt"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution does not describe an old request with a label from the current edited plan",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution does not describe an old request with a label from the current edited plan"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for empty stored value without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for empty stored value without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for invalid JSON without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for invalid JSON without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for array without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for array without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for primitive without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for primitive without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for invalid timestamp without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for invalid timestamp without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for missing task without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for missing task without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution blocks startup for foreign owner without clearing or exposing the raw journal",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution blocks startup for foreign owner without clearing or exposing the raw journal"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution keeps startup blocked when the journal storage read throws",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution keeps startup blocked when the journal storage read throws"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution treats a missing recovery module as a startup failure",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution treats a missing recovery module as a startup failure"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution does not show or save another account's receipt after identity changes during startup",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution does not show or save another account's receipt after identity changes during startup"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution keeps the journal and UI closed if identity changes while reading the pending record",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution keeps the journal and UI closed if identity changes while reading the pending record"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "pending startup failure and receipt-only resolution restores eleven completed results and the twelfth receipt without sending on confirmation or release",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "pending startup failure and receipt-only resolution restores eleven completed results and protects only the twelfth pending image without manual release"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge awaits durable main storage while retaining idle receipts and the paid generation lock",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge awaits durable main storage while retaining idle receipts and protecting the paid image"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge awaits durable detail storage while retaining idle receipts and the paid generation lock",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge awaits durable detail storage while retaining idle receipts and protecting the paid image"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge blocks startup and incomplete restoration, then preserves original storage on an idle startup failure exit",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge blocks startup and incomplete restoration, then preserves original storage on an idle startup failure exit"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge preserves original storage on native leave and hide after startup fails with bound listeners",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge preserves original storage on native leave and hide after startup fails with bound listeners"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge ignores API dialog and bound-account callbacks after a bound startup render failure",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge ignores API dialog and bound-account callbacks after a bound startup render failure"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge drops the awaited tail of an API callback that started before startup render failed",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge drops the awaited tail of an API callback that started before startup render failed"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge blocks controller activity, awaiting responses and an external import even without busy",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge blocks controller activity, awaiting responses and an external import even without busy"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge protects an actual analysis request and returns to an idle save after it finishes",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge protects an actual analysis request and returns to an idle save after it finishes"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge protects actual original-image archiving for a current result while generation is idle",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge protects actual original-image archiving for a current result while generation is idle"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge protects actual original-image archiving for a previous result while generation is idle",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge protects actual original-image archiving for a previous result while generation is idle"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge blocks navigation during the account/save preflight of an actual generate click",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge blocks navigation during the account/save preflight of an actual generate click"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge blocks navigation during the account/save preflight of an actual retry click",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge blocks navigation during the account/save preflight of an actual retry click"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge retains the real timeout request through navigation guards and accepts its original late success exactly once",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge retains the real timeout request through navigation guards and accepts its original late success exactly once"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge denies failed writes and account changes before or during saving",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge denies failed writes and account changes before or during saving"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge coalesces rapid requests and rejects active state that appears during an asynchronous write",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge coalesces rapid requests and rejects active state that appears during an asynchronous write"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio deactivation bridge coalesces rapid requests and rejects changed state that appears during an asynchronous write",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio deactivation bridge coalesces rapid requests and rejects changed state that appears during an asynchronous write"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions persists empty groups and cascades rename/delete/undo without changing module content or approved plans",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions persists empty groups and cascades rename/delete/undo without changing module content or approved plans"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions restores empty and legacy inferred groups with account and environment isolation",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions restores empty and legacy inferred groups with account and environment isolation"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions does not call an old completed run current after edits, and excludes retained images from the next run progress",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions does not call an old completed run current after edits, and excludes retained images from the next run progress"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions binds ad quality into its approved plan and keeps unavailable fast generation disabled",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions binds ad quality into its approved plan and keeps unavailable fast generation disabled"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions blocks sidebar navigation during a pending generation and flushes the completed draft when idle",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions blocks sidebar navigation during a pending generation and flushes the completed draft when idle"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions persists every selected main module and invalidates confirmation when selection is removed",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions persists every selected main module and invalidates confirmation when selection is removed"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions persists every selected detail module and invalidates confirmation when selection is removed",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions persists every selected detail module and invalidates confirmation when selection is removed"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions keeps module quantities in selection order, respects five-per-module, and persists expert mode as a boolean",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions keeps module quantities in selection order, respects five-per-module, and persists expert mode as a boolean"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions persists an ad template and type in the actual plan and bound generation payload",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions persists an ad template and type in the actual plan and bound generation payload"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions creates, selects, edits and removes a saved user module without retaining a stale approved plan",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions creates, selects, edits and removes a saved user module without retaining a stale approved plan"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions restores the saved module library only for its owner account",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions restores the saved module library only for its owner account"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "real studio replica control interactions allows an explicitly checked unknown receipt to be resolved while the rest of the workspace remains locked",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Isolated pending receipts (no global lock/manual clear), recovery-row read order, migration contract; studio-genesis-ui.js pendingReceiptMarkup/taskRows/loadWorkspace.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "real studio replica control interactions keeps an unknown receipt's exact image protected without a manual release while the rest of the workspace continues"
+   },
+   "renamed": true
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "confirmed plans with unavailable image API feedback keeps the approved main plan disabled with a configuration reason, then enables that same plan when its API becomes ready",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "confirmed plans with unavailable image API feedback keeps the approved main plan disabled with a configuration reason, then enables that same plan when its API becomes ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "confirmed plans with unavailable image API feedback keeps the approved detail plan disabled with a configuration reason, then enables that same plan when its API becomes ready",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "confirmed plans with unavailable image API feedback keeps the approved detail plan disabled with a configuration reason, then enables that same plan when its API becomes ready"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "confirmed plans with unavailable image API feedback does not unlock or write another account's configuration into the approved draft",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "confirmed plans with unavailable image API feedback does not unlock or write another account's configuration into the approved draft"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-genesis-startup.test.ts",
+   "fullName": "confirmed plans with unavailable image API feedback explains an explicitly unsupported reference model and keeps the approved plan intact",
+   "classification": "broken_historical_fixture",
+   "evidence": "Fake IndexedDB returned the saved draft for every key and rejected readonly transactions; DOM lacked style/documentElement/attributes/timers. Keyed transactional store added.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-genesis-startup.test.ts",
+    "fullName": "confirmed plans with unavailable image API feedback explains an explicitly unsupported reference model and keeps the approved plan intact"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-history-dialog.test.ts",
+   "fullName": "studio generation history dialog routes both studio history buttons and the legacy history entry through the same opener",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Toolbar and legacy recovery dialog are both valid openers routed through one account-checked handler.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-history-dialog.test.ts",
+    "fullName": "studio generation history dialog routes both studio history buttons and the legacy history entry through the same opener"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-main-replica.test.ts",
+   "fullName": "main module replica contract leaves a successful original in place when an unknown persisted receipt blocks regeneration",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "retrySlot reports STUDIO_RECEIPT_PENDING for a persisted unloaded receipt and STUDIO_CONFIRM_REQUIRED for a loaded uncertain one.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-main-replica.test.ts",
+    "fullName": "main module replica contract leaves a successful original in place when an unknown persisted receipt blocks regeneration"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-scene-background.test.ts",
+   "fullName": "website scene backend contract only bypasses link knowledge for a completely validated scene contract",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "background.js verifyKnowledgeBeforeImage: optional business knowledge no longer gates saved link prompts (prompt_input_scope); subject binding still gates.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-scene-background.test.ts",
+    "fullName": "website scene backend contract only bypasses link knowledge for a completely validated scene contract"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-scene-route.test.ts",
+   "fullName": "场景档案不显示旧引导重生；案例和焕新保留各自可用入口",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Archive card adds accessible preview and 下载原图 label; auto-QA waits for archive commits (fixed microtask count was fixture timing).",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-scene-route.test.ts",
+    "fullName": "场景档案不显示旧引导重生；案例和焕新保留各自可用入口"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/lib/studio-scene-route.test.ts",
+   "fullName": "风格路线未切换时四槽位与一次自动QA完整保留",
+   "classification": "obsolete_expectation_with_source_evidence",
+   "evidence": "Archive card adds accessible preview and 下载原图 label; auto-QA waits for archive commits (fixed microtask count was fixture timing).",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/lib/studio-scene-route.test.ts",
+    "fullName": "风格路线未切换时四槽位与一次自动QA完整保留"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration hides multiplier rules while retaining the same balance and quote calculation",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration hides multiplier rules while retaining the same balance and quote calculation"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration 提供积分充值入口，支付成功事件重新读取账户余额",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration 提供积分充值入口，支付成功事件重新读取账户余额"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration 供应结算事件刷新可用余额和冻结积分，旧请求不能覆盖新余额",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration 供应结算事件刷新可用余额和冻结积分，旧请求不能覆盖新余额"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration rounds each actual request and distinguishes four-image grouping",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration rounds each actual request and distinguishes four-image grouping"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration does not guess a missing model price or accept invalid quantities",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration does not guess a missing model price or accept invalid quantities"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration shows true balance, simulates with the current plan, and never posts or invokes a model",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration shows true balance, simulates with the current plan, and never posts or invokes a model"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration shows API failures instead of presenting an empty ledger as verified",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration shows API failures instead of presenting an empty ledger as verified"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/creative/CreativeCredits.test.ts",
+   "fullName": "creative credit display and safe demonstration clears an old quote when refreshing current pricing fails",
+   "classification": "broken_historical_fixture",
+   "evidence": "VM document lacked addEventListener/visibilityState used by production refresh; exact-handler browser collaborators added plus lifecycle regression.",
+   "finalStatus": "passed",
+   "identityType": "assertion_failure",
+   "finalIdentity": {
+    "suite": "src/components/creative/CreativeCredits.test.ts",
+    "fullName": "creative credit display and safe demonstration clears an old quote when refreshing current pricing fails"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/management/CreditGiftPanel.test.ts",
+   "fullName": "SUITE_LOAD_ERROR",
+   "classification": "broken_historical_fixture",
+   "evidence": "Custom loader did not transpile real sibling CreditGiftPlansPanel; window.dispatchEvent collaborator missing.",
+   "finalStatus": "passed",
+   "identityType": "suite_load_error",
+   "finalIdentity": {
+    "suite": "src/components/management/CreditGiftPanel.test.ts",
+    "fullName": "SUITE_LOAD_ERROR"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/components/management/CreditPoolConnectionPanel.test.ts",
+   "fullName": "SUITE_LOAD_ERROR",
+   "classification": "broken_historical_fixture",
+   "evidence": "Loader lacked real credit-pool-observation-contract alias; findButton default-param recursion; hidden drift to request-key verification updated with stronger proofs.",
+   "finalStatus": "passed",
+   "identityType": "suite_load_error",
+   "finalIdentity": {
+    "suite": "src/components/management/CreditPoolConnectionPanel.test.ts",
+    "fullName": "SUITE_LOAD_ERROR"
+   },
+   "renamed": false
+  },
+  {
+   "suite": "src/app/api/management/credit-pool/routes.test.ts",
+   "fullName": "SUITE_LOAD_ERROR",
+   "classification": "broken_historical_fixture",
+   "evidence": "server-only sentinel needs a scoped test mock; source route now requires requestKey; gift-plan processing collaborator mocked.",
+   "finalStatus": "passed",
+   "identityType": "suite_load_error",
+   "finalIdentity": {
+    "suite": "src/app/api/management/credit-pool/routes.test.ts",
+    "fullName": "SUITE_LOAD_ERROR"
+   },
+   "renamed": false
+  }
+ ],
+ "sessionDefectsFixed_notOriginalFailures": [
+  {
+   "commit": "7d47cc3",
+   "file": "src/components/creative/CreativeStudio.tsx",
+   "defect": "Pending switch feedback (introduced by this session in 4dba58d) was not cleared when a URL revision or effect cleanup superseded an in-flight click, leaving a stale \"正在打开…\" status with unlocked controls.",
+   "fix": "URL-effect reset and cleanup clear pendingTarget.",
+   "regression": "src/lib/creative-viral-navigation.test.ts > studio switch pending feedback > clears a superseded pending destination when a URL revision lands on the current surface (mutation-checked: fails without the fix)"
+  },
+  {
+   "commit": "4dba58d",
+   "file": "public/creative/labs/image-prompt-lab/studio-genesis-ui.js + identical leaf in studio-views-20261010-credit-v3.js",
+   "defect": "Safeguards designed into this session's own read-overlap optimization (not a pre-existing defect): target migration writes must not run when the source save fails, and a failed source save must unlock without waiting for the target chain.",
+   "fix": "beforeWrite barrier in loadWorkspace; await the source save before the target read result.",
+   "regression": "src/lib/studio-explicit-mode.test.ts > workspace switch reads overlap the current save without weakening its guards (barrier mutation-checked: removing it fails 2 tests)"
+  }
+ ],
+ "workerTerminationBoundary": "A Vitest worker stop ACK/exit warning was reported by the reviewer for studio-scene-contract in an earlier run. It was not reproduced in this environment (final run: 22/22 passed, no termination/timeout text in 01-vitest.log). No native handle or scene leak evidence was found; this is recorded as not reproduced, not as a fixed leak. No timeouts were added and no warnings suppressed."
+}

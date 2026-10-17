@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "main account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "main account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js pendingReceiptMarkup/generateActions: a pending receipt protects only its own image; other images generate; journal and secret-free receipt display preserved and asserted."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "detail account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "detail account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js pendingReceiptMarkup/generateActions: a pending receipt protects only its own image; other images generate; journal and secret-free receipt display preserved and asserted."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "ad account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "ad account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js pendingReceiptMarkup/generateActions: a pending receipt protects only its own image; other images generate; journal and secret-free receipt display preserved and asserted."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "batch account-level pending startup UI shows another entry's request before generation can unlock and preserves its journal",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "batch account-level pending startup UI isolates another entry's pending request while preserving its journal and enabling independent generation",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js pendingReceiptMarkup/generateActions: a pending receipt protects only its own image; other images generate; journal and secret-free receipt display preserved and asserted."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "pending startup failure and receipt-only resolution opposite-type corrupt snapshot preserves the untouched draft without writes",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "pending startup failure and receipt-only resolution opposite-type corrupt snapshot preserves the untouched canonical draft and migrates through a backup and recovery row",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js loadWorkspace: mixed/opposite-type drafts keep the canonical row byte-identical and add one UUID backup plus one type-recovery-v1 row with fresh unconfirmed tasks; asserted on committed rows."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "pending startup failure and receipt-only resolution restores eleven completed results and the twelfth receipt without sending on confirmation or release",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "pending startup failure and receipt-only resolution restores eleven completed results and protects only the twelfth pending image without manual release",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js pendingReceiptMarkup ('无需手动解除'): manual confirm/release removed; 11 completed results, the 12th uncertain slot, journal and plan preserved; zero sends."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "real studio deactivation bridge awaits durable main storage while retaining idle receipts and the paid generation lock",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "real studio deactivation bridge awaits durable main storage while retaining idle receipts and protecting the paid image",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "Deactivation still awaits a durable committed save and freezes the workspace; production no longer applies a global paid lock, only the uncertain image is non-retryable."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "real studio deactivation bridge awaits durable detail storage while retaining idle receipts and the paid generation lock",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "real studio deactivation bridge awaits durable detail storage while retaining idle receipts and protecting the paid image",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "Deactivation still awaits a durable committed save and freezes the workspace; production no longer applies a global paid lock, only the uncertain image is non-retryable."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-genesis-startup.test.ts",
+        "fullName": "real studio replica control interactions allows an explicitly checked unknown receipt to be resolved while the rest of the workspace remains locked",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-genesis-startup.test.ts",
+          "fullName": "real studio replica control interactions keeps an unknown receipt's exact image protected without a manual release while the rest of the workspace continues",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "Manual unknown-receipt clearing was removed in production; the unknown request stays journaled and bound to its image, the workspace continues, new images are billed as new tasks."
+    },
+    {
+      "from": {
+        "suite": "src/lib/studio-explicit-mode.test.ts",
+        "fullName": "explicit official module entries retain account materials and prior work keeps the existing preference for an old bookmark without explicit mode",
+        "occurrence": 1
+      },
+      "to": [
+        {
+          "suite": "src/lib/studio-explicit-mode.test.ts",
+          "fullName": "explicit official module entries retain account materials and prior work opens an old bookmark without an explicit mode as main while retaining its detail draft",
+          "occurrence": 1
+        }
+      ],
+      "same_intent": true,
+      "reason": "studio-genesis-ui.js: mode defaults to main without ?mode; the old detail draft is preserved through the reviewed backup and type-recovery migration instead of reinterpreting the entry."
+    }
+  ],
+  "suites": []
+}
