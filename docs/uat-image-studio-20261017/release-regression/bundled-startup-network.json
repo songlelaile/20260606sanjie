@@ -1,0 +1,125 @@
+{
+  "scope": "Local bundled actual assets with synthetic fixtures; no paid calls. Full flow blocked before upload.",
+  "url": "http://127.0.0.1:18803/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1&demo=1",
+  "dom": {
+    "bootstrap": "resource-error",
+    "labStartup": "error",
+    "startup": "resource-error",
+    "studioRoot": true,
+    "visibleFailure": "主图创作暂未就绪\n\n工作台资源加载失败，请重新加载；原素材、草稿和任务记录仍保留。\n\n重新加载"
+  },
+  "network": [
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/api/auth/me",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1&demo=1",
+      "status": 200,
+      "type": "Document"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/creative/web-chrome.js?v=20261017-studio-optimize-v2",
+      "status": 200,
+      "type": "Script"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/creative/labs/image-prompt-lab/studio-entry.css?v=28a9afe0b363c934c1194893",
+      "status": 200,
+      "type": "Stylesheet"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/creative/labs/image-prompt-lab/studio-entry.js?v=8878bc7128664150f4ca6a86",
+      "status": 200,
+      "type": "Script"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/api/auth/me",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Runtime.exceptionThrown",
+      "text": "Uncaught",
+      "description": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: script-src 'self' 'unsafe-inline'\".\n\n    at <anonymous>:1:28\n    at <anonymous>:1:35",
+      "frames": [
+        {
+          "functionName": "",
+          "url": "",
+          "lineNumber": 0
+        },
+        {
+          "functionName": "",
+          "url": "",
+          "lineNumber": 0
+        }
+      ]
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/api/creative/credits",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/__demo/event",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "chrome-extension://hehggadaopoacecdllhhajmbjkdcmajg/images/cursor-chat.png",
+      "status": 200,
+      "type": "Image"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/__demo/event",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/api/auth/me",
+      "status": 200,
+      "type": "Fetch"
+    },
+    {
+      "method": "Network.responseReceived",
+      "url": "http://127.0.0.1:18803/api/auth/me",
+      "status": 200,
+      "type": "Fetch"
+    }
+  ],
+  "console": [
+    {
+      "level": "error",
+      "message": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: script-src 'self' 'unsafe-inline'\".\n\n    at <anonymous>:1:28\n    at <anonymous>:1:35",
+      "timestamp": "2026-10-17T13:39:01.801Z"
+    },
+    {
+      "level": "error",
+      "message": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: script-src 'self' 'unsafe-inline'\".\n\n    at <anonymous>:1:28\n    at <anonymous>:1:35",
+      "timestamp": "2026-10-17T13:39:32.328Z"
+    },
+    {
+      "level": "error",
+      "message": "EvalError: Evaluating a string as JavaScript violates the following Content Security Policy directive because 'unsafe-eval' is not an allowed source of script: script-src 'self' 'unsafe-inline'\".\n\n    at <anonymous>:1:28\n    at <anonymous>:1:35",
+      "timestamp": "2026-10-17T13:40:21.386Z"
+    }
+  ],
+  "limitations": [
+    "No Network.loadingFailed events captured.",
+    "Anonymous CSP eval rejection was observed; origin of injected code is not proven.",
+    "Upload, bundled analysis/generation, archive/download, preview and mobile flow remain unverified in this run.",
+    "No permissions, CSP, page state or app source modified."
+  ]
+}

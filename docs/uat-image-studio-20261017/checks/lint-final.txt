@@ -1,0 +1,51 @@
+
+> three-stage-engine-saas@0.1.0 lint
+> next lint
+
+`next lint` is deprecated and will be removed in Next.js 16.
+For new projects, use create-next-app to choose your preferred linter.
+For existing projects, migrate to the ESLint CLI:
+npx @next/codemod@canary next-lint-to-eslint-cli .
+
+
+./src/components/creative/CreativeStudio.test.ts
+17:7  Warning: 'stylesSource' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+39:10  Warning: 'deferred' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/creative/CreativeStudio.tsx
+182:61  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+435:23  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/components/creative/ScanPaymentDialog.tsx
+248:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+257:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/components/management/CreditGiftPanel.test.ts
+34:7  Warning: 'ENDPOINT' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/management/CreditGiftPanel.tsx
+143:62  Warning: The ref value 'refreshVersion.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'refreshVersion.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/lib/algorithm/three-stage.ts
+8:3  Warning: 'Lifecycle' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/creative-image-runtime.test.ts
+50:43  Warning: '_options' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/link-image-ui.test.ts
+124:24  Warning: '_name' is defined but never used.  @typescript-eslint/no-unused-vars
+132:67  Warning: '_input' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/proxy.ts
+307:30  Warning: 'upstream' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-archive-receipt.test.ts
+11:35  Warning: '_input' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-task-progress.test.ts
+49:25  Warning: 'label' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-narration.ts
+231:10  Warning: 'error' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules

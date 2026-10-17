@@ -1,0 +1,78 @@
+{
+  "scope": "Actual bundled public UI with visible synthetic fixture import and preset local analysis/generation. Native/system file picker not verified.",
+  "fixtureControl": "载入本地合成示例图",
+  "inputFile": "local-synthetic-demo-tote.png",
+  "generationDisabledBeforeConfirm": true,
+  "generationEnabledAfterConfirm": true,
+  "editedPlan": true,
+  "generatedCount": "1/1",
+  "archiveState": "已存入本机历史",
+  "selectedDownloadEnabled": true,
+  "keyboardPreview": {
+    "openedWithEnter": true,
+    "closedWithEscape": true,
+    "focusedLabel": "预览首页图",
+    "previewHidden": true,
+    "previewImageCount": 0
+  },
+  "mainDetailRestoration": {
+    "mainBriefRestored": true,
+    "mainResultRetained": true,
+    "mainArchiveRetained": true,
+    "detailBriefRestored": "详情独立草稿回归：首屏商品全貌，第二屏双提手与口袋，第三屏材质细节。"
+  },
+  "mobile": {
+    "formFontSizes": [
+      "16px",
+      "16px",
+      "16px",
+      "16px"
+    ],
+    "scrollWidth": 390,
+    "startup": "ready",
+    "width": 390,
+    "preview": {
+      "width": 366,
+      "x": 12
+    }
+  },
+  "resources": {
+    "bootstrap": "ready",
+    "scripts": [
+      "/creative/web-chrome.js",
+      "/creative/labs/image-prompt-lab/studio-entry.js"
+    ],
+    "startup": "ready",
+    "styles": [
+      "/creative/labs/image-prompt-lab/studio-entry.css"
+    ]
+  },
+  "download": {
+    "uiClicked": true,
+    "eventObserver": "Timed out after15000ms; actual output separately verified on disk",
+    "path": "/Users/shaozhuang/Downloads/商品任务 1_01.png",
+    "bytes": 460926,
+    "width": 1024,
+    "height": 1024,
+    "modifiedUtc": "2026-10-17T13:46:10.723211+00:00",
+    "sha256": "c1cfb217a34aa275dfeee810e77d05e0f13e3cd885385fede8f80e1b62b1bc3f"
+  },
+  "boundaries": [
+    "No paid provider calls",
+    "No extension permissions or CSP changed",
+    "No CUA page-state injection",
+    "System chooser and real provider generation remain unverified"
+  ],
+  "metrics": {
+    "bundled": true,
+    "fixtureInputAttempts": 1,
+    "fixtureInputDispatched": 1,
+    "fixtureInputBlocked": 0,
+    "fixtureInputFailures": 0,
+    "fixtureAnalysis": 1,
+    "fixtureGeneration": 1,
+    "localArchives": 1,
+    "outboundProviderRequests": 0,
+    "blockedProxyRequests": 0
+  }
+}

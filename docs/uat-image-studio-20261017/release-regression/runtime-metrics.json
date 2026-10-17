@@ -1,0 +1,121 @@
+{
+  "startedAt": "2026-10-17T13:45:14.015Z",
+  "environment": "studio-main-local-demo-v1",
+  "fixtureInputAttempts": 1,
+  "fixtureInputDispatched": 1,
+  "fixtureInputBlocked": 0,
+  "fixtureInputFailures": 0,
+  "fixtureAnalysis": 1,
+  "fixtureGeneration": 1,
+  "localArchives": 1,
+  "blockedProxyRequests": 0,
+  "blockedOtherApiRequests": 0,
+  "outboundProviderRequests": 0,
+  "events": [
+    {
+      "type": "bridge-ready",
+      "at": "2026-10-17T13:45:29.096Z"
+    },
+    {
+      "type": "csp-blocked",
+      "directive": "script-src",
+      "url": "eval",
+      "at": "2026-10-17T13:45:29.107Z"
+    },
+    {
+      "type": "fixture-input",
+      "phase": "attempt",
+      "nativePicker": false,
+      "method": "visible-demo-button-file-input-change",
+      "taskId": "e4ca02a7-6187-48c8-89db-c8bd57ff2c91",
+      "at": "2026-10-17T13:45:35.163Z"
+    },
+    {
+      "type": "fixture-input",
+      "phase": "dispatched",
+      "nativePicker": false,
+      "method": "visible-demo-button-file-input-change",
+      "taskId": "e4ca02a7-6187-48c8-89db-c8bd57ff2c91",
+      "fileName": "local-synthetic-demo-tote.png",
+      "bytes": 7977,
+      "at": "2026-10-17T13:45:35.228Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "analyze",
+      "at": "2026-10-17T13:45:45.424Z"
+    },
+    {
+      "type": "fixture-analysis",
+      "products": 1,
+      "at": "2026-10-17T13:45:45.450Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "generate",
+      "at": "2026-10-17T13:45:53.269Z"
+    },
+    {
+      "type": "fixture-generation",
+      "jobId": "job_1792244753387_ae0ad8b7e97c38",
+      "ratio": "1:1",
+      "quality": "auto",
+      "generationSpeed": "standard",
+      "width": 1024,
+      "height": 1024,
+      "at": "2026-10-17T13:45:53.443Z"
+    },
+    {
+      "type": "local-archive",
+      "ok": true,
+      "resultId": "job_1792244753387_ae0ad8b7e97c38:studio:shot-1",
+      "at": "2026-10-17T13:45:54.601Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "download",
+      "at": "2026-10-17T13:46:10.686Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "mode",
+      "at": "2026-10-17T13:47:05.475Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "mode",
+      "at": "2026-10-17T13:47:06.173Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "mode",
+      "at": "2026-10-17T13:47:06.493Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "mode",
+      "at": "2026-10-17T13:47:06.797Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "navigate-step",
+      "at": "2026-10-17T13:47:23.997Z"
+    }
+  ],
+  "requests": {
+    "/creative/labs/image-prompt-lab/promptlab.html": 2,
+    "/creative/web-chrome.js": 1,
+    "/creative/labs/image-prompt-lab/studio-entry.css": 1,
+    "/creative/labs/image-prompt-lab/studio-entry.js": 1,
+    "/api/auth/me": 124,
+    "/api/creative/credits": 1,
+    "/__demo/event": 15,
+    "/__demo/product.png": 1,
+    "/__demo/metrics": 1
+  },
+  "bundled": true,
+  "productPath": "/var/folders/4p/srdlq7d51575spj5yns3zg6h0000gn/T/sanjie-studio-main-demo/demo-product-tote.png",
+  "productSha256": "bc046f07f829ca3984d22512ad1989759e5609461f725c290d41007302804afb",
+  "mode": "actual public UI + explicit mock analysis and generation",
+  "providerNetworkPolicy": "No server outbound networking. All provider proxy routes return 403. Browser CSP allows only this origin, blob and data."
+}

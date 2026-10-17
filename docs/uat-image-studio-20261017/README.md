@@ -17,26 +17,32 @@
 - API 忙碌标志在排入界面绘制前立即同步；结果图支持键盘预览，关闭后恢复焦点。恢复旧草稿的提示保持在标题之前。
 - 更新修改过的静态资源版本；修复本地演示服务未识别带版本号 `web-chrome.js`、导致演示桥缺少原生 fetch 的问题。
 - 在外部资源之前安装工作台启动保护：合并脚本或样式缺失时显示错误及重新加载入口，避免空白页；保留原草稿恢复错误界面，超时后真实恢复成功仍可继续使用。对应资源失败、解析前失败与迟到恢复为 VM 故障注入验证。
+- 启动保护只把当前创作资源目录内的脚本、样式加载失败和脚本 URL 可归属的运行错误视为资源故障；匿名、无 URL、浏览器扩展或无关脚本异常不会误锁工作台。增加 6 项回归，保留真实合并脚本解析错误、超时与原生恢复契约，未放宽 CSP。
+- 修复 3 个基线测试文件中的显式 `any`：使用窗口、事件、动作记录、截图源和图片响应类型，并从 `unknown` 收窄错误对象。保留全部原有用例与断言，没有关闭 lint 规则、增加跳过或放宽阈值。
 
 ## 验证证据
 
 | 验证 | 结果与边界 |
 | --- | --- |
-| `npm run typecheck` | 通过 |
-| `npm test -- --maxWorkers=2` | 207 个测试文件通过、6 个跳过；3526 项通过、62 项跳过。比基线 3433 项通过增加 93 项回归测试 |
-| 修改的 TS 文件 ESLint | 通过，无新增 lint 错误 |
-| `npm run build` | 编译成功；随后被基线的 3 个测试文件中既有 `no-explicit-any` 错误阻断。这 3 个文件与 `d161f31` 完全一致 |
-| `npm exec next build -- --no-lint` | 通过生产编译、类型检查和路由生成。该结果不等于标准构建全部检查通过 |
+| `npm run typecheck` | 通过，见 [typecheck-final.txt](checks/typecheck-final.txt) |
+| `npm test -- --maxWorkers=2` | 207 个测试文件通过、6 个跳过；3532 项通过、62 项跳过。比基线 3433 项通过增加 99 项回归测试，见 [test-final.txt](checks/test-final.txt) |
+| `npm run lint` | 通过，无 lint 错误；仍有仓库已有 warning，见 [lint-final.txt](checks/lint-final.txt) |
+| `npm run build` | 标准生产编译、lint、类型检查和路由生成全部通过，见 [build-final.txt](checks/build-final.txt) |
 | 并发通知回归 | VM 测试中 100 次控制器通知只排入 1 次界面绘制，100 次持久化全部等待，控制器快照数为 100。此结果不是线上 100 张图压测 |
-| 浏览器交互 | CUA 操作真实 public 工作台，使用明确标注的本地合成素材和预设分析/生成响应：上传 → 分析 → 可编辑方案 → 确认 → 生成 → 1/1 归档 → 勾选 → 打开及关闭预览 |
-| 合并后的入口 | 浏览器实际启动状态为 ready，网络记录确认 HTML、`web-chrome.js`、`studio-entry.css`、`studio-entry.js` 各 1 次。实际合并 JS 另在运行时测试中验证共享桥、合同与 API 行为。合并版本未完整重跑浏览器上传和生成链路，不能将启动成功描述为整条链路通过 |
-| 响应布局 | 主图、详情、广告、链接成图、复刻、DIY、旧 SKU、参考详情在 390px 视口均未出现页面横向溢出；主图/详情/广告另检查桌面和平板布局 |
+| 合并版浏览器交互 | CUA 操作实际合并 public 工作台，通过可见且仅本地演示有效的“载入本地合成示例图”控件导入素材，完成分析 → 编辑方案 → 确认 → 生成 → 1/1 本机归档。确认前生成按钮禁用、确认后启用。系统文件选择器未完成验证，不能将这个合成素材入口描述为原生选择器通过。见 [bundled-ui-evidence.json](release-regression/bundled-ui-evidence.json) |
+| 合并后的入口与调用记录 | HTML、`web-chrome.js`、`studio-entry.css`、`studio-entry.js` 四类入口资源正常加载，启动与 bootstrap 均为 ready。本次预设分析 1 次、预设生成 1 次、本机归档 1 次、付费模型出站请求 0 次。实际合并 JS 另在运行时测试中验证共享桥、合同与 API 行为。见 [runtime-metrics.json](release-regression/runtime-metrics.json) |
+| 勾选与键盘预览 | 选中后下载按钮启用；Enter 打开预览、Escape 关闭，焦点返回“预览首页图”；关闭后预览图片节点数为 0 |
+| 实际下载文件 | 点击下载后独立核验磁盘中的 PNG：1024 × 1024、460926 字节，文件哈希记录在交互证据中。浏览器下载事件观察器曾超时，完成判断以实际文件核验为依据 |
+| 主图与详情草稿恢复 | 主图需求、结果和本机归档保留；切换后详情的独立草稿恢复，未互相覆盖 |
+| 响应布局 | 主图、详情、广告、链接成图、复刻、DIY、旧 SKU、参考详情的既有 390px 检查均未出现页面横向溢出；主图/详情/广告另检查桌面和平板布局。合并版再次验证 390px 视口的 scrollWidth 为 390、表单字号均为 16px，预览宽度 366px、左边距 12px |
 
-标准构建的原有 lint 阻断文件：`src/lib/link-image-result-actions.test.ts`、`src/lib/reference-detail-screenshot-source.test.ts`、`src/lib/reference-detail-screenshot-ui.test.ts`。没有为通过构建关闭仓库的 lint 规则。
+标准构建早先被 `src/lib/link-image-result-actions.test.ts`、`src/lib/reference-detail-screenshot-source.test.ts`、`src/lib/reference-detail-screenshot-ui.test.ts` 中的基线 lint 错误阻断。上述类型问题现已修复，标准 lint、类型检查和构建均已通过。早先 [build-no-lint.txt](checks/build-no-lint.txt) 保留为排障历史，不再作为最终构建依据。
 
 默认并发的末轮测试在未修改的 `link-image-ui.test.ts` 大图用例上出现一次 5 秒超时；限制为 2 个 worker 后，全量复验全部通过。没有加大超时阈值或增加跳过范围。最终测试输出见 [test-final.txt](checks/test-final.txt)。
 
-浏览器演示服务限定本机，CSP 禁止外部请求，模型代理固定拒绝调用。使用独立本地演示标签页、演示环境存储前缀和合成账号，没有读取生产租户数据、使用真实密钥或调用付费模型。真实模型计费、线上多租户并发、数据库负载及上线后表现尚未验收。外层 React 工作台由组件测试和生产编译覆盖，本地 public 演示页没有渲染该 React 外壳，因此其原生运行布局仍需要部署环境复核。
+保留的[启动故障截图](release-regression/bundled-startup-error.jpg)和[网络及异常记录](release-regression/bundled-startup-network.json)是已定位、已修复的历史误判：应用资源全部为 200，未记录网络加载失败；无来源 URL 的匿名 CSP `unsafe-eval` 拒绝却被旧监听器当作应用资源失败。现在监听器仅归因于所属创作脚本与样式，新增回归覆盖匿名异常忽略和真实资源错误保留；CSP 限制保持不变。该修复已包含在本轮全量测试中，后续合并版本地合成素材链路已完成上述浏览器复验。
+
+浏览器演示服务限定本机，CSP 禁止外部请求，模型代理固定拒绝调用。使用独立本地演示标签页、演示环境存储前缀和合成账号，没有读取生产租户数据、使用真实密钥或调用付费模型，也未更改扩展权限或 CSP。素材通过明确标注的可见演示控件导入；原生系统文件选择器、真实服务商生成与计费、线上多租户并发、数据库负载及上线后表现尚未验收。外层 React 工作台由组件测试和生产编译覆盖，本地 public 演示页没有渲染该 React 外壳，因此其原生运行布局仍需要部署环境复核。
 
 ## 浏览器截图
 
@@ -48,6 +54,10 @@
 - [手机图片预览](browser/layout-preview-mobile.jpg)
 - [旧 SKU 手机布局](browser/layout-sku-mobile.jpg)
 - [本地演示请求与调用记录](browser/runtime-evidence.json)
+- [合并版桌面结果](release-regression/bundled-results-desktop.jpg)
+- [合并版桌面预览](release-regression/bundled-preview-desktop.jpg)
+- [合并版手机结果](release-regression/bundled-results-mobile.jpg)
+- [合并版手机预览](release-regression/bundled-preview-mobile.jpg)
 
 ## 后续结构调整的边界
 
