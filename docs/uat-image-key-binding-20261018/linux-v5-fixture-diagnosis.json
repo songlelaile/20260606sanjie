@@ -1,0 +1,43 @@
+{
+  "sourceCommit": "808b456e64d74f1515e36278fd6c24e98a039577",
+  "accepted": false,
+  "runtime": "Linux Node 22.22.0, UID 0",
+  "testProcessExit": 1,
+  "actualCaseStatuses": {
+    "passed": 4317,
+    "failed": 5,
+    "skipped": 277
+  },
+  "nativeReportSha256": "5527ec15b9bd0e5894f86c2647281f0eb34d2b377b4ef662860ff21ebe8dba70",
+  "workerShutdownWarnings": false,
+  "environmentRestored": true,
+  "typecheckLintBuildReached": false,
+  "classification": "All five failed cases use chmod restrictions as an unavailability fixture. UID 0 can still read mode 000 files and write mode 0500 directories. The snapshot store-unavailable cases therefore used a valid binding and reached only the synthetic provider stub. This does not demonstrate a production request-guard bypass.",
+  "failedIdentities": [
+    "raw browser account profile bridge to real encrypted server storage reports a real storage write failure without clearing the Key, changing the model, or invoking a provider",
+    "raw browser account profile bridge to real encrypted server storage rejects a frozen config before any provider POST when its binding is store-unavailable",
+    "loaded browser account profile bridge to real encrypted server storage reports a real storage write failure without clearing the Key, changing the model, or invoking a provider",
+    "loaded browser account profile bridge to real encrypted server storage rejects a frozen config before any provider POST when its binding is store-unavailable",
+    "durable account-owned creative API profiles preserves the original ciphertext after a real filesystem write failure"
+  ],
+  "repair": "Test-only: create a real file-to-directory atomic publication collision through a scoped passthrough hook; record the actual OS error and restore exact original ciphertext. Use mode 0644 for the unavailable-file fixture, which the actual private-file guard rejects for every UID.",
+  "preservedAssertions": [
+    "HTTP 503 and ok false",
+    "zero synthetic provider dispatch",
+    "unchanged ciphertext, model, Key and complete profile revisions",
+    "one publication attempt, actual OS errno, no temporary/backup/lock residue"
+  ],
+  "productionCodeChanged": false,
+  "newSkips": 0,
+  "localFocusedRegression": {
+    "passed": 195,
+    "failed": 0,
+    "skipped": 0,
+    "processExit": 0,
+    "reportSha256": "509120bcb4eb108d73652cffcd38b122b8de3931ae8ebf97b021e14757a4ab63",
+    "typecheckExit": 0,
+    "lintExit": 0
+  },
+  "freshLinuxFullRunStillRequired": true,
+  "claudePostFixExecutableTestsStillRequired": true
+}

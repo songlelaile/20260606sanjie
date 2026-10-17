@@ -7,7 +7,8 @@ vi.mock("server-only", () => ({}));
 const lockFixture = vi.hoisted(() => ({
   proc: new Map<string, string | NodeJS.ErrnoException>(),
   beforeProcRead: undefined as ((file: string) => Promise<void>) | undefined,
-  beforeRename: undefined as ((from: string, to: string) => Promise<void>) | undefined
+  beforeRename: undefined as ((from: string, to: string) => Promise<void>) | undefined,
+  renameFailure: undefined as NodeJS.ErrnoException | undefined
 }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -29,7 +30,8 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     rename: async (...args: Parameters<typeof actual.rename>) => {
       await lockFixture.beforeRename?.(String(args[0]), String(args[1]));
-      return actual.rename(...args);
+      try { return await actual.rename(...args); }
+      catch (error) { lockFixture.renameFailure = error as NodeJS.ErrnoException; throw error; }
     }
   };
 });
@@ -44,7 +46,7 @@ const config = { provider: "openai", apiKey, visionBaseUrl: "https://api.openai.
 describe("durable account-owned creative API profiles", () => {
   let temporary: string, root: string;
   beforeEach(async () => {
-    lockFixture.proc.clear(); lockFixture.beforeProcRead = undefined; lockFixture.beforeRename = undefined;
+    lockFixture.proc.clear(); lockFixture.beforeProcRead = undefined; lockFixture.beforeRename = undefined; lockFixture.renameFailure = undefined;
     temporary = await realpath(await mkdtemp(path.join(tmpdir(), "creative-config-store-")));
     root = path.join(temporary, "profiles");
     vi.stubEnv("SANJIE_CREATIVE_CONFIG_ROOT", root);
@@ -305,11 +307,36 @@ describe("durable account-owned creative API profiles", () => {
   });
 
   it("preserves the original ciphertext after a real filesystem write failure", async () => {
-    await save(); const file = await onlyFile(), before = await readFile(file);
-    await chmod(root, 0o500);
-    try { await expect(save(1, { config: { imageModel: "must-not-be-published", apiKey: "" } })).rejects.toMatchObject({ status: 503 }); }
-    finally { await chmod(root, 0o700); }
+    await save(); const file = await onlyFile(), before = await readFile(file), metadataBefore = await getCreativeConfigProfiles(alice, true);
+    const filesystem = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const backup = path.join(temporary, "original-ciphertext.backup"), blocker = path.join(file, "publish-blocker");
+    let publishAttempts = 0, displaced = false, directoryCreated = false, blockerCreated = false, publishTemporary = "";
+    lockFixture.beforeRename = async (from, to) => {
+      if (to !== file || path.dirname(from) !== root || !/^\.config-[\da-f-]+\.tmp$/.test(path.basename(from))) return;
+      publishAttempts++; publishTemporary = from;
+      if (publishAttempts !== 1) return;
+      // UID 0 may ignore chmod write restrictions. A real file-to-directory
+      // rename fails on both root/non-root while the original bytes stay safe.
+      await filesystem.rename(file, backup); displaced = true;
+      await filesystem.mkdir(file, { mode: 0o700 }); directoryCreated = true;
+      await filesystem.writeFile(blocker, "synthetic publication obstruction", { mode: 0o600 }); blockerCreated = true;
+    };
+    try {
+      await expect(save(1, { config: { imageModel: "must-not-be-published", apiKey: "" } })).rejects.toMatchObject({ status: 503 });
+      expect(publishAttempts).toBe(1);
+      expect(lockFixture.renameFailure).toMatchObject({ code: expect.stringMatching(/^(EISDIR|ENOTDIR|ENOTEMPTY)$/) });
+      expect(await filesystem.readFile(backup)).toEqual(before);
+      await expect(filesystem.lstat(publishTemporary)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      lockFixture.beforeRename = undefined;
+      if (blockerCreated) await filesystem.unlink(blocker);
+      if (directoryCreated) await filesystem.rmdir(file);
+      if (displaced) await filesystem.rename(backup, file);
+    }
     expect(await readFile(file)).toEqual(before);
+    expect(await getCreativeConfigProfiles(alice, true)).toEqual(metadataBefore);
+    await expect(filesystem.lstat(backup)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await filesystem.readdir(root)).filter(name => name.startsWith(".config-") || name.endsWith(".lock"))).toEqual([]);
     expect(await resolveCreativeConfigProfile(alice, "openai")).toMatchObject({ revision: 1, config: { apiKey, imageModel: config.imageModel } });
   });
 

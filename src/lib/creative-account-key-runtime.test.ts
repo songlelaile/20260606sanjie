@@ -8,8 +8,20 @@ import path from "node:path";
 import { createContext, runInContext, type Context } from "node:vm";
 
 const auth = vi.hoisted(() => ({ currentUser: vi.fn() }));
+const filesystemPublish = vi.hoisted(() => ({
+  beforeRename: undefined as ((from: string, to: string) => Promise<void>) | undefined,
+  failure: undefined as NodeJS.ErrnoException | undefined
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/server-session", () => ({ getCurrentUser: auth.currentUser }));
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, rename: async (...args: Parameters<typeof actual.rename>) => {
+    await filesystemPublish.beforeRename?.(String(args[0]), String(args[1]));
+    try { return await actual.rename(...args); }
+    catch (error) { filesystemPublish.failure = error as NodeJS.ErrnoException; throw error; }
+  } };
+});
 import { GET, POST, PUT, DELETE } from "@/app/api/creative/config-profiles/route";
 import { creativeConfigAccountKey, getCreativeConfigProfiles, resolveCreativeConfigProfile, type CreativeConfigOwner } from "./creative-config-profile-store";
 
@@ -162,11 +174,13 @@ describe.each(["raw", "loaded"] as const)("%s browser account profile bridge to 
   }
   async function ciphertext() { return readFile(path.join(root, (await readdir(root)).find(name => name.endsWith(".json"))!)); }
   beforeEach(async () => {
+    filesystemPublish.beforeRename = undefined; filesystemPublish.failure = undefined;
     temporary = await realpath(await mkdtemp(path.join(tmpdir(), "creative-account-key-runtime-"))); root = path.join(temporary, "profiles");
     vi.stubEnv("SANJIE_CREATIVE_CONFIG_ROOT", root); vi.stubEnv("AI_API_ENCRYPTION_KEY", "synthetic-runtime-independent-key-0123456789abcdef");
     auth.currentUser.mockImplementation(async () => requestOwner.getStore() || null);
   });
   afterEach(async () => {
+    filesystemPublish.beforeRename = undefined;
     for (const runtime of browsers.splice(0)) { expect(runtime.providerRequests).toHaveLength(runtime.state.expectedProviderCalls); runtime.dispose(); }
     vi.restoreAllMocks(); vi.unstubAllEnvs(); await rm(temporary, { recursive: true, force: true });
   });
@@ -412,13 +426,40 @@ describe.each(["raw", "loaded"] as const)("%s browser account profile bridge to 
   });
 
   it("reports a real storage write failure without clearing the Key, changing the model, or invoking a provider", async () => {
-    const { runtime, reply } = await importedPage(); const before = await ciphertext();
-    await chmod(root, 0o500);
-    try { expect(await runtime.send("SAVE_CONFIG", { config: { ...reply.config, imageModel: "must-not-persist", apiKey: "" } })).toMatchObject({ ok: false }); }
-    finally { await chmod(root, 0o700); }
+    const { runtime, reply } = await importedPage(); const before = await ciphertext(), metadataBefore = await getCreativeConfigProfiles(ALICE, true);
+    const filesystem = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const file = path.join(root, (await filesystem.readdir(root)).find(name => name.endsWith(".json"))!);
+    const backup = path.join(temporary, "original-ciphertext.backup"), blocker = path.join(file, "publish-blocker");
+    let publishAttempts = 0, displaced = false, directoryCreated = false, blockerCreated = false, publishTemporary = "";
+    filesystemPublish.beforeRename = async (from, to) => {
+      if (to !== file || path.dirname(from) !== root || !/^\.config-[\da-f-]+\.tmp$/.test(path.basename(from))) return;
+      publishAttempts++; publishTemporary = from;
+      if (publishAttempts !== 1) return;
+      // Keep the real route/store path: only arrange an on-disk obstruction,
+      // then let the actual OS rename reject even when the test UID is root.
+      await filesystem.rename(file, backup); displaced = true;
+      await filesystem.mkdir(file, { mode: 0o700 }); directoryCreated = true;
+      await filesystem.writeFile(blocker, "synthetic publication obstruction", { mode: 0o600 }); blockerCreated = true;
+    };
+    try {
+      expect(await runtime.send("SAVE_CONFIG", { config: { ...reply.config, imageModel: "must-not-persist", apiKey: "" } })).toMatchObject({ ok: false });
+      expect(publishAttempts).toBe(1);
+      expect(filesystemPublish.failure).toMatchObject({ code: expect.stringMatching(/^(EISDIR|ENOTDIR|ENOTEMPTY)$/) });
+      expect(await filesystem.readFile(backup)).toEqual(before);
+      await expect(filesystem.lstat(publishTemporary)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      filesystemPublish.beforeRename = undefined;
+      if (blockerCreated) await filesystem.unlink(blocker);
+      if (directoryCreated) await filesystem.rmdir(file);
+      if (displaced) await filesystem.rename(backup, file);
+    }
     expect(await ciphertext()).toEqual(before);
+    expect(await getCreativeConfigProfiles(ALICE, true)).toEqual(metadataBefore);
+    await expect(filesystem.lstat(backup)).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await filesystem.readdir(root)).filter(name => name.startsWith(".config-") || name.endsWith(".lock"))).toEqual([]);
     expect((await page().read()).config).toMatchObject(CONFIG_A);
     expect(runtime.requests.some(request => request.method === "PUT" && request.status === 503)).toBe(true);
+    expect(runtime.providerRequests).toEqual([]); expect(runtime.syntheticDispatches).toEqual([]);
   });
 
   const genericConfig = { ...CONFIG_A, imageEndpoint: "https://synthetic-model.example.test/v1/generate", visionBaseUrl: "https://synthetic-model.example.test/v1", imageModel: "Exact_User_Selected_Image_Model" };
@@ -675,7 +716,7 @@ describe.each(["raw", "loaded"] as const)("%s browser account profile bridge to 
     let unavailableFile: string | undefined;
     if (change === "store-unavailable") {
       unavailableFile = path.join(root, (await readdir(root)).find(name => name.endsWith(".json"))!);
-      await chmod(unavailableFile, 0o000);
+      await chmod(unavailableFile, 0o644);
     } else {
       const other = page(), latest = await other.read();
       if (change === "replaced") {
