@@ -43,9 +43,11 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 function bridge() {
-  const state = { busy: false };
+  const state = { busy: false, pendingReceipts: 0 };
+  // The real task bridges also report live task state to the host's task notices.
   return { state, canDeactivate: vi.fn<DeactivationBridge["canDeactivate"]>(() => ({ allowed: !state.busy, reason: state.busy ? "任务仍在执行" : undefined })),
-    activate: vi.fn(async () => ({ ok: true })) };
+    activate: vi.fn(async () => ({ ok: true })),
+    getTaskState: vi.fn(() => ({ ready: true, busy: state.busy, activeCount: state.busy ? 1 : 0, pendingReceiptCount: state.pendingReceipts, summary: "" })) };
 }
 
 function harness(initial: Props = { kind: "image", initialSurface: "viral-case" }) {
@@ -64,6 +66,16 @@ function harness(initial: Props = { kind: "image", initialSurface: "viral-case" 
   let tree: RenderValue;
   let pending: Array<{ slot: HookSlot; callback: () => Cleanup }> = [];
   const router = { push: vi.fn(), replace: vi.fn() };
+  // Browser collaborators used by the host's task notices and leave protection.
+  const intervals = new Map<number, () => void>(); let timerId = 0;
+  const listeners = (registry: Map<string, Set<(event: unknown) => void>>) => ({
+    addEventListener: (name: string, handler: (event: unknown) => void) => { if (!registry.has(name)) registry.set(name, new Set()); registry.get(name)!.add(handler); },
+    removeEventListener: (name: string, handler: (event: unknown) => void) => { registry.get(name)?.delete(handler); }
+  });
+  const windowListeners = new Map<string, Set<(event: unknown) => void>>(), documentListeners = new Map<string, Set<(event: unknown) => void>>();
+  const hostWindow = { ...listeners(windowListeners), location: { href: "https://offline.test/dashboards/operating-network", origin: "https://offline.test" },
+    setInterval: (callback: () => void) => { intervals.set(++timerId, callback); return timerId; }, clearInterval: (id: number) => { intervals.delete(id); } };
+  const hostDocument = { ...listeners(documentListeners), visibilityState: "visible" };
   const sameDeps = (a?: unknown[], b?: unknown[]) => !!a && !!b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
   const hook = (kind: string) => {
     const index = cursor++;
@@ -99,7 +111,7 @@ function harness(initial: Props = { kind: "image", initialSurface: "viral-case" 
   const jsx = (type: unknown, nodeProps: Record<string, unknown>, key?: unknown): JsxNode => ({ type, props: nodeProps, key });
   const exports: Record<string, unknown> = {};
   const mockStyles = new Proxy({}, { get: (_target, name) => String(name) });
-  const context = createContext({ exports, module: { exports }, console, AbortController,
+  const context = createContext({ exports, module: { exports }, console, AbortController, URL, setTimeout, clearTimeout, window: hostWindow, document: hostDocument,
     require(name: string) {
       if (name === "react") return react;
       if (name === "react/jsx-runtime") return { jsx, jsxs: jsx };
@@ -186,8 +198,12 @@ function harness(initial: Props = { kind: "image", initialSurface: "viral-case" 
   const alert = () => nodes("p").filter(node => node.props.role === "alert").map(node => text(node.props.children as RenderValue)).join("");
   const status = () => nodes("p").filter(node => node.props.role === "status").map(node => text(node.props.children as RenderValue)).join("");
   render();
-  return { frames, defaults, studioDefaults, toolsDefaults, bridges, router, render, flush, click, button, selected, alert, status, unmount,
-    updatesAfterUnmount: () => updatesAfterUnmount };
+  // A pending destination is shown on its rail button and as a breadcrumb status.
+  const switching = () => nodes("span").filter(node => node.props.role === "status").map(node => text(node.props.children as RenderValue)).join("");
+  const busyButtons = () => nodes("button").filter(node => node.props["aria-busy"]).map(node => String(node.props["aria-label"] || text(node.props.children as RenderValue)));
+  const tickTasks = () => { for (const callback of intervals.values()) callback(); };
+  return { frames, defaults, studioDefaults, toolsDefaults, bridges, router, render, flush, click, button, selected, alert, status, unmount, switching, busyButtons, tickTasks,
+    intervals, windowListeners, documentListeners, updatesAfterUnmount: () => updatesAfterUnmount };
 }
 
 async function visitCachedStyle(h: ReturnType<typeof harness>) {
@@ -202,6 +218,7 @@ describe("actual CreativeStudio async navigation and cached iframe lifetime", ()
   it("loads a dedicated iframe only on its first visit and retains all three live instances", async () => {
     const h = harness({ kind: "image", initialSurface: "main" });
     expect([...h.frames.keys()].filter(key => key.startsWith("viral-"))).toEqual([]);
+    const mainFrame = h.frames.get("main")!; mainFrame.draft = "主图草稿丁";
     h.click("案例裂变"); await h.flush();
     const caseFrame = h.frames.get("viral-case")!; caseFrame.draft = "案例草稿甲";
     expect(h.frames.has("viral-style")).toBe(false); expect(h.frames.has("viral-scene")).toBe(false);
@@ -213,7 +230,11 @@ describe("actual CreativeStudio async navigation and cached iframe lifetime", ()
     expect(h.frames.get("viral-case")).toBe(caseFrame); expect(caseFrame.draft).toBe("案例草稿甲");
     expect(h.frames.get("viral-style")).toBe(styleFrame); expect(styleFrame.draft).toBe("自由共创描述乙");
     expect(h.frames.get("viral-scene")).toBe(sceneFrame); expect(sceneFrame.draft).toBe("场景多角度素材丙");
-    expect(h.frames.size).toBe(3);
+    // The original main workbench stays cached beside the three dedicated frames:
+    // the same hidden instance with its draft, never saved, re-activated or redispatched.
+    expect([...h.frames.keys()].sort()).toEqual(["main", "viral-case", "viral-scene", "viral-style"]);
+    expect(h.frames.get("main")).toBe(mainFrame); expect(mainFrame.draft).toBe("主图草稿丁"); expect(mainFrame.hidden).toBe(true); expect(mainFrame.tabIndex).toBe(-1);
+    expect(h.studioDefaults.get("main")!.canDeactivate).not.toHaveBeenCalled(); expect(h.studioDefaults.get("main")!.activate).not.toHaveBeenCalled();
     for (const surface of CREATIVE_VIRAL_SURFACES) expect(h.frames.get(surface.id)?.src).toBe(surface.src);
     expect(caseFrame.hidden).toBe(false); expect(styleFrame.hidden).toBe(true); expect(sceneFrame.hidden).toBe(true);
     expect(styleFrame.tabIndex).toBe(-1); expect(sceneFrame.tabIndex).toBe(-1);
@@ -393,67 +414,166 @@ describe("actual CreativeStudio main/detail/ad and batch request protection", ()
     { id: "batch", label: "批量任务", props: { kind: "image", initialSurface: "main", initialBatch: true } }
   ] satisfies Array<{ id: string; label: string; props: Props }>;
 
+  // Each studio surface is a cached task frame: internal switches keep it mounted
+  // and untouched, while every exit that would unmount it still runs its guard.
+  const taskName = (id: string) => id === "batch" ? "批量任务" : cases.find(item => item.id === id)!.label;
+  const studioFrame = (h: ReturnType<typeof harness>) => [...h.frames.values()].find(item => item.src.includes("studio=1"))!;
+
   it.each(cases)("preserves the $id frame while a request is executing", async ({ id, label, props }) => {
-    const h = harness(props), frame = [...h.frames.values()].find(item => item.src.includes("studio=1"))!;
-    frame.draft = "当前商品与未完成方案"; h.studioDefaults.get(id)!.state.busy = true;
-    for (const target of ["案例裂变", "详情", "生成视频", id === "batch" ? "返回单个创作" : "批量任务"]) {
-      h.click(target); await h.flush();
-      expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.draft).toBe("当前商品与未完成方案");
-      expect(h.selected(label)).toBe(true); expect(h.router.push).not.toHaveBeenCalled(); expect(h.router.replace).not.toHaveBeenCalled();
-      expect(h.alert()).toContain("任务仍在执行");
-    }
+    const h = harness(props), frame = studioFrame(h), guard = h.studioDefaults.get(id)!;
+    frame.draft = "当前商品与未完成方案"; guard.state.busy = true;
+    // Leaving the image studio would unmount the frame: its own guard refuses.
+    h.click("生成视频"); await h.flush();
+    expect(h.selected(label)).toBe(true); expect(frame.hidden).toBe(false); expect(h.alert()).toContain("任务仍在执行");
+    expect(h.router.push).not.toHaveBeenCalled(); expect(h.router.replace).not.toHaveBeenCalled();
+    // An internal switch keeps the same busy frame mounted, hidden and undisturbed.
+    h.click("案例裂变"); await h.flush();
+    expect(h.selected("案例裂变")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame);
+    expect(frame.hidden).toBe(true); expect(frame.draft).toBe("当前商品与未完成方案");
+    expect(guard.canDeactivate).toHaveBeenCalledTimes(1); expect(guard.activate).not.toHaveBeenCalled();
+    expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=viral-case", { scroll: false });
+    h.tickTasks(); await h.flush();
+    expect(h.status()).toContain(`${taskName(id)} · 任务进行中`);
+    // Exiting from another surface is still refused by the cached busy frame.
+    h.click("生成视频"); await h.flush();
+    expect(h.router.push).not.toHaveBeenCalled(); expect(h.alert()).toContain(`${taskName(id)}：任务仍在执行`);
+    expect(guard.canDeactivate).toHaveBeenCalledTimes(2); expect(h.frames.get(frame.identity)).toBe(frame);
+    // Returning re-activates the same instance with its draft intact.
+    h.click(`${taskName(id)}：返回原任务`); await h.flush();
+    expect(h.selected(label)).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame);
+    expect(frame.hidden).toBe(false); expect(frame.draft).toBe("当前商品与未完成方案"); expect(guard.activate).toHaveBeenCalledOnce();
   });
 
   it("keeps an uncertain receipt visible and presents its required next action", async () => {
-    const h = harness({ kind: "image", initialSurface: "ad" });
-    h.studioDefaults.get("ad")!.canDeactivate.mockReturnValue({ allowed: false, reason: "上一请求回执尚未确认，请先核对服务商任务记录。" });
+    const h = harness({ kind: "image", initialSurface: "ad" }), frame = studioFrame(h), guard = h.studioDefaults.get("ad")!;
+    guard.state.pendingReceipts = 1;
+    guard.canDeactivate.mockReturnValue({ allowed: false, reason: "上一请求回执尚未确认，请先核对服务商任务记录。" });
     h.click("主图"); await h.flush();
-    expect(h.selected("广告图")).toBe(true); expect(h.alert()).toContain("先核对服务商任务记录");
-    expect(h.router.replace).not.toHaveBeenCalled();
+    expect(h.selected("主图")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.hidden).toBe(true);
+    expect(guard.canDeactivate).not.toHaveBeenCalled();
+    h.tickTasks(); await h.flush();
+    expect(h.status()).toContain("广告图 · 有待确认的请求回执"); expect(h.button("广告图：返回原任务").props.disabled).toBe(false);
+    h.click("生成视频"); await h.flush();
+    expect(h.alert()).toContain("广告图：上一请求回执尚未确认，请先核对服务商任务记录。");
+    expect(h.router.push).not.toHaveBeenCalled(); expect(h.frames.get(frame.identity)).toBe(frame);
   });
 
   it("awaits the latest idle draft save before changing the iframe", async () => {
-    const h = harness({ kind: "image", initialSurface: "main" }), frame = [...h.frames.values()][0];
-    const waiting = deferred<Permission>(); h.studioDefaults.get("main")!.canDeactivate.mockImplementationOnce(() => waiting.promise);
-    h.click("详情"); await h.flush(3);
+    const h = harness({ kind: "image", initialSurface: "main" }), frame = studioFrame(h), guard = h.studioDefaults.get("main")!;
+    const waiting = deferred<Permission>(); guard.canDeactivate.mockImplementationOnce(() => waiting.promise);
+    h.click("生成视频"); await h.flush(3);
     expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.inert).toBe(true); expect(h.selected("主图")).toBe(true);
-    expect(h.router.replace).not.toHaveBeenCalled();
+    expect(h.router.push).not.toHaveBeenCalled();
     waiting.resolve({ allowed: true }); await h.flush(20);
-    expect(h.selected("详情")).toBe(true); expect(h.frames.has(frame.identity)).toBe(false);
-    expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=detail", { scroll: false });
-    expect(h.studioDefaults.get("main")!.canDeactivate).toHaveBeenCalledTimes(2);
+    expect(h.router.push).toHaveBeenCalledWith("/dashboards/operating-network/video");
+    // Leave guard, cached-unmount guard, final leave guard and final cached-unmount guard.
+    expect(guard.canDeactivate).toHaveBeenCalledTimes(4);
+    // An internal switch does not unmount the frame, so it needs no save wait.
+    const internal = harness({ kind: "image", initialSurface: "main" }), retained = studioFrame(internal);
+    internal.studioDefaults.get("main")!.canDeactivate.mockImplementation(() => new Promise<Permission>(() => {}));
+    internal.click("详情"); await internal.flush();
+    expect(internal.selected("详情")).toBe(true); expect(internal.frames.get(retained.identity)).toBe(retained); expect(retained.hidden).toBe(true);
+    expect(internal.studioDefaults.get("main")!.canDeactivate).not.toHaveBeenCalled();
   });
 
   it("keeps the current draft when the asynchronous save cannot complete", async () => {
-    const h = harness({ kind: "image", initialSurface: "main" }), frame = [...h.frames.values()][0];
+    const h = harness({ kind: "image", initialSurface: "main" }), frame = studioFrame(h);
+    frame.draft = "未保存方案";
     h.studioDefaults.get("main")!.canDeactivate.mockResolvedValue({ allowed: false, reason: "保存草稿失败，请检查本机存储空间后重试。" });
-    h.click("批量任务"); await h.flush();
+    h.click("生成视频"); await h.flush();
     expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.inert).toBe(false); expect(h.selected("主图")).toBe(true);
-    expect(h.alert()).toContain("保存草稿失败"); expect(h.router.replace).not.toHaveBeenCalled();
+    expect(frame.draft).toBe("未保存方案"); expect(h.alert()).toContain("保存草稿失败"); expect(h.router.push).not.toHaveBeenCalled();
+    expect(h.button("生成视频").props.disabled).toBe(false);
   });
 
   it.each(cases)("requires the $id guard while opening and allows leaving a startup error", async ({ label, props }) => {
-    const h = harness(props), frame = [...h.frames.values()].find(item => item.src.includes("studio=1"))!;
+    const h = harness(props), frame = studioFrame(h);
     delete frame.contentWindow.SanjieStudioGenesisBridge; frame.contentDocument.documentElement.dataset.labStartup = "pending";
+    // The opening frame stays mounted in the background during an internal switch.
     h.click("案例裂变"); await h.flush();
-    expect(h.selected(label)).toBe(true); expect(h.frames.has("viral-case")).toBe(false); expect(h.alert()).toContain("正在打开");
+    expect(h.selected("案例裂变")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.hidden).toBe(true);
+    // An exit that would unmount it waits for its guard to load.
+    h.click("生成视频"); await h.flush();
+    expect(h.alert()).toContain(`${label === "批量任务" ? "批量任务" : label}正在打开`); expect(h.router.push).not.toHaveBeenCalled();
     frame.contentDocument.documentElement.dataset.labStartup = "error";
-    h.click("案例裂变"); await h.flush();
-    expect(h.selected("案例裂变")).toBe(true);
+    h.click("生成视频"); await h.flush();
+    expect(h.router.push).toHaveBeenCalledWith("/dashboards/operating-network/video");
   });
 
   it("does not apply an asynchronous guard answer after component unmount", async () => {
     const h = harness({ kind: "image", initialSurface: "main" }), waiting = deferred<Permission>();
     h.studioDefaults.get("main")!.canDeactivate.mockImplementation(() => waiting.promise);
-    h.click("详情"); await h.flush(3); h.unmount(); waiting.resolve({ allowed: true }); await h.flush();
+    h.click("生成视频"); await h.flush(3); h.unmount(); waiting.resolve({ allowed: true }); await h.flush();
     expect(h.router.replace).not.toHaveBeenCalled(); expect(h.router.push).not.toHaveBeenCalled(); expect(h.updatesAfterUnmount()).toBe(0);
+    // A deferred activation of a cached studio target cannot navigate after disposal either.
+    const k = harness({ kind: "image", initialSurface: "main" });
+    k.click("详情"); await k.flush(); k.click("主图"); await k.flush(); k.router.replace.mockClear();
+    const activation = deferred<{ ok: boolean }>(); k.studioDefaults.get("detail")!.activate.mockImplementation(() => activation.promise);
+    k.click("详情"); await k.flush(3); k.unmount(); activation.resolve({ ok: true }); await k.flush();
+    expect(k.router.replace).not.toHaveBeenCalled(); expect(k.updatesAfterUnmount()).toBe(0);
   });
 
   it("restores the active studio URL when back/forward tries to leave a request", async () => {
-    const h = harness({ kind: "image", initialSurface: "main" }); h.studioDefaults.get("main")!.state.busy = true;
+    const h = harness({ kind: "image", initialSurface: "main" }), frame = studioFrame(h);
+    h.studioDefaults.get("main")!.state.busy = true; frame.draft = "进行中的主图任务";
+    // A URL revision to another studio surface keeps the busy frame alive.
     h.render({ kind: "image", initialSurface: "ad" }); await h.flush();
-    expect(h.selected("主图")).toBe(true); expect(h.selected("广告图")).toBe(false);
-    expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=main", { scroll: false });
+    expect(h.selected("广告图")).toBe(true); expect(h.frames.get(frame.identity)).toBe(frame); expect(frame.hidden).toBe(true);
+    expect(frame.draft).toBe("进行中的主图任务"); expect(h.studioDefaults.get("main")!.canDeactivate).not.toHaveBeenCalled();
+    // A refused URL revision restores the active surface's URL.
+    h.studioDefaults.get("main")!.activate.mockResolvedValue({ ok: false, error: "当前账号与 API 配置暂未就绪，请重试。" });
+    h.render({ kind: "image", initialSurface: "main" }); await h.flush();
+    expect(h.selected("广告图")).toBe(true); expect(h.alert()).toContain("当前账号与 API 配置暂未就绪");
+    expect(h.router.replace).toHaveBeenCalledWith("/dashboards/operating-network?surface=ad", { scroll: false });
+  });
+});
+
+describe("studio switch pending feedback", () => {
+  async function withVisitedDetail() {
+    const h = harness({ kind: "image", initialSurface: "main" });
+    h.click("详情"); await h.flush(); h.click("主图"); await h.flush();
+    h.router.replace.mockClear();
+    return h;
+  }
+
+  it("shows the clicked destination as pending until its guards finish", async () => {
+    const h = await withVisitedDetail(), activation = deferred<{ ok: boolean }>();
+    h.studioDefaults.get("detail")!.activate.mockImplementation(() => activation.promise);
+    h.click("详情"); await h.flush(1);
+    expect(h.busyButtons()).toEqual(["详情"]); expect(h.button("详情").props.disabled).toBe(true);
+    expect(h.switching()).toBe("正在打开详情…"); expect(h.selected("主图")).toBe(true);
+    activation.resolve({ ok: true }); await h.flush();
+    expect(h.selected("详情")).toBe(true); expect(h.busyButtons()).toEqual([]); expect(h.switching()).toBe("");
+    expect(h.button("主图").props.disabled).toBe(false);
+  });
+
+  it("clears the pending destination when the switch is denied", async () => {
+    const h = await withVisitedDetail();
+    h.studioDefaults.get("detail")!.activate.mockResolvedValue({ ok: false, error: "当前账号与 API 配置暂未就绪，请重试。" });
+    h.click("详情"); await h.flush();
+    expect(h.selected("主图")).toBe(true); expect(h.alert()).toContain("当前账号与 API 配置暂未就绪");
+    expect(h.busyButtons()).toEqual([]); expect(h.switching()).toBe(""); expect(h.button("详情").props.disabled).toBe(false);
+  });
+
+  it("clears a superseded pending destination when a URL revision lands on the current surface", async () => {
+    const h = await withVisitedDetail(), activation = deferred<{ ok: boolean }>();
+    h.click("详情"); await h.flush();
+    h.studioDefaults.get("main")!.activate.mockImplementation(() => activation.promise);
+    h.click("主图"); await h.flush(2);
+    expect(h.switching()).toBe("正在打开主图…");
+    // The URL revision names the surface that is already visible.
+    h.render({ kind: "image", initialSurface: "detail" }); await h.flush();
+    expect(h.selected("详情")).toBe(true); expect(h.busyButtons()).toEqual([]); expect(h.switching()).toBe("");
+    expect(h.button("主图").props.disabled).toBe(false);
+    activation.resolve({ ok: true }); await h.flush();
+    expect(h.selected("详情")).toBe(true); expect(h.switching()).toBe("");
+  });
+
+  it("does not update pending feedback after unmount", async () => {
+    const h = await withVisitedDetail(), activation = deferred<{ ok: boolean }>();
+    h.studioDefaults.get("detail")!.activate.mockImplementation(() => activation.promise);
+    h.click("详情"); await h.flush(2); h.unmount(); activation.resolve({ ok: true }); await h.flush();
+    expect(h.updatesAfterUnmount()).toBe(0); expect(h.router.replace).not.toHaveBeenCalled();
   });
 });
 

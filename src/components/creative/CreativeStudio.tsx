@@ -413,6 +413,7 @@ export function CreativeStudio({
     navigationEpoch.current++;
     navigating.current = false;
     setNavigationPending(false);
+    setPendingTarget(null);
     const next = ALL_IMAGE_SURFACES.some((item) => item.id === initialSurface) ? initialSurface : "main";
     if (next === surface && initialBatch === batch) return;
     let disposed = false;
@@ -430,7 +431,7 @@ export function CreativeStudio({
       disposed = true;
       navigationEpoch.current++;
       navigating.current = false;
-      if (mounted.current) setNavigationPending(false);
+      if (mounted.current) { setNavigationPending(false); setPendingTarget(null); }
     };
     // URL changes (including back/forward) use the same task-state gate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
