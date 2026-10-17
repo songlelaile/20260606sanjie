@@ -5,7 +5,7 @@
    ▲ Next.js 15.5.27
 
    Creating an optimized production build ...
- ✓ Compiled successfully in 3.9s
+ ✓ Compiled successfully in 5.0s
    Linting and checking validity of types ...
 
 ./src/components/creative/CreativeStudio.test.ts

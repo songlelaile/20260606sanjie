@@ -1,0 +1,33 @@
+{
+  "changed": [
+    "public/creative/labs/image-prompt-lab/background.js",
+    "public/creative/labs/image-prompt-lab/image-archive-store.js",
+    "public/creative/labs/image-prompt-lab/promptlab.html",
+    "public/creative/labs/image-prompt-lab/promptlab.js",
+    "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+    "public/creative/labs/image-prompt-lab/studio-legacy-layout.css",
+    "public/creative/labs/image-prompt-lab/studio-prerequisites-20261009-v1.js",
+    "public/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js",
+    "public/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js",
+    "public/creative/labs/image-prompt-lab/studio-workspace-20261009-v1.css",
+    "public/creative/labs/image-prompt-lab/viral-workflow-layout.css",
+    "public/creative/labs/image-prompt-lab/workspace-ux.css",
+    "public/creative/web-chrome.js",
+    "src/app/api/auth/me/route.test.ts",
+    "src/app/api/auth/me/route.ts",
+    "src/app/api/creative/assets/[...path]/route.test.ts",
+    "src/app/api/creative/assets/[...path]/route.ts",
+    "src/components/creative/CreativeStudio.module.css",
+    "src/components/creative/CreativeStudio.tsx",
+    "src/lib/creative-config-profiles.test.ts",
+    "src/lib/creative-entry-bundle.ts",
+    "src/lib/creative-history-entry.ts",
+    "src/lib/creative-image-runtime.test.ts",
+    "src/lib/creative-platform-supply-web.test.ts",
+    "src/lib/creative-video-runtime.test.ts",
+    "src/lib/creative-web-chrome.test.ts",
+    "src/lib/studio-entry-startup.test.ts"
+  ],
+  "unexpected": [],
+  "protectedMismatch": []
+}

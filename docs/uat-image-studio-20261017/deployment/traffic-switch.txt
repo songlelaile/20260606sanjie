@@ -1,0 +1,4 @@
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+curl: (22) The requested URL returned error: 404
+TRAFFIC_SWITCHED {"sourceCommit": "00d029668dc4beba9037715fb401213383acd9c8", "candidatePort": 53450, "candidateBuildId": "cI9x0gap9LsScG6o8WZnb", "nginxAfterSha256": "2917f25d931bee8bede81100001348b198195593c64a2511d5d02de19f50bc60", "proxyBackendPortPreserved": 53448, "pauseGatePortPreserved": 53449, "uatPortPreserved": 44119}

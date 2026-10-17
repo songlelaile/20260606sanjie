@@ -1,0 +1,7 @@
+{
+  "/login": 200,
+  "/api/auth/me": 401,
+  "/api/creative/proxy": 405,
+  "/api/creative/proxy/": 405,
+  "/api/creative/assets/web-chrome.js": 401
+}

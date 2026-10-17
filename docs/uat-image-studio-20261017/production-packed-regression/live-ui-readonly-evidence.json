@@ -1,0 +1,33 @@
+{
+  "checkedAt": "2026-10-17T14:46:43.689Z",
+  "authenticatedSessionRetained": true,
+  "startupReady": "ready",
+  "bootstrapReady": "ready",
+  "publishedScripts": [
+    "/creative/web-chrome.js?v=20261017-studio-optimize-v2",
+    "studio-prerequisites-20261009-v1.js?v=20261017-image-studio-optimize-v1",
+    "viral-series-contract.js?v=20260721-v1875-viral-20",
+    "studio-runtime-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1",
+    "sku-region-ui.js?v=20261012-sku-region-v1",
+    "sku-delivery-store.js?v=20261013-sku-delivery-v1",
+    "sku-durable-receipt.js?v=20261013-sku-paid-workspace-v8c",
+    "promptlab.js?v=20261017-image-studio-optimize-v1",
+    "studio-views-20261010-credit-v3.js?v=20261017-image-studio-optimize-v1",
+    "aesthetic-mirror-contract.js?v=20261014-mirror-v2",
+    "aesthetic-mirror-ui.js?v=20261014-mirror-v2",
+    "link-list-import.js?v=20261015-v1",
+    "link-image-contract.js?v=20261015-v1",
+    "link-image-result-actions.js?v=20261016-shell-v1",
+    "link-image-ui.js?v=task-list-cleanup-20261016-v1"
+  ],
+  "publishedStyles": [
+    "studio-workspace-20261009-v1.css?v=20261017-image-studio-optimize-v1",
+    "./workspace-ux.css?v=20261017-studio-optimize-v3"
+  ],
+  "existingResultPreviews": 2,
+  "mainDetailMainNavigationVerified": true,
+  "existingDraftAndProductMaterialRetained": true,
+  "paidAnalysisOrGenerationClicked": false,
+  "historyDialogOpened": false,
+  "customerScreenshotCommitted": false
+}

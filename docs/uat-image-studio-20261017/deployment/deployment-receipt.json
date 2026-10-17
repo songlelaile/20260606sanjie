@@ -1,0 +1,45 @@
+{
+  "sourceCommit": "00d029668dc4beba9037715fb401213383acd9c8",
+  "oldRoot": "/opt/sanjie-releases/link-image-workspace-20261015-v1",
+  "candidateRoot": "/opt/sanjie-releases/20261017-image-studio-optimize-v1",
+  "oldPmId": 88,
+  "oldPid": 229880,
+  "oldName": "sanjie-link-image-workspace-20261015-v1",
+  "nginxSha256": "e984b8a77fc3b0bcc7072ef64254aab489524917787ab76b799dd72ec795704f",
+  "candidatePmId": 90,
+  "candidatePid": 965082,
+  "candidateName": "sanjie-image-studio-optimize-20261017-v1",
+  "candidatePort": 53450,
+  "candidateBuildId": "cI9x0gap9LsScG6o8WZnb",
+  "oldClientStaticFilesPreserved": 183,
+  "canaryReadOnlyStatus": {
+    "/login": 200,
+    "/api/auth/me": 401,
+    "/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1": 307,
+    "/api/creative/assets/web-chrome.js": 401,
+    "/api/creative/assets/labs/image-prompt-lab/studio-entry.js": 401,
+    "/api/creative/assets/labs/image-prompt-lab/studio-entry.css": 401
+  },
+  "canaryReadOnlyRedirects": {
+    "/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1": {
+      "host": "shaozhuangai.com",
+      "path": "/login"
+    }
+  },
+  "canaryReadyAt": 1792248014.179153,
+  "runtimeIdentityAndProviderConfigParity": true,
+  "runtimeConfigKeysCompared": 27,
+  "trafficSwitched": true,
+  "trafficSwitchedAt": 1792248074.3955562,
+  "nginxAfterSha256": "2917f25d931bee8bede81100001348b198195593c64a2511d5d02de19f50bc60",
+  "publicBuildManifestSha256": "c97164551638bb8e8573e1d562e65002261a58b0957966e8780976c1e050ca1a",
+  "proxyBackendPortPreserved": 53448,
+  "pauseGatePortPreserved": 53449,
+  "uatPortPreserved": 44119,
+  "databaseMigrationsRun": false,
+  "seedOrResetRun": false,
+  "protectedConfigurationAndSchemaUnchanged": true,
+  "environmentValuesIncluded": false,
+  "rollbackScript": "release-rollback.py",
+  "rollbackScriptSha256": "86fe51efc5de90a500ff057dffe60be49a7e05b0fcba3c276532f4e27ebc3982"
+}

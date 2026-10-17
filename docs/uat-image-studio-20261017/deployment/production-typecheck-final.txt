@@ -1,0 +1,3 @@
+
+> three-stage-engine-saas@0.1.0 typecheck
+> tsc --noEmit

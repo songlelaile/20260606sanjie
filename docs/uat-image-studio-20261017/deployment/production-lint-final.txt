@@ -1,0 +1,108 @@
+
+> three-stage-engine-saas@0.1.0 lint
+> next lint
+
+`next lint` is deprecated and will be removed in Next.js 16.
+For new projects, use create-next-app to choose your preferred linter.
+For existing projects, migrate to the ESLint CLI:
+npx @next/codemod@canary next-lint-to-eslint-cli .
+
+
+./src/components/creative/CreativeStudio.tsx
+182:61  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+427:23  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/components/creative/ScanPaymentDialog.tsx
+251:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+260:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/components/management/CreditGiftPanel.tsx
+174:137  Warning: The ref value 'refreshVersion.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'refreshVersion.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/components/management/ManagementConsole.test.ts
+111:10  Warning: 'jsonResponse' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/model-gateway/UserSupplyPanel.tsx
+74:6  Warning: React Hook useEffect has a missing dependency: 'cooldownUntil'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/components/tools/DmpGrowthReportViewModel.ts
+1297:104  Warning: 'metric' is defined but never used.  @typescript-eslint/no-unused-vars
+2141:9  Warning: 'spendIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+2142:9  Warning: 'sourceIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/tools/DmpGrowthReportViewer.tsx
+139:17  Warning: 'number' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/accounts.ts
+207:6  Warning: 'RegistrationResult' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/algorithm/three-stage.ts
+8:3  Warning: 'Lifecycle' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/dmp-report-store.ts
+1129:10  Warning: 'sameExactGrowthPeriod' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video-contract.ts
+182:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video-supply.test.ts
+32:23  Warning: '_tiers' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video.ts
+142:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+142:50  Warning: '_quote' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+154:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/proxy.ts
+331:30  Warning: 'upstream' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-concurrency-100.test.ts
+4:10  Warning: 'webcrypto' is defined but never used.  @typescript-eslint/no-unused-vars
+13:27  Warning: 'OTHER' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+27:11  Warning: 'GenerationMessage' is defined but never used.  @typescript-eslint/no-unused-vars
+32:11  Warning: 'ArchiveContext' is defined but never used.  @typescript-eslint/no-unused-vars
+33:11  Warning: 'ResultItem' is defined but never used.  @typescript-eslint/no-unused-vars
+35:11  Warning: 'TaskState' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-archive-receipt.test.ts
+11:35  Warning: '_input' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-bridge.test.ts
+33:29  Warning: '_item' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/asset-service.cjs
+151:16  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+154:14  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+276:18  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+293:14  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+343:66  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/http-handler.cjs
+34:50  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+54:12  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+112:18  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+126:93  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+143:20  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+155:162  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+164:105  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/postgres-repository.cjs
+39:62  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+50:20  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/provider-resolver.cjs
+17:12  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+64:129  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/site-adapter.cjs
+77:47  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/video-assets-r51/tasks-service.cjs
+20:10  Warning: 'text' is defined but never used.  @typescript-eslint/no-unused-vars
+68:12  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+150:69  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+302:16  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+331:16  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+337:113  Warning: '_' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules

@@ -1,0 +1,72 @@
+{
+  "recorded_date": "2026-10-17",
+  "status": "deployed_and_read_only_live_smoke_verified",
+  "scope": "Source integration evidence; no credential or environment values are recorded here.",
+  "source_patch": {
+    "file": "reviewed-public-source.patch",
+    "sha256": "44edfeee8ab9660bb4bab2a88278218cb22a914757ad6066a756b73a227b5ea4",
+    "bytes": 65483,
+    "files": [
+      "public/creative/labs/image-prompt-lab/image-archive-store.js",
+      "public/creative/labs/image-prompt-lab/promptlab.html",
+      "public/creative/labs/image-prompt-lab/studio-genesis-ui.js",
+      "public/creative/web-chrome.js"
+    ]
+  },
+  "overlay_payload": {
+    "file": "sanjie-prod-overlay-payload-20261017.json.gz",
+    "sha256": "bce68d4b61c1b2b82333cefbd2fc262c8dca1098a42a96f52b9a707b559ab4c7",
+    "bytes": 34922,
+    "boundary": "Initial overlay input only. Final raw UI restore and mobile CSS/cache-version changes are recorded separately."
+  },
+  "packaging": {
+    "granular_branch": {
+      "body_scripts": 37,
+      "stylesheets": 13,
+      "entry_requests_after_bundling": 4
+    },
+    "actual_production": {
+      "external_scripts": 15,
+      "stylesheets": 5,
+      "mode": "validated passthrough; original script/style ordering, preloads and noscript fallback retained"
+    },
+    "frozen_bundles": "Exact reviewed source-leaf replacement; no full bundle rebuild"
+  },
+  "local_validation": {
+    "test_started_at": "2026-10-17T22:01:57+08:00",
+    "tests_passed": 3558,
+    "tests_skipped": 62,
+    "lint": "passed",
+    "typecheck": "passed",
+    "standard_build": "passed"
+  },
+  "pending_acceptance": [
+    "native system file picker",
+    "real provider generation and billing",
+    "live tenant concurrency and database load",
+    "135 existing production test failures remain unresolved; exact comparison shows no new failure identities"
+  ],
+  "source_commit": "00d029668dc4beba9037715fb401213383acd9c8",
+  "raw_and_loaded_ui": {
+    "raw_source_sha256": "cc0cc76d2a198eb6ac5eb61ff1ab20eec373972b53ca5e1c9d2219c85fd5f1ec",
+    "original_loaded_leaf_sha256": "87f831e827f728df7adc04622e62dab926b0d00a757805217ddf6168284a9ced",
+    "final_loaded_leaf_sha256": "95550344b4ee2187ca97c214d258bfeab3207f3ad1108a11bf67457f292894b6",
+    "patch": "reviewed-frozen-ui-leaf.patch",
+    "boundary": "Raw published source and actual frozen UI leaf had distinct existing versions; both were merged independently and their production-only behavior preserved."
+  },
+  "production_checks": {
+    "build": "passed on final release source",
+    "lint": "passed with existing warnings",
+    "typecheck": "passed",
+    "tests": {
+      "passed": 3485,
+      "failed": 135,
+      "skipped": 277,
+      "baseline_failed": 135,
+      "new_failure_identities": 0,
+      "boundary": "Existing production test failures remain failures; not an all-green test-suite claim."
+    },
+    "exact_public_assets_browser_regression": "21 hashes matched; actual production 15 JS / 5 CSS fixture interaction passed, no provider network calls"
+  },
+  "deployed_at": "2026-10-17T22:41:14.395556+08:00"
+}

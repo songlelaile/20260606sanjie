@@ -1,0 +1,23 @@
+{
+  "checkedAt": 1792248206.2142677,
+  "anonymousHttpStatus": {
+    "/login": 200,
+    "/api/auth/me": 401,
+    "/api/creative/proxy": 405,
+    "/api/creative/proxy/": 405,
+    "/api/creative/assets/web-chrome.js": 401
+  },
+  "anonymousConditionalAssetStatus": {
+    "/api/creative/assets/web-chrome.js": 401,
+    "/api/creative/assets/labs/image-prompt-lab/studio-entry.js": 401,
+    "/api/creative/assets/labs/image-prompt-lab/studio-entry.css": 401
+  },
+  "defaultDynamicLoginBuildMatchesCandidate": true,
+  "uatDynamicLoginBuildMatchesExistingUat": true,
+  "uatBuildId": "mvrLKK6b7WuEr0YEVIDph",
+  "gateProcessAndConfigUnchanged": true,
+  "proxyGetStatusMatchesBaseline": true,
+  "oldCandidateGateAndUatProcessesOnline": true,
+  "accessLogBoundary": "Existing Nginx access logging is off. Routing is verified by effective configuration, distinct dynamic login build identities, unchanged gate process/config, and existing method-denial responses; no access-log upstream trace is claimed.",
+  "paidGenerationOrHistoryCleanupRequested": false
+}

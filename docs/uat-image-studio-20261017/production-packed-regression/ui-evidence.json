@@ -1,0 +1,41 @@
+{
+  "mode": "exact production candidate 15 external JS / 5 CSS with explicit localhost-only provider fixtures",
+  "assetsVerified": 21,
+  "fixtureImports": 1,
+  "fixtureAnalysis": 1,
+  "fixtureGeneration": 1,
+  "localArchives": 1,
+  "outboundProviderRequests": 0,
+  "systemFilePickerVerified": false,
+  "flow": [
+    "visible fixture import through normal input change",
+    "analysis",
+    "edit plan",
+    "confirmation unchecked disables generation",
+    "confirmation checked enables generation",
+    "1/1 generated and locally archived",
+    "select result enables selected-download button",
+    "Enter preview and Escape close restores image focus",
+    "download PNG exists on disk",
+    "same-account second-frame draft and result restoration"
+  ],
+  "download": {
+    "filename": "少壮创作_商品任务 1_01.png",
+    "bytes": 460926,
+    "dimensions": [
+      1024,
+      1024
+    ],
+    "sha256": "c1cfb217a34aa275dfeee810e77d05e0f13e3cd885385fede8f80e1b62b1bc3f"
+  },
+  "mobile": {
+    "kind": "390px iframe viewport, not physical-device browser emulation",
+    "clientWidth": 390,
+    "scrollWidth": 390,
+    "planEditorFontSize": "16px",
+    "allNineVisibleFormControls": "16px",
+    "previewWidth": 366,
+    "previewLeft": 12
+  },
+  "fixtures": "Existing checked-in local demonstration script with fixture bridge inserted before the actual frozen creative-tools-ui marker in a temporary server copy. Public source files themselves are unchanged. Server-owned synthetic PNG, analysis and generation are explicit fixtures; browser CSP forbids outbound provider requests."
+}

@@ -1,0 +1,135 @@
+{
+  "startedAt": "2026-10-17T14:29:56.543Z",
+  "environment": "studio-main-local-demo-v1",
+  "fixtureInputAttempts": 1,
+  "fixtureInputDispatched": 1,
+  "fixtureInputBlocked": 0,
+  "fixtureInputFailures": 0,
+  "fixtureAnalysis": 1,
+  "fixtureGeneration": 1,
+  "localArchives": 1,
+  "blockedProxyRequests": 0,
+  "blockedOtherApiRequests": 0,
+  "outboundProviderRequests": 0,
+  "events": [
+    {
+      "type": "bridge-ready",
+      "at": "2026-10-17T14:30:05.053Z"
+    },
+    {
+      "type": "csp-blocked",
+      "directive": "script-src",
+      "url": "eval",
+      "at": "2026-10-17T14:30:05.085Z"
+    },
+    {
+      "type": "fixture-input",
+      "phase": "attempt",
+      "nativePicker": false,
+      "method": "visible-demo-button-file-input-change",
+      "taskId": "3e09ba57-f698-454b-8363-96326eca80b3",
+      "at": "2026-10-17T14:30:09.142Z"
+    },
+    {
+      "type": "fixture-input",
+      "phase": "dispatched",
+      "nativePicker": false,
+      "method": "visible-demo-button-file-input-change",
+      "taskId": "3e09ba57-f698-454b-8363-96326eca80b3",
+      "fileName": "local-synthetic-demo-tote.png",
+      "bytes": 7977,
+      "at": "2026-10-17T14:30:09.181Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "analyze",
+      "at": "2026-10-17T14:30:12.722Z"
+    },
+    {
+      "type": "fixture-analysis",
+      "products": 1,
+      "at": "2026-10-17T14:30:12.730Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "generate",
+      "at": "2026-10-17T14:30:22.743Z"
+    },
+    {
+      "type": "fixture-generation",
+      "jobId": "job_1792247422818_50f609dea4fc08",
+      "ratio": "1:1",
+      "quality": "auto",
+      "generationSpeed": "standard",
+      "width": 1024,
+      "height": 1024,
+      "at": "2026-10-17T14:30:22.912Z"
+    },
+    {
+      "type": "local-archive",
+      "ok": true,
+      "resultId": "job_1792247422818_50f609dea4fc08:studio:shot-1",
+      "at": "2026-10-17T14:30:24.184Z"
+    },
+    {
+      "type": "ui-action",
+      "action": "download",
+      "at": "2026-10-17T14:30:49.020Z"
+    },
+    {
+      "type": "bridge-ready",
+      "at": "2026-10-17T14:31:40.562Z"
+    },
+    {
+      "type": "csp-blocked",
+      "directive": "script-src",
+      "url": "eval",
+      "at": "2026-10-17T14:31:40.578Z"
+    },
+    {
+      "type": "bridge-ready",
+      "at": "2026-10-17T14:33:19.151Z"
+    },
+    {
+      "type": "csp-blocked",
+      "directive": "script-src",
+      "url": "eval",
+      "at": "2026-10-17T14:33:19.175Z"
+    }
+  ],
+  "requests": {
+    "/creative/labs/image-prompt-lab/promptlab.html": 3,
+    "/creative/web-chrome.js": 3,
+    "/creative/labs/image-prompt-lab/studio-prerequisites-20261009-v1.js": 3,
+    "/creative/labs/image-prompt-lab/sku-region-ui.css": 3,
+    "/creative/labs/image-prompt-lab/aesthetic-mirror.css": 3,
+    "/creative/labs/image-prompt-lab/link-image.css": 3,
+    "/creative/labs/image-prompt-lab/workspace-ux.css": 3,
+    "/creative/labs/image-prompt-lab/viral-series-contract.js": 3,
+    "/creative/labs/image-prompt-lab/promptlab.js": 3,
+    "/creative/labs/image-prompt-lab/studio-runtime-20261010-credit-v3.js": 3,
+    "/creative/labs/image-prompt-lab/studio-views-20261010-credit-v3.js": 3,
+    "/creative/labs/image-prompt-lab/sku-region-ui.js": 3,
+    "/creative/labs/image-prompt-lab/sku-delivery-store.js": 3,
+    "/creative/labs/image-prompt-lab/sku-durable-receipt.js": 3,
+    "/creative/labs/image-prompt-lab/aesthetic-mirror-contract.js": 3,
+    "/creative/labs/image-prompt-lab/aesthetic-mirror-ui.js": 3,
+    "/creative/labs/image-prompt-lab/link-list-import.js": 3,
+    "/creative/labs/image-prompt-lab/link-image-contract.js": 3,
+    "/creative/labs/image-prompt-lab/link-image-result-actions.js": 3,
+    "/creative/labs/image-prompt-lab/link-image-ui.js": 3,
+    "/creative/labs/image-prompt-lab/studio-workspace-20261009-v1.css": 3,
+    "/api/auth/me": 49,
+    "/__demo/event": 14,
+    "/api/creative/credits": 3,
+    "/favicon.ico": 1,
+    "/__demo/product.png": 1,
+    "/__demo/metrics": 2,
+    "/creative/qa-mobile.html": 2
+  },
+  "bundled": false,
+  "productPath": "/var/folders/4p/srdlq7d51575spj5yns3zg6h0000gn/T/sanjie-studio-main-demo/demo-product-tote.png",
+  "productSha256": "bc046f07f829ca3984d22512ad1989759e5609461f725c290d41007302804afb",
+  "mode": "actual public UI + explicit mock analysis and generation",
+  "providerNetworkPolicy": "No server outbound networking. All provider proxy routes return 403. Browser CSP allows only this origin, blob and data."
+}
