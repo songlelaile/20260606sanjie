@@ -1,0 +1,58 @@
+{
+  "claude": {
+    "client": "Claude desktop Code",
+    "sessionId": "local_89b95872-65d1-4eba-a7a5-8ce5648e9d90",
+    "privateCommit": "23488ecdf5cf97a1af806344b0e94e9b79ba8c68",
+    "integratedCommit": "e0a2472",
+    "beforeFix": {
+      "failed": 8,
+      "passed": 32
+    },
+    "afterFixVideoTests": 143,
+    "paidRequests": 0,
+    "buildAtHandoff": {
+      "exit": 1,
+      "blockingFile": "src/lib/creative-video-trusted-portrait.test.ts",
+      "blockingRule": "no-explicit-any",
+      "blockingErrors": 4
+    }
+  },
+  "root": {
+    "videoVitest": {
+      "files": 9,
+      "passed": 216,
+      "exit": 0
+    },
+    "providerNode": {
+      "passed": 4,
+      "exit": 0
+    },
+    "typecheckExit": 0,
+    "changedTestsEslintExit": 0,
+    "jsSyntaxExit": 0,
+    "diffCheckExit": 0,
+    "nextBuild": {
+      "exit": 0,
+      "staticPages": 30,
+      "existingWarningsRemain": true
+    },
+    "nativeIndexedDbBrowser": {
+      "checks": 4,
+      "passed": 4,
+      "customerDataOrProviderRequests": 0
+    }
+  },
+  "staticHashes": {
+    "public/creative/labs/ecommerce-video-studio/video-studio-store.js": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5",
+    "public/creative/labs/ecommerce-video-studio/video-studio.js": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313",
+    "public/creative/labs/ecommerce-video-studio/video-studio.html": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4"
+  },
+  "evidenceHashes": {
+    "root-final-typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "root-final-video-vitest.log": "fd04507bc675f1f392222acb2a1005af9fa8976b97d7735f6047fcb429bb5599",
+    "root-browser-store-proof.json": "8f53baa60114da2bd628b53d6ed4f4a68fa1782e1bfda64fada2eb5eb9a3b802",
+    "root-final-eslint.log": "a34f2e617ca01c7c25cb2604ac5a9b740346db9221c064b4d0d25dc3beb8d187",
+    "root-final-provider.log": "dfb06f2967cf2f50f4b24f0bf7c2d4b109a70af87d31a5d00ca5acc066bac6ba",
+    "root-final-build.log": "2c2bc5a4daf097911578eaaf6045ddb3da6a6065aeab62689f7abc6e959fc398"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "passed": true,
+      "text": "通过：嵌套的逐帧源仍然可用"
+    },
+    {
+      "passed": true,
+      "text": "通过：已移除已拥有但未被引用的固定装置"
+    },
+    {
+      "passed": true,
+      "text": "PASS：过期的草稿会中止删除操作。"
+    },
+    {
+      "passed": true,
+      "text": "通过：过时的草稿会被拒绝"
+    }
+  ],
+  "title": "PASS — 视频资产保留"
+}

@@ -1,0 +1,12 @@
+✔ privacy HTTP 400 persists actionable Chinese guidance and bounded diagnostics without provider prose (22.652917ms)
+✔ HTTP diagnostics accept a safe request ID header and omit unsafe identifier values (6.395667ms)
+✔ HTTP 500 with the same provider code remains unknown and blocks repeat submissions (3.199875ms)
+✔ unverified native HTTP 400 keeps its existing unknown-submission state (3.359375ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 84.444667

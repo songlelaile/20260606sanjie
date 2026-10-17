@@ -1,0 +1,242 @@
+   ▲ Next.js 15.5.19
+   - Experiments (use with caution):
+     · cpus: 1
+     ✓ webpackMemoryOptimizations
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 14.0s
+   Linting and checking validity of types ...
+
+./src/components/creative/CreativeStudio.tsx
+182:61  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+432:23  Warning: The ref value 'navigationEpoch.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'navigationEpoch.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/components/creative/ScanPaymentDialog.tsx
+251:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+260:6  Warning: React Hook useEffect has a missing dependency: 'order'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/components/management/CreditGiftPanel.tsx
+174:137  Warning: The ref value 'refreshVersion.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'refreshVersion.current' to a variable inside the effect, and use that variable in the cleanup function.  react-hooks/exhaustive-deps
+
+./src/components/management/ManagementConsole.test.ts
+111:10  Warning: 'jsonResponse' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/model-gateway/UserSupplyPanel.tsx
+74:6  Warning: React Hook useEffect has a missing dependency: 'cooldownUntil'. Either include it or remove the dependency array.  react-hooks/exhaustive-deps
+
+./src/components/tools/DmpGrowthReportViewModel.ts
+1297:104  Warning: 'metric' is defined but never used.  @typescript-eslint/no-unused-vars
+2141:9  Warning: 'spendIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+2142:9  Warning: 'sourceIndex' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/components/tools/DmpGrowthReportViewer.tsx
+139:17  Warning: 'number' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/accounts.ts
+207:6  Warning: 'RegistrationResult' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/algorithm/three-stage.ts
+8:3  Warning: 'Lifecycle' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/creative-image-runtime.test.ts
+167:47  Warning: Expected an assignment or function call and instead saw an expression.  @typescript-eslint/no-unused-expressions
+
+./src/lib/dmp-report-store.ts
+1129:10  Warning: 'sameExactGrowthPeriod' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video-contract.ts
+182:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video-supply.test.ts
+32:23  Warning: '_tiers' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/native-video.ts
+142:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+142:50  Warning: '_quote' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+154:28  Warning: '_account' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/model-gateway/proxy.ts
+331:30  Warning: 'upstream' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-concurrency-100.test.ts
+4:10  Warning: 'webcrypto' is defined but never used.  @typescript-eslint/no-unused-vars
+13:27  Warning: 'OTHER' is assigned a value but never used.  @typescript-eslint/no-unused-vars
+27:11  Warning: 'GenerationMessage' is defined but never used.  @typescript-eslint/no-unused-vars
+32:11  Warning: 'ArchiveContext' is defined but never used.  @typescript-eslint/no-unused-vars
+33:11  Warning: 'ResultItem' is defined but never used.  @typescript-eslint/no-unused-vars
+35:11  Warning: 'TaskState' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-archive-receipt.test.ts
+11:35  Warning: '_input' is defined but never used.  @typescript-eslint/no-unused-vars
+
+./src/lib/studio-genesis-bridge.test.ts
+39:29  Warning: '_item' is defined but never used.  @typescript-eslint/no-unused-vars
+
+info  - Need to disable some ESLint rules? Learn more here: https://nextjs.org/docs/app/api-reference/config/eslint#disabling-rules
+   Collecting page data ...
+   Generating static pages (0/30) ...
+   Generating static pages (7/30) 
+   Generating static pages (14/30) 
+   Generating static pages (22/30) 
+ ✓ Generating static pages (30/30)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                                      Size  First Load JS
+┌ ƒ /                                                           433 B         103 kB
+├ ƒ /_not-found                                                  1 kB         103 kB
+├ ƒ /admin                                                      165 B         106 kB
+├ ƒ /api/admin/sower-work/users                                 433 B         103 kB
+├ ƒ /api/ai-access/events                                       433 B         103 kB
+├ ƒ /api/ai-access/execute                                      433 B         103 kB
+├ ƒ /api/ai-access/grants                                       433 B         103 kB
+├ ƒ /api/ai-access/grants/[id]                                  433 B         103 kB
+├ ƒ /api/ai-api-config                                          433 B         103 kB
+├ ƒ /api/ai-api-config/test                                     433 B         103 kB
+├ ƒ /api/auth/creative-access                                   433 B         103 kB
+├ ƒ /api/auth/login                                             433 B         103 kB
+├ ƒ /api/auth/logout                                            433 B         103 kB
+├ ƒ /api/auth/me                                                433 B         103 kB
+├ ƒ /api/auth/register                                          433 B         103 kB
+├ ƒ /api/business-diagnosis/ai-report                           433 B         103 kB
+├ ƒ /api/business-diagnosis/html-report                         433 B         103 kB
+├ ƒ /api/business-diagnosis/source                              433 B         103 kB
+├ ƒ /api/calc-runs                                              433 B         103 kB
+├ ƒ /api/creative/assets/[...path]                              433 B         103 kB
+├ ƒ /api/creative/billing/cancel                                433 B         103 kB
+├ ƒ /api/creative/billing/quote                                 433 B         103 kB
+├ ƒ /api/creative/credits                                       433 B         103 kB
+├ ƒ /api/creative/credits/ledger                                433 B         103 kB
+├ ƒ /api/creative/image-receipts/[receiptId]                    433 B         103 kB
+├ ƒ /api/creative/image-receipts/[receiptId]/content/[index]    433 B         103 kB
+├ ƒ /api/creative/native-video                                  433 B         103 kB
+├ ƒ /api/creative/native-video/[id]                             433 B         103 kB
+├ ƒ /api/creative/native-video/[id]/content                     433 B         103 kB
+├ ƒ /api/creative/native-video/quote                            433 B         103 kB
+├ ƒ /api/creative/native-video/resolve                          433 B         103 kB
+├ ƒ /api/creative/proxy                                         433 B         103 kB
+├ ƒ /api/cycles/[cycleId]/prefill-items                         433 B         103 kB
+├ ƒ /api/daily-retention                                        433 B         103 kB
+├ ƒ /api/dashboard-shares                                       433 B         103 kB
+├ ƒ /api/dashboards/audience-plan                               433 B         103 kB
+├ ƒ /api/dashboards/management                                  433 B         103 kB
+├ ƒ /api/dashboards/product-breakthrough                        433 B         103 kB
+├ ƒ /api/dmp-market-reports                                     433 B         103 kB
+├ ƒ /api/dmp-report-exports                                     433 B         103 kB
+├ ƒ /api/dmp-report-shares                                      433 B         103 kB
+├ ƒ /api/dmp-reports                                            433 B         103 kB
+├ ƒ /api/dmp-runtime/[action]                                   433 B         103 kB
+├ ƒ /api/dmp-source-data                                        433 B         103 kB
+├ ƒ /api/growth-profit-config                                   433 B         103 kB
+├ ƒ /api/import-batches                                         433 B         103 kB
+├ ƒ /api/import-batches/[id]/validation                         433 B         103 kB
+├ ƒ /api/import-batches/ingest                                  433 B         103 kB
+├ ƒ /api/import-batches/merge-shengyi                           433 B         103 kB
+├ ƒ /api/interventions                                          433 B         103 kB
+├ ƒ /api/interventions/[id]                                     433 B         103 kB
+├ ƒ /api/interventions/[id]/comparison                          433 B         103 kB
+├ ƒ /api/invite-codes                                           433 B         103 kB
+├ ƒ /api/invite-codes/[id]                                      433 B         103 kB
+├ ƒ /api/managed-users                                          433 B         103 kB
+├ ƒ /api/managed-users/[id]                                     433 B         103 kB
+├ ƒ /api/managed-users/[id]/dmp-access                          433 B         103 kB
+├ ƒ /api/managed-users/[id]/reset-password                      433 B         103 kB
+├ ƒ /api/managed-users/[id]/sower-work-access                   433 B         103 kB
+├ ƒ /api/management/credit-gift-plans                           433 B         103 kB
+├ ƒ /api/management/credit-gift-plans/[id]/cancel               433 B         103 kB
+├ ƒ /api/management/credit-gifts                                433 B         103 kB
+├ ƒ /api/management/credit-pool                                 433 B         103 kB
+├ ƒ /api/management/credit-pool/initialize                      433 B         103 kB
+├ ƒ /api/management/credit-pool/observe                         433 B         103 kB
+├ ƒ /api/management/credit-pool/operations/[requestKey]         433 B         103 kB
+├ ƒ /api/management/credit-pool/proposals                       433 B         103 kB
+├ ƒ /api/management/credit-pool/proposals/[id]                  433 B         103 kB
+├ ƒ /api/management/credit-pool/refresh                         433 B         103 kB
+├ ƒ /api/management/credit-pool/source                          433 B         103 kB
+├ ƒ /api/management/dmp-report-share-analytics                  433 B         103 kB
+├ ƒ /api/management/gateway-billing/accounts                    433 B         103 kB
+├ ƒ /api/management/gateway-billing/holds                       433 B         103 kB
+├ ƒ /api/management/gateway-billing/ledger                      433 B         103 kB
+├ ƒ /api/management/gateway-billing/rules                       433 B         103 kB
+├ ƒ /api/management/user-supply                                 433 B         103 kB
+├ ƒ /api/model-gateway/checkout                                 433 B         103 kB
+├ ƒ /api/model-gateway/checkout/[id]                            433 B         103 kB
+├ ƒ /api/model-gateway/keys                                     433 B         103 kB
+├ ƒ /api/model-gateway/keys/[id]                                433 B         103 kB
+├ ƒ /api/model-gateway/orders                                   433 B         103 kB
+├ ƒ /api/model-gateway/orders/[id]                              433 B         103 kB
+├ ƒ /api/model-gateway/orders/[id]/mark-paid                    433 B         103 kB
+├ ƒ /api/model-gateway/overview                                 433 B         103 kB
+├ ƒ /api/model-gateway/relay                                    433 B         103 kB
+├ ƒ /api/model-gateway/relay/sync                               433 B         103 kB
+├ ƒ /api/model-gateway/relay/test                               433 B         103 kB
+├ ƒ /api/model-gateway/wallet                                   433 B         103 kB
+├ ƒ /api/operating-network/ai-report                            433 B         103 kB
+├ ƒ /api/payments/alipay/notify                                 433 B         103 kB
+├ ƒ /api/payments/wechat/notify                                 433 B         103 kB
+├ ƒ /api/profile/orders                                         433 B         103 kB
+├ ƒ /api/protected-downloads/[...path]                          433 B         103 kB
+├ ƒ /api/shared/dmp-reports/[token]                             433 B         103 kB
+├ ƒ /api/shops                                                  433 B         103 kB
+├ ƒ /api/shops/[id]                                             433 B         103 kB
+├ ƒ /api/shops/active                                           433 B         103 kB
+├ ƒ /api/sower-work/access                                      433 B         103 kB
+├ ƒ /api/tools/dmp/download                                     433 B         103 kB
+├ ƒ /api/tools/sower-work/access                                433 B         103 kB
+├ ƒ /api/tools/sower-work/download                              433 B         103 kB
+├ ƒ /api/tools/sower-work/lease                                 433 B         103 kB
+├ ƒ /api/tools/sower-work/lease/verify                          433 B         103 kB
+├ ƒ /api/tools/sower-work/update                                433 B         103 kB
+├ ƒ /api/tools/updates/[product]/bootstrap                      433 B         103 kB
+├ ƒ /api/tools/updates/[product]/latest                         433 B         103 kB
+├ ƒ /api/tools/updates/[product]/package/[version]              433 B         103 kB
+├ ƒ /api/v1/chat/completions                                    433 B         103 kB
+├ ƒ /api/v1/images/edits                                        433 B         103 kB
+├ ƒ /api/v1/images/generations                                  433 B         103 kB
+├ ƒ /api/v1/models                                              433 B         103 kB
+├ ƒ /api/v1/videos                                              433 B         103 kB
+├ ƒ /api/v1/videos/[id]                                         433 B         103 kB
+├ ƒ /api/v1/videos/[id]/content                                 433 B         103 kB
+├ ƒ /api/versions                                               433 B         103 kB
+├ ƒ /api/video-assets/[[...path]]                               433 B         103 kB
+├ ƒ /api/video-tasks/[[...path]]                                433 B         103 kB
+├ ƒ /dashboards/audience-plan                                 4.46 kB         224 kB
+├ ƒ /dashboards/business-diagnosis                            6.04 kB         115 kB
+├ ƒ /dashboards/diagnostics                                     433 B         103 kB
+├ ƒ /dashboards/management                                    10.5 kB         230 kB
+├ ƒ /dashboards/operating-network                               126 B         115 kB
+├ ƒ /dashboards/operating-network/video                         126 B         115 kB
+├ ƒ /dashboards/product-breakthrough                          4.39 kB         224 kB
+├ ƒ /imports                                                   145 kB         250 kB
+├ ƒ /login                                                    3.55 kB         106 kB
+├ ƒ /management                                               36.3 kB         146 kB
+├ ƒ /management/ai-access                                     4.84 kB         107 kB
+├ ƒ /management/sower-work                                    2.02 kB         108 kB
+├ ƒ /models                                                   21.7 kB         124 kB
+├ ƒ /prefill                                                  7.37 kB         113 kB
+├ ƒ /privacy                                                    433 B         103 kB
+├ ƒ /profile                                                  7.38 kB         113 kB
+├ ƒ /reports                                                    433 B         103 kB
+├ ƒ /reports/operating-network                                2.76 kB         222 kB
+├ ƒ /shared/dashboards/[token]                                  433 B         103 kB
+├ ƒ /shared/dmp-reports/[token]                               2.58 kB         161 kB
+├ ƒ /sower-work                                               2.27 kB         104 kB
+├ ƒ /tools                                                     6.4 kB         112 kB
+├ ƒ /tools/dmp-report                                         9.13 kB         167 kB
+├ ƒ /tools/tutorials                                            165 B         106 kB
+├ ƒ /v1/chat/completions                                        433 B         103 kB
+├ ƒ /v1/images/edits                                            433 B         103 kB
+├ ƒ /v1/images/generations                                      433 B         103 kB
+├ ƒ /v1/models                                                  433 B         103 kB
+├ ƒ /v1/videos                                                  433 B         103 kB
+├ ƒ /v1/videos/[id]                                             433 B         103 kB
+├ ƒ /v1/videos/[id]/content                                     433 B         103 kB
+└ ƒ /versions                                                   433 B         103 kB
++ First Load JS shared by all                                  102 kB
+  ├ chunks/52-55ab6cd87013eb66.js                             45.9 kB
+  ├ chunks/8003bab1-c59b6d50497867b5.js                       54.2 kB
+  └ other shared chunks (total)                                  2 kB
+
+
+ƒ  (Dynamic)  server-rendered on demand
+

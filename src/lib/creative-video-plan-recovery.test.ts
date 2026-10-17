@@ -38,6 +38,10 @@ type Api = { state: State; cacheDom(): void; bindProductionEvents(): void; rende
   startProductionGeneration(): Promise<void>; executeProductionRun(run: Run | undefined): Promise<unknown>;
   retryProductionShot(run: Run | undefined, shotId: string): Promise<unknown>; productionRetryState(run: Run, shot: Shot): { allowed: boolean; exhausted: boolean };
   productionCostSummary(run: Run): Record<string, number>; removeAsset(kind: string, id: string): Promise<void> };
+const retentionContext = vm.createContext({});
+vm.runInContext(readFileSync(new URL("../../public/creative/labs/ecommerce-video-studio/video-studio-store.js", import.meta.url), "utf8"), retentionContext);
+const retainedIds = (retentionContext.SZEcommerceVideoStore as { productionRetainedAssetIds(runs: unknown[]): Set<string> }).productionRetainedAssetIds;
+type RetentionOptions = { isCurrent(): boolean; memoryRuns(): Run[]; assetAliases: Array<{ storageId: string; assetId: string }> };
 function harness() {
   const html = readFileSync(new URL("../../public/creative/labs/ecommerce-video-studio/video-studio.html", import.meta.url), "utf8");
   const nodes = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Node()]));
@@ -45,7 +49,13 @@ function harness() {
   const saved = new Map<string, Run>();
   const store = { saveRun: vi.fn(async (run: Run) => { saved.set(run.id, structuredClone(run)); return run; }),
     listRuns: vi.fn(async () => [...saved.values()].map(run => structuredClone(run))),
-    removeAsset: vi.fn(), saveDraft: vi.fn(), deleteAsset: vi.fn(async () => true), deleteDraft: vi.fn(async () => true) };
+    removeAsset: vi.fn(), saveDraft: vi.fn(), deleteAsset: vi.fn(async (id: string) => Boolean(id)), deleteDraft: vi.fn(async () => true),
+    deleteAssetsIfUnreferenced: vi.fn(async (ids: string[], options: RetentionOptions): Promise<void> => {
+      const runs = await store.listRuns();
+      if (!options.isCurrent()) throw new Error("Fixture draft changed");
+      const retained = retainedIds(runs.concat(options.memoryRuns()));
+      for (const id of ids) if (!retained.has(id) && !options.assetAliases.some(alias => alias.storageId === id && retained.has(alias.assetId))) await store.deleteAsset(id);
+    }) };
   const messages = vi.fn((message: Message, done: (reply: unknown) => void) => done({ ok: true, payload: {
     task: { id: `test-${messages.mock.calls.length}`, status: "failed", providerSubmitted: false,
       error: { code: "TEST_ONLY_REJECTION", message: "No supplier call is made by this fixture." } }
@@ -53,7 +63,7 @@ function harness() {
   const context = vm.createContext({ console, URL, AbortController,
     setTimeout: () => 1, clearTimeout: () => {},
     document: { readyState: "loading", addEventListener: vi.fn(), getElementById: (id: string) => nodes.get(id) ?? null,
-      createElement: () => new Node(), querySelector: () => null },
+      createElement: () => new Node(), querySelector: () => null, querySelectorAll: () => [] },
     __SZ_VIDEO_STUDIO_EXPOSE_TESTING__: true, SZEcommerceVideoStore: store,
     chrome: { runtime: { sendMessage: messages } } });
   for (const file of ["video-studio-contract.js", "video-production.js", "video-studio.js"]) {
@@ -240,6 +250,8 @@ describe("explicit release of a terminal failed plan with saved successful shots
     ["a queued state in a terminal attempt", (r: Run) => { r.shotRuns[0].attempts[0].status = "failed"; r.shotRuns[0].attempts[0].state = "QUEUED"; }],
     ["a run-level running state", (r: Run) => { r.state = "running"; }],
     ["a pending shot with a nested provider task", (r: Run) => { r.shotRuns[2].details = { receipt: { providerTaskId: "cgt-late" } }; }],
+    ["a pending shot with a nested job identity", (r: Run) => { r.shotRuns[2].details = { receipt: { jobId: "job-late" } }; }],
+    ["a ready shot with a nested task envelope", (r: Run) => { r.shotRuns[2].status = "ready"; r.shotRuns[2].details = { task: { id: "task-late" } }; }],
     ["a ready shot with nested provider submission", (r: Run) => { r.shotRuns[2].status = "ready"; r.shotRuns[2].details = { providerSubmitted: true }; }],
     ["a pending shot with a nested request identity", (r: Run) => { r.shotRuns[2].details = [{ requestId: "submitted-before-reload" }]; }],
     ["a malformed pending attempt collection", (r: Run) => { r.shotRuns[2].attempts = {} as unknown as Attempt[]; }],
