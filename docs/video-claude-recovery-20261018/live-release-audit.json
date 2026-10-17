@@ -1,0 +1,12 @@
+{
+  "changedOldFields": [
+    "updatedAt",
+    "newPlanRequestedAt"
+  ],
+  "oldRequestsKept": true,
+  "allShotReceiptsKept": true,
+  "draftUnchanged": true,
+  "savedShotReadable": true,
+  "runCount": 4,
+  "newPlanRequestedAt": "2026-10-17T18:56:49.743Z"
+}

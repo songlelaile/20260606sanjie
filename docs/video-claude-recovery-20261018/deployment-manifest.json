@@ -1,0 +1,438 @@
+{
+  "sourceCommit": "54f91f366e3b7559f88c42a2054a903b9e8d93c0",
+  "expectedProcesses": {
+    "50": {
+      "pid": 3612108,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/credit-pool-shared-wallet-20261009-v1"
+    },
+    "88": {
+      "pid": 229880,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/link-image-workspace-20261015-v1"
+    },
+    "89": {
+      "pid": 644499,
+      "status": "online",
+      "cwd": "/opt/sanjie-platform-modules-pause-20261016-tools-r1"
+    },
+    "90": {
+      "pid": 965082,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-optimize-v1"
+    },
+    "91": {
+      "pid": 989625,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2"
+    },
+    "92": {
+      "pid": 1013260,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261018-image-studio-online-uat-v3"
+    }
+  },
+  "files": [
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio-store.js",
+      "before": "ef79578097f1c12c7ca2295f8d4add0e91d21b42c5fbb51bc1c07cfb72234ae1",
+      "after": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5",
+      "edits": [
+        [
+          84,
+          85,
+          "  function transact(storeName, mode, work, expectedAccountKey, isCurrent) {\n"
+        ],
+        [
+          90,
+          90,
+          "      if (isCurrent && !isCurrent()) throw new Error('\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u539f\u8349\u7a3f\u64cd\u4f5c\u3002');\n"
+        ],
+        [
+          119,
+          119,
+          "            try { if (isCurrent && !isCurrent()) throw new Error('\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u539f\u8349\u7a3f\u5199\u5165\u3002'); }\n            catch (error) {\n              try { tx.abort(); } catch (_) { /* already aborted */ }\n              fail(error);\n              return;\n            }\n"
+        ],
+        [
+          166,
+          167,
+          "    }, meta.expectedAccountKey || '', meta.isCurrent).then(function saved() {\n"
+        ],
+        [
+          181,
+          181,
+          "  }\n\n  // Inspect every saved production record, including released/hidden plans and\n  // result-only legacy records. An unreadable reference graph never authorizes deletion.\n  function productionRetainedAssetIds(runs) {\n    if (!Array.isArray(runs)) throw new Error('\u65e0\u6cd5\u6838\u5bf9\u6210\u7247\u8ba1\u5212\u5f15\u7528\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n    var ids = new Set(), seen = new Set();\n    var lists = ['images', 'videos', 'audios', 'productImages', 'generationVideos', 'referenceVideos', 'referenceAudios', 'referenceFrames', 'assets', 'tracks'];\n    function add(value) {\n      if (value == null || value === '') return;\n      if (typeof value !== 'string') throw new Error('\u6210\u7247\u7d20\u6750\u5f15\u7528\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n      if (value.trim()) ids.add(value.trim());\n    }\n    function visit(value, asset) {\n      if (value == null) return;\n      if (typeof value !== 'object' || Array.isArray(value)) throw new Error('\u6210\u7247\u8bb0\u5f55\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n      if (asset) add(value.id);\n      if (seen.has(value)) return;\n      seen.add(value);\n      Object.keys(value).forEach(function (key) {\n        var child = value[key];\n        if (['plan', 'request', 'finalAudio'].indexOf(key) >= 0 && child != null && (typeof child !== 'object' || Array.isArray(child))) throw new Error('\u6210\u7247\u5feb\u7167\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n        if (['shots', 'shotRuns', 'narrationRuns', 'attempts'].indexOf(key) >= 0 && child != null) {\n          if (!Array.isArray(child) || child.some(function (item) { return !item || typeof item !== 'object' || Array.isArray(item); })) throw new Error('\u6210\u7247\u955c\u5934\u8bb0\u5f55\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n        }\n        if (['sourceAssetId', 'resultAssetId', 'assetId', 'referenceVideoId'].indexOf(key) >= 0) { add(child); return; }\n        if (key === 'musicAssetIds') {\n          if (child != null && !Array.isArray(child)) throw new Error('\u6210\u7247\u97f3\u9891\u5f15\u7528\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n          (child || []).forEach(add); return;\n        }\n        if (key === 'storageRef') {\n          if (child != null) {\n            if (typeof child !== 'object' || Array.isArray(child) || typeof child.id !== 'string' || !child.id.trim()) throw new Error('\u672c\u5730\u7d20\u6750\u7d22\u5f15\u65e0\u6cd5\u6838\u5bf9\uff0c\u526f\u672c\u4fdd\u7559\u3002');\n            visit(child, false); add(child.id);\n          }\n          return;\n        }\n        if (key === 'referenceVideo') { if (child != null) visit(child, true); return; }\n        if (lists.indexOf(key) >= 0) {\n          if (child != null && (!Array.isArray(child) || child.some(function (item) { return !item || typeof item !== 'object' || Array.isArray(item); }))) throw new Error('\u6210\u7247\u7d20\u6750\u5217\u8868\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n          (child || []).forEach(function (item) { visit(item, true); }); return;\n        }\n        if (Array.isArray(child)) child.forEach(function (item) { if (item && typeof item === 'object') visit(item, false); });\n        else if (child && typeof child === 'object') visit(child, false);\n      });\n    }\n    runs.forEach(function (run) {\n      if (!run || typeof run !== 'object' || Array.isArray(run)) throw new Error('\u751f\u6210\u5386\u53f2\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n      if (run.purpose === 'production') visit(run, false);\n    });\n    return ids;\n  }\n\n  function deleteAssetsIfUnreferenced(ids, options) {\n    var opts = options || {}, expected = String(opts.expectedAccountKey || '').trim();\n    if (!expected || !root.SZ_WEB_ACCOUNT || typeof root.SZ_WEB_ACCOUNT.require !== 'function') {\n      return Promise.reject(new Error('\u65e0\u6cd5\u786e\u8ba4\u7d20\u6750\u6240\u5c5e\u8d26\u53f7\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002'));\n    }\n    var candidates = Array.from(new Set((ids || []).map(String)));\n    return open().then(function (db) {\n      return root.SZ_WEB_ACCOUNT.require().then(function (account) {\n        if (account !== expected || opts.isCurrent && !opts.isCurrent()) throw new Error('\u8d26\u53f7\u6216\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u5220\u9664\u3002');\n        return new Promise(function (resolve, reject) {\n          var tx = db.transaction([ASSET_STORE, RUN_STORE], 'readwrite');\n          var assets = tx.objectStore(ASSET_STORE), result = { deleted: [], retained: [] }, failure;\n          function current() { if (opts.isCurrent && !opts.isCurrent()) throw new Error('\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u5220\u9664\u3002'); }\n          function referenced(id, retained) {\n            return retained.has(id) || (opts.assetAliases || []).some(function (alias) { return alias.storageId === id && retained.has(alias.assetId); });\n          }\n          function abort(error) { failure = error; try { tx.abort(); } catch (_) { /* already aborted */ } }\n          tx.onabort = tx.onerror = function () { reject(failure || tx.error || new Error('\u65e0\u6cd5\u6838\u5bf9\u6210\u7247\u8ba1\u5212\u5f15\u7528\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002')); };\n          tx.oncomplete = function () { resolve(result); };\n          var request = tx.objectStore(RUN_STORE).getAll();\n          request.onsuccess = function () {\n            try {\n              current();\n              var retained = productionRetainedAssetIds(request.result);\n              var memory = productionRetainedAssetIds(typeof opts.memoryRuns === 'function' ? opts.memoryRuns() : []);\n              memory.forEach(function (id) { retained.add(id); });\n              candidates.forEach(function (id) {\n                if (referenced(id, retained)) { result.retained.push(id); return; }\n                var record = assets.get(id);\n                record.onsuccess = function () {\n                  try {\n                    current();\n                    // Old unowned blobs remain readable, but are never assigned to this account by deletion.\n                    if (!record.result || record.result.accountKey !== expected) { result.retained.push(id); return; }\n                    var latest = productionRetainedAssetIds(typeof opts.memoryRuns === 'function' ? opts.memoryRuns() : []);\n                    if (referenced(id, latest)) { result.retained.push(id); return; }\n                    var deletion = assets.delete(id);\n                    deletion.onsuccess = function () {\n                      try {\n                        current();\n                        if (referenced(id, productionRetainedAssetIds(typeof opts.memoryRuns === 'function' ? opts.memoryRuns() : []))) throw new Error('\u6210\u7247\u8ba1\u5212\u4ecd\u5f15\u7528\u6b64\u7d20\u6750\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n                      } catch (error) { abort(error); }\n                    };\n                    result.deleted.push(id);\n                  } catch (error) { abort(error); }\n                };\n              });\n            } catch (error) { abort(error); }\n          };\n        });\n      });\n    });\n"
+        ],
+        [
+          222,
+          223,
+          "  function saveDraft(mode, draft, options) {\n    var opts = options || {};\n"
+        ],
+        [
+          232,
+          233,
+          "    }, opts.expectedAccountKey, opts.isCurrent).then(function saved() { return clonePlain(record); });\n"
+        ],
+        [
+          243,
+          244,
+          "  function deleteDraft(mode, options) {\n    var opts = options || {};\n"
+        ],
+        [
+          246,
+          247,
+          "    }, opts.expectedAccountKey, opts.isCurrent).then(function removed() { return true; });\n"
+        ],
+        [
+          297,
+          297,
+          "    productionRetainedAssetIds: productionRetainedAssetIds,\n    deleteAssetsIfUnreferenced: deleteAssetsIfUnreferenced,\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "d99b5fa100948fc3702877ca816e16b50ca1ef1e74d254e259e0b472c3eb9858",
+      "after": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313",
+      "edits": [
+        [
+          117,
+          117,
+          "    draftEpoch: 0,\n    sourceMutationPending: false,\n"
+        ],
+        [
+          488,
+          488,
+          "      if (previousAccountKey !== state.accountKey) state.draftEpoch += 1;\n"
+        ],
+        [
+          1164,
+          1164,
+          "  function captureDraftContext(guardActivity) {\n    return { accountKey: state.accountKey, mode: state.mode, epoch: state.draftEpoch,\n      assets: state.assets, reference: state.reference, frames: state.referenceFrames,\n      activity: guardActivity ? [state.productionStarting, state.productionBusy, state.actionPending].join(':') : '',\n      snapshot: JSON.stringify(draftSnapshot()) };\n  }\n\n  function draftContextCurrent(context) {\n    return !!context && context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch &&\n      (!context.activity || context.activity === [state.productionStarting, state.productionBusy, state.actionPending].join(':')) &&\n      context.assets === state.assets && context.reference === state.reference && context.frames === state.referenceFrames &&\n      context.snapshot === JSON.stringify(draftSnapshot());\n  }\n\n  async function confirmDraftContext(context) {\n    if (!draftContextCurrent(context)) return false;\n    if (globalThis.SZ_WEB_ACCOUNT && typeof globalThis.SZ_WEB_ACCOUNT.require === 'function') {\n      try {\n        var account = await globalThis.SZ_WEB_ACCOUNT.require();\n        if (!draftContextCurrent(context) || account !== context.accountKey) return false;\n      } catch (_) { return false; }\n    }\n    return draftContextCurrent(context);\n  }\n\n  function draftWriteOptions(context) {\n    return { expectedAccountKey: context.accountKey, isCurrent: function () { return draftContextCurrent(context); } };\n  }\n\n  function withSourceMutation(work) {\n    if (state.sourceMutationPending || state.productionStarting || state.productionBusy || state.actionPending) return Promise.resolve(false);\n    state.sourceMutationPending = true;\n    renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();\n    var controls = Array.from(document.querySelectorAll('#mode-panel input, #mode-panel textarea, #mode-panel select, #mode-panel button, #mode-tabs button, #review-panel input, #review-panel textarea, #review-panel select, #review-panel button'))\n      .map(function (node) { var entry = { node: node, disabled: node.disabled }; node.disabled = true; return entry; });\n    return Promise.resolve().then(work).finally(function () {\n      state.sourceMutationPending = false;\n      controls.forEach(function (entry) { entry.node.disabled = entry.disabled; });\n      renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();\n    });\n  }\n\n"
+        ],
+        [
+          1167,
+          1167,
+          "    var context = captureDraftContext();\n"
+        ],
+        [
+          1169,
+          1170,
+          "      if (!draftContextCurrent(context)) return;\n      saveCurrentDraft(context).catch(function onDraftError(error) {\n        if (!draftContextCurrent(context)) return;\n"
+        ],
+        [
+          1175,
+          1176,
+          "  function saveCurrentDraft(context) {\n"
+        ],
+        [
+          1180,
+          1181,
+          "    context = context || captureDraftContext();\n    if (!draftContextCurrent(context)) return Promise.resolve(false);\n    return Store.saveDraft(context.mode, JSON.parse(context.snapshot), draftWriteOptions(context));\n"
+        ],
+        [
+          1233,
+          1233,
+          "    state.draftEpoch += 1;\n"
+        ],
+        [
+          1258,
+          1258,
+          "    var context = captureDraftContext();\n"
+        ],
+        [
+          1260,
+          1260,
+          "      if (!draftContextCurrent(context)) return false;\n"
+        ],
+        [
+          1262,
+          1262,
+          "    if (!draftContextCurrent(context)) return false;\n"
+        ],
+        [
+          1264,
+          1264,
+          "      var hydrated = await Promise.all([hydrateList(draft.assets && draft.assets.image), hydrateList(draft.assets && draft.assets.video),\n        hydrateList(draft.assets && draft.assets.audio), hydrateAsset(draft.reference), hydrateList(draft.referenceFrames)]);\n      if (!draftContextCurrent(context)) {\n        [].concat(hydrated[0], hydrated[1], hydrated[2], hydrated[3] || [], hydrated[4]).forEach(revokePreview);\n        return false;\n      }\n"
+        ],
+        [
+          1271,
+          1276,
+          "      state.assets.image = hydrated[0];\n      state.assets.video = hydrated[1];\n      state.assets.audio = hydrated[2];\n      state.reference = hydrated[3];\n      state.referenceFrames = hydrated[4];\n"
+        ],
+        [
+          1294,
+          1294,
+          "    return true;\n"
+        ],
+        [
+          1489,
+          1491,
+          "    if (!mode || mode === state.mode || state.actionPending || state.sourceMutationPending) return;\n    var context = captureDraftContext();\n    try { await saveCurrentDraft(context); } catch (_) { /* user can still switch */ }\n    if (!draftContextCurrent(context)) return;\n"
+        ],
+        [
+          1492,
+          1492,
+          "    state.draftEpoch += 1;\n"
+        ],
+        [
+          1596,
+          1597,
+          "  function resetCurrentDraft() { return withSourceMutation(resetDraftSources); }\n  async function resetDraftSources() {\n"
+        ],
+        [
+          1599,
+          1600,
+          "    if (hasContent && !globalThis.confirm('\u6e05\u7a7a\u5f53\u524d\u6a21\u5f0f\u8349\u7a3f\uff1f\u672c\u5730\u4fdd\u5b58\u7684\u76f8\u5173\u7d20\u6750\u4e5f\u4f1a\u88ab\u5220\u9664\uff08\u6210\u7247\u8ba1\u5212\u4ecd\u5f15\u7528\u7684\u7d20\u6750\u4fdd\u7559\uff09\uff0c\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d\u3002')) return;\n"
+        ],
+        [
+          1603,
+          1613,
+          "    var context = captureDraftContext(true);\n    if (!await deleteUnreferencedDraftAssets(all, context) || !draftContextCurrent(context)) return;\n    try { await Store.deleteDraft(context.mode, draftWriteOptions(context)); } catch (_) { return; }\n    if (!draftContextCurrent(context)) return;\n    all.forEach(revokePreview);\n    if (!await restoreDraft(context.mode)) return;\n"
+        ],
+        [
+          1627,
+          1627,
+          "    if (state.sourceMutationPending) return;\n"
+        ],
+        [
+          1683,
+          1684,
+          "  function setReferenceVideo(file) { return withSourceMutation(function () { return replaceReferenceVideo(file); }); }\n  async function replaceReferenceVideo(file) {\n"
+        ],
+        [
+          1685,
+          1685,
+          "    var context = captureDraftContext(true), previous = state.reference, previousFrames = state.referenceFrames.slice();\n"
+        ],
+        [
+          1688,
+          1688,
+          "      if (!await confirmDraftContext(context)) return;\n"
+        ],
+        [
+          1694,
+          1694,
+          "        expectedAccountKey: context.accountKey,\n        isCurrent: function () { return draftContextCurrent(context); },\n"
+        ],
+        [
+          1698,
+          1698,
+          "      if (!draftContextCurrent(context)) { revokePreview(hydrated); return; }\n"
+        ],
+        [
+          1702,
+          1703,
+          "        extractedFrames = await extractAndStoreReferenceFrames(file, hydrated.id, hydrated.name, context);\n"
+        ],
+        [
+          1705,
+          1706,
+          "        await deleteUnreferencedDraftAssets([hydrated], context);\n"
+        ],
+        [
+          1709,
+          1718,
+          "      if (!await deleteUnreferencedDraftAssets([previous].concat(previousFrames), context) || !draftContextCurrent(context)) return;\n      [previous].concat(previousFrames).forEach(revokePreview);\n"
+        ],
+        [
+          1726,
+          1726,
+          "      if (!draftContextCurrent(context)) return;\n"
+        ],
+        [
+          1728,
+          1729,
+          "      if (draftContextCurrent(context) || context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch && state.reference === hydrated) dom.referenceVideoInput.value = '';\n"
+        ],
+        [
+          1732,
+          1733,
+          "  async function extractAndStoreReferenceFrames(file, referenceVideoId, sourceName, context) {\n    context = context || captureDraftContext(true);\n"
+        ],
+        [
+          1737,
+          1737,
+          "        if (!draftContextCurrent(context)) throw new Error('\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u4fdd\u5b58\u5173\u952e\u5e27\u3002');\n"
+        ],
+        [
+          1741,
+          1741,
+          "          expectedAccountKey: context.accountKey,\n          isCurrent: function () { return draftContextCurrent(context); },\n"
+        ],
+        [
+          1748,
+          1748,
+          "        saved.push(summary);\n"
+        ],
+        [
+          1749,
+          1749,
+          "        if (!draftContextCurrent(context)) { revokePreview(hydrated); throw new Error('\u8349\u7a3f\u5df2\u53d8\u5316\uff0c\u5df2\u505c\u6b62\u4fdd\u5b58\u5173\u952e\u5e27\u3002'); }\n"
+        ],
+        [
+          1750,
+          1751,
+          "        saved[saved.length - 1] = hydrated;\n"
+        ],
+        [
+          1755,
+          1756,
+          "      await deleteReferenceFrames(saved, context);\n"
+        ],
+        [
+          1862,
+          1870,
+          "  async function deleteReferenceFrames(frames, context) {\n    if (!context) return withSourceMutation(function () { return deleteReferenceFrames(frames, captureDraftContext(true)); });\n    context = context || captureDraftContext(true);\n    var captured = (frames || []).slice();\n    if (!await deleteUnreferencedDraftAssets(captured, context) || !draftContextCurrent(context)) return false;\n    captured.forEach(revokePreview);\n    return true;\n"
+        ],
+        [
+          1982,
+          1983,
+          "  async function deleteUnreferencedDraftAssets(items, context) {\n    if (!await confirmDraftContext(context)) return false;\n    var aliases = (items || []).filter(Boolean).map(function (item) {\n      return { storageId: localStorageAssetId(item), assetId: cleanText(item.id) };\n    }).filter(function (item) { return !!item.storageId; });\n    if (aliases.length) {\n      try {\n        // A cached older Store must fail closed; never fall back to its unguarded deleteAsset.\n        if (typeof Store.deleteAssetsIfUnreferenced !== 'function') throw new Error('\u7d20\u6750\u4fdd\u62a4\u6a21\u5757\u5c1a\u672a\u5237\u65b0\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n        await Store.deleteAssetsIfUnreferenced(aliases.map(function (item) { return item.storageId; }), {\n          expectedAccountKey: context.accountKey, assetAliases: aliases,\n          isCurrent: function () { return draftContextCurrent(context); },\n          memoryRuns: function () {\n            if (!Array.isArray(state.history)) throw new Error('\u751f\u6210\u5386\u53f2\u65e0\u6cd5\u6838\u5bf9\uff0c\u672c\u5730\u526f\u672c\u4fdd\u7559\u3002');\n            return state.history.concat([state.productionRun, state.activeRun].filter(Boolean));\n          }\n        });\n      } catch (_) {\n        // Read/transaction failures retain the blob; a changed identity also stops the UI/draft write below.\n        if (!await confirmDraftContext(context)) return false;\n        showToast('\u6682\u65f6\u65e0\u6cd5\u5b89\u5168\u6e05\u7406\u672c\u5730\u7d20\u6750\uff0c\u526f\u672c\u5df2\u4fdd\u7559\u3002', 'error');\n      }\n    }\n    return confirmDraftContext(context);\n  }\n\n  function removeAsset(kind, id) { return withSourceMutation(function () { return removeDraftAsset(kind, id); }); }\n  async function removeDraftAsset(kind, id) {\n"
+        ],
+        [
+          1987,
+          1987,
+          "    var context = captureDraftContext(true);\n    if (!await deleteUnreferencedDraftAssets([asset], context) || !draftContextCurrent(context)) return;\n"
+        ],
+        [
+          1989,
+          1995,
+          ""
+        ],
+        [
+          2002,
+          2003,
+          "  function removeReference() { return withSourceMutation(removeDraftReference); }\n  async function removeDraftReference() {\n"
+        ],
+        [
+          2004,
+          2005,
+          "    var reference = state.reference, frames = state.referenceFrames.slice(), context = captureDraftContext(true);\n    if (!await deleteUnreferencedDraftAssets([reference].concat(frames), context) || !draftContextCurrent(context)) return;\n"
+        ],
+        [
+          2007,
+          2012,
+          "    frames.forEach(revokePreview);\n"
+        ],
+        [
+          2353,
+          2353,
+          "    if (state.sourceMutationPending) errors.push('\u6b63\u5728\u66f4\u65b0\u5f53\u524d\u8349\u7a3f\u7d20\u6750\uff0c\u8bf7\u7a0d\u540e\u751f\u6210\u3002');\n"
+        ],
+        [
+          2471,
+          2474,
+          "    dom.primaryAction.disabled = state.actionPending || state.sourceMutationPending || !canPrimary;\n    dom.resetDraft.disabled = state.actionPending || state.sourceMutationPending;\n    dom.refreshCapabilities.disabled = state.actionPending || state.sourceMutationPending;\n"
+        ],
+        [
+          2610,
+          2611,
+          "    if (state.actionPending || state.sourceMutationPending) return;\n"
+        ],
+        [
+          2998,
+          2998,
+          "    if (state.sourceMutationPending) errors.push('\u6b63\u5728\u66f4\u65b0\u5f53\u524d\u8349\u7a3f\u7d20\u6750\uff0c\u8bf7\u7a0d\u540e\u751f\u6210\u3002');\n"
+        ],
+        [
+          3170,
+          3171,
+          "    // savedSuccess exempts only the success markers of one already-transferred shot; its nested receipts stay checked.\n    function unresolved(receipt, savedSuccess) {\n"
+        ],
+        [
+          3172,
+          3172,
+          "      var statuses = [cleanText(receipt.status).toLowerCase(), cleanText(receipt.state).toLowerCase()];\n"
+        ],
+        [
+          3173,
+          3175,
+          "          statuses.some(function (status) { return ['submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(status) >= 0; }) ||\n          (!savedSuccess && (statuses.indexOf('succeeded') >= 0 ||\n            receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)))) return true;\n"
+        ],
+        [
+          3177,
+          3178,
+          "        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(function (item) { return unresolved(item); }) : unresolved(value));\n      });\n    }\n    function savedSuccess(shot) { return shot.status === 'succeeded' && typeof shot.resultAssetId === 'string' && !!shot.resultAssetId.trim(); }\n    // Submission evidence can arrive in nested provider receipts before the normalized shot fields are updated.\n    function submissionEvidence(receipt) {\n      if (!receipt || typeof receipt !== 'object') return false;\n      if (receipt.providerSubmitted === true || receipt.submitted === true ||\n          (receipt.attempts != null && (!Array.isArray(receipt.attempts) || receipt.attempts.length)) ||\n          ['requestId', 'taskId', 'task_id', 'jobId', 'job_id', 'providerTaskId', 'provider_task_id', 'submissionId', 'submittedAt', 'submitted_at', 'acceptedAt'].some(function (key) { return !!cleanText(receipt[key]); }) ||\n          ['task', 'job'].some(function (key) { var value = receipt[key]; return value && typeof value === 'object' && !!cleanText(value.id); })) return true;\n      return Object.keys(receipt).some(function (key) {\n        var value = receipt[key];\n        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(submissionEvidence) : submissionEvidence(value));\n"
+        ],
+        [
+          3181,
+          3182,
+          "    var runFields = Object.assign({}, run); delete runFields.shotRuns; delete runFields.narrationRuns;\n    if (unresolved(runFields)) return false;\n    var valid = shots.every(function (shot) {\n      if (!shot || typeof shot !== 'object') return false;\n      if (shot.status === 'failed') return !unresolved(shot);\n      if (shot.status === 'pending' || shot.status === 'ready') return !submissionEvidence(shot) && !unresolved(shot);\n      if (shot.status === 'succeeded') return savedSuccess(shot) && !unresolved(shot, true);\n      return false;\n    });\n    // A plan whose shots all succeeded keeps its free resume/composition path instead of a new paid plan.\n    return valid && (!shots.some(savedSuccess) || shots.some(function (shot) { return shot.status === 'failed'; }));\n  }\n  function productionNewPlanGuidance(run, released) {\n    var kept = (run.shotRuns || []).some(function (shot) { return shot.status === 'succeeded'; })\n      ? '\u539f\u8ba1\u5212\u53ca\u5176\u5df2\u6210\u529f\u955c\u5934\u3001\u7ed3\u679c\u548c\u8d39\u7528\u8bb0\u5f55\u5747\u4fdd\u7559\u5728\u5386\u53f2\u4e2d\uff0c\u4e0d\u4f1a\u8f6c\u5165\u65b0\u8ba1\u5212' : '\u539f\u8ba1\u5212\u4e0e\u8d39\u7528\u8bb0\u5f55\u5747\u4fdd\u7559\u5728\u5386\u53f2\u4e2d';\n    return kept + (released ? '\u3002\u53ef\u7f16\u8f91\u5f53\u524d\u7d20\u6750\u548c\u65b9\u6848\uff0c\u518d\u70b9\u51fb\u751f\u6210\uff1a' : '\uff1b\u7ee7\u7eed\u7f16\u8f91\u5f53\u524d\u7d20\u6750\u548c\u65b9\u6848\uff0c\u70b9\u51fb\u751f\u6210\u540e\u624d\u4f1a\u521b\u5efa\u65b0\u8ba1\u5212\uff0c') +\n      '\u65b0\u8ba1\u5212\u6309\u5f53\u524d\u8bbe\u7f6e\u5355\u72ec\u4f30\u7b97\u3001\u6838\u5bf9\u6743\u5229\u4e0e\u9884\u7b97\u5e76\u91cd\u65b0\u63d0\u4ea4\u3002';\n"
+        ],
+        [
+          3198,
+          3199,
+          "      setNotice(dom.composerValidation, productionNewPlanGuidance(run, true), 'success');\n"
+        ],
+        [
+          3231,
+          3232,
+          "    dom.productionResume.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting || run.status === 'succeeded' || releasedProductionPlan(run);\n"
+        ],
+        [
+          3236,
+          3237,
+          "    if (dom.productionNewPlanHelp) {\n      dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;\n      if (!dom.productionNewPlanHelp.hidden) dom.productionNewPlanHelp.textContent = productionNewPlanGuidance(run, false);\n    }\n"
+        ],
+        [
+          3255,
+          3256,
+          "      function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }\n"
+        ],
+        [
+          3274,
+          3274,
+          "    if (state.sourceMutationPending) return;\n"
+        ],
+        [
+          3381,
+          3381,
+          "    if (state.sourceMutationPending) return;\n"
+        ],
+        [
+          3391,
+          3391,
+          "    if (state.sourceMutationPending) return;\n"
+        ],
+        [
+          3446,
+          3446,
+          "    if (state.sourceMutationPending) return;\n"
+        ],
+        [
+          4501,
+          4501,
+          "      productionRetryState: productionRetryState, removeAsset: removeAsset,\n      removeReference: removeReference, resetCurrentDraft: resetCurrentDraft, deleteReferenceFrames: deleteReferenceFrames, setReferenceVideo: setReferenceVideo,\n      saveCurrentDraft: saveCurrentDraft, scheduleDraftSave: scheduleDraftSave, switchMode: switchMode, startGeneration: startGeneration,\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "d088d90d9ae7d6fcceaa5cd548c4d6a039dc1d8c79fc95be6e43393ed9d0317b",
+      "after": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4",
+      "edits": [
+        [
+          165,
+          165,
+          "              <p class=\"field-help\">\u79fb\u9664\u53ea\u5f71\u54cd\u5f53\u524d\u8349\u7a3f\uff1b\u5df2\u4fdd\u5b58\u6210\u7247\u8ba1\u5212\u4ecd\u5f15\u7528\u7684\u672c\u5730\u7d20\u6750\u4f1a\u4fdd\u7559\u3002</p>\n"
+        ],
+        [
+          278,
+          279,
+          "          <p id=\"production-new-plan-help\" class=\"section-note\" hidden>\u539f\u8ba1\u5212\u4e0e\u8d39\u7528\u8bb0\u5f55\u5747\u4fdd\u7559\u5728\u5386\u53f2\u4e2d\uff1b\u7ee7\u7eed\u7f16\u8f91\u5f53\u524d\u7d20\u6750\u548c\u65b9\u6848\uff0c\u70b9\u51fb\u751f\u6210\u540e\u624d\u4f1a\u521b\u5efa\u65b0\u8ba1\u5212\uff0c\u65b0\u8ba1\u5212\u6309\u5f53\u524d\u8bbe\u7f6e\u5355\u72ec\u4f30\u7b97\u3001\u6838\u5bf9\u6743\u5229\u4e0e\u9884\u7b97\u5e76\u91cd\u65b0\u63d0\u4ea4\u3002</p>\n"
+        ],
+        [
+          470,
+          471,
+          "  <script src=\"./video-studio-store.js?v=asset-retention-20261018-v1\"></script>\n"
+        ],
+        [
+          473,
+          474,
+          "  <script src=\"./video-studio.js?v=asset-retention-20261018-v1\"></script>\n"
+        ]
+      ]
+    }
+  ]
+}

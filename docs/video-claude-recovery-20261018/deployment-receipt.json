@@ -1,0 +1,65 @@
+{
+  "appliedAt": 1792263333.5965974,
+  "root": "/opt/sanjie-releases/20261018-image-studio-online-uat-v3",
+  "backup": "/opt/sanjie-private/video-claude-recovery-20261018-v1",
+  "files": [
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio-store.js",
+      "before": "ef79578097f1c12c7ca2295f8d4add0e91d21b42c5fbb51bc1c07cfb72234ae1",
+      "after": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5",
+      "actual": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "d99b5fa100948fc3702877ca816e16b50ca1ef1e74d254e259e0b472c3eb9858",
+      "after": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313",
+      "actual": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "d088d90d9ae7d6fcceaa5cd548c4d6a039dc1d8c79fc95be6e43393ed9d0317b",
+      "after": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4",
+      "actual": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4"
+    }
+  ],
+  "nginxHashUnchanged": "4cc1d5a6eebb3b93751773bb27ec742fb34691358a0dde24ea72ca9e9b5460e6",
+  "processesUnchanged": {
+    "50": {
+      "pid": 3612108,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/credit-pool-shared-wallet-20261009-v1"
+    },
+    "88": {
+      "pid": 229880,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/link-image-workspace-20261015-v1"
+    },
+    "89": {
+      "pid": 644499,
+      "status": "online",
+      "cwd": "/opt/sanjie-platform-modules-pause-20261016-tools-r1"
+    },
+    "90": {
+      "pid": 965082,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-optimize-v1"
+    },
+    "91": {
+      "pid": 989625,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2"
+    },
+    "92": {
+      "pid": 1013260,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261018-image-studio-online-uat-v3"
+    }
+  },
+  "readOnlyHttpStatus": {
+    "/login": 200,
+    "/api/creative/proxy": 405,
+    "/api/creative/assets/src/ecommerce-video-background.js": 401
+  },
+  "processRestarted": false,
+  "databaseOrProviderConfigurationChanged": false
+}

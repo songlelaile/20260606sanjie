@@ -1,0 +1,50 @@
+{
+  "candidate": "/Users/shaozhuang/.codex/worktrees/video-http400-repair/6.6\u65b0\u4e09\u9636",
+  "base": "54e5a33053d8d2fea279be02c8657c36f52821b2",
+  "head": "2d02cc391fc0f178c1045ed01600a49dfd8e210e",
+  "cherryPicks": {
+    "93968fd": "a65aa7d",
+    "e0a2472": "4020943",
+    "c33061a": "f2b2d1a",
+    "54f91f3": "2d02cc391fc0f178c1045ed01600a49dfd8e210e"
+  },
+  "automaticReportingPreserved": true,
+  "deployed": false,
+  "pushed": true,
+  "nodeModulesTracked": false,
+  "vitest": {
+    "files": 22,
+    "passedFiles": 21,
+    "skippedFiles": 1,
+    "passed": 506,
+    "skipped": 88,
+    "reason": "Opt-in isolated database integration fixtures not configured"
+  },
+  "nodeAutoReportingAndProvider": {
+    "passed": 75,
+    "failed": 0
+  },
+  "extraLegacyAnalysisSuite": {
+    "passed": 47,
+    "failed": 4,
+    "unchangedSinceBase": true,
+    "note": "Supplemental old account/points fixture assertions failed; loaded host/shim/background/contract and test script byte-identical to pre-integration base. No changes made outside requested integration."
+  },
+  "checks": {
+    "typecheck": "passed",
+    "targetedEslint": "passed",
+    "publicJavaScriptSyntax": "passed",
+    "diffWhitespace": "passed"
+  },
+  "worktreeStatus": [
+    "?? node_modules"
+  ],
+  "notes": [
+    "Preserved automatic preparation/classification/authorization and library metadata in JS/HTML.",
+    "Kept prominent stale-image warning and added saved-success/new-plan guidance.",
+    "Unioned automatic preparation and source mutation submission guards.",
+    "Accepted final explicit-type recovery/portrait fixtures after confirming no candidate-only automatic tests.",
+    "Removed one duplicate testing-export key introduced by merge."
+  ],
+  "pushedBy": "root"
+}
