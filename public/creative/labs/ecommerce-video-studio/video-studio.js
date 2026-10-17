@@ -3453,9 +3453,10 @@
     // savedSuccess exempts only the success markers of one already-transferred shot; its nested receipts stay checked.
     function unresolved(receipt, savedSuccess) {
       if (!receipt || typeof receipt !== 'object') return false;
+      var statuses = [cleanText(receipt.status).toLowerCase(), cleanText(receipt.state).toLowerCase()];
       if (receipt.stateUncertain === true || receipt.cancelPending || submissionStateUncertain(receipt) ||
-          ['submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(receipt.status || receipt.state) >= 0 ||
-          (!savedSuccess && ((receipt.status || receipt.state) === 'succeeded' ||
+          statuses.some(function (status) { return ['submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(status) >= 0; }) ||
+          (!savedSuccess && (statuses.indexOf('succeeded') >= 0 ||
             receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)))) return true;
       return Object.keys(receipt).some(function (key) {
         var value = receipt[key];
@@ -3463,9 +3464,16 @@
       });
     }
     function savedSuccess(shot) { return shot.status === 'succeeded' && typeof shot.resultAssetId === 'string' && !!shot.resultAssetId.trim(); }
-    // Unsubmitted means no attempt or task identity at all; otherwise the shot contradicts its pending state.
-    function unsubmitted(shot) {
-      return (!Array.isArray(shot.attempts) || !shot.attempts.length) && !shot.taskId && !shot.providerTaskId && !shot.resultAssetId;
+    // Submission evidence can arrive in nested provider receipts before the normalized shot fields are updated.
+    function submissionEvidence(receipt) {
+      if (!receipt || typeof receipt !== 'object') return false;
+      if (receipt.providerSubmitted === true || receipt.submitted === true ||
+          (receipt.attempts != null && (!Array.isArray(receipt.attempts) || receipt.attempts.length)) ||
+          ['requestId', 'taskId', 'task_id', 'providerTaskId', 'provider_task_id', 'submissionId', 'submittedAt', 'submitted_at', 'acceptedAt'].some(function (key) { return !!cleanText(receipt[key]); })) return true;
+      return Object.keys(receipt).some(function (key) {
+        var value = receipt[key];
+        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(submissionEvidence) : submissionEvidence(value));
+      });
     }
     var shots = run.shotRuns.concat(run.narrationRuns || []);
     var runFields = Object.assign({}, run); delete runFields.shotRuns; delete runFields.narrationRuns;
@@ -3473,7 +3481,7 @@
     var valid = shots.every(function (shot) {
       if (!shot || typeof shot !== 'object') return false;
       if (shot.status === 'failed') return !unresolved(shot);
-      if (shot.status === 'pending' || shot.status === 'ready') return unsubmitted(shot) && !unresolved(shot);
+      if (shot.status === 'pending' || shot.status === 'ready') return !submissionEvidence(shot) && !unresolved(shot);
       if (shot.status === 'succeeded') return savedSuccess(shot) && !unresolved(shot, true);
       return false;
     });

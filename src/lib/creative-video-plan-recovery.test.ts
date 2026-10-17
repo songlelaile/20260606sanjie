@@ -17,17 +17,17 @@ class Node {
   setAttribute() {}
   addEventListener(name: string, fn: () => unknown) { this.listeners.set(name, fn); }
 }
-type Attempt = { requestId: string; taskId?: string; providerTaskId?: string; reservedYuan: number; estimatedYuan?: number;
+type Attempt = { requestId: string; taskId?: string; providerTaskId?: string; status?: string; state?: string; reservedYuan: number; estimatedYuan?: number;
   actualCostYuan?: number; costSource?: string; released?: boolean; details?: { stateUncertain?: boolean }; errorCode?: string };
 type Shot = { id: string; status: string; attempts: Attempt[]; adoptionStatus?: string; taskId?: string; providerTaskId?: string;
-  resultAssetId?: string; resultUrls?: string[]; error?: string; stateUncertain?: boolean; cancelPending?: boolean };
+  resultAssetId?: string; resultUrls?: string[]; error?: string; state?: string; details?: unknown; stateUncertain?: boolean; cancelPending?: boolean };
 type ShotDefinition = { id: string; index: number; kind: string; durationSeconds: number; productKey: string; estimatedYuan: number;
   sourceAssetId?: string; request?: { resolution: string; ratio: string; productKey: string; durationSeconds: number } };
 type Plan = { aiSeconds: number; resolution?: string; options: { mode: string; budgetYuan: number; maxAttempts: number }; shots: ShotDefinition[];
   request?: { images?: Array<{ id: string; kind: string }> }; finalAudio?: { tracks: Array<{ id: string; assetId: string; role: string }> }; musicAssetIds?: string[] };
 type Run = { id: string; taskId: string; purpose: string; accountKey: string; status: string; durationSeconds: number; prompt: string; plan: Plan;
   shotRuns: Shot[]; narrationRuns?: Array<{ status: string; stateUncertain?: boolean }>; resolution?: string; stateUncertain?: boolean;
-  resultAssetId?: string; newPlanRequestedAt?: string; updatedAt?: string };
+  resultAssetId?: string; newPlanRequestedAt?: string; updatedAt?: string; state?: string };
 type Asset = Record<string, unknown>;
 type Message = { payload: { requestId?: string; request?: { resolution: string } } };
 type State = { accountKey: string; productionRun: Run | null; history: Run[]; productionBusy: boolean; actionPending: boolean;
@@ -235,6 +235,14 @@ describe("explicit release of a terminal failed plan with saved successful shots
   it.each([
     ["an unsaved success", (r: Run) => { r.shotRuns[0].resultAssetId = ""; }],
     ["an unknown shot", (r: Run) => { r.shotRuns[2].status = "unknown"; }],
+    ["conflicting failed status and processing state", (r: Run) => { r.shotRuns[1].state = "processing"; }],
+    ["conflicting saved success and unknown state", (r: Run) => { r.shotRuns[0].state = "unknown"; }],
+    ["a queued state in a terminal attempt", (r: Run) => { r.shotRuns[0].attempts[0].status = "failed"; r.shotRuns[0].attempts[0].state = "QUEUED"; }],
+    ["a run-level running state", (r: Run) => { r.state = "running"; }],
+    ["a pending shot with a nested provider task", (r: Run) => { r.shotRuns[2].details = { receipt: { providerTaskId: "cgt-late" } }; }],
+    ["a ready shot with nested provider submission", (r: Run) => { r.shotRuns[2].status = "ready"; r.shotRuns[2].details = { providerSubmitted: true }; }],
+    ["a pending shot with a nested request identity", (r: Run) => { r.shotRuns[2].details = [{ requestId: "submitted-before-reload" }]; }],
+    ["a malformed pending attempt collection", (r: Run) => { r.shotRuns[2].attempts = {} as unknown as Attempt[]; }],
     ["a processing shot", (r: Run) => { r.shotRuns[2].status = "processing"; }],
     ["a cancelled shot", (r: Run) => { r.shotRuns[2].status = "cancelled"; }],
     ["an uncertain success", (r: Run) => { r.shotRuns[0].stateUncertain = true; }],
