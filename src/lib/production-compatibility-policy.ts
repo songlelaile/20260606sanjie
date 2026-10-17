@@ -5,6 +5,7 @@
  */
 const PUBLIC_AI_UPDATE_PATH = /^\/api\/tools\/updates\/ai-automation\/(?:latest|bootstrap|package\/(?:0|[1-9]\d{0,4})(?:\.(?:0|[1-9]\d{0,4})){2,3})$/;
 const VIDEO_SELF_AUTH_PATH = /^\/api\/(?:video-assets(?:\/(?:[A-Za-z0-9_-]{8,120}|source\/[a-f0-9]{32}))?|video-tasks(?:\/(?:[A-Za-z0-9_-]{8,120}|by-key\/[A-Za-z0-9_-]{8,120}))?)$/;
+const VIDEO_VALIDATION_PATH = /^\/api\/video-assets\/validation-sessions\/[A-Za-z0-9_-]{8,120}(?:\/verify)?$/;
 const SOWER_SELF_AUTH_PATH = /^\/api\/tools\/sower-work\/(?:access|lease(?:\/verify)?|download|update)$/;
 const SOWER_ADMIN_GRANT_PATH = /^\/api\/managed-users\/[A-Za-z0-9_-]{1,128}\/sower-work-access$/;
 
@@ -28,6 +29,6 @@ export function isPublicAiDistributionPath(pathname: string): boolean {
  * an extension Origin and a signed lease POST are valid existing client paths.
  */
 export function isProductionSelfAuthenticatedPath(pathname: string): boolean {
-  return VIDEO_SELF_AUTH_PATH.test(pathname) || SOWER_SELF_AUTH_PATH.test(pathname) ||
+  return VIDEO_SELF_AUTH_PATH.test(pathname) || VIDEO_VALIDATION_PATH.test(pathname) || SOWER_SELF_AUTH_PATH.test(pathname) ||
     pathname === "/api/admin/sower-work/users" || SOWER_ADMIN_GRANT_PATH.test(pathname);
 }

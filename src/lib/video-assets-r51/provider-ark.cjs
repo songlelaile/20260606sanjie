@@ -11,7 +11,8 @@ const VIDEO_ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/contents/genera
 const ASSET_ID = /^asset-[A-Za-z0-9-]{1,120}$/;
 const TASK_ID = /^cgt-[A-Za-z0-9-]{1,150}$/;
 const GROUP_ID = /^group-[A-Za-z0-9-]{1,120}$/;
-const ACTIONS = new Set(['CreateAssetGroup', 'CreateAsset', 'GetAsset', 'ListAssets', 'DeleteAsset']);
+const ACTIONS = new Set(['CreateAssetGroup', 'CreateAsset', 'GetAsset', 'ListAssets', 'DeleteAsset',
+  'CreateVisualValidateSession', 'GetVisualValidateResult', 'GetAssetGroup']);
 
 function fail(code, message, extras = {}) {
   const error = new Error(message);
@@ -143,13 +144,39 @@ function createArkProvider(options = {}) {
     groupFlights.set(key, flight);
     try { return await flight; } finally { groupFlights.delete(key); }
   }
-  async function create({ scope, assetId, name, mime, bytes, sha256 } = {}) {
+  async function getGroup({ scope, id, expectedType } = {}) {
+    checkedScope(scope);
+    if (!GROUP_ID.test(id || '')) throw fail('ARK_GROUP_INVALID', '素材组 ID 无效。', { accepted: false });
+    const { result } = await request('GetAssetGroup', { Id: id, ProjectName: projectName });
+    if (result.Id !== id || result.ProjectName !== projectName || !['AIGC', 'LivenessFace'].includes(result.GroupType) ||
+        expectedType && result.GroupType !== expectedType) throw fail('ARK_GROUP_SCOPE_INVALID', '素材组所属项目或真人核验类型不匹配。', { accepted: false });
+    return { id: result.Id, projectName: result.ProjectName, groupType: result.GroupType };
+  }
+  async function createValidationSession({ scope, callbackUrl } = {}) {
+    checkedScope(scope);
+    if (!publicHttps(callbackUrl)) throw fail('ARK_CALLBACK_INVALID', '真人核验回调地址无效。', { accepted: false });
+    const { result } = await request('CreateVisualValidateSession', { CallbackURL: callbackUrl, ProjectName: projectName });
+    if (typeof result.BytedToken !== 'string' || !result.BytedToken || result.BytedToken.length > 8192 ||
+        /[\u0000-\u0020\u007f]/.test(result.BytedToken) || !publicHttps(result.H5Link) || result.CallbackURL !== callbackUrl) {
+      throw fail('ARK_VALIDATION_RECEIPT_INVALID', '真人核验会话回执无法核验，请保留原会话核对。');
+    }
+    return { bytedToken: result.BytedToken, h5Link: result.H5Link };
+  }
+  async function getValidationResult({ scope, bytedToken } = {}) {
+    checkedScope(scope);
+    if (typeof bytedToken !== 'string' || !bytedToken || bytedToken.length > 8192) throw fail('ARK_VALIDATION_TOKEN_INVALID', '真人核验凭证无效。', { accepted: false });
+    const { result } = await request('GetVisualValidateResult', { BytedToken: bytedToken, ProjectName: projectName });
+    if (!GROUP_ID.test(result.GroupId || '')) throw fail('ARK_VALIDATION_UNVERIFIED', '真人核验结果尚未确认。');
+    return { groupId: result.GroupId };
+  }
+  async function create({ scope, assetId, name, mime, bytes, sha256, groupId: requestedGroup, groupType = 'AIGC' } = {}) {
     checkedScope(scope);
     // Validate before creating a group or sending any upstream mutation.
     const image = validateImage(bytes, mime);
     if (sha256 && image.sha256 !== sha256) throw fail('ARK_SOURCE_HASH_MISMATCH', '素材 SHA256 校验失败。', { accepted: false });
     const source = await sourceStore.put({ scope, bytes: image.bytes, mimeType: image.mimeType, sha256: image.sha256 });
-    const groupId = await ensureGroup(scope);
+    const groupId = requestedGroup || await ensureGroup(scope);
+    await getGroup({ scope, id: groupId, expectedType: groupType });
     const url = await sourceStore.urlFor({ scope, id: source.id });
     // Only a URL produced and verified by our controlled source store can reach CreateAsset.
     if (typeof url !== 'string' || !url.startsWith('https://')) throw fail('ARK_SOURCE_URL_INVALID', '临时素材服务未提供 HTTPS 链接。', { accepted: false });
@@ -161,12 +188,12 @@ function createArkProvider(options = {}) {
       try { await sourceStore.markManaged({ scope, id: source.id }); }
       catch { throw fail('ARK_SOURCE_PERSIST_UNCERTAIN', '云端已接收素材，但源文件索引保存失败；请核对后恢复，不能自动重提。', { upstreamId: result.Id, sourceId: source.id, requestId }); }
     }
-    return { id: result.Id, status: 'Processing', groupId, sourceId: source.id, requestId };
+    return { id: result.Id, status: 'Processing', groupId, groupType, sourceId: source.id, requestId };
   }
-  async function get({ scope, id } = {}) {
+  async function get({ scope, id, groupId, groupType } = {}) {
     checkedScope(scope);
     if (!ASSET_ID.test(id || '')) throw fail('ARK_ASSET_ID_INVALID', '素材 ID 无效。', { accepted: false });
-    const saved = managedGroupId ? { id: managedGroupId } : await groupStore.get(scope);
+    const saved = groupId ? { id: groupId } : managedGroupId ? { id: managedGroupId } : await groupStore.get(scope);
     if (!saved || !GROUP_ID.test(saved.id || '')) throw fail('ARK_GROUP_MISSING', '该租户素材组尚未配置或不可用。', { accepted: false });
     const { result, requestId } = await request('GetAsset', { Id: id, ProjectName: projectName });
     if (result.Id !== id || result.ProjectName !== projectName || result.GroupId !== saved.id || !['Active', 'Processing', 'Failed'].includes(result.Status)) {
@@ -179,20 +206,20 @@ function createArkProvider(options = {}) {
         if (parsed.protocol === 'https:' && !parsed.username && !parsed.password && !parsed.hash) previewUrl = parsed.href;
       } catch { /* An absent preview must not change a valid moderation state. */ }
     }
-    return { id, status: result.Status, groupId: result.GroupId, previewUrl, error: result.Status === 'Failed' ? safe(result.Error?.Message || result.Error?.Code || '素材审核失败。') : undefined, errorCode: safe(result.Error?.Code), createdAt: result.CreateTime, lastInferenceAt: result.LastInferenceTime, requestId };
+    return { id, status: result.Status, groupId: result.GroupId, groupType: groupType || 'AIGC', previewUrl, error: result.Status === 'Failed' ? safe(result.Error?.Message || result.Error?.Code || '素材审核失败。') : undefined, errorCode: safe(result.Error?.Code), createdAt: result.CreateTime, lastInferenceAt: result.LastInferenceTime, requestId };
   }
-  async function deleteAsset({ scope, id, sourceId } = {}) {
+  async function deleteAsset({ scope, id, sourceId, groupId, groupType = 'AIGC' } = {}) {
     checkedScope(scope);
     if (sourceId && sourceStore.assertRemovable) await sourceStore.assertRemovable({ scope, id: sourceId });
     // Verify existence AND ownership before issuing an irreversible upstream action.
-    const before = await get({ scope, id });
+    const before = await get({ scope, id, groupId, groupType });
     const accepted = await request('DeleteAsset', { Id: id, ProjectName: projectName });
     let nextToken;
     const seen = new Set();
     let remaining = 0;
     try {
       do {
-        const { result } = await request('ListAssets', { Filter: { GroupType: 'AIGC', GroupIds: [before.groupId] }, ProjectName: projectName, MaxResults: 100, SortBy: 'CreateTime', SortOrder: 'Asc', ...(nextToken ? { NextToken: nextToken } : {}) });
+        const { result } = await request('ListAssets', { Filter: { GroupType: groupType, GroupIds: [before.groupId] }, ProjectName: projectName, MaxResults: 100, SortBy: 'CreateTime', SortOrder: 'Asc', ...(nextToken ? { NextToken: nextToken } : {}) });
         if (!Array.isArray(result.Items)) throw fail('ARK_LIST_INVALID', '方舟素材列表结构不完整。');
         for (const item of result.Items) {
           if (!ASSET_ID.test(item.Id || '') || item.GroupId !== before.groupId || item.ProjectName !== projectName) throw fail('ARK_LIST_SCOPE_INVALID', '方舟素材列表归属不一致。');
@@ -254,7 +281,19 @@ function createArkProvider(options = {}) {
       if (item?.type === 'text') {
         if (typeof item.text !== 'string' || item.text.length > 20000 || Object.keys(item).some(key => !['type', 'text'].includes(key))) throw fail('ARK_VIDEO_CONTENT_INVALID', '视频提示词内容无效。', { accepted: false });
       } else if (item?.type === 'image_url') {
-        if (!/^asset:\/\/asset-[A-Za-z0-9-]{1,120}$/.test(item.image_url?.url || '') || !['first_frame', 'last_frame', 'reference_image'].includes(item.role) || Object.keys(item).some(key => !['type', 'role', 'image_url'].includes(key)) || Object.keys(item.image_url).some(key => key !== 'url')) {
+        const imageUrl = item.image_url?.url;
+        let ordinary = false;
+        if (options.allowOrdinaryImages === true) {
+          ordinary = publicHttps(imageUrl);
+          if (!ordinary && typeof imageUrl === 'string' && imageUrl.length <= 40 * 1024 * 1024 + 80) {
+            const encoded = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(imageUrl);
+            if (encoded && encoded[2].length % 4 === 0) {
+              const bytes = Buffer.from(encoded[2], 'base64');
+              try { ordinary = bytes.toString('base64') === encoded[2] && !!validateImage(bytes, encoded[1]); } catch (_) {}
+            }
+          }
+        }
+        if ((!/^asset:\/\/asset-[A-Za-z0-9-]{1,120}$/.test(imageUrl || '') && !ordinary) || !['first_frame', 'last_frame', 'reference_image'].includes(item.role) || Object.keys(item).some(key => !['type', 'role', 'image_url'].includes(key)) || Object.keys(item.image_url).some(key => key !== 'url')) {
           throw fail('ARK_VIDEO_ASSET_REQUIRED', '本次图转视频只能引用已审核且属于当前用户的资产。', { accepted: false });
         }
       } else if (item?.type === 'video_url') {
@@ -320,6 +359,7 @@ function createArkProvider(options = {}) {
   }
   return {
     create, get, delete: deleteAsset, preview, setPinned, cleanupSource, videoCreate, videoGet, videoCancel,
+    getGroup, createValidationSession, getValidationResult,
     capabilities: () => ({ provider: 'volcengine-ark', configured: true, projectName, providerAccountId, managedGroup: !!managedGroupId, createQpm: 3, deleteVerification: 'accepted-and-fully-listed-absent', usageApiVerified: false, watermark: false }),
   };
 }

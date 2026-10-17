@@ -15,6 +15,7 @@ import { getGatewayAvailableBalance, reserveGatewayBillingHold, markGatewayBilli
 import { recordGatewayUsage } from "./store";
 import { findNativeVideoJob, findActiveNativeVideoJob, insertNativeVideoJob, requireNativeVideoJob, updateNativeVideoJob, type NativeVideoJob } from "./native-video-store";
 import { NativeVideoError, digest, stable, plain, parseNativeVideoConfig, nativeTariff, nativeTokenCost, nativeTaskId, safeVideoUrl, validateNativeRequest, NATIVE_VIDEO_ENDPOINT, NATIVE_VIDEO_PATH, type NativeVideoOwner, type NativeVideoModel } from "./native-video-contract";
+import { nativeVideoAssets, releaseNativeVideoAssets } from "./native-video-assets";
 
 export const NATIVE_VIDEO_BODY_BYTES = 24 * 1024 * 1024;
 const RESPONSE_BYTES = 1024 * 1024;
@@ -143,7 +144,8 @@ export async function quoteNativeVideo(owner: NativeVideoOwner, body: Record<str
   const current = await createSupply(owner);
   const model = current.models.find(item => item.id === body.model);
   if (!model) throw new NativeVideoError("NATIVE_VIDEO_MODEL_UNAVAILABLE", "平台未开通该视频模型", 503);
-  validateNativeRequest({ expectedAccount: body.expectedAccount, ...publicBody }, model);
+  const material = await nativeVideoAssets(owner, current, { expectedAccount: body.expectedAccount, ...publicBody });
+  validateNativeRequest(material.body, model, material.trustedUris);
   const tariff = nativeTariff(model, publicBody);
   const snapshot = await gatewayNativeFundingSnapshot(await getGatewayBillingSnapshot(owner.id));
   if (snapshot.tenantId !== owner.tenantId || snapshot.username !== owner.username) throw new NativeVideoError("ACCOUNT_CHANGED", "当前账号已变更", 409);
@@ -164,7 +166,8 @@ export async function createNativeVideo(owner: NativeVideoOwner, body: Record<st
   const current = await createSupply(owner);
   const model = current.models.find(item => item.id === body.model);
   if (!model) throw new NativeVideoError("NATIVE_VIDEO_MODEL_UNAVAILABLE", "平台未开通该视频模型", 503);
-  const providerBody = validateNativeRequest({ expectedAccount: body.expectedAccount, ...publicBody }, model);
+  const material = await nativeVideoAssets(owner, current, { expectedAccount: body.expectedAccount, ...publicBody });
+  let providerBody = validateNativeRequest(material.body, model, material.trustedUris);
   const tariff = nativeTariff(model, publicBody);
   const billingSnapshot = await gatewayNativeFundingSnapshot(await getGatewayBillingSnapshot(owner.id));
   if (billingSnapshot.tenantId !== owner.tenantId || billingSnapshot.username !== owner.username) throw new NativeVideoError("ACCOUNT_CHANGED", "当前账号已变更", 409);
@@ -209,6 +212,10 @@ export async function createNativeVideo(owner: NativeVideoOwner, body: Record<st
   if (!claim.shouldDispatch) return publicNativeVideoJob(await requireNativeVideoJob(owner, stored.id));
   let providerAttempted = false;
   try {
+    // Recheck moderation/authorization and persist protection immediately before
+    // dispatch. The existing wallet and idempotency remain authoritative.
+    const leasedMaterial = await nativeVideoAssets(owner, current, { expectedAccount: body.expectedAccount, ...publicBody }, stored.id);
+    providerBody = validateNativeRequest(leasedMaterial.body, model, leasedMaterial.trustedUris);
     await updateNativeVideoJob(owner, stored.id, { state: "submitting" });
     const signal = AbortSignal.timeout(60_000);
     const send = (key: string) => { providerAttempted = true; return relayFetch(current.endpoint, { method: "POST", headers: { ...headers(key), "Idempotency-Key": stored.eventId },
@@ -226,6 +233,7 @@ export async function createNativeVideo(owner: NativeVideoOwner, body: Record<st
         if (rejected && !nativeTaskId(rejected.id) && plain(rejected.error)) {
           await refundGatewayBillingHold({userId:owner.id,eventId:stored.eventId,reason:"confirmed_failed",evidenceFingerprint:digest(stable({eventId:stored.eventId,status:response.status,outcome:"provider_rejected"}))});
           await updateNativeVideoJob(owner,stored.id,{state:"failed",errorCode:"NATIVE_VIDEO_PROVIDER_FAILED"});
+          await releaseNativeVideoAssets(owner, current, stored.id, "failed");
           return publicNativeVideoJob(await requireNativeVideoJob(owner,stored.id));
         }
       } else await response.body?.cancel();
@@ -240,6 +248,7 @@ export async function createNativeVideo(owner: NativeVideoOwner, body: Record<st
     if (!providerAttempted && stored.billingMode === "prepaid_quote") {
       await refundGatewayBillingHold({userId:owner.id,eventId:stored.eventId,reason:"confirmed_failed",evidenceFingerprint:digest(stable({eventId:stored.eventId,outcome:"local_before_provider_send"}))});
       await updateNativeVideoJob(owner,stored.id,{state:"failed",errorCode:"NATIVE_VIDEO_PROVIDER_FAILED"});
+      await releaseNativeVideoAssets(owner, current, stored.id, "failed");
       return publicNativeVideoJob(await requireNativeVideoJob(owner,stored.id));
     }
     return unknown(owner, stored, "NATIVE_VIDEO_CREATE_UNCERTAIN");
@@ -252,7 +261,12 @@ export async function resolveNativeVideo(owner: NativeVideoOwner, rawIdempotency
 }
 export async function pollNativeVideo(owner: NativeVideoOwner, id: string) {
   const job = await requireNativeVideoJob(owner, id);
-  if (job.state === "succeeded" || (job.state === "failed" && !(job.billingMode === "prepaid_quote" && job.completionTokens !== null && !job.usageId)) || !job.providerTaskId) return publicNativeVideoJob(job);
+  if (job.state === "succeeded" || (job.state === "failed" && !(job.billingMode === "prepaid_quote" && job.completionTokens !== null && !job.usageId)) || !job.providerTaskId) {
+    if (["succeeded", "failed"].includes(job.state)) {
+      try { await releaseNativeVideoAssets(owner, await supplyForJob(owner, job), id, job.state as "succeeded" | "failed"); } catch { /* Keep the original terminal receipt. */ }
+    }
+    return publicNativeVideoJob(job);
+  }
   const current = await supplyForJob(owner, job);
   const response = await relayFetch(`${current.endpoint}/${encodeURIComponent(job.providerTaskId)}`, {
     method: "GET", headers: headers(current.key), signal: AbortSignal.timeout(30_000), cache: "no-store" });
@@ -337,7 +351,9 @@ export async function pollNativeVideo(owner: NativeVideoOwner, id: string) {
   } else if (!["queued", "running", "processing"].includes(String(receipt.status))) {
     throw new NativeVideoError("NATIVE_VIDEO_STATUS_UNKNOWN", "供应商任务状态仍待核对", 502);
   }
-  return publicNativeVideoJob(await requireNativeVideoJob(owner, id));
+  const finalJob = await requireNativeVideoJob(owner, id);
+  if (finalJob.state === "succeeded" || finalJob.state === "failed") await releaseNativeVideoAssets(owner, current, id, finalJob.state);
+  return publicNativeVideoJob(finalJob);
 }
 
 export async function nativeVideoContent(owner: NativeVideoOwner, id: string, request: Request) {

@@ -28,7 +28,7 @@ function credentialFingerprint(origin, apiKey) { return createHash('sha256').upd
 function createRequestProviderResolver({ findBinding } = {}) {
   if (typeof findBinding !== 'function') throw new TypeError('A current database binding lookup is required.');
   return Object.freeze({
-    async resolve(identity, selection) {
+    async resolve(identity, selection, options = {}) {
       if (!identity || !identity.tenantId || !identity.userId || !identity.accountKey) rejected('AUTH_REQUIRED', '请重新登录。');
       if (!selection || typeof selection.provider !== 'string' || selection.provider.length > 80 || !selection.provider.trim()) rejected('PROVIDER_BINDING_MISMATCH', '缺少当前视频 API 绑定。');
       const origin = apiOrigin(selection.apiOrigin);
@@ -39,6 +39,7 @@ function createRequestProviderResolver({ findBinding } = {}) {
       // a sibling tenant's row. Platform mode still needs an explicit user grant.
       if (row.tenantId !== identity.tenantId || row.userId !== identity.userId || row.provider !== selection.provider || row.apiOrigin !== origin) rejected('PROVIDER_BINDING_MISMATCH', '供应商绑定与当前账号不一致。');
       if (row.mode === 'platform' && row.platformGrantEnabled !== true) rejected('ASSET_SERVICE_NOT_CONFIGURED', '当前账号尚未获准使用平台供应商绑定。');
+      if (options.requirePlatform === true && row.mode !== 'platform') rejected('PROVIDER_BINDING_MISMATCH', '当前请求需要平台供应商绑定。');
       if (!row.apiKey || !row.accessKeyId || !row.secretAccessKey || !row.providerAccountId || !row.projectName) rejected('ASSET_SERVICE_NOT_CONFIGURED', '当前账号素材服务配置未完成。');
       if (!sameSecretDigest(credentialFingerprint(origin, row.apiKey), selection.credentialFingerprint)) rejected('PROVIDER_BINDING_MISMATCH', '当前视频 API Key 已变化，请同步服务端绑定后重试。');
       return Object.freeze({
@@ -70,7 +71,9 @@ function createSessionAuthenticator({ verifySessionToken, lookupUser } = {}) {
     // Preserve the extension's established user:<username> account archive key.
     // Do not change auth/me to expose id and silently orphan existing archives.
     const accountKey = 'user:' + String(session.username).replace(/[^\w@.+:-]/g, '_').slice(0, 120);
-    return Object.freeze({ tenantId: user.tenantId, userId: user.id, accountKey });
+    const websiteAccountKey = user.tenantId + ':' + session.username;
+    const accountKeys = [...new Set([accountKey, websiteAccountKey, 'user:' + websiteAccountKey.replace(/[^\w@.+:-]/g, '_').slice(0, 120)])];
+    return Object.freeze({ tenantId: user.tenantId, userId: user.id, accountKey, websiteAccountKey, accountKeys: Object.freeze(accountKeys) });
   };
 }
 

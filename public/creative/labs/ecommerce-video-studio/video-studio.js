@@ -21,6 +21,8 @@
     CONFIG_GET: 'VIDEO_STUDIO_CONFIG_GET',
     OPEN_API_SETTINGS: 'OPEN_UNIFIED_API_SETTINGS',
     IMPORT_MEDIA_CLAIM: 'SZ_VISUAL_LAB_CLAIM_MEDIA_IMPORT',
+    ASSET_PREPARE: 'VIDEO_STUDIO_ASSET_PREPARE',
+    PORTRAIT_START: 'VIDEO_STUDIO_PORTRAIT_START',
     ANALYZE: 'VIDEO_STUDIO_ANALYZE',
     START: 'VIDEO_STUDIO_START',
     STATUS: 'VIDEO_STUDIO_STATUS',
@@ -99,6 +101,9 @@
     productionRun: null,
     productionBusy: false,
     productionStarting: false,
+    assetPreparing: false,
+    portraitAuthorization: null,
+    portraitStartRequest: null,
     productionAbortController: null,
     review: freshReview(),
     backendConnected: false,
@@ -242,6 +247,196 @@
   function localStorageAssetId(asset) {
     if (!asset || safeRemoteAssetUrl(asset.remoteUrl) || !asset.storageRef) return '';
     return cleanText(asset.storageRef.id || asset.id);
+  }
+
+  function materialKind(asset) {
+    return asset && ['ordinary', 'virtual', 'real'].indexOf(asset.materialKind) >= 0 ? asset.materialKind : 'unknown';
+  }
+  function assetReportingCapability() {
+    var reporting = state.capabilities && state.capabilities.assetReporting;
+    return reporting && typeof reporting === 'object' ? reporting : {};
+  }
+  function assetReportingAvailable() {
+    return !!(state.accountKey && state.backendConnected && assetReportingCapability().available === true);
+  }
+  function assetReportingMessage() {
+    return cleanText(assetReportingCapability().message) || '当前账号未配置自动报备服务，请由管理员打开素材送审安全配置。普通图片可继续使用。';
+  }
+  function registrationMetadata(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    return { accountKey: cleanText(raw.accountKey).slice(0, 256), libraryId: cleanText(raw.libraryId).slice(0, 160),
+      status: ['active', 'preparing', 'needs_authorization', 'failed', 'uncertain'].indexOf(raw.status) >= 0 ? raw.status : 'uncertain',
+      registrationKind: raw.registrationKind === 'real' ? 'real' : (raw.registrationKind === 'virtual' ? 'virtual' : ''),
+      portraitSessionId: cleanText(raw.portraitSessionId).slice(0, 256), message: cleanText(raw.message).slice(0, 600) };
+  }
+  function currentRegistration(asset) {
+    var registration = registrationMetadata(asset && asset.registration);
+    if (!registration) return null;
+    if (!state.accountKey || registration.accountKey !== state.accountKey) throw makeStudioError('ASSET_REPORT_ACCOUNT', '素材报备记录属于原账号，请切回原账号后核对。');
+    if (registration.registrationKind !== materialKind(asset)) throw makeStudioError('ASSET_REPORT_KIND', '素材类型与报备记录不一致，请重新确认素材类型。');
+    return registration;
+  }
+  function activeLibraryUri(asset) {
+    var registration = currentRegistration(asset);
+    if (!registration || registration.status !== 'active') return '';
+    if (!/^va_[A-Za-z0-9_-]{1,150}$/.test(registration.libraryId)) throw makeStudioError('ASSET_REPORT_ID', '报备服务返回的素材编号无效，请核对原记录。');
+    if (!assetReportingAvailable()) throw makeStudioError('ASSET_REPORT_UNAVAILABLE', assetReportingMessage());
+    return 'library://' + registration.libraryId;
+  }
+  function requiresAssetPreparation(asset) {
+    // A manually linked, previously authenticated portrait keeps its original BYOK route.
+    return ['virtual', 'real'].indexOf(materialKind(asset)) >= 0 && (!asset.trustedPortrait || !!asset.registration);
+  }
+  function materialValidationErrors() {
+    var errors = [];
+    if (state.assets.image.some(function (asset) { return materialKind(asset) === 'unknown'; })) errors.push('请为每张图片选择素材类型：普通图片、虚拟人物或真实人物。');
+    state.assets.image.forEach(function (asset) {
+      try { currentRegistration(asset); } catch (error) { errors.push(safeErrorMessage(error)); }
+    });
+    return errors;
+  }
+  function authorizationMetadata(raw, accountKey) {
+    if (!raw || !cleanText(raw.sessionId)) return null;
+    var url = safeRemoteAssetUrl(raw.url);
+    return { accountKey: accountKey, sessionId: cleanText(raw.sessionId).slice(0, 256), url: url, status: cleanText(raw.status).slice(0, 64) };
+  }
+  function currentPortraitAuthorization() {
+    return state.portraitAuthorization && state.portraitAuthorization.accountKey === state.accountKey ? state.portraitAuthorization : null;
+  }
+  function confirmedNotUploaded(reply, registration) {
+    return !!(reply && reply.uploadRequired === true && reply.providerSubmitted === false && !reply.libraryId && registration && !registration.libraryId);
+  }
+  async function setMaterialKind(id, value) {
+    if (state.actionPending || state.productionBusy || state.productionStarting || state.assetPreparing) return false;
+    var asset = state.assets.image.find(function (item) { return item.id === id; });
+    if (!asset || ['unknown', 'ordinary', 'virtual', 'real'].indexOf(value) < 0 || materialKind(asset) === value) return false;
+    if (asset.registration) {
+      setNotice(dom.composerValidation, '这张图片已有报备记录。请保留原类型核对，或重新添加原图后选择正确类型；旧记录不会重复上传。', 'error'); renderAssets(); return false;
+    }
+    asset.materialKind = value;
+    if (value !== 'real') delete asset.trustedPortrait;
+    invalidateRights(); state.review.confirmed = false; state.review.confirmedAt = '';
+    invalidateReviewForSourceChange('素材类型已变化，请重新分析并确认脚本。');
+    renderAssets(); renderReadiness(); await saveCurrentDraft(); return true;
+  }
+  async function startPortraitAuthorization() {
+    if (state.actionPending || state.productionBusy || state.productionStarting || state.assetPreparing) return false;
+    if (!assetReportingAvailable() || assetReportingCapability().portraitAvailable !== true) { setNotice(dom.composerValidation, assetReportingMessage(), 'error'); return false; }
+    var accountKey = state.accountKey;
+    state.assetPreparing = true; renderAssets();
+    try {
+      if (!state.portraitStartRequest || state.portraitStartRequest.accountKey !== accountKey) state.portraitStartRequest = { accountKey: accountKey, idempotencyKey: makeId('portrait') };
+      await saveCurrentDraft();
+      if (state.accountKey !== accountKey) throw makeStudioError('ASSET_REPORT_ACCOUNT', '账号已变化，未创建新的本人认证。');
+      var response = responsePayload(await sendRuntimeMessage(MESSAGE.PORTRAIT_START, { idempotencyKey: state.portraitStartRequest.idempotencyKey }, RUNTIME_TIMEOUT_MS.start));
+      if (!accountKey || response.accountKey !== accountKey || state.accountKey !== accountKey) throw makeStudioError('ASSET_REPORT_ACCOUNT', '认证响应账号不一致，未采用认证链接。');
+      var authorization = authorizationMetadata(response.authorization, accountKey);
+      if (!authorization) throw makeStudioError('PORTRAIT_AUTHORIZATION_MISSING', '认证服务没有返回本人认证记录，请核对配置。');
+      state.portraitAuthorization = authorization;
+      state.assets.image.forEach(function (asset) {
+        if (materialKind(asset) === 'real' && asset.registration && asset.registration.accountKey === accountKey && asset.registration.status !== 'active') asset.registration.portraitSessionId = authorization.sessionId;
+      });
+      await saveCurrentDraft();
+      if (['expired', 'failed'].indexOf(authorization.status) >= 0) { setNotice(dom.composerValidation, '本人认证会话已过期或失败，请点击“重新创建本人认证链接”。', 'info'); return false; }
+      if (['verified', 'active'].indexOf(authorization.status) >= 0) { setNotice(dom.composerValidation, '本人认证已核对，请准备素材并等待供应商审核。', 'info'); return true; }
+      if (!authorization.url) throw makeStudioError('PORTRAIT_AUTHORIZATION_MISSING', '本人认证回执尚未确认，请核对原认证记录；不会自动创建新会话。');
+      setNotice(dom.composerValidation, '请由图片中的本人打开认证链接，亲自确认授权并完成认证；完成后点击“查询报备进度”。', 'info'); return true;
+    } catch (error) { setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); return false; }
+    finally { state.assetPreparing = false; renderAssets(); renderReadiness(); }
+  }
+  async function restartPortraitAuthorization() {
+    var authorization = currentPortraitAuthorization();
+    if (state.actionPending || state.productionBusy || state.productionStarting || state.assetPreparing || !authorization || ['expired', 'failed'].indexOf(authorization.status) < 0) return false;
+    // The user explicitly replaces a terminal session. An unknown response keeps this new key for lookup.
+    state.portraitStartRequest = { accountKey: state.accountKey, idempotencyKey: makeId('portrait') };
+    state.portraitAuthorization = Object.assign({}, authorization, { status: 'uncertain', url: '' });
+    return startPortraitAuthorization();
+  }
+  async function originalImageDataUrl(asset) {
+    var storedId = localStorageAssetId(asset);
+    if (!storedId) throw makeStudioError('ASSET_REPORT_LOCAL_REQUIRED', '自动报备需要本地原图，请下载并重新添加这张图片。');
+    var record = await Store.getAsset(storedId);
+    if (!record || !(record.blob instanceof Blob) || !record.blob.size || record.blob.size > FILE_LIMITS.image.bytes) throw makeStudioError('ASSET_REPORT_SOURCE_MISSING', '本地原图缺失或超过 20 MB，请恢复原始图片。');
+    var bytes = new Uint8Array(await record.blob.arrayBuffer()), binary = '';
+    for (var index = 0; index < bytes.length; index += 8192) binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 8192));
+    return 'data:' + asset.mimeType + ';base64,' + globalThis.btoa(binary);
+  }
+  async function prepareVideoAssets(options) {
+    if (state.assetPreparing || state.productionBusy || state.productionStarting) return false;
+    var errors = materialValidationErrors();
+    if (errors.length) { setNotice(dom.composerValidation, errors.join(' '), 'error'); return false; }
+    var assets = state.assets.image.filter(requiresAssetPreparation);
+    if (!assets.length) return true;
+    if (!assetReportingAvailable()) { setNotice(dom.composerValidation, assetReportingMessage(), 'error'); return false; }
+    if (!state.rightsConfirmed || state.rightsFingerprint !== assetRightsFingerprint()) { setNotice(dom.composerValidation, '请先确认素材权利及向当前供应商自动送审的授权。', 'error'); return false; }
+    try { assets.forEach(function (asset) { activeLibraryUri(asset); }); }
+    catch (error) { setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); return false; }
+    var authorization = currentPortraitAuthorization();
+    if (assets.some(function (asset) { return materialKind(asset) === 'real' && !asset.registration; }) && !authorization) {
+      setNotice(dom.composerValidation, '真实人物需要由本人认证和授权。请先点击图片下方“创建本人认证链接”，完成后准备素材。', 'info'); renderAssets(); return false;
+    }
+    var accountKey = state.accountKey, sourceFingerprint = assetRightsFingerprint(), pending = assets;
+    state.assetPreparing = true; setPending(true, '正在准备素材…'); renderAssets();
+    try {
+      var requests = [];
+      for (var asset of pending) {
+        var registration = currentRegistration(asset), item = { id: asset.id, name: asset.name, mimeType: asset.mimeType, registrationKind: materialKind(asset) };
+        if (registration) { if (registration.libraryId) item.libraryId = registration.libraryId; }
+        else item.dataUrl = await originalImageDataUrl(asset);
+        var sessionId = registration && registration.portraitSessionId || authorization && authorization.sessionId || '';
+        if (item.registrationKind === 'real' && sessionId) item.portraitSessionId = sessionId;
+        requests.push(item);
+      }
+      if (state.accountKey !== accountKey || sourceFingerprint !== assetRightsFingerprint()) throw makeStudioError('ASSET_REPORT_ACCOUNT', '账号或素材已变化，未发送原图，请切回原账号。');
+      // Persist intent before crossing the runtime boundary. An uncertain reply is polled without sending bytes again.
+      pending.forEach(function (asset, index) {
+        if (!asset.registration) asset.registration = registrationMetadata({ accountKey: accountKey, libraryId: '', status: 'preparing', registrationKind: materialKind(asset), portraitSessionId: requests[index].portraitSessionId });
+      });
+      await saveCurrentDraft();
+      if (state.accountKey !== accountKey || sourceFingerprint !== assetRightsFingerprint()) throw makeStudioError('ASSET_REPORT_ACCOUNT', '账号或素材已变化，未发送报备请求，请切回原账号。');
+      var payload = { assets: requests, rightsConfirmed: true }; if (authorization) payload.portraitSessionId = authorization.sessionId;
+      var automatic = options && options.pollUntilReady === true, deadline = Date.now() + 60000;
+      while (true) {
+      var result = responsePayload(await sendRuntimeMessage(MESSAGE.ASSET_PREPARE, payload, automatic ? Math.min(20000, Math.max(1, deadline - Date.now())) : RUNTIME_TIMEOUT_MS.start));
+      if (state.accountKey !== accountKey || result.accountKey !== accountKey || sourceFingerprint !== assetRightsFingerprint()) throw makeStudioError('ASSET_REPORT_ACCOUNT', '账号或素材已变化，未采用报备结果；请切回原账号核对原记录。');
+      if (!Array.isArray(result.assets)) throw makeStudioError('ASSET_REPORT_INVALID', '报备服务返回不完整，请核对原记录。');
+      pending.forEach(function (asset) {
+        var matches = result.assets.filter(function (item) { return item.id === asset.id; });
+        if (matches.length !== 1) { asset.registration.status = 'uncertain'; asset.registration.message = '没有收到唯一的素材状态，请查询原记录。'; return; }
+        var reply = matches[0], previous = asset.registration;
+        if (confirmedNotUploaded(reply, previous)) { delete asset.registration; return; }
+        asset.registration = registrationMetadata({ accountKey: accountKey, libraryId: reply.libraryId || previous.libraryId, status: reply.status,
+          registrationKind: materialKind(asset), portraitSessionId: previous.portraitSessionId, message: reply.message });
+        if (asset.registration.status === 'active' && !/^va_[A-Za-z0-9_-]{1,150}$/.test(asset.registration.libraryId)) { asset.registration.status = 'uncertain'; asset.registration.message = '素材编号无效，请核对原记录。'; }
+      });
+      if (result.authorization) state.portraitAuthorization = authorizationMetadata(result.authorization, accountKey) || state.portraitAuthorization;
+      await saveCurrentDraft();
+      var complete = assets.every(function (asset) { return !!activeLibraryUri(asset); });
+      setNotice(dom.composerValidation, complete ? '需报备的素材已由供应商确认可用。' : '素材尚未全部可用。请查看每张图片的报备状态，完成本人认证后查询原记录。', complete ? 'success' : 'info');
+      if (complete || !automatic) return complete;
+      var waiting = assets.filter(function (asset) { return !activeLibraryUri(asset); });
+      if (!waiting.length || waiting.some(function (asset) { return !asset.registration || asset.registration.status !== 'preparing' || !/^va_[A-Za-z0-9_-]{1,150}$/.test(asset.registration.libraryId); })) return false;
+      if (Date.now() >= deadline) { setNotice(dom.composerValidation, '素材仍在审核，已保留原报备记录。请稍后查询进度，再次点击生成不会重复上传。', 'info'); return false; }
+      renderAssets();
+      setNotice(dom.composerValidation, '素材正在审核，工作台正在查询原报备记录；全部可用后继续本次生成。', 'info');
+      await new Promise(function (resolve) { globalThis.setTimeout(resolve, Math.min(2000, deadline - Date.now())); });
+      if (state.accountKey !== accountKey || sourceFingerprint !== assetRightsFingerprint()) throw makeStudioError('ASSET_REPORT_ACCOUNT', '账号或素材已变化，已停止自动查询；原报备记录仍保留。');
+      if (Date.now() >= deadline) { setNotice(dom.composerValidation, '素材仍在审核，已保留原报备记录。请稍后查询进度，再次点击生成不会重复上传。', 'info'); return false; }
+      pending = waiting;
+      payload.assets = waiting.map(function (asset) { var record = asset.registration, query = { id: asset.id, name: asset.name, mimeType: asset.mimeType, libraryId: record.libraryId, registrationKind: record.registrationKind }; if (record.portraitSessionId) query.portraitSessionId = record.portraitSessionId; return query; });
+      }
+    } catch (error) {
+      if (state.accountKey === accountKey) {
+        var details = error && error.details || {}, safeCodes = ['ASSET_SERVICE_NOT_CONFIGURED', 'ASSET_RATE_LIMIT', 'PROVIDER_BINDING_MISMATCH', 'AUTH_REQUIRED', 'VALIDATION_REQUIRED', 'VALIDATION_PENDING', 'HUMAN_VALIDATION_REQUIRED', 'HUMAN_GROUP_UNVERIFIED', 'VALIDATION_NOT_FOUND', 'MATERIAL_TYPE_REQUIRED'];
+        pending.forEach(function (asset) {
+          var applies = details.assetId === asset.id || details.clientId === asset.id || (!details.assetId && !details.clientId && pending.length === 1);
+          if (applies && safeCodes.indexOf(errorCode(error)) >= 0 && confirmedNotUploaded(details, asset.registration)) delete asset.registration;
+          else if (asset.registration) { asset.registration.status = 'uncertain'; asset.registration.message = safeErrorMessage(error); }
+        });
+        await saveCurrentDraft().catch(function () {});
+      }
+      setNotice(dom.composerValidation, safeErrorMessage(error), 'error'); return false;
+    } finally { state.assetPreparing = false; setPending(false); renderAssets(); renderReadiness(); }
   }
 
   function clamp(value, min, max) {
@@ -1108,6 +1303,10 @@
       storageRef: storageRef
     };
     if (asset.trustedPortrait) summary.trustedPortrait = { uri: String(asset.trustedPortrait.uri || '').slice(0, 256), accountKey: cleanText(asset.trustedPortrait.accountKey).slice(0, 256) };
+    if (asset.kind === 'image') {
+      summary.materialKind = materialKind(asset);
+      if (asset.registration) summary.registration = registrationMetadata(asset.registration);
+    }
     return summary;
   }
 
@@ -1158,6 +1357,8 @@
       rightsConfirmed: state.rightsConfirmed,
       rightsConfirmedAt: state.rightsConfirmedAt,
       rightsFingerprint: state.rightsFingerprint,
+      portraitAuthorization: currentPortraitAuthorization(),
+      portraitStartRequest: state.portraitStartRequest && state.portraitStartRequest.accountKey === state.accountKey ? Object.assign({}, state.portraitStartRequest) : null,
       settings: Object.assign({}, state.settings),
       review: serializeReview(state.review)
     };
@@ -1216,7 +1417,7 @@
       if (!record || !(record.blob instanceof Blob)) return null;
       var hydrated = Object.assign({}, serializeAsset(Object.assign({}, record, {
         finalAudioRole: summary.finalAudioRole, finalAudioVolume: summary.finalAudioVolume, finalAudioLoop: summary.finalAudioLoop,
-        trustedPortrait: summary.trustedPortrait
+        trustedPortrait: summary.trustedPortrait, materialKind: summary.materialKind, registration: summary.registration
       })));
       hydrated.previewUrl = URL.createObjectURL(record.blob);
       state.previewUrls.add(hydrated.previewUrl);
@@ -1242,6 +1443,8 @@
     state.rightsConfirmed = false;
     state.rightsConfirmedAt = '';
     state.rightsFingerprint = '';
+    state.portraitAuthorization = null;
+    state.portraitStartRequest = null;
     state.review = freshReview();
     state.settings = {
       productKey: 'seedance-2.0',
@@ -1276,6 +1479,8 @@
       state.reference = await hydrateAsset(draft.reference);
       state.referenceFrames = await hydrateList(draft.referenceFrames);
       state.review = normalizeDraftReview(draft.review);
+      if (draft.portraitAuthorization && draft.portraitAuthorization.accountKey === state.accountKey) state.portraitAuthorization = authorizationMetadata(draft.portraitAuthorization, state.accountKey);
+      if (draft.portraitStartRequest && draft.portraitStartRequest.accountKey === state.accountKey && /^[a-zA-Z0-9_-]{1,160}$/.test(draft.portraitStartRequest.idempotencyKey || '')) state.portraitStartRequest = { accountKey: state.accountKey, idempotencyKey: draft.portraitStartRequest.idempotencyKey };
 
       var fingerprint = assetRightsFingerprint();
       if (draft.rightsConfirmed === true && draft.rightsFingerprint === fingerprint) {
@@ -1456,7 +1661,8 @@
     var portraits = state.assets.image.filter(function (asset) { return !!asset.trustedPortrait; }).map(function (asset) {
       return { id: asset.id, uri: asset.trustedPortrait.uri, accountKey: asset.trustedPortrait.accountKey };
     });
-    return portraits.length ? Contract.fingerprint({ base: base, portraits: portraits }, 'rights_') : base;
+    var materials = state.assets.image.map(function (asset) { return { id: asset.id, materialKind: materialKind(asset) }; });
+    return materials.length || portraits.length ? Contract.fingerprint({ base: base, portraits: portraits, materials: materials, reportingConsent: 'AUTO_REPORT_V1' }, 'rights_') : base;
   }
 
   function analysisFingerprint() {
@@ -2064,7 +2270,8 @@
         var uri = normalizeTrustedPortraitUri(value);
         if (!uri) throw new Error('请输入完整 Asset ID（asset-…）或 asset://asset-…，不含空格、参数或片段。');
         asset.trustedPortrait = { uri: uri, accountKey: state.accountKey };
-      } else delete asset.trustedPortrait;
+        asset.materialKind = 'real';
+      } else { delete asset.trustedPortrait; if (!asset.registration) asset.materialKind = 'unknown'; }
       invalidateRights();
       state.review.confirmed = false; state.review.confirmedAt = '';
       invalidateReviewForSourceChange('人像素材引用已变化，请重新分析并确认脚本。');
@@ -2124,6 +2331,7 @@
       card.classList.add('final-audio-card');
       appendFinalAudioControls(info, asset);
     } else info.appendChild(role);
+    if (asset.kind === 'image') appendMaterialControls(info, asset);
     if (asset.kind === 'image' && localStorageAssetId(asset)) {
       var portraitActions = document.createElement('div'); portraitActions.className = 'trusted-portrait-actions';
       var associate = document.createElement('button'); associate.type = 'button'; associate.className = 'button button-secondary button-small';
@@ -2150,6 +2358,49 @@
     remove.textContent = '×';
     card.append(thumb, info, remove);
     return card;
+  }
+
+  function appendMaterialControls(info, asset) {
+    var section = document.createElement('div'); section.className = 'asset-reporting';
+    var label = document.createElement('label'); label.textContent = '素材类型（请按实际内容选择）';
+    var select = document.createElement('select'); select.className = 'asset-material-select'; select.dataset.assetMaterial = asset.id;
+    select.setAttribute('aria-label', '选择素材 ' + asset.name + ' 的真实内容类型');
+    [['unknown', '请选择素材类型'], ['ordinary', '普通图片 · 无人物'], ['virtual', '虚拟人物 · 非真实人物'], ['real', '真实人物 · 需本人认证']].forEach(function (pair) {
+      var option = document.createElement('option'); option.value = pair[0]; option.textContent = pair[1]; select.appendChild(option);
+    });
+    select.value = materialKind(asset); select.disabled = state.actionPending || state.productionBusy || state.productionStarting || state.assetPreparing || !!asset.registration;
+    label.appendChild(select); section.appendChild(label);
+    var kind = materialKind(asset);
+    if (kind === 'unknown') { var hint = document.createElement('small'); hint.textContent = '用途不会决定内容类型，请确认是否含真实人物。'; section.appendChild(hint); }
+    if (kind === 'virtual' || kind === 'real') {
+      var status = document.createElement('small'), registration = asset.registration;
+      var labels = { active: '供应商已确认可用', preparing: '报备处理中', needs_authorization: '等待本人认证与授权', failed: '报备失败', uncertain: '报备状态待核对' };
+      status.className = 'asset-reporting-status';
+      if (registration && registration.accountKey !== state.accountKey) status.textContent = '报备记录属于原账号，请切回后核对。';
+      else if (registration) status.textContent = (labels[registration.status] || '报备状态待核对') + (registration.message ? '：' + registration.message : '');
+      else status.textContent = asset.trustedPortrait ? '使用手填可信素材引用；实际可用性由火山方舟校验。' : (kind === 'real' ? '需本人认证授权后向当前供应商送审。' : '生成前向当前供应商报备，审核可用后才提交视频。');
+      section.appendChild(status);
+      var actions = document.createElement('div'); actions.className = 'asset-reporting-actions';
+      var busy = state.actionPending || state.productionBusy || state.productionStarting || state.assetPreparing;
+      if (kind === 'real' && !asset.trustedPortrait) {
+        var start = document.createElement('button'); start.type = 'button'; start.className = 'button button-secondary button-small'; start.dataset.portraitStart = asset.id;
+        start.textContent = currentPortraitAuthorization() ? '核对本人认证入口' : '创建本人认证链接';
+        start.disabled = busy || !assetReportingAvailable() || assetReportingCapability().portraitAvailable !== true; actions.appendChild(start);
+        var authorization = currentPortraitAuthorization();
+        if (authorization && ['expired', 'failed'].indexOf(authorization.status) >= 0) { start.dataset.portraitRestart = asset.id; start.textContent = '重新创建本人认证链接'; }
+        if (authorization && authorization.url) { var link = document.createElement('a'); link.href = authorization.url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.className = 'portrait-authorization-link'; link.textContent = '由图片中的本人打开认证并确认授权'; actions.appendChild(link); }
+      }
+      if (requiresAssetPreparation(asset)) {
+        var prepare = document.createElement('button'); prepare.type = 'button'; prepare.className = 'button button-secondary button-small'; prepare.dataset.prepareAsset = asset.id;
+        prepare.textContent = registration ? '查询报备进度' : '准备需报备的素材'; prepare.disabled = busy || !assetReportingAvailable(); actions.appendChild(prepare);
+      }
+      section.appendChild(actions);
+      if (!assetReportingAvailable()) {
+        var unavailable = document.createElement('small'); unavailable.className = 'asset-reporting-config'; unavailable.textContent = assetReportingMessage(); section.appendChild(unavailable);
+        var configure = document.createElement('a'); configure.href = '/management/video-materials'; configure.target = '_top'; configure.className = 'portrait-authorization-link'; configure.textContent = '管理员：打开素材送审安全配置'; section.appendChild(configure);
+      }
+    }
+    info.appendChild(section);
   }
 
   function renderReference() {
@@ -2207,8 +2458,10 @@
   }
 
   function assetForRequest(asset, options) {
-    var remoteUrl = options && options.analysis === true ? safeRemoteAssetUrl(asset.remoteUrl) : (trustedPortraitUri(asset) || safeRemoteAssetUrl(asset.remoteUrl));
-    return {
+    var analysis = options && options.analysis === true, libraryUri = analysis ? '' : activeLibraryUri(asset);
+    if (!analysis && requiresAssetPreparation(asset) && !libraryUri && !(options && options.allowUnprepared)) throw makeStudioError('ASSET_REPORT_NOT_ACTIVE', '需报备的图片尚未由供应商确认可用，请先准备素材并核对进度。');
+    var remoteUrl = analysis ? safeRemoteAssetUrl(asset.remoteUrl) : (libraryUri || trustedPortraitUri(asset) || safeRemoteAssetUrl(asset.remoteUrl));
+    var requestAsset = {
       id: asset.id,
       kind: asset.kind,
       role: asset.role || 'asset',
@@ -2226,9 +2479,12 @@
         id: asset.id
       })
     };
+    if (asset.kind === 'image') requestAsset.materialKind = materialKind(asset);
+    if (libraryUri) requestAsset.registration = registrationMetadata(asset.registration);
+    return requestAsset;
   }
 
-  function buildRequest(stage) {
+  function buildRequest(stage, options) {
     var raw = {
       mode: state.mode,
       productKey: state.settings.productKey,
@@ -2244,7 +2500,7 @@
       supplementalRequirements: supplementalRequirementsFor(stage),
       scriptConfirmed: state.mode === 'direct' ? false : state.review.confirmed,
       referenceRightsConfirmed: state.mode === 'remix' && state.rightsConfirmed,
-      images: state.assets.image.map(function (asset) { return assetForRequest(asset, { analysis: stage === 'draft' }); }),
+      images: state.assets.image.map(function (asset) { return assetForRequest(asset, { analysis: stage === 'draft', allowUnprepared: !!(options && options.allowUnprepared) }); }),
       videos: state.assets.video.map(assetForRequest),
       audios: state.assets.audio.map(assetForRequest),
       referenceVideo: state.mode === 'remix' && state.reference ? assetForRequest(state.reference) : null,
@@ -2261,7 +2517,7 @@
       if (raw.creativeRoute === 'audio_visual') raw.creativeRoute = 'storyboard_direct';
       raw.rights.assetFingerprint = Contract.assetRightsFingerprint(raw);
     }
-    if (state.assets.image.some(function (asset) { return !!asset.trustedPortrait; })) raw.rights.assetFingerprint = Contract.assetRightsFingerprint(raw);
+    if (state.assets.image.length) raw.rights.assetFingerprint = Contract.assetRightsFingerprint(raw);
     if (stage === 'submit' && state.mode !== 'direct' && state.review.storyboard.length) {
       raw.storyboard = storyboardForRequest();
       var canonicalStoryboard = Contract.normalizeStoryboard(raw.storyboard, {
@@ -2357,6 +2613,7 @@
     if (state.assets.image.some(function (asset) { return !!asset.trustedPortrait; }) && !personalArkPortraitAvailable()) errors.push('可信人像引用仅支持个人火山方舟 API；平台视频暂不支持，请切换个人 API 或恢复原始图片。');
     if (!state.backendConnected) errors.push(state.capabilityError || '后台生成能力未接入。');
     var analyzing = state.mode !== 'direct' && !options.requireReview;
+    if (!analyzing) errors = errors.concat(materialValidationErrors());
     if (analyzing && state.analysisAvailable !== true) {
       errors.push(cleanText(state.analysisStatus && state.analysisStatus.message) || '当前账号的脚本分析配置不可用。');
     }
@@ -2411,7 +2668,7 @@
     }
 
     try {
-      buildRequest(options.requireReview && state.mode !== 'direct' ? 'submit' : 'draft');
+      buildRequest(options.requireReview && state.mode !== 'direct' ? 'submit' : 'draft', { allowUnprepared: true });
     } catch (contractError) {
       errors.push(safeErrorMessage(contractError, '当前路线或素材不符合生成合同。'));
     }
@@ -2958,7 +3215,7 @@
       styleProfile: state.settings.styleProfile, script: state.mode === 'direct' ? state.prompt : (state.review.script || state.prompt),
       goal: state.prompt, supplementalRequirements: state.expertEnabled ? state.expertRequirements : '',
       scriptConfirmed: state.review.confirmed, storyboard: state.review.storyboard,
-      images: state.assets.image.map(assetForRequest), videos: state.assets.video.map(assetForRequest), audios: [],
+      images: state.assets.image.map(function (asset) { return assetForRequest(asset, { allowUnprepared: !options.confirmed || (state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) }); }), videos: state.assets.video.map(assetForRequest), audios: [],
       rights: { confirmed: state.rightsConfirmed, confirmedAt: state.rightsConfirmedAt, fingerprint: state.rightsFingerprint }
     };
     if (!options.confirmed || (state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0)) { request.mode = 'direct'; request.storyboard = []; }
@@ -3001,6 +3258,7 @@
     var hasAssets = state.assets.image.length || state.assets.video.length || state.assets.audio.length || state.reference;
     if (hasAssets && (!state.rightsConfirmed || state.rightsFingerprint !== assetRightsFingerprint())) errors.push('请确认素材权利，素材变化后需要重新确认。');
     var localOnly = state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0;
+    if (state.mode === 'direct' || options.requireReview || localOnly) errors = errors.concat(materialValidationErrors());
     if (state.mode !== 'direct' && !options.requireReview && !localOnly) {
       var analysisError = analysisRequestError();
       if (analysisError) errors.push(analysisError);
@@ -3243,7 +3501,7 @@
     setNotice(dom.productionRunNotice, run.error || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
   }
   async function startProductionGeneration() {
-    if (state.productionBusy || state.productionStarting) return;
+    if (state.productionBusy || state.productionStarting || state.assetPreparing || state.actionPending) return;
     var errors = productionValidationErrors({ requireReview: true });
     if (errors.length) { setNotice(dom.composerValidation, errors.join(' '), 'error'); return; }
     if (state.productionRun && state.productionRun.status !== 'succeeded' &&
@@ -3251,6 +3509,8 @@
       setNotice(dom.composerValidation, '已有未完成的成片计划，请使用“继续 / 核对已提交镜头”；改方案不会重复提交旧镜头。', 'error');
       renderProductionRun(); return;
     }
+    var preparationPlan = previewProductionPlan();
+    if (preparationPlan.shots.some(function (shot) { return shot.kind === 'ai'; }) && !await prepareVideoAssets({ pollUntilReady: true })) return;
     state.productionStarting = true; setPending(true, '正在保存成片计划…');
     try {
     var plan = previewProductionPlan({ confirmed: true });
@@ -3416,12 +3676,14 @@
 
   async function startGeneration() {
     if (usingProductionPlan()) return startProductionGeneration();
+    if (state.actionPending || state.assetPreparing) return;
     var errors = validationErrors({ requireReview: state.mode !== 'direct' });
     if (errors.length) {
       setNotice(state.mode === 'direct' ? dom.composerValidation : dom.reviewValidation, errors.join(' '), 'error');
       showToast(errors[0], 'error');
       return;
     }
+    if (!await prepareVideoAssets({ pollUntilReady: true })) return;
 
     var request;
     try {
@@ -4215,6 +4477,12 @@
     });
 
     dom.assetList.addEventListener('click', function assetAction(event) {
+      var prepareAsset = event.target.closest('[data-prepare-asset]'), portraitStart = event.target.closest('[data-portrait-start]');
+      if (prepareAsset || portraitStart) {
+        if ((prepareAsset || portraitStart).disabled || state.actionPending || state.assetPreparing) return;
+        if (portraitStart) { if (portraitStart.dataset.portraitRestart) restartPortraitAuthorization(); else startPortraitAuthorization(); } else prepareVideoAssets();
+        return;
+      }
       var portrait = event.target.closest('[data-trusted-portrait-asset]'), restorePortrait = event.target.closest('[data-restore-portrait-asset]');
       if (portrait || restorePortrait) {
         var action = portrait || restorePortrait;
@@ -4229,6 +4497,8 @@
       if (button) removeAsset(button.dataset.kind, button.dataset.removeAsset);
     });
     dom.assetList.addEventListener('change', function assetRoleChange(event) {
+      var material = event.target.closest('[data-asset-material]');
+      if (material) { setMaterialKind(material.dataset.assetMaterial, material.value); return; }
       var finalRole = event.target.closest('[data-final-audio-role]'), finalLoop = event.target.closest('[data-final-audio-loop]');
       if (finalRole || finalLoop) {
         var finalAsset = state.assets.audio.find(function (item) { return item.id === (finalRole ? finalRole.dataset.finalAudioRole : finalLoop.dataset.finalAudioLoop); });
@@ -4461,6 +4731,9 @@
       setHistoryRunHidden: setHistoryRunHidden, releaseResultPreview: releaseResultPreview, openResultDialog: openResultDialog,
       assetForRequest: assetForRequest,
       normalizeTrustedPortraitUri: normalizeTrustedPortraitUri, associateTrustedPortrait: associateTrustedPortrait, personalArkPortraitAvailable: personalArkPortraitAvailable,
+      materialKind: materialKind, setMaterialKind: setMaterialKind, prepareVideoAssets: prepareVideoAssets, startPortraitAuthorization: startPortraitAuthorization,
+      restartPortraitAuthorization: restartPortraitAuthorization,
+      assetReportingAvailable: assetReportingAvailable, activeLibraryUri: activeLibraryUri, validationErrors: validationErrors, startGeneration: startGeneration,
       buildRequest: buildRequest,
       claimStartupMediaImport: claimStartupMediaImport,
       normalizeSettingsSnapshot: normalizeSettingsSnapshot,

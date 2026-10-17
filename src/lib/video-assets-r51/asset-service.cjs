@@ -56,6 +56,7 @@ function publicAsset(record, state) {
     id: record.id, name: record.name, sha256: record.sha256, mime: record.mime, size: record.size,
     bound: record.bound, pool: record.bound ? 'bound' : 'automatic', status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt,
     canUse: record.status === 'active', inUse: leased(state, record.id),
+    materialType: record.materialType || 'virtual',
     errorCode: record.errorCode || '', message: record.message || ''
   };
 }
@@ -66,7 +67,7 @@ function normalizeProviderRecord(value) {
   if (!id) fail('PROVIDER_ASSET_ID_MISSING', '素材供应商未返回稳定素材 ID。');
   const status = { Active: 'active', Processing: 'processing', Failed: 'rejected' }[value.status];
   if (!status) fail('PROVIDER_STATUS_INVALID', '素材供应商返回了未知审核状态。');
-  return { id, status, sourceId: text(value.sourceId), message: status === 'rejected' ? '素材审核未通过，请检查图片后重新选择。' : '' };
+  return { id, status, sourceId: text(value.sourceId), groupId: text(value.groupId), groupType: text(value.groupType), message: status === 'rejected' ? '素材审核未通过，请检查图片后重新选择。' : '' };
 }
 function normalizeImage(input) {
   if (!input || !(Buffer.isBuffer(input.bytes) || input.bytes instanceof Uint8Array)) fail('IMAGE_REQUIRED', '请上传图片字节。');
@@ -124,7 +125,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
   function firstVictim(state, scope, excludedId) {
     return ownLive(state, scope)
       .filter(record => record.id !== excludedId && record.bound === false && !leased(state, record.id)
-        && (record.providerAssetId || record.providerCreationRejected) && ['active', 'processing', 'rejected'].includes(record.status))
+        && (record.providerAssetId || record.providerCreationRejected) && ['active', 'rejected'].includes(record.status))
       .sort((a, b) => a.createdAt - b.createdAt || a.sequence - b.sequence || a.id.localeCompare(b.id))[0];
   }
 
@@ -145,7 +146,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
         await binding.provider.setPinned({ scope, sourceId: record.sourceId, pinned: false });
         temporarilyUnpinned = true;
       }
-      const result = await binding.provider.delete({ scope, id: record.providerAssetId, sourceId: record.sourceId });
+      const result = await binding.provider.delete({ scope, id: record.providerAssetId, sourceId: record.sourceId, groupId: record.providerGroupId, groupType: record.groupType || 'AIGC' });
       confirmed = !!(result && result.deleted === true && result.verified === true);
       if (confirmed && result.sourceCleanupPending) record.sourceCleanupPending = true;
     } } catch (_) { /* Persist the uncertain deletion below; do not erase history. */ }
@@ -178,7 +179,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
         // Prove this scope alone can free enough capacity before deleting anything.
         // A larger external/other-tenant reservation must not drain this user's pool.
         const candidates = ownLive(state, context.scope).filter(record => record.id !== excludeId && !record.bound && !leased(state, record.id)
-          && (record.providerAssetId || record.providerCreationRejected) && ['active', 'processing', 'rejected'].includes(record.status));
+          && (record.providerAssetId || record.providerCreationRejected) && ['active', 'rejected'].includes(record.status));
         const cloudNeeded = increaseCloud ? Math.max(0, trackedCloud + context.quota.externalUsed + 1 - context.quota.limit) : 0;
         if (candidates.filter(usesCloud).length < cloudNeeded) fail('PROVIDER_QUOTA_FULL', '云素材容量不足，当前账号可清理素材也无法释放足够容量，已保留全部素材。');
         const victim = firstVictim(state, context.scope, excludeId);
@@ -194,9 +195,15 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
 
   async function ingest(inputScope, input) {
     const image = normalizeImage(input);
+    if (input.groupId || input.providerGroupId) fail('REQUEST_INVALID', '不接受客户端提供的素材组。');
+    const materialType = input.materialType == null ? 'virtual' : input.materialType;
+    if (!['ordinary', 'virtual', 'real'].includes(materialType)) fail('MATERIAL_TYPE_REQUIRED', '请确认素材是普通商品、虚拟人像还是真人人像。');
     return locked(inputScope, async context => {
+      if (materialType === 'ordinary') return { requiresRegistration: false, materialType: 'ordinary' };
+      const groupId = materialType === 'real' ? await humanGroup(context, input.validationId) : '';
       const existing = await context.tx(state => {
-        const record = ownLive(state, context.scope).find(item => item.sha256 === image.sha256);
+        const record = ownLive(state, context.scope).find(item => item.sha256 === image.sha256 && (item.materialType || 'virtual') === materialType &&
+          (materialType !== 'real' || item.providerGroupId === groupId));
         return record ? publicAsset(record, state) : null;
       });
       if (existing) return { asset: existing, deduplicated: true };
@@ -224,7 +231,8 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
           tenantId: context.scope.tenantId, userId: context.scope.userId,
           name: image.name, mime: image.mime, sha256: image.sha256, size: image.size,
           sequence: Object.keys(state.records).length + 1,
-          status: 'creating', bound: false, providerAssetId: '',
+          status: 'creating', bound: false, providerAssetId: '', materialType,
+          providerGroupId: groupId, groupType: materialType === 'real' ? 'LivenessFace' : 'AIGC', validationId: text(input.validationId),
           createdAt: timestamp, updatedAt: timestamp, errorCode: '', message: ''
         };
       });
@@ -232,7 +240,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
       try {
         result = normalizeProviderRecord(await context.binding.provider.create({
           scope: context.scope, assetId: id, name: image.name, mime: image.mime,
-          bytes: image.bytes, sha256: image.sha256
+          bytes: image.bytes, sha256: image.sha256, groupId: groupId || undefined, groupType: materialType === 'real' ? 'LivenessFace' : 'AIGC'
         }));
         if (result.missing) fail('PROVIDER_CREATE_INVALID', '素材供应商未确认创建结果。');
       } catch (error) {
@@ -252,6 +260,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
       return context.tx(state => {
         const record = ownedRecord(state, context.scope, id);
         record.providerAssetId = result.id; record.status = result.status; record.sourceId = result.sourceId;
+        if (result.groupId) record.providerGroupId = result.groupId;
         record.message = result.message; record.updatedAt = now();
         record.errorCode = result.status === 'rejected' ? 'ASSET_REVIEW_FAILED' : '';
         return { asset: publicAsset(record, state), deduplicated: false };
@@ -289,7 +298,7 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
       const record = await context.tx(state => clone(ownedRecord(state, context.scope, id)));
       if (!record.providerAssetId) return context.tx(state => publicAsset(ownedRecord(state, context.scope, id), state));
       let result;
-      try { result = normalizeProviderRecord(await context.binding.provider.get({ scope: context.scope, id: record.providerAssetId })); }
+      try { result = normalizeProviderRecord(await context.binding.provider.get({ scope: context.scope, id: record.providerAssetId, groupId: record.providerGroupId, groupType: record.groupType || 'AIGC' })); }
       catch (_) { fail('PROVIDER_STATUS_UNAVAILABLE', '暂时无法核验云素材状态，已保留当前记录。'); }
       if (result.id && result.id !== record.providerAssetId) fail('PROVIDER_ASSET_MISMATCH', '供应商返回的素材 ID 不一致。');
       return context.tx(state => {
@@ -349,7 +358,9 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
   async function acquireLease(inputScope, { taskId, assetIds } = {}) {
     taskId = identifier(taskId, 'taskId');
     if (!Array.isArray(assetIds) || !assetIds.length || assetIds.length > 50 || new Set(assetIds).size !== assetIds.length) fail('LEASE_ASSETS_INVALID', '任务素材引用不能为空或重复。');
-    return locked(inputScope, context => context.tx(state => {
+    return locked(inputScope, async context => {
+      await checkedReferences(context, assetIds);
+      return context.tx(state => {
       const previous = state.tasks[taskId];
       if (previous) {
         if (previous.ownerKey !== ownerKey(context.scope) || previous.bindingKey !== bindingKey(context.scope) || previous.terminal || JSON.stringify(previous.assetIds) !== JSON.stringify(assetIds)) fail('TASK_LEASE_CONFLICT', '任务编号已绑定其他素材或已结束。');
@@ -360,7 +371,119 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
       // This return value is internal to the video service. Do not return raw Ark
       // references to a public list endpoint or accept them back from the client.
       return { taskId, references: records.map(record => ({ id: record.id, url: 'asset://' + record.providerAssetId })) };
+      });
+    });
+  }
+
+  function validationRecord(state, scope, id) {
+    const record = state.portraitSessions && state.portraitSessions[text(id)];
+    if (!record || record.ownerKey !== ownerKey(scope) || record.bindingKey !== bindingKey(scope)) fail('VALIDATION_NOT_FOUND', '当前账号下找不到真人核验会话。');
+    return record;
+  }
+  function publicValidation(record) {
+    return { id: record.id, status: record.status, expiresAt: record.expiresAt,
+      ...(['pending', 'unverified'].includes(record.status) && record.h5Link ? { h5Link: record.h5Link } : {}), errorCode: record.errorCode || '' };
+  }
+  async function checkedGroup(context, id) {
+    if (!/^group-[A-Za-z0-9-]{1,120}$/.test(id || '') || typeof context.binding.provider.getGroup !== 'function') fail('HUMAN_VALIDATION_REQUIRED', '该真人需先完成供应商活体核验与授权。');
+    const result = await context.binding.provider.getGroup({ scope: context.scope, id, expectedType: 'LivenessFace' });
+    if (!result || result.id !== id || result.projectName !== context.scope.projectName || result.groupType !== 'LivenessFace') fail('HUMAN_GROUP_UNVERIFIED', '真人组类型或所属项目未通过供应商验证。');
+    return id;
+  }
+  async function humanGroup(context, validationId) {
+    let id = context.binding.livenessGroupId;
+    if (validationId) {
+      const record = await context.tx(state => clone(validationRecord(state, context.scope, validationId)));
+      if (record.status !== 'verified' || !record.groupId) fail('HUMAN_VALIDATION_REQUIRED', '请由素材中的本人完成供应商活体核验与授权。');
+      id = record.groupId;
+    }
+    return checkedGroup(context, id);
+  }
+  async function createValidation(inputScope, { idempotencyKey } = {}) {
+    idempotencyKey = identifier(idempotencyKey, 'idempotencyKey');
+    return locked(inputScope, async context => {
+      if (typeof context.binding.provider.createValidationSession !== 'function') fail('HUMAN_VALIDATION_UNAVAILABLE', '当前供应商未配置真人核验接口。');
+      const key = createHash('sha256').update(JSON.stringify([ownerKey(context.scope), bindingKey(context.scope), idempotencyKey])).digest('hex');
+      const prepared = await context.tx(state => {
+        state.portraitSessions ||= {}; state.portraitSessionKeys ||= {};
+        if (state.portraitSessionKeys[key]) return { existing: true, record: clone(validationRecord(state, context.scope, state.portraitSessionKeys[key])) };
+        const id = 'vv_' + makeId(), record = { id, ownerKey: ownerKey(context.scope), bindingKey: bindingKey(context.scope),
+          status: 'creating', expiresAt: now() + 30 * 60 * 1000, createdAt: now(), updatedAt: now() };
+        state.portraitSessions[id] = record; state.portraitSessionKeys[key] = id;
+        return { existing: false, record: clone(record) };
+      });
+      if (prepared.existing) return publicValidation(prepared.record);
+      const callback = new URL(context.binding.validationCallbackUrl || 'https://shaozhuangai.com/api/video-assets/validation-callback');
+      if (callback.protocol !== 'https:' || callback.username || callback.password || callback.hash || callback.search ||
+          !['https://shaozhuangai.com', 'https://www.shaozhuangai.com'].includes(callback.origin)) fail('HUMAN_VALIDATION_UNAVAILABLE', '真人核验回调配置不可用。');
+      callback.searchParams.set('videoValidation', prepared.record.id);
+      try {
+        const result = await context.binding.provider.createValidationSession({ scope: context.scope, callbackUrl: callback.href });
+        let h5;
+        try { h5 = new URL(result && result.h5Link); } catch (_) {}
+        if (!result || typeof result.bytedToken !== 'string' || !result.bytedToken || !h5 || h5.protocol !== 'https:' || h5.username || h5.password || h5.hash) fail('HUMAN_VALIDATION_UNVERIFIED', '供应商真人核验会话回执无效。');
+        return context.tx(state => {
+          const record = validationRecord(state, context.scope, prepared.record.id);
+          record.status = 'pending'; record.bytedToken = result.bytedToken; record.h5Link = h5.href; record.updatedAt = now();
+          return publicValidation(record);
+        });
+      } catch (_) {
+        return context.tx(state => { const record = validationRecord(state, context.scope, prepared.record.id); record.status = 'uncertain'; record.errorCode = 'HUMAN_VALIDATION_UNVERIFIED'; return publicValidation(record); });
+      }
+    });
+  }
+  async function getValidation(inputScope, id) {
+    return locked(inputScope, context => context.tx(state => {
+      const record = validationRecord(state, context.scope, id);
+      if (['pending', 'unverified'].includes(record.status) && now() >= record.expiresAt) { record.status = 'expired'; delete record.bytedToken; delete record.h5Link; }
+      return publicValidation(record);
     }));
+  }
+  async function verifyValidation(inputScope, id) {
+    return locked(inputScope, async context => {
+      const record = await context.tx(state => clone(validationRecord(state, context.scope, id)));
+      if (record.status === 'verified') { await checkedGroup(context, record.groupId); return publicValidation(record); }
+      if (!['pending', 'unverified'].includes(record.status) || now() >= record.expiresAt) return context.tx(state => {
+        const item = validationRecord(state, context.scope, id); if (['pending', 'unverified'].includes(item.status)) item.status = 'expired';
+        if (item.status === 'expired') { delete item.bytedToken; delete item.h5Link; } return publicValidation(item);
+      });
+      if (typeof context.binding.provider.getValidationResult !== 'function') fail('HUMAN_VALIDATION_UNAVAILABLE', '当前供应商未配置真人核验结果查询。');
+      try {
+        const result = await context.binding.provider.getValidationResult({ scope: context.scope, bytedToken: record.bytedToken });
+        const groupId = await checkedGroup(context, result && result.groupId);
+        return context.tx(state => { const item = validationRecord(state, context.scope, id); item.status = 'verified'; item.groupId = groupId; item.verifiedAt = now(); item.errorCode = ''; delete item.bytedToken; delete item.h5Link; return publicValidation(item); });
+      } catch (_) {
+        // No undocumented pending/error code is treated as proof of certification.
+        return context.tx(state => { const item = validationRecord(state, context.scope, id); item.status = 'unverified'; item.errorCode = 'HUMAN_VALIDATION_UNVERIFIED'; return publicValidation(item); });
+      }
+    });
+  }
+  async function checkedReferences(context, assetIds) {
+    if (!Array.isArray(assetIds) || !assetIds.length || assetIds.length > 50 || new Set(assetIds).size !== assetIds.length) fail('LEASE_ASSETS_INVALID', '任务素材引用不能为空或重复。');
+    const records = await context.tx(state => assetIds.map(id => clone(ownedRecord(state, context.scope, id))));
+    const references = [];
+    for (const record of records) {
+      if (!record.providerAssetId || record.status !== 'active') fail('ASSET_NOT_ACTIVE', '所有图片审核成功后才可生成视频。');
+      if (record.materialType === 'real') await checkedGroup(context, record.providerGroupId);
+      let remote;
+      try { remote = normalizeProviderRecord(await context.binding.provider.get({ scope: context.scope, id: record.providerAssetId, groupId: record.providerGroupId, groupType: record.groupType || 'AIGC' })); }
+      catch (_) { fail('PROVIDER_STATUS_UNAVAILABLE', '生成前无法重新确认素材审核状态。'); }
+      if (remote.id !== record.providerAssetId || remote.groupId && record.providerGroupId && remote.groupId !== record.providerGroupId) fail('PROVIDER_ASSET_MISMATCH', '生成前素材所属分组未通过核验。');
+      await context.tx(state => { const item = ownedRecord(state, context.scope, record.id); item.status = remote.status; item.updatedAt = now(); });
+      if (remote.status !== 'active') fail('ASSET_NOT_ACTIVE', '图片尚未通过供应商审核，视频未提交。');
+      references.push({ id: record.id, url: 'asset://' + record.providerAssetId });
+    }
+    return references;
+  }
+  async function resolveReferences(inputScope, assetIds) { return locked(inputScope, context => checkedReferences(context, assetIds)); }
+  async function capabilities(inputScope) {
+    const context = await resolve(inputScope);
+    const provider = context.binding.provider;
+    let callback;
+    try { callback = new URL(context.binding.validationCallbackUrl || 'https://shaozhuangai.com/api/video-assets/validation-callback'); } catch (_) {}
+    return { portraitAvailable: !!(callback && callback.protocol === 'https:' && !callback.username && !callback.password && !callback.hash && !callback.search &&
+      ['https://shaozhuangai.com', 'https://www.shaozhuangai.com'].includes(callback.origin) &&
+      ['createValidationSession', 'getValidationResult', 'getGroup'].every(key => typeof provider[key] === 'function')) };
   }
 
   async function releaseLease(inputScope, { taskId, terminalStatus } = {}) {
@@ -373,7 +496,8 @@ function createAssetService({ repository, providerResolver, now = Date.now, make
     }));
   }
 
-  return Object.freeze({ ingest, list, refresh, setBound, remove, preview, acquireLease, releaseLease });
+  return Object.freeze({ ingest, list, refresh, setBound, remove, preview, acquireLease, releaseLease,
+    createValidation, getValidation, verifyValidation, resolveReferences, capabilities });
 }
 
 module.exports = { createAssetService, AssetError, freshState, bindingKey, providerLockKey, ownerKey, AUTOMATIC_LIMIT, BOUND_LIMIT, MAX_IMAGE_BYTES };

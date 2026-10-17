@@ -119,7 +119,7 @@ export function safeVideoUrl(value: unknown, hosts: string[]): string | null {
   } catch { return null; }
 }
 export function nativeTaskId(value: unknown): value is string { return token(value, 200); }
-export function validateNativeRequest(body: Record<string, unknown>, model: NativeVideoModel) {
+export function validateNativeRequest(body: Record<string, unknown>, model: NativeVideoModel, trustedAssetUris: ReadonlySet<string> = new Set()) {
   const allowed = new Set(["expectedAccount", "model", "content", "duration", "resolution", "ratio", "generate_audio", "omni_reference_task_type", "output_format"]);
   if (Object.keys(body).some(key => !allowed.has(key)) || !model.durations.includes(Number(body.duration)) || typeof body.duration !== "number" ||
     !model.resolutions.includes(String(body.resolution)) || !model.ratios.includes(String(body.ratio)) ||
@@ -149,7 +149,10 @@ export function validateNativeRequest(body: Record<string, unknown>, model: Nati
     const raw = asset.url;
     // The platform credential is shared. Opaque provider asset IDs have no
     // tenant ownership mapping here, so knowledge of an ID is not authority.
-    if (raw.startsWith("asset://")) throw new NativeVideoError("NATIVE_VIDEO_ASSET_UNSUPPORTED", "平台视频暂不接受未绑定当前账号的供应商素材编号");
+    if (raw.startsWith("asset://")) {
+      if (type !== "image_url" || !trustedAssetUris.has(raw)) throw new NativeVideoError("NATIVE_VIDEO_ASSET_UNSUPPORTED", "平台视频暂不接受未绑定当前账号的供应商素材编号");
+      continue;
+    }
     if (raw.startsWith("data:")) {
       const matched = /^data:([^;,]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(raw);
       const mime = matched?.[1] || ""; const encoded = matched?.[2] || "";

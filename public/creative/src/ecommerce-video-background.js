@@ -21,12 +21,15 @@
     CANCEL: 'VIDEO_STUDIO_CANCEL',
     RETRY: 'VIDEO_STUDIO_RETRY',
     RESULT: 'VIDEO_STUDIO_RESULT',
+    ASSET_PREPARE: 'VIDEO_STUDIO_ASSET_PREPARE',
+    PORTRAIT_START: 'VIDEO_STUDIO_PORTRAIT_START',
     CONFIG_GET: 'VIDEO_STUDIO_CONFIG_GET',
     CONFIG_SAVE: 'VIDEO_STUDIO_CONFIG_SAVE'
   });
   var KNOWN_MESSAGES = Object.keys(MESSAGE_TYPES).map(function (key) { return MESSAGE_TYPES[key]; });
   var CONFIG_KEY = 'sz_ecommerce_video_config_v1';
   var TASK_KEY = 'sz_ecommerce_video_tasks_v1';
+  var ASSET_PREP_KEY = 'sz_ecommerce_video_asset_preparation_v1';
   var ARK_LIMITS = Object.freeze({
     bodyBytes: 64 * 1024 * 1024,
     imageBytes: 30 * 1024 * 1024,
@@ -529,6 +532,7 @@
     var startInflight = new Map();
     var pollInflight = new Map();
     var cancelInflight = new Map();
+    var assetPreparationInflight = new Map();
     var nativeCreditPhases = new Map();
 
     function notifyNativeVideoCreditsChanged(task) {
@@ -589,6 +593,158 @@
       else if (!apiKey) throw error('CREDENTIALS_UNAVAILABLE', '当前账号未配置视频供应商 API Key。');
       return { apiKey: apiKey, config: cfg, accountKey: accountKey };
     }
+    function assetEndpoint(path) {
+      return nativeEndpoint('').replace('/api/creative/native-video', '/api/video-assets') + (path || '');
+    }
+    async function sha256(value) {
+      var cryptoObject = env.crypto || root.crypto;
+      if (!cryptoObject || !cryptoObject.subtle) throw error('ASSET_HASH_UNAVAILABLE', '安全校验不可用，素材尚未上传。');
+      var bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+      var digest = new Uint8Array(await cryptoObject.subtle.digest('SHA-256', bytes));
+      return Array.from(digest).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+    }
+    async function assetBinding(accountKey, config) {
+      if (config.adapter !== 'ark') throw error('ASSET_PROVIDER_UNSUPPORTED', '当前视频供应商未提供自动报备接口。');
+      var creds = await credentials(accountKey, config.provider);
+      var selected;
+      if (isNativeConfig(config)) selected = { provider: 'shaozhuang-native', native: true };
+      else {
+        var origin = new URL(config.createEndpoint).origin;
+        if (origin !== 'https://ark.cn-beijing.volces.com') throw error('ASSET_PROVIDER_UNSUPPORTED', '自动报备仅支持当前绑定的火山方舟账号。');
+        selected = { provider: config.provider, apiOrigin: origin, credentialFingerprint: await sha256(origin + '\n' + creds.apiKey) };
+      }
+      return { accountKey: accountKey, selection: selected, fingerprint: await sha256(JSON.stringify(selected)),
+        headers: { 'Content-Type': 'application/json', 'x-video-account': encodeURIComponent(accountKey), 'x-video-binding': encodeURIComponent(JSON.stringify(selected)) } };
+    }
+    async function assetApi(binding, path, method, body, taskService) {
+      if (await resolveAccount() !== binding.accountKey) throw error('ACCOUNT_CHANGED', '账号已切换，素材操作已停止。');
+      var current = await assetBinding(binding.accountKey, await getConfigFor(binding.accountKey));
+      if (current.fingerprint !== binding.fingerprint) throw error('PROVIDER_BINDING_MISMATCH', '视频供应账号已变化，素材操作已停止。');
+      var response = await requestWithDeadline(env, { fallbackMs: 40000, code: 'ASSET_REQUEST_UNCERTAIN', message: '素材请求尚未确认，请查询原记录，勿重复上传。', stateUncertain: false }, async function (signal) {
+        return env.fetch(taskService ? assetEndpoint(path).replace('/api/video-assets', '/api/video-tasks') : assetEndpoint(path), { method: method || 'GET', headers: binding.headers, credentials: 'same-origin', cache: 'no-store', signal: signal,
+          body: body === undefined ? undefined : JSON.stringify(body) });
+      });
+      var parsed;
+      try { parsed = await response.json(); } catch (_) { throw error('ASSET_REQUEST_UNCERTAIN', '素材服务回执无法核验，请查询原记录。'); }
+      if (await resolveAccount() !== binding.accountKey) throw error('ACCOUNT_CHANGED', '素材操作后账号已切换，请切回原账号查询。');
+      if (!response.ok || !parsed || parsed.ok !== true) {
+        var code = text(parsed && parsed.error && parsed.error.code, 100) || 'ASSET_REQUEST_UNCERTAIN';
+        var known = { ASSET_SERVICE_NOT_CONFIGURED: '当前账号尚未配置自动报备服务，请由管理员在安全配置入口完成 AK/SK 和供应商项目绑定。',
+          PROVIDER_BINDING_MISMATCH: '视频与报备服务的账号或项目不匹配，请联系管理员。', AUTH_REQUIRED: '请重新登录。', ACCOUNT_CHANGED: '账号已切换，请刷新。',
+          ASSET_RATE_LIMIT: '素材送审频率已达限制，请稍后查询原记录。', ASSET_REVIEW_FAILED: '素材审核未通过，请查看素材类型及本人授权。',
+          VALIDATION_REQUIRED: '真人人像须由本人完成官方核验后才能自动报备。', VALIDATION_PENDING: '本人认证尚未完成，请先完成官方核验。' };
+        known.HUMAN_VALIDATION_REQUIRED = known.VALIDATION_REQUIRED;
+        known.HUMAN_GROUP_UNVERIFIED = '真人素材组尚未由供应商确认可用，请完成本人认证。';
+        var definitive = ['ASSET_SERVICE_NOT_CONFIGURED', 'PROVIDER_BINDING_MISMATCH', 'AUTH_REQUIRED', 'ACCOUNT_CHANGED', 'ASSET_RATE_LIMIT', 'ASSET_NOT_ACTIVE', 'ASSET_NOT_FOUND', 'REQUEST_INVALID'].indexOf(code) >= 0;
+        throw error(code, known[code] || '素材暂不可用，请查询原记录或联系管理员。', taskService && !definitive ? { stateUncertain: true } : { providerSubmitted: false, definitiveFailure: true });
+      }
+      var data = parsed.data || {};
+      if (data.accountKey !== binding.accountKey) throw error('ACCOUNT_CHANGED', '素材回执不属于当前账号。');
+      return data;
+    }
+    async function assetTaskApi(binding, path, method, body) {
+      var result = await assetApi(binding, path, method, body, true), task = result.task;
+      if (!task || !/^vt_[A-Za-z0-9_-]+$/.test(task.id || '')) throw error('ASSET_TASK_UNCERTAIN', '视频任务回执尚未确认，请查询原请求。', { stateUncertain: true });
+      return Object.assign({}, task, { stateUncertain: task.stateUncertain === true || task.status === 'uncertain' });
+    }
+    async function prepState(accountKey, fingerprint, update) {
+      return serial(async function () {
+        var value = unwrapStored(await storage.get(ASSET_PREP_KEY), ASSET_PREP_KEY);
+        if (!plain(value) || !plain(value.accounts)) value = { version: 1, accounts: {} };
+        var key = accountKey + ':' + fingerprint;
+        if (!plain(value.accounts[key])) value.accounts[key] = { assets: {} };
+        var state = value.accounts[key];
+        var result = update ? update(state) : clone(state);
+        if (update) { var saved = {}; saved[ASSET_PREP_KEY] = value; await storage.set(saved); }
+        return result;
+      });
+    }
+    async function portraitStartOnce(message, sender) {
+      var accountKey = await resolveAccount(sender), config = await getConfigFor(accountKey), binding = await assetBinding(accountKey, config);
+      var saved = await prepState(accountKey, binding.fingerprint);
+      var requestedKey = text(message.idempotencyKey, 160);
+      if (!/^[A-Za-z0-9_.:-]{8,160}$/.test(requestedKey)) requestedKey = '';
+      if (saved.validationId) {
+        var previous = (await assetApi(binding, '/validation-sessions/' + encodeURIComponent(saved.validationId))).validation;
+        if (!previous) throw error('ASSET_REQUEST_UNCERTAIN', '原本人认证会话尚未确认，请查询原记录。');
+        if (['expired', 'failed'].indexOf(previous.status) < 0 || !requestedKey || requestedKey === saved.validationKey) {
+          return { accountKey: accountKey, authorization: { sessionId: previous.id, url: previous.h5Link || '', status: previous.status } };
+        }
+        saved.validationKey = requestedKey; saved.validationId = '';
+        await prepState(accountKey, binding.fingerprint, function (state) { state.validationKey = requestedKey; delete state.validationId; });
+      }
+      if (!saved.validationKey) {
+        saved.validationKey = requestedKey || 'portrait-' + id();
+        await prepState(accountKey, binding.fingerprint, function (state) { state.validationKey = saved.validationKey; });
+      }
+      var data = await assetApi(binding, '/validation-sessions', 'POST', { idempotencyKey: saved.validationKey });
+      var validation = data.validation || data.session || data;
+      if (!validation.id) throw error('ASSET_REQUEST_UNCERTAIN', '本人认证会话尚未核验，请查询原记录。');
+      await prepState(accountKey, binding.fingerprint, function (state) { state.validationId = validation.id; });
+      return { accountKey: accountKey, authorization: { sessionId: validation.id, url: validation.h5Link || '', status: validation.status } };
+    }
+    async function prepareAssetsOnce(message, sender) {
+      var accountKey = await resolveAccount(sender), config = await getConfigFor(accountKey), binding = await assetBinding(accountKey, config);
+      if (message.rightsConfirmed !== true) throw error('ASSET_RIGHTS_REQUIRED', '请先确认素材权利及向当前供应商报备。');
+      if (!Array.isArray(message.assets) || !message.assets.length || message.assets.length > 30) throw error('ASSET_REQUEST_INVALID', '请选择需要报备的图片。');
+      var results = [], authorization = null;
+      for (var asset of message.assets) {
+        var clientId = text(asset.id, 260), kind = asset.registrationKind;
+        if (!clientId || ['virtual', 'real'].indexOf(kind) < 0) throw error('ASSET_CLASSIFICATION_REQUIRED', '请先明确选择 AI 虚拟人像或真人人像，系统不会代为判断人物身份。');
+        var saved = await prepState(accountKey, binding.fingerprint), checkpoint = saved.assets[clientId];
+        var libraryId = text(asset.libraryId || checkpoint && checkpoint.libraryId, 200);
+        var validationId = text(asset.portraitSessionId || message.portraitSessionId || saved.validationId, 200);
+        if (kind === 'real' && !libraryId) {
+          if (!validationId) {
+            results.push({ id: clientId, status: 'needs_authorization', registrationKind: kind, uploadRequired: true, providerSubmitted: false }); continue;
+          }
+          var verified = await assetApi(binding, '/validation-sessions/' + encodeURIComponent(validationId) + '/verify', 'POST', {});
+          var validation = verified.validation || verified.session || verified;
+          if (validation.status !== 'verified' && validation.status !== 'active') {
+            authorization = { sessionId: validationId, url: validation.h5Link || '', status: validation.status };
+            results.push({ id: clientId, status: 'needs_authorization', registrationKind: kind, uploadRequired: !checkpoint, providerSubmitted: checkpoint ? undefined : false }); continue;
+          }
+        }
+        var result;
+        if (libraryId) result = (await assetApi(binding, '/' + encodeURIComponent(libraryId))).asset;
+        else if (checkpoint) {
+          var listed = await assetApi(binding, '');
+          result = (listed.assets || []).find(function (row) { return row.sha256 === checkpoint.sha256 && row.materialType === kind; });
+          if (!result) { results.push({ id: clientId, status: 'uncertain', message: '原上传回执未确认，系统没有重复上传。', registrationKind: kind }); continue; }
+        } else {
+          if (typeof asset.dataUrl !== 'string' || !/^data:image\/(png|jpeg|webp);base64,/.test(asset.dataUrl)) throw error('ASSET_IMAGE_REQUIRED', '首次报备需要原始图片。');
+          var parts = asset.dataUrl.split(','), binary = root.atob ? root.atob(parts[1]) : Buffer.from(parts[1], 'base64').toString('binary');
+          var bytes = Uint8Array.from(binary, function (c) { return c.charCodeAt(0); }), digest = await sha256(bytes);
+          await prepState(accountKey, binding.fingerprint, function (state) { state.assets[clientId] = { sha256: digest, kind: kind, libraryId: '', status: 'creating' }; });
+          try {
+            result = (await assetApi(binding, '', 'POST', { dataUrl: asset.dataUrl, mime: asset.mimeType || parts[0].slice(5).split(';')[0],
+              name: text(asset.name, 64), sha256: digest, materialType: kind, validationId: validationId || undefined })).asset;
+          } catch (cause) {
+            // A definitive capability rejection happened before any provider mutation.
+            // Only those responses permit a later first upload after configuration.
+            if (['ASSET_SERVICE_NOT_CONFIGURED', 'PROVIDER_BINDING_MISMATCH', 'AUTH_REQUIRED', 'ASSET_RATE_LIMIT', 'HUMAN_VALIDATION_REQUIRED', 'HUMAN_GROUP_UNVERIFIED', 'VALIDATION_NOT_FOUND', 'MATERIAL_TYPE_REQUIRED'].indexOf(cause.code) >= 0) {
+              await prepState(accountKey, binding.fingerprint, function (state) { delete state.assets[clientId]; });
+              cause.details = Object.assign({}, cause.details || {}, { uploadRequired: true, providerSubmitted: false, assetId: clientId });
+            }
+            throw cause;
+          }
+        }
+        if (!result || !/^va_[A-Za-z0-9_-]+$/.test(result.id)) throw error('ASSET_REQUEST_UNCERTAIN', '素材编号尚未核验，系统没有重复上传。');
+        await prepState(accountKey, binding.fingerprint, function (state) { state.assets[clientId] = Object.assign({}, state.assets[clientId], { libraryId: result.id, status: result.status, kind: kind }); });
+        results.push({ id: clientId, libraryId: result.id, status: result.status === 'active' && result.canUse === true ? 'active'
+          : result.status === 'failed' ? 'failed' : result.status === 'uncertain' ? 'uncertain' : 'preparing', message: result.message || '', registrationKind: kind, portraitSessionId: validationId });
+      }
+      return { accountKey: accountKey, assets: results, authorization: authorization };
+    }
+    async function assetOperation(kind, message, sender, work) {
+      var account = await resolveAccount(sender);
+      var key = JSON.stringify([account, kind, kind === 'portrait' ? '' : (message.assets || []).map(function (a) { return [a.id, a.registrationKind, a.libraryId || '', a.portraitSessionId || '']; })]);
+      if (assetPreparationInflight.has(key)) return assetPreparationInflight.get(key);
+      var promise = work(message, sender); assetPreparationInflight.set(key, promise);
+      try { return await promise; } finally { assetPreparationInflight.delete(key); }
+    }
+    function portraitStart(message, sender) { return assetOperation('portrait', message, sender, portraitStartOnce); }
+    function prepareAssets(message, sender) { return assetOperation('assets', message, sender, prepareAssetsOnce); }
     async function readConfigRoot() {
       var raw = unwrapStored(await storage.get(CONFIG_KEY), CONFIG_KEY);
       return plain(raw) && plain(raw.accounts) ? raw : { version: 1, accounts: {} };
@@ -761,6 +917,10 @@
       for (var g of ['images', 'videos', 'audios']) {
         for (var asset of request[g]) {
           if (asset.remoteUrl) {
+            if (/^library:/i.test(asset.remoteUrl) && (!asset.registration || asset.registration.accountKey !== await resolveAccount() ||
+                asset.registration.status !== 'active' || asset.remoteUrl !== 'library://' + asset.registration.libraryId)) {
+              throw error('ASSET_REGISTRATION_INVALID', '报备素材的账号或审核记录不匹配，请重新核对素材状态。');
+            }
             if (platformVideo && /^asset:/i.test(asset.remoteUrl)) throw error('NATIVE_VIDEO_ASSET_UNSUPPORTED', '平台视频仅接受 HTTPS 素材地址，不支持未绑定当前账号的供应商素材编号。');
             groups[g].push(asset);
           }
@@ -796,6 +956,21 @@
         throw error('PLATFORM_VIDEO_CONFIG_CHANGED', '视频供应配置已变化，本次尚未提交，请重新核对方案。', { providerSubmitted: false, definitiveFailure: true });
       }
       creds = refreshedCredentials;
+      var libraryImages = assets.images.some(function (item) { return /^library:\/\//.test(item.remoteUrl || ''); });
+      if (libraryImages && assets.images.some(function (item) { return /^asset:/i.test(item.remoteUrl || ''); })) throw error('ASSET_REFERENCE_MIXED', '手工素材编号不能与自动报备素材混合，请恢复原图并完成报备。');
+      if (libraryImages && !isNativeConfig(config)) {
+        var binding = await assetBinding(creds.accountKey, config);
+        var receipt = await assetApi(binding, '', 'GET'); // Fresh entitlement check before the only video POST.
+        if (receipt.available !== true) throw error('ASSET_SERVICE_NOT_CONFIGURED', '当前账号自动报备尚未开通，视频未提交。');
+        var serviceBody = arkBody(request, model, assets);
+        var createdTask;
+        try { createdTask = await assetTaskApi(binding, '', 'POST', { idempotencyKey: 'report-' + await sha256(idemKey), body: serviceBody }); }
+        catch (cause) {
+          if (!(cause.details && cause.details.definitiveFailure === true)) throw uncertainCreate('视频回执尚未确认，系统只查询原请求，不会重新提交。');
+          throw cause;
+        }
+        return { providerTaskId: createdTask.id, body: createdTask };
+      }
       var requestInit;
       if (config.adapter === 'ark') {
         var body = arkBody(request, model, assets);
@@ -873,6 +1048,11 @@
       return { providerTaskId: remoteId, body: body };
     }
     async function adapterStatus(config, creds, task) {
+      if (task._assetService === true) {
+        var managed = await assetTaskApi(await assetBinding(task.accountKey, config), '/' + encodeURIComponent(task.providerTaskId), 'GET');
+        return { status: managed.status === 'uncertain' ? 'unknown' : canonicalProviderStatus(managed.status), providerState: managed.providerState || managed.status,
+          resultUrls: managed.resultUrls || [], message: managed.message || managed.error || '', errorCode: managed.errorCode || '', progress: null };
+      }
       var body = await requestWithDeadline(env, {
         envKey: 'statusTimeoutMs',
         fallbackMs: REQUEST_TIMEOUT_MS.status,
@@ -907,6 +1087,11 @@
       };
     }
     async function adapterCancel(config, creds, task) {
+      if (task._assetService === true) {
+        var managed = await assetTaskApi(await assetBinding(task.accountKey, config), '/' + encodeURIComponent(task.providerTaskId), 'DELETE');
+        if (managed.status !== 'cancelled') throw error('CANCEL_UNCONFIRMED', '供应商取消尚未确认，原任务保留。');
+        return true;
+      }
       if (!config.cancelEndpoint) throw error('CANCEL_UNSUPPORTED', '当前供应商未配置可验证的取消端点，不能伪造已取消。');
       await requestWithDeadline(env, {
         envKey: 'cancelTimeoutMs',
@@ -989,6 +1174,7 @@
         var request = C.normalizeRequest(requestBody, { stage: 'submit' });
         var production = productionGuard(message.production, request);
         var config = await getConfigFor(accountKey); var model = C.resolveModel(request.productKey, config.providerModels);
+        var assetIdempotency = request.images.some(function (image) { return /^library:\/\//.test(image.remoteUrl || ''); }) ? 'report-' + await sha256(idemKey) : '';
         var requestFingerprint = C.fingerprint(production ? { request: request, production: production } : request);
         var idemFingerprint = C.fingerprint(idemKey, 'idem_');
         var created = await serial(async function () {
@@ -1011,6 +1197,8 @@
             status: 'queued', phase: 'queued', productKey: model.productKey, displayName: model.displayName,
             providerModel: model.providerModel, adapter: config.adapter, provider: config.provider,
             _platformVideo: isNativeConfig(config), _dispatchConfig: isNativeConfig(config) ? publicConfig(config) : null,
+            _assetService: !isNativeConfig(config) && request.images.some(function (image) { return /^library:\/\//.test(image.remoteUrl || ''); }),
+            _assetIdempotencyKey: assetIdempotency,
             _nativeIdempotencyKey: isNativeConfig(config) ? idemKey : '',
             requestFingerprint: requestFingerprint, idempotencyFingerprint: idemFingerprint,
             providerTaskId: '', resultUrls: [], createdAt: timestamp, updatedAt: timestamp,
@@ -1052,6 +1240,14 @@
         var task = await readTask(accountKey, requestedTaskId);
         notifyNativeVideoCreditsChanged(task);
         if (C.isTerminal(task.status)) return { task: C.publicTask(task), idempotent: true };
+        if (!task.providerTaskId && task._assetService === true && task._assetIdempotencyKey) {
+          var recoveredTask = await assetTaskApi(await assetBinding(accountKey, await getConfigFor(accountKey)), '/by-key/' + encodeURIComponent(task._assetIdempotencyKey), 'GET');
+          task = await mutateTask(accountKey, requestedTaskId, function (current) {
+            current.providerTaskId = recoveredTask.id;
+            if (current.status === 'unknown' || current.status === 'submitting') current = C.transitionTask(current, 'processing', { now: nowFrom(env) });
+            return current;
+          });
+        }
         if (!task.providerTaskId && task._platformVideo === true && task._nativeIdempotencyKey) {
           var recoveryResponse = await requestWithDeadline(env, { envKey: 'statusTimeoutMs', fallbackMs: REQUEST_TIMEOUT_MS.status,
             code: 'PLATFORM_TASK_RECOVERY_TIMEOUT', message: '原视频任务查询超时，仍保留待核对。' }, function (signal) {
@@ -1202,6 +1398,7 @@
       var accountKey = await resolveAccount(sender); var config = await getConfigFor(accountKey);
       var analysis = await analysisAvailability(accountKey, config.provider);
       var credentialAvailable = false;
+      var assetReporting = { available: false, portraitAvailable: false, message: '自动报备尚未配置，请由管理员打开 /management/video-materials 完成安全配置。' };
       var credentialStatus = { state: 'unavailable', code: 'CREDENTIAL_CHECK_UNAVAILABLE', message: '暂时无法验证当前账号的 API 配置。' };
       try {
         var checkedCredentials = await credentials(accountKey, config.provider);
@@ -1220,6 +1417,13 @@
         } else if (/account_changed/.test(code)) {
           credentialStatus = { state: 'account_changed', code: 'ACCOUNT_CHANGED', message: '账号已变更，请重新确认 API 配置。' };
         }
+      }
+      if (credentialAvailable && root.location && /^https:/.test(root.location.protocol || '')) {
+        try {
+          var reporting = await assetApi(await assetBinding(accountKey, config), '');
+          assetReporting = { available: reporting.available === true, portraitAvailable: reporting.available === true && !!(reporting.capabilities && reporting.capabilities.portraitAvailable),
+            message: reporting.available === true ? '已连接当前账号的自动报备服务；人像须审核通过后生成。' : assetReporting.message };
+        } catch (_) { /* Missing grants never switch supplier or grant a second POST. */ }
       }
       return {
         contractVersion: C.CONTRACT_VERSION, accountKey: accountKey,
@@ -1247,6 +1451,7 @@
             maxDuration: Math.max.apply(Math, limits.durations), resolutions: limits.resolutions, ratios: limits.ratios }) });
         }),
         capabilities: {
+          assetReporting: assetReporting,
           remoteAssets: true,
           localAssets: config.adapter === 'generic-multipart' ? ['image', 'video', 'audio'] : ['image-data-url', 'audio-data-url'],
           analysisOnlyReferenceVideo: true,
@@ -1281,6 +1486,8 @@
         else if (message.type === MESSAGE_TYPES.CANCEL) data = await cancel(message, sender);
         else if (message.type === MESSAGE_TYPES.RETRY) data = await retry(message, sender);
         else if (message.type === MESSAGE_TYPES.RESULT) data = await result(message, sender);
+        else if (message.type === MESSAGE_TYPES.ASSET_PREPARE) data = await prepareAssets(message, sender);
+        else if (message.type === MESSAGE_TYPES.PORTRAIT_START) data = await portraitStart(message, sender);
         else throw error('MESSAGE_UNSUPPORTED', '不支持的视频工作台消息。');
         return { ok: true, type: message.type, payload: Object.assign({ schemaVersion: 1, requestId: requestId }, data || {}) };
       } catch (cause) { return responseError(cause, message.type, requestId); }

@@ -17,7 +17,15 @@ class Node {
   setAttribute() {}
   addEventListener(name: string, fn: () => unknown) { this.listeners.set(name, fn); }
 }
-type Run = Record<string, any>;
+type Attempt = { requestId: string; reservedYuan: number; released: boolean; details?: { stateUncertain: boolean } };
+type ShotRun = { id: string; status: string; attempts: Attempt[]; stateUncertain?: boolean };
+type Run = {
+  id: string; taskId: string; purpose: string; accountKey: string; status: string; durationSeconds: number; prompt: string;
+  plan: { aiSeconds: number; options: { mode: string; budgetYuan: number; maxAttempts: number };
+    shots: Array<{ id: string; index: number; kind: string; durationSeconds: number; productKey: string; estimatedYuan: number }> };
+  shotRuns: ShotRun[]; stateUncertain?: boolean; narrationRuns?: Array<{ status: string; stateUncertain: boolean }>;
+  newPlanRequestedAt?: string;
+};
 function harness() {
   const html = readFileSync(new URL("../../public/creative/labs/ecommerce-video-studio/video-studio.html", import.meta.url), "utf8");
   const nodes = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Node()]));
@@ -26,7 +34,7 @@ function harness() {
   const store = { saveRun: vi.fn(async (run: Run) => { saved.set(run.id, structuredClone(run)); return run; }),
     listRuns: vi.fn(async () => [...saved.values()].map(run => structuredClone(run))),
     removeAsset: vi.fn(), saveDraft: vi.fn() };
-  const messages = vi.fn((message: any, done: (reply: unknown) => void) => done({ ok: true, payload: {
+  const messages = vi.fn((_message: { payload: { requestId: string } }, done: (reply: unknown) => void) => done({ ok: true, payload: {
     task: { id: `test-${messages.mock.calls.length}`, status: "failed", providerSubmitted: false,
       error: { code: "TEST_ONLY_REJECTION", message: "No supplier call is made by this fixture." } }
   } }));
@@ -39,11 +47,12 @@ function harness() {
   for (const file of ["video-studio-contract.js", "video-production.js", "video-studio.js"]) {
     vm.runInContext(readFileSync(new URL(`../../public/creative/labs/ecommerce-video-studio/${file}`, import.meta.url), "utf8"), context);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- This test boundary loads the untyped browser API from a separate VM realm.
   const api = context.SZEcommerceVideoStudioTesting as any;
   api.cacheDom();
   Object.assign(api.state, { accountKey: "tenant:alice", backendConnected: true, credentialAvailable: true,
     prompt: "商品细节展示", productionOptions: { mode: "quality", totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 17, maxAttempts: 1 } });
-  api.state.modelCatalog.find((model: any) => model.productKey === "seedance-2.0").configured = true;
+  api.state.modelCatalog.find((model: { productKey: string }) => model.productKey === "seedance-2.0").configured = true;
   api.state.settings.creativeRoute = "free_direct";
   function run(): Run {
     return { id: "old-plan", taskId: "old-plan", purpose: "production", accountKey: "tenant:alice", status: "failed",

@@ -1,0 +1,33 @@
+{
+  "sourceSigningKeyRef": "VIDEO_ASSET_SOURCE_SIGNING_KEY",
+  "validationCallbackUrl": "https://shaozhuangai.com/api/video-assets/validation-callback",
+  "accounts": [
+    {
+      "providerAccountId": "replace-with-verified-physical-ark-account-id",
+      "enabled": false,
+      "mode": "platform",
+      "projectName": "default",
+      "accessKeyIdRef": "VIDEO_ASSET_ARK_ACCESS_KEY_ID",
+      "secretAccessKeyRef": "VIDEO_ASSET_ARK_SECRET_ACCESS_KEY",
+      "apiKeyRef": "VIDEO_ASSET_ARK_VIDEO_API_KEY",
+      "allowOrdinaryImages": true,
+      "cloudLimit": null,
+      "externalUsed": null,
+      "createQpm": 3,
+      "providerModels": {
+        "seedance-2.0-mini": "doubao-seedance-2-0-mini-260615",
+        "seedance-2.0": "doubao-seedance-2-0-260128"
+      }
+    }
+  ],
+  "grants": [
+    {
+      "tenantId": "replace-with-current-tenant-id",
+      "userId": "replace-with-current-user-id",
+      "provider": "doubao",
+      "providerAccountId": "replace-with-verified-physical-ark-account-id",
+      "enabled": false,
+      "platformGrantEnabled": false
+    }
+  ]
+}

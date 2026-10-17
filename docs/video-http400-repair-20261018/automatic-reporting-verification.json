@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-18",
+  "scope": "tenant-isolated automatic material registration candidate",
+  "userInstruction": "AK/SK尚未配置，先做好功能和安全配置入口",
+  "deployed": false,
+  "productionMigrationExecuted": false,
+  "credentialsConfigured": false,
+  "platformWildcardGrantEnabled": false,
+  "supplierRegistrationExecuted": false,
+  "entryPoint": "/management/video-materials",
+  "checks": {
+    "vitest": {
+      "files": 13,
+      "passed": 298,
+      "skipped": 53,
+      "skipReason": "disposable PostgreSQL integration environment absent"
+    },
+    "nodeTests": {
+      "passed": 75
+    },
+    "typecheck": "passed",
+    "productionBuild": "passed; existing warnings remain",
+    "syntax": "passed",
+    "diffWhitespace": "passed",
+    "independentReview": "passed"
+  },
+  "implemented": [
+    "explicit ordinary/virtual/real classification",
+    "same binding hash and tenant/user isolation",
+    "persistent upload and validation checkpoints",
+    "server verified LivenessFace group",
+    "Active-only generation",
+    "bounded 60-second polling of original records",
+    "mixed ordinary and library reference support",
+    "native wallet ownership resolution and durable lease protection",
+    "explicit platform wildcard grants; BYOK wildcard denied",
+    "read-only administrator readiness entry; secrets never accepted in browser",
+    "disabled server configuration example and read-only preflight",
+    "database migration prepared, not applied"
+  ],
+  "remainingAcceptance": [
+    "configure server AK/SK and matching API Key/project",
+    "review grant and actual cloud quota",
+    "apply migration and deploy candidate in deployment window",
+    "real supplier asset moderation, human validation, two-tenant isolation and native wallet end-to-end acceptance"
+  ],
+  "productionEvidenceSeparate": {
+    "existingStaticRepair": "previous r3 remains deployed",
+    "ordinaryProductVideoRun": "production-0fe5e9c4-13c9-4a34-81e2-8c32852928d5",
+    "ordinaryProductVideoStatus": "in progress after explicit new plan using two product images; no portrait reference"
+  }
+}

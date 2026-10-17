@@ -2239,6 +2239,12 @@ input[type="range"]::-moz-range-thumb {
 .production-shot-actions { display:flex; gap:8px; flex-wrap:wrap; }
 .production-panel .panel-heading { gap:14px; flex-wrap:wrap; }
 .trusted-portrait-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.asset-reporting { display:grid; gap:7px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+.asset-reporting label { display:grid; gap:5px; font-size:11px; color:var(--muted); }
+.asset-material-select { width:100%; min-width:0; }
+.asset-reporting-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+.asset-reporting-status, .asset-reporting-config { white-space:normal; line-height:1.6; overflow-wrap:anywhere; }
+.portrait-authorization-link { font-size:11px; line-height:1.6; overflow-wrap:anywhere; }
 
 /* History presentation and media teardown; source assets remain unchanged. */
 .history-controls { flex-wrap:wrap; justify-content:flex-end; }

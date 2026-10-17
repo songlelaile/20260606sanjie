@@ -35,6 +35,7 @@ describe("precise production routes with their own authentication", () => {
   it.each([
     "/api/video-assets", "/api/video-assets/asset_abcdefgh", "/api/video-assets/source/" + "a".repeat(32),
     "/api/video-tasks", "/api/video-tasks/task_abcdefgh", "/api/video-tasks/by-key/request_abcdefgh",
+    "/api/video-assets/validation-sessions/vv_abcdefgh", "/api/video-assets/validation-sessions/vv_abcdefgh/verify", "/api/video-assets/validation-callback",
     "/api/tools/sower-work/access", "/api/tools/sower-work/lease", "/api/tools/sower-work/lease/verify",
     "/api/tools/sower-work/download", "/api/tools/sower-work/update", "/api/admin/sower-work/users",
     "/api/managed-users/user_a/sower-work-access"
@@ -42,6 +43,7 @@ describe("precise production routes with their own authentication", () => {
   it.each([
     "/api/video-assets/source/" + "a".repeat(31), "/api/video-assets/source/" + "g".repeat(32),
     "/api/video-assets/short", "/api/video-assets/asset_abcdefgh/extra", "/api/video-assets/by-key/request_abcdefgh",
+    "/api/video-assets/validation-sessions/short/verify", "/api/video-assets/validation-sessions/vv_abcdefgh/verify/extra",
     "/api/video-tasks/source/" + "a".repeat(32), "/api/video-tasks/by-key/short",
     "/api/tools/sower-work/grant", "/api/tools/sower-work/lease/verify/extra",
     "/api/tools/sower-work/download/private", "/api/admin/sower-work/users/extra",

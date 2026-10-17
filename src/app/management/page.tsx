@@ -20,6 +20,7 @@ export default async function ManagementPage() {
   return (
     <>
     <p><Link className="button-link" href="/management/sower-work">Sower Work 独立采集插件授权管理</Link></p>
+    {account?.authRole === "admin" && account.status === "active" && <p><Link className="button-link" href="/management/video-materials">视频素材自动报备 · 安全配置</Link></p>}
     <ManagementConsole
       currentUser={{ ...user, authRole: account?.authRole === "admin" ? "admin" : "tenant" }}
       canManageGatewayBilling={account?.authRole === "admin" && account.status === "active"}

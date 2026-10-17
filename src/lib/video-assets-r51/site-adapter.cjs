@@ -16,11 +16,21 @@ const SECRET_NAME = /^[A-Z][A-Z0-9_]{2,119}$/;
 async function readConfiguration(env = process.env) {
   const filename = env.VIDEO_ASSET_CONFIG_FILE;
   if (!filename) return null;
-  if (!path.isAbsolute(filename)) throw new Error('Invalid server configuration path.');
+  if (!path.isAbsolute(filename) || path.normalize(filename) !== filename) throw new Error('Invalid server configuration path.');
+  // A writable ancestor could replace the file after an otherwise valid 0600
+  // check. Deployment configuration must remain in a root-controlled directory.
+  let ancestor = path.dirname(filename);
+  for (;;) {
+    const info = await fs.lstat(ancestor);
+    if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== 0 || (info.mode & 0o022) !== 0) throw new Error('Unsafe server configuration directory.');
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
   const handle = await fs.open(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.size > CONFIG_LIMIT) throw new Error('Invalid server configuration file.');
+    if (!info.isFile() || info.uid !== 0 || (info.mode & 0o777) !== 0o600 || info.nlink !== 1 || info.size > CONFIG_LIMIT) throw new Error('Invalid server configuration file.');
     const configuration = JSON.parse(await handle.readFile('utf8'));
     if (!configuration || !Array.isArray(configuration.accounts) || !Array.isArray(configuration.grants)) throw new Error('Invalid server configuration shape.');
     return configuration;

@@ -382,6 +382,7 @@
   function validRemoteAssetUrl(value) {
     value = text(value, 4096);
     if (!value) return '';
+    if (/^library:\/\/va_[A-Za-z0-9_-]{1,180}$/.test(value)) return value;
     try {
       var parsed = new URL(value);
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'asset:') return '';
@@ -439,7 +440,14 @@
       role: role,
       rightsConfirmed: raw.rightsConfirmed === true || raw.authorized === true,
       remoteUrl: remoteUrl,
-      storageRef: storageRef
+      storageRef: storageRef,
+      registration: plainObject(raw.registration) ? {
+        accountKey: text(raw.registration.accountKey, 256),
+        libraryId: text(raw.registration.libraryId, 200),
+        registrationKind: text(raw.registration.registrationKind, 20),
+        status: text(raw.registration.status, 30),
+        portraitSessionId: text(raw.registration.portraitSessionId, 200)
+      } : null
     });
   }
 

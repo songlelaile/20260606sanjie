@@ -4,10 +4,13 @@
 const { createHash, randomUUID } = require('node:crypto');
 const { isIP } = require('node:net');
 const { ownerKey, bindingKey } = require('./asset-service.cjs');
+const { validateImage } = require('./source-store.cjs');
 
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 const RATIOS = new Set(['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', 'adaptive']);
 const MODEL_CAPS = Object.freeze({
+  // Keep the shipped video-studio-contract.js Mini limits; no inferred upgrade.
+  'seedance-2.0-mini': { duration: 15, images: 9, videos: 3, audios: 3, total: 15, resolutions: ['480p', '720p'] },
   'seedance-2.0': { duration: 15, images: 9, videos: 3, audios: 3, total: 15, resolutions: ['480p', '720p', '1080p', '4k'] },
   'seedance-2.5': { duration: 30, images: 30, videos: 10, audios: 10, total: 50, resolutions: ['480p', '720p', '1080p'] }
 });
@@ -53,6 +56,7 @@ function publicTask(record) {
     createdAt: record.createdAt, updatedAt: record.updatedAt, submittedAt: record.submittedAt || null,
     finishedAt: record.finishedAt || null, errorCode: record.errorCode || '', error: record.message || '',
     message: record.message || '', stateUncertain: record.status === 'uncertain',
+    providerCode: record.providerCode || '', requestId: record.requestId || '',
     cancelPending: record.cancelPending === true, leaseReleasePending: record.leaseReleasePending === true
   };
 }
@@ -75,13 +79,22 @@ function audioUrl(value) {
   const decoded = Buffer.from(match[2], 'base64');
   return decoded.length > 0 && decoded.length <= MAX_AUDIO_BYTES && decoded.toString('base64') === match[2] ? value : '';
 }
+function ordinaryImage(value) {
+  const remote = httpsUrl(value); if (remote) return remote;
+  if (typeof value !== 'string' || value.length > Math.ceil(30 * 1024 * 1024 / 3) * 4 + 80) return '';
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match || match[2].length % 4 !== 0) return '';
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.toString('base64') !== match[2]) return '';
+  try { validateImage(bytes, match[1]); return value; } catch (_) { return ''; }
+}
 function modelChoice(binding, model) {
   if (typeof model !== 'string' || !model || model.length > 220 || /\s/.test(model)) fail('VIDEO_MODEL_INVALID', '视频模型标识无效。');
   const map = plain(binding.providerModels) ? binding.providerModels : {};
   const product = Object.keys(MODEL_CAPS).find(key => map[key] === model);
   const explicit = Array.isArray(binding.allowedModels) && binding.allowedModels.includes(model);
   if (!product && !explicit) fail('VIDEO_MODEL_NOT_BOUND', '该视频模型未绑定到当前供应商账号。');
-  const inferred = model.includes('seedance-2-5') ? 'seedance-2.5' : model.includes('seedance-2-0') ? 'seedance-2.0' : '';
+  const inferred = model.includes('seedance-2-0-mini') ? 'seedance-2.0-mini' : model.includes('seedance-2-5') ? 'seedance-2.5' : model.includes('seedance-2-0') ? 'seedance-2.0' : '';
   const key = product || inferred;
   if (!MODEL_CAPS[key]) fail('VIDEO_MODEL_CAPABILITIES_REQUIRED', '当前绑定模型缺少可验证的参数规格。');
   return { productKey: key, caps: MODEL_CAPS[key] };
@@ -108,9 +121,10 @@ function normalizeBody(input, binding) {
     if (entry.type === 'image_url') {
       if (!['reference_image', 'first_frame', 'last_frame'].includes(entry.role)) fail('VIDEO_IMAGE_ROLE_INVALID', '图片用途无效。');
       const match = typeof raw === 'string' && /^library:\/\/([A-Za-z0-9_-]{1,200})$/.exec(raw);
-      if (!match) fail('VIDEO_IMAGE_LIBRARY_REQUIRED', '视频图片必须引用当前账号校验成功的素材库编号。');
-      if (!assetIds.includes(match[1])) assetIds.push(match[1]);
-      counts.images++; return { type: entry.type, image_url: { url: 'library://' + match[1] }, role: entry.role };
+      const ordinary = !match && binding.allowOrdinaryImages === true ? ordinaryImage(raw) : '';
+      if (!match && !ordinary) fail('VIDEO_IMAGE_LIBRARY_REQUIRED', '视频图片必须引用当前账号已审核素材，普通商品图仅在显式开通后可直接使用。');
+      if (match && !assetIds.includes(match[1])) assetIds.push(match[1]);
+      counts.images++; return { type: entry.type, image_url: { url: match ? 'library://' + match[1] : ordinary }, role: entry.role };
     }
     const expectedRole = entry.type === 'video_url' ? 'reference_video' : 'reference_audio';
     if (entry.role !== expectedRole) fail('VIDEO_MEDIA_ROLE_INVALID', '视频或音频素材用途无效。');
@@ -233,7 +247,7 @@ function createTaskService({ repository, assetService, providerResolver, now = D
           return { task: publicTask(await release(tx, scope, record)), idempotent: false };
         }
         const providerBody = structuredClone(normalized.body);
-        providerBody.content.forEach(entry => { if (entry.type === 'image_url') entry.image_url.url = referenceMap.get(entry.image_url.url.slice('library://'.length)); });
+        providerBody.content.forEach(entry => { if (entry.type === 'image_url' && entry.image_url.url.startsWith('library://')) entry.image_url.url = referenceMap.get(entry.image_url.url.slice('library://'.length)); });
         // Committed before the only chargeable upstream operation. A restarted
         // process observes 'claimed' and never calls videoCreate again.
         record = await tx(state => {
@@ -253,7 +267,15 @@ function createTaskService({ repository, assetService, providerResolver, now = D
           });
         } catch (error) {
           if (error && error.accepted === false) {
-            record = await tx(state => { const task = taskRecord(state, scope, record.id); task.status = 'failed'; task.phase = 'failed'; task.submissionState = 'rejected'; task.errorCode = 'PROVIDER_CREATE_REJECTED'; task.message = '视频供应商明确拒绝本次请求，未自动重试。'; task.finishedAt = now(); task.updatedAt = now(); return structuredClone(task); });
+            record = await tx(state => {
+              const task = taskRecord(state, scope, record.id); task.status = 'failed'; task.phase = 'failed'; task.submissionState = 'rejected'; task.errorCode = 'PROVIDER_CREATE_REJECTED';
+              const diagnostic = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$/.test(value) ? value : '';
+              task.providerCode = diagnostic(error.code); task.requestId = diagnostic(error.requestId);
+              task.message = task.providerCode === 'InputImageSensitiveContentDetected.PrivacyInformation'
+                ? '参考素材可能包含真人，当前模型拒绝；请完成该真人的供应商活体核验与素材审核后再生成。'
+                : '视频供应商明确拒绝本次请求，未自动重试。';
+              task.finishedAt = now(); task.updatedAt = now(); return structuredClone(task);
+            });
             record = await release(tx, scope, record);
           } else record = await markUncertain(tx, scope, record.id);
         }

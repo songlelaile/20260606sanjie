@@ -31,11 +31,12 @@ function harness() {
   for (const file of ["video-studio-contract.js", "video-production.js", "video-studio.js"]) {
     vm.runInContext(readFileSync(new URL(root + file, import.meta.url), "utf8"), context);
   }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- This test boundary loads the untyped browser API from a separate VM realm.
   const api = context.SZEcommerceVideoStudioTesting as any;
   api.cacheDom();
   Object.assign(api.state, { accountKey: "tenant:alice", backendConnected: true, credentialAvailable: true,
     capabilities: { provider: "doubao", adapter: "ark" }, prompt: "展示白色西装细节", legacySingle: true });
-  api.state.modelCatalog.find((model: any) => model.productKey === "seedance-2.0").configured = true;
+  api.state.modelCatalog.find((model: { productKey: string }) => model.productKey === "seedance-2.0").configured = true;
   api.state.assets.image = vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify([{ ...record, blob: undefined,
     storageRef: { dbName: store.DB_NAME, storeName: "assets", id: record.id }, previewUrl: "blob:test-original" }]))})`, context);
   const image = () => api.state.assets.image[0];
@@ -46,7 +47,10 @@ function harness() {
     });
     await api.refreshCapabilities();
   }
-  return { api, production: context.SZEcommerceVideoProduction as any, nodes, store, record, image, allNodes, runtime, refresh };
+  const production = context.SZEcommerceVideoProduction as {
+    buildPlan(input: unknown, options: unknown): { shots: Array<{ request: { images: Array<{ remoteUrl: string; storageRef: { id: string } | null }> }; sourceAssetId: string }> };
+  };
+  return { api, production, nodes, store, record, image, allNodes, runtime, refresh };
 }
 
 describe("explicit trusted Ark portrait references", () => {
@@ -184,7 +188,7 @@ describe("explicit trusted Ark portrait references", () => {
 
   it("disables platform associations and blocks existing references after a platform/account switch", async () => {
     const h = harness(); await h.api.associateTrustedPortrait(h.image().id, "asset-person-approved");
-    const model = h.api.state.modelCatalog.find((item: any) => item.productKey === "seedance-2.0");
+    const model = h.api.state.modelCatalog.find((item: { productKey: string }) => item.productKey === "seedance-2.0");
     model.nativePlatform = true; h.api.state.capabilities.provider = "shaozhuang-native";
     expect(await h.api.associateTrustedPortrait(h.image().id, "asset-other")).toBe(false);
     expect(() => h.api.assetForRequest(h.image())).toThrow("个人火山方舟 API");
