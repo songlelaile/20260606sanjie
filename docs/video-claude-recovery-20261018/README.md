@@ -1,0 +1,13 @@
+# Video recovery and source preservation — 2026-10-18
+
+A failed plan containing a saved successful shot and an exhausted failed shot could neither retry nor start a separate plan. Explicitly choosing **新建成片计划** now preserves the old requests, results, attempts and fees, releases only the active pointer, and lets the normal Generate action estimate and submit a fresh plan from the current draft. Old 720p shots are not silently reused as new 480p generation. Retry caps remain frozen per plan.
+
+Claude desktop independently reproduced the defects in a new isolated Code session, added failing regressions and committed `23488ec`. Root reviewed and integrated that commit, then added protection for conflicting status/state and nested task/job identities. Active, uncertain, cancellation-pending or contradictory submissions remain blocked.
+
+Removing a draft source now checks all saved production references and in-memory plans. Source/result/reference/audio IDs are retained in one assets+runs transaction; malformed history, failed identity proof and unknown ownership preserve the local copy. Async deletion and draft writes recheck account/mode/draft identity. Source mutation locks editing and generation through final persistence/identity confirmation. This keeps old plans usable while the current draft is edited. No schema migration, garbage collector or cross-tab task-start protocol is introduced.
+
+Root acceptance: **216/216 video tests in nine files**, **4/4 provider-error tests**, TypeScript, changed-test ESLint, JavaScript syntax, diff check and the standard Next.js build all passed (30 static pages; existing unrelated warnings remain). The four old lint errors in the portrait fixture were repaired with explicit test-boundary types, retaining all runtime assertions. A separate localhost browser verified real IndexedDB retention/deletion and stale-operation rejection with no customer records or supplier requests. See `validation.json` and the saved command logs.
+
+Real supplier acceptance is recorded separately in `../video-live-480p-acceptance-20261018`: three 480p shots, decoded final 480 × 854, 15 seconds and complete narration. Other resolutions have free request/budget/export coverage; no additional paid resolution matrix was run.
+
+Deployment is restricted to the reviewed Store, studio JS and HTML, in that order, with hashes, protected-process/routing checks and rollback copies. Video core, backend/provider configuration, billing tables and database schema are unchanged. Automatic portrait reporting remains a separate candidate requiring AK/SK configuration.

@@ -120,6 +120,8 @@
     configOpenPending: false,
     awaitingConfigRefresh: false,
     draftTimer: null,
+    draftEpoch: 0,
+    sourceMutationPending: false,
     activeRun: null,
     history: [],
     historyViewAccountKey: null,
@@ -681,6 +683,7 @@
       var previousAccountKey = state.accountKey;
       state.backendConnected = true;
       state.accountKey = cleanText(payload.accountKey);
+      if (previousAccountKey !== state.accountKey) state.draftEpoch += 1;
       var capabilityDetails = payload.capabilities || payload.data || payload;
       state.capabilities = Object.assign({}, capabilityDetails, {
         provider: cleanText(payload.provider || capabilityDetails.provider),
@@ -1363,23 +1366,70 @@
     };
   }
 
+  function captureDraftContext(guardActivity) {
+    return { accountKey: state.accountKey, mode: state.mode, epoch: state.draftEpoch,
+      assets: state.assets, reference: state.reference, frames: state.referenceFrames,
+      activity: guardActivity ? [state.productionStarting, state.productionBusy, state.actionPending].join(':') : '',
+      snapshot: JSON.stringify(draftSnapshot()) };
+  }
+
+  function draftContextCurrent(context) {
+    return !!context && context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch &&
+      (!context.activity || context.activity === [state.productionStarting, state.productionBusy, state.actionPending].join(':')) &&
+      context.assets === state.assets && context.reference === state.reference && context.frames === state.referenceFrames &&
+      context.snapshot === JSON.stringify(draftSnapshot());
+  }
+
+  async function confirmDraftContext(context) {
+    if (!draftContextCurrent(context)) return false;
+    if (globalThis.SZ_WEB_ACCOUNT && typeof globalThis.SZ_WEB_ACCOUNT.require === 'function') {
+      try {
+        var account = await globalThis.SZ_WEB_ACCOUNT.require();
+        if (!draftContextCurrent(context) || account !== context.accountKey) return false;
+      } catch (_) { return false; }
+    }
+    return draftContextCurrent(context);
+  }
+
+  function draftWriteOptions(context) {
+    return { expectedAccountKey: context.accountKey, isCurrent: function () { return draftContextCurrent(context); } };
+  }
+
+  function withSourceMutation(work) {
+    if (state.sourceMutationPending || state.productionStarting || state.productionBusy || state.actionPending) return Promise.resolve(false);
+    state.sourceMutationPending = true;
+    renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();
+    var controls = Array.from(document.querySelectorAll('#mode-panel input, #mode-panel textarea, #mode-panel select, #mode-panel button, #mode-tabs button, #review-panel input, #review-panel textarea, #review-panel select, #review-panel button'))
+      .map(function (node) { var entry = { node: node, disabled: node.disabled }; node.disabled = true; return entry; });
+    return Promise.resolve().then(work).finally(function () {
+      state.sourceMutationPending = false;
+      controls.forEach(function (entry) { entry.node.disabled = entry.disabled; });
+      renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();
+    });
+  }
+
   function scheduleDraftSave() {
     if (!state.booted) return;
     if (state.draftTimer) globalThis.clearTimeout(state.draftTimer);
+    var context = captureDraftContext();
     state.draftTimer = globalThis.setTimeout(function persistLater() {
       state.draftTimer = null;
-      saveCurrentDraft().catch(function onDraftError(error) {
+      if (!draftContextCurrent(context)) return;
+      saveCurrentDraft(context).catch(function onDraftError(error) {
+        if (!draftContextCurrent(context)) return;
         showToast('草稿保存失败：' + safeErrorMessage(error), 'error');
       });
     }, 320);
   }
 
-  function saveCurrentDraft() {
+  function saveCurrentDraft(context) {
     if (state.draftTimer) {
       globalThis.clearTimeout(state.draftTimer);
       state.draftTimer = null;
     }
-    return Store.saveDraft(state.mode, draftSnapshot());
+    context = context || captureDraftContext();
+    if (!draftContextCurrent(context)) return Promise.resolve(false);
+    return Store.saveDraft(context.mode, JSON.parse(context.snapshot), draftWriteOptions(context));
   }
 
   function revokePreview(asset) {
@@ -1432,6 +1482,7 @@
   }
 
   async function restoreDraft(mode) {
+    state.draftEpoch += 1;
     revokeAllPreviews();
     state.assets = { image: [], video: [], audio: [] };
     state.reference = null;
@@ -1459,12 +1510,21 @@
     state.productionOptions = { mode: 'economic', totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 };
     state.productionAudio = { sourceAudioVolume: 0 };
     state.legacySingle = false;
+    var context = captureDraftContext();
     var record = null;
     try { record = await Store.getDraft(mode); } catch (error) {
+      if (!draftContextCurrent(context)) return false;
       showToast('读取本地草稿失败：' + safeErrorMessage(error), 'error');
     }
+    if (!draftContextCurrent(context)) return false;
     var draft = record && record.data;
     if (draft && draft.mode === mode) {
+      var hydrated = await Promise.all([hydrateList(draft.assets && draft.assets.image), hydrateList(draft.assets && draft.assets.video),
+        hydrateList(draft.assets && draft.assets.audio), hydrateAsset(draft.reference), hydrateList(draft.referenceFrames)]);
+      if (!draftContextCurrent(context)) {
+        [].concat(hydrated[0], hydrated[1], hydrated[2], hydrated[3] || [], hydrated[4]).forEach(revokePreview);
+        return false;
+      }
       state.prompt = cleanText(draft.prompt);
       state.expertEnabled = draft.expertEnabled === true;
       state.expertRequirements = cleanText(draft.expertRequirements);
@@ -1472,11 +1532,11 @@
       state.legacySingle = draft.productionOptions ? draft.legacySingle === true : true;
       state.productionOptions = normalizeProductionOptions(draft.productionOptions || { mode: 'quality', totalDurationSeconds: 15, budgetYuan: 10, maxAttempts: 1 });
       state.productionAudio = normalizeProductionAudio(draft.productionAudio);
-      state.assets.image = await hydrateList(draft.assets && draft.assets.image);
-      state.assets.video = await hydrateList(draft.assets && draft.assets.video);
-      state.assets.audio = await hydrateList(draft.assets && draft.assets.audio);
-      state.reference = await hydrateAsset(draft.reference);
-      state.referenceFrames = await hydrateList(draft.referenceFrames);
+      state.assets.image = hydrated[0];
+      state.assets.video = hydrated[1];
+      state.assets.audio = hydrated[2];
+      state.reference = hydrated[3];
+      state.referenceFrames = hydrated[4];
       state.review = normalizeDraftReview(draft.review);
       if (draft.portraitAuthorization && draft.portraitAuthorization.accountKey === state.accountKey) state.portraitAuthorization = authorizationMetadata(draft.portraitAuthorization, state.accountKey);
       if (draft.portraitStartRequest && draft.portraitStartRequest.accountKey === state.accountKey && /^[a-zA-Z0-9_-]{1,160}$/.test(draft.portraitStartRequest.idempotencyKey || '')) state.portraitStartRequest = { accountKey: state.accountKey, idempotencyKey: draft.portraitStartRequest.idempotencyKey };
@@ -1497,6 +1557,7 @@
     }
     applyDraftToDom();
     renderProductionOptions();
+    return true;
   }
 
   function startupImportQuery() {
@@ -1693,9 +1754,12 @@
 
   async function switchMode(mode) {
     mode = Contract.normalizeMode(mode);
-    if (!mode || mode === state.mode || state.actionPending) return;
-    try { await saveCurrentDraft(); } catch (_) { /* user can still switch */ }
+    if (!mode || mode === state.mode || state.actionPending || state.sourceMutationPending) return;
+    var context = captureDraftContext();
+    try { await saveCurrentDraft(context); } catch (_) { /* user can still switch */ }
+    if (!draftContextCurrent(context)) return;
     state.mode = mode;
+    state.draftEpoch += 1;
     if (!routeSupportsMode(state.settings.creativeRoute, mode)) {
       state.settings.creativeRoute = defaultRouteForMode(mode);
     }
@@ -1800,23 +1864,20 @@
     updateCreditAnnotations();
   }
 
-  async function resetCurrentDraft() {
+  function resetCurrentDraft() { return withSourceMutation(resetDraftSources); }
+  async function resetDraftSources() {
     var hasContent = state.prompt || state.assets.image.length || state.assets.video.length ||
       state.assets.audio.length || state.reference || state.review.script;
     if (hasContent && !globalThis.confirm('清空当前模式草稿？本地保存的相关素材也会被删除（成片计划仍引用的素材保留），此操作不可恢复。')) return;
 
     var all = state.assets.image.concat(state.assets.video, state.assets.audio, state.referenceFrames);
     if (state.reference) all.push(state.reference);
-    var retained = await productionRetainedAssetIds();
-    await Promise.all(all.map(function remove(item) {
-      revokePreview(item);
-      var storedId = localStorageAssetId(item);
-      return storedId && retained && !retained.has(storedId) && !retained.has(item.id)
-        ? Store.deleteAsset(storedId).catch(function ignore() {})
-        : Promise.resolve();
-    }));
-    await Store.deleteDraft(state.mode).catch(function ignore() {});
-    await restoreDraft(state.mode);
+    var context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets(all, context) || !draftContextCurrent(context)) return;
+    try { await Store.deleteDraft(context.mode, draftWriteOptions(context)); } catch (_) { return; }
+    if (!draftContextCurrent(context)) return;
+    all.forEach(revokePreview);
+    if (!await restoreDraft(context.mode)) return;
     showToast('当前模式草稿已清空。', 'success');
   }
 
@@ -1831,6 +1892,7 @@
   }
 
   async function addFiles(kind, files) {
+    if (state.sourceMutationPending) return;
     var incoming = Array.from(files || []);
     var uploadAccountKey = state.accountKey;
     if (!incoming.length) return;
@@ -1887,41 +1949,40 @@
     }
   }
 
-  async function setReferenceVideo(file) {
+  function setReferenceVideo(file) { return withSourceMutation(function () { return replaceReferenceVideo(file); }); }
+  async function replaceReferenceVideo(file) {
     if (!file) return;
+    var context = captureDraftContext(true), previous = state.reference, previousFrames = state.referenceFrames.slice();
     try {
       validateFile('video', file);
       var metadata = await readFileMetadata('video', file);
+      if (!await confirmDraftContext(context)) return;
       if (!metadata.durationSec || metadata.durationSec < 4 || metadata.durationSec > 15) {
         throw new Error('参考视频时长必须为 4–15 秒。');
       }
       var summary = await Store.saveAsset(file, Object.assign(metadata, {
         kind: 'video',
         role: 'asset',
+        expectedAccountKey: context.accountKey,
+        isCurrent: function () { return draftContextCurrent(context); },
         name: file.name,
         mimeType: file.type
       }));
       var hydrated = await hydrateAsset(summary);
+      if (!draftContextCurrent(context)) { revokePreview(hydrated); return; }
       if (!hydrated) throw new Error('参考视频写入后无法从本地库读取。');
 
       var extractedFrames;
       try {
-        extractedFrames = await extractAndStoreReferenceFrames(file, hydrated.id, hydrated.name);
+        extractedFrames = await extractAndStoreReferenceFrames(file, hydrated.id, hydrated.name, context);
       } catch (frameError) {
         revokePreview(hydrated);
-        await Store.deleteAsset(hydrated.id).catch(function ignore() {});
+        await deleteUnreferencedDraftAssets([hydrated], context);
         throw new Error('关键帧提取失败，参考视频未保存：' + safeErrorMessage(frameError));
       }
 
-      if (state.reference) {
-        var previous = state.reference;
-        revokePreview(previous);
-        var previousStoredId = localStorageAssetId(previous);
-        if (previousStoredId) {
-          Store.deleteAsset(previousStoredId).catch(function ignore() {});
-        }
-      }
-      await deleteReferenceFrames(state.referenceFrames);
+      if (!await deleteUnreferencedDraftAssets([previous].concat(previousFrames), context) || !draftContextCurrent(context)) return;
+      [previous].concat(previousFrames).forEach(revokePreview);
       state.reference = hydrated;
       state.referenceFrames = extractedFrames;
       invalidateRights();
@@ -1930,21 +1991,26 @@
       renderReadiness();
       scheduleDraftSave();
     } catch (error) {
+      if (!draftContextCurrent(context)) return;
       showToast(file.name + '：' + safeErrorMessage(error), 'error');
     } finally {
-      dom.referenceVideoInput.value = '';
+      if (draftContextCurrent(context) || context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch && state.reference === hydrated) dom.referenceVideoInput.value = '';
     }
   }
 
-  async function extractAndStoreReferenceFrames(file, referenceVideoId, sourceName) {
+  async function extractAndStoreReferenceFrames(file, referenceVideoId, sourceName, context) {
+    context = context || captureDraftContext(true);
     var frames = await extractReferenceFrameBlobs(file, 5);
     var saved = [];
     try {
       for (var i = 0; i < frames.length; i += 1) {
+        if (!draftContextCurrent(context)) throw new Error('草稿已变化，已停止保存关键帧。');
         var frame = frames[i];
         var summary = await Store.saveAsset(frame.blob, {
           kind: 'reference_frame',
           role: 'asset',
+          expectedAccountKey: context.accountKey,
+          isCurrent: function () { return draftContextCurrent(context); },
           name: cleanText(sourceName).replace(/\.[^.]+$/, '') + '-关键帧-' + String(i + 1).padStart(2, '0') + '.jpg',
           mimeType: 'image/jpeg',
           width: frame.width,
@@ -1952,14 +2018,16 @@
           referenceVideoId: referenceVideoId,
           timeSec: frame.timeSec
         });
+        saved.push(summary);
         var hydrated = await hydrateAsset(summary);
+        if (!draftContextCurrent(context)) { revokePreview(hydrated); throw new Error('草稿已变化，已停止保存关键帧。'); }
         if (!hydrated) throw new Error('关键帧写入后无法读取。');
-        saved.push(hydrated);
+        saved[saved.length - 1] = hydrated;
       }
       if (saved.length !== 5) throw new Error('关键帧数量不足 5 个。');
       return saved;
     } catch (error) {
-      await deleteReferenceFrames(saved);
+      await deleteReferenceFrames(saved, context);
       throw error;
     }
   }
@@ -2066,14 +2134,13 @@
     });
   }
 
-  async function deleteReferenceFrames(frames) {
-    await Promise.all((frames || []).map(function removeFrame(frame) {
-      revokePreview(frame);
-      var storedId = localStorageAssetId(frame);
-      return storedId
-        ? Store.deleteAsset(storedId).catch(function ignore() {})
-        : Promise.resolve();
-    }));
+  async function deleteReferenceFrames(frames, context) {
+    if (!context) return withSourceMutation(function () { return deleteReferenceFrames(frames, captureDraftContext(true)); });
+    context = context || captureDraftContext(true);
+    var captured = (frames || []).slice();
+    if (!await deleteUnreferencedDraftAssets(captured, context) || !draftContextCurrent(context)) return false;
+    captured.forEach(revokePreview);
+    return true;
   }
 
   function validateFile(kind, file) {
@@ -2186,43 +2253,42 @@
     });
   }
 
-  // Draft sources and saved production plans share local asset ids. Returns null when saved plans cannot be read,
-  // so callers keep the local copy instead of deleting a blob an unfinished plan may still need.
-  async function productionRetainedAssetIds() {
-    var runs;
-    try { runs = await Store.listRuns(); } catch (error) { return null; }
-    var ids = new Set();
-    function add(id) { id = cleanText(id); if (id) ids.add(id); }
-    (Array.isArray(runs) ? runs : []).concat(state.history || []).forEach(function (run) {
-      if (!run || run.purpose !== 'production' || !run.plan) return;
-      var plan = run.plan, request = plan.request || {}, finalAudio = plan.finalAudio || {};
-      (plan.shots || []).forEach(function (shot) { add(shot && shot.sourceAssetId); });
-      (plan.musicAssetIds || []).forEach(add);
-      [].concat(request.images || [], request.videos || [], request.audios || [], finalAudio.assets || [], finalAudio.tracks || []).forEach(function (item) {
-        if (!item) return; add(item.id); add(item.assetId); add(item.storageRef && item.storageRef.id);
-      });
-    });
-    return ids;
+  async function deleteUnreferencedDraftAssets(items, context) {
+    if (!await confirmDraftContext(context)) return false;
+    var aliases = (items || []).filter(Boolean).map(function (item) {
+      return { storageId: localStorageAssetId(item), assetId: cleanText(item.id) };
+    }).filter(function (item) { return !!item.storageId; });
+    if (aliases.length) {
+      try {
+        // A cached older Store must fail closed; never fall back to its unguarded deleteAsset.
+        if (typeof Store.deleteAssetsIfUnreferenced !== 'function') throw new Error('素材保护模块尚未刷新，本地副本保留。');
+        await Store.deleteAssetsIfUnreferenced(aliases.map(function (item) { return item.storageId; }), {
+          expectedAccountKey: context.accountKey, assetAliases: aliases,
+          isCurrent: function () { return draftContextCurrent(context); },
+          memoryRuns: function () {
+            if (!Array.isArray(state.history)) throw new Error('生成历史无法核对，本地副本保留。');
+            return state.history.concat([state.productionRun, state.activeRun].filter(Boolean));
+          }
+        });
+      } catch (_) {
+        // Read/transaction failures retain the blob; a changed identity also stops the UI/draft write below.
+        if (!await confirmDraftContext(context)) return false;
+        showToast('暂时无法安全清理本地素材，副本已保留。', 'error');
+      }
+    }
+    return confirmDraftContext(context);
   }
 
-  async function removeAsset(kind, id) {
+  function removeAsset(kind, id) { return withSourceMutation(function () { return removeDraftAsset(kind, id); }); }
+  async function removeDraftAsset(kind, id) {
     var list = state.assets[kind] || [];
     var index = list.findIndex(function find(item) { return item.id === id; });
     if (index < 0) return;
     var asset = list[index];
+    var context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets([asset], context) || !draftContextCurrent(context)) return;
     list.splice(index, 1);
     revokePreview(asset);
-    var storedId = localStorageAssetId(asset);
-    if (storedId) {
-      var retained = await productionRetainedAssetIds();
-      if (!retained) showToast('素材已从草稿移除；暂时无法核对成片计划引用，本地副本保留。', 'error');
-      else if (retained.has(storedId) || retained.has(asset.id)) showToast('素材已从草稿移除；已保存的成片计划仍引用它，本地副本保留。', 'success');
-      else {
-        await Store.deleteAsset(storedId).catch(function onDelete(error) {
-          showToast('本地素材删除失败：' + safeErrorMessage(error), 'error');
-        });
-      }
-    }
     invalidateRights();
     invalidateReviewForSourceChange('素材已变化，请重新分析后再确认脚本。');
     renderAssets();
@@ -2230,16 +2296,14 @@
     scheduleDraftSave();
   }
 
-  async function removeReference() {
+  function removeReference() { return withSourceMutation(removeDraftReference); }
+  async function removeDraftReference() {
     if (!state.reference) return;
-    var reference = state.reference;
+    var reference = state.reference, frames = state.referenceFrames.slice(), context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets([reference].concat(frames), context) || !draftContextCurrent(context)) return;
     state.reference = null;
     revokePreview(reference);
-    var storedId = localStorageAssetId(reference);
-    if (storedId) {
-      await Store.deleteAsset(storedId).catch(function ignore() {});
-    }
-    await deleteReferenceFrames(state.referenceFrames);
+    frames.forEach(revokePreview);
     state.referenceFrames = [];
     invalidateRights();
     invalidateReviewForSourceChange('参考视频已移除，请重新拆解。');
@@ -2631,6 +2695,7 @@
     options = options || {};
     if (usingProductionPlan()) return productionValidationErrors(options);
     var errors = [];
+    if (state.sourceMutationPending) errors.push('正在更新当前草稿素材，请稍后生成。');
     var limits = effectiveLimits(state.mode, state.settings.productKey);
     var model = getSelectedModel();
     if (state.assets.image.some(function (asset) { return !!asset.trustedPortrait; }) && !personalArkPortraitAvailable()) errors.push('可信人像引用仅支持个人火山方舟 API；平台视频暂不支持，请切换个人 API 或恢复原始图片。');
@@ -2750,9 +2815,9 @@
     var needsReviewScroll = state.mode !== 'direct' &&
       (state.review.state === 'editing' || state.review.state === 'confirmed');
     var canPrimary = needsReviewScroll || errors.length === 0;
-    dom.primaryAction.disabled = state.actionPending || !canPrimary;
-    dom.resetDraft.disabled = state.actionPending;
-    dom.refreshCapabilities.disabled = state.actionPending;
+    dom.primaryAction.disabled = state.actionPending || state.sourceMutationPending || !canPrimary;
+    dom.resetDraft.disabled = state.actionPending || state.sourceMutationPending;
+    dom.refreshCapabilities.disabled = state.actionPending || state.sourceMutationPending;
     updatePrimaryActionLabel();
   }
 
@@ -2889,7 +2954,7 @@
   }
 
   async function handlePrimaryAction() {
-    if (state.actionPending) return;
+    if (state.actionPending || state.sourceMutationPending) return;
     if (usingProductionPlan() && state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) { await startGeneration(); return; }
     if (state.mode !== 'direct' &&
         (state.review.state === 'editing' || state.review.state === 'confirmed')) {
@@ -3277,6 +3342,7 @@
   function productionValidationErrors(options) {
     options = options || {};
     var errors = [], plan;
+    if (state.sourceMutationPending) errors.push('正在更新当前草稿素材，请稍后生成。');
     if (!state.prompt) errors.push('请填写创作要求。');
     var hasAssets = state.assets.image.length || state.assets.video.length || state.assets.audio.length || state.reference;
     if (hasAssets && (!state.rightsConfirmed || state.rightsFingerprint !== assetRightsFingerprint())) errors.push('请确认素材权利，素材变化后需要重新确认。');
@@ -3469,7 +3535,8 @@
       if (!receipt || typeof receipt !== 'object') return false;
       if (receipt.providerSubmitted === true || receipt.submitted === true ||
           (receipt.attempts != null && (!Array.isArray(receipt.attempts) || receipt.attempts.length)) ||
-          ['requestId', 'taskId', 'task_id', 'providerTaskId', 'provider_task_id', 'submissionId', 'submittedAt', 'submitted_at', 'acceptedAt'].some(function (key) { return !!cleanText(receipt[key]); })) return true;
+          ['requestId', 'taskId', 'task_id', 'jobId', 'job_id', 'providerTaskId', 'provider_task_id', 'submissionId', 'submittedAt', 'submitted_at', 'acceptedAt'].some(function (key) { return !!cleanText(receipt[key]); }) ||
+          ['task', 'job'].some(function (key) { var value = receipt[key]; return value && typeof value === 'object' && !!cleanText(value.id); })) return true;
       return Object.keys(receipt).some(function (key) {
         var value = receipt[key];
         return value && typeof value === 'object' && (Array.isArray(value) ? value.some(submissionEvidence) : submissionEvidence(value));
@@ -3542,7 +3609,7 @@
     var run = state.productionRun;
     dom.productionPanel.hidden = !run;
     if (!run) return;
-    dom.productionResume.disabled = state.productionBusy || state.productionStarting || run.status === 'succeeded' || releasedProductionPlan(run);
+    dom.productionResume.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting || run.status === 'succeeded' || releasedProductionPlan(run);
     if (dom.productionNewPlan) {
       dom.productionNewPlan.hidden = !!run.newPlanRequestedAt || !canStartNewProductionPlan(run);
       dom.productionNewPlan.disabled = state.actionPending || state.productionBusy || state.productionStarting;
@@ -3572,7 +3639,7 @@
       note.textContent = ({ pending: '待生成', ready: '素材就绪', submitting: '提交中', processing: '生成中', unknown: '接收状态未知：保留预算，只核对任务', succeeded: '已转存，可复用', failed: retryState.allowed ? '失败，可手动重试' : retryState.exhausted ? '失败，已达尝试上限' : '失败，当前不能重试' }[shot.status] || shot.status) + ' · 尝试 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' · 不采用，费用保留' : '') + (shot.status === 'failed' && !retryState.allowed ? ' · ' + retryState.reason : '') + (shot.error ? ' · ' + shot.error : '');
       main.append(title, note); row.appendChild(main);
       var actions = document.createElement('div'); actions.className = 'production-shot-actions';
-      function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
+      function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
       var retryButton;
       if (shot.status === 'failed') {
         retryButton = action('仅重试此镜', 'retry');
@@ -3591,7 +3658,7 @@
     setNotice(dom.productionRunNotice, notice || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
   }
   async function startProductionGeneration() {
-    if (state.productionBusy || state.productionStarting || state.assetPreparing || state.actionPending) return;
+    if (state.sourceMutationPending || state.productionBusy || state.productionStarting || state.assetPreparing || state.actionPending) return;
     var errors = productionValidationErrors({ requireReview: true });
     if (errors.length) { setNotice(dom.composerValidation, errors.join(' '), 'error'); return; }
     if (state.productionRun && state.productionRun.status !== 'succeeded' &&
@@ -3700,6 +3767,7 @@
     await updateProductionTask(run, shot, task);
   }
   async function retryProductionShot(run, shotId) {
+    if (state.sourceMutationPending) return;
     if (state.productionBusy || state.productionStarting || releasedProductionPlan(run)) return;
     var shot = run.shotRuns.find(function (item) { return item.id === shotId; });
     if (!productionRetryState(run, shot).allowed) return;
@@ -3710,6 +3778,7 @@
     } finally { state.productionStarting = false; if (!state.productionBusy) setPending(false); }
   }
   async function executeProductionRun(run) {
+    if (state.sourceMutationPending) return;
     if (state.productionBusy || !run || run.purpose !== 'production' || releasedProductionPlan(run)) return;
     state.productionBusy = true; setPending(true, '正在执行镜头计划…');
     var productionController;
@@ -3765,6 +3834,7 @@
   }
 
   async function startGeneration() {
+    if (state.sourceMutationPending) return;
     if (usingProductionPlan()) return startProductionGeneration();
     if (state.actionPending || state.assetPreparing) return;
     var errors = validationErrors({ requireReview: state.mode !== 'direct' });
@@ -4823,7 +4893,7 @@
       normalizeTrustedPortraitUri: normalizeTrustedPortraitUri, associateTrustedPortrait: associateTrustedPortrait, personalArkPortraitAvailable: personalArkPortraitAvailable,
       materialKind: materialKind, setMaterialKind: setMaterialKind, prepareVideoAssets: prepareVideoAssets, startPortraitAuthorization: startPortraitAuthorization,
       restartPortraitAuthorization: restartPortraitAuthorization,
-      assetReportingAvailable: assetReportingAvailable, activeLibraryUri: activeLibraryUri, validationErrors: validationErrors, startGeneration: startGeneration,
+      assetReportingAvailable: assetReportingAvailable, activeLibraryUri: activeLibraryUri, validationErrors: validationErrors,
       buildRequest: buildRequest,
       claimStartupMediaImport: claimStartupMediaImport,
       normalizeSettingsSnapshot: normalizeSettingsSnapshot,
@@ -4834,6 +4904,8 @@
       canStartNewProductionPlan: canStartNewProductionPlan, startNewProductionPlan: startNewProductionPlan, restoreHistory: restoreHistory,
       productionCommitments: productionCommitments, productionCostSummary: productionCostSummary, retryProductionShot: retryProductionShot,
       productionRetryState: productionRetryState, removeAsset: removeAsset,
+      removeReference: removeReference, resetCurrentDraft: resetCurrentDraft, deleteReferenceFrames: deleteReferenceFrames, setReferenceVideo: setReferenceVideo,
+      saveCurrentDraft: saveCurrentDraft, scheduleDraftSave: scheduleDraftSave, switchMode: switchMode, startGeneration: startGeneration,
       snapshotProductionAudio: snapshotProductionAudio, productionAudioRenderOptions: productionAudioRenderOptions,
       localUploadSupported: localUploadSupported, maxForKind: maxForKind, validateAssetMetadata: validateAssetMetadata,
       productionTemplate: productionTemplate, state: state, renderProductionRun: renderProductionRun,
