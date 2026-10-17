@@ -342,3 +342,22 @@
   .backgroundTask { gap: 8px; }
   .backgroundTaskButton { min-height: 44px; }
 }
+
+/* Immediate feedback for the clicked destination while its leave/activation guards run. */
+.navItem.switching,
+.batchNav.switching {
+  box-shadow: inset 0 0 0 2px var(--brand);
+  opacity: 1;
+}
+
+.navItem.switching small,
+.batchNav.switching small {
+  color: var(--brand);
+}
+
+.switchingStatus {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 10px;
+}
+

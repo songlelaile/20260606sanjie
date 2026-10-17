@@ -12,7 +12,7 @@ import {
   Workflow,
   X
 } from "lucide-react";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "@/lib/auth";
@@ -32,6 +32,12 @@ const TENANT_NAV = [
 
 // 管理版 = 租户版全部功能 + 多一个「管理」入口
 const ADMIN_NAV = [{ href: "/sower-work", label: "Sower Work", icon: Brain }, ...TENANT_NAV, { href: "/management", label: "管理", icon: Brain }];
+
+// Rendered inside each sidebar Link: visible from the click until the route commits.
+function NavPendingHint() {
+  const { pending } = useLinkStatus();
+  return pending ? <small className="nav-pending" role="status">正在打开…</small> : null;
+}
 
 export function AppShell({
   children,
@@ -145,6 +151,7 @@ export function AppShell({
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
+                <NavPendingHint />
               </Link>
             );
           })}

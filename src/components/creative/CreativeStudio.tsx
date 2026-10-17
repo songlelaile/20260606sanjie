@@ -184,6 +184,8 @@ export function CreativeStudio({
   const [navigationNotice, setNavigationNotice] = useState("");
   const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTaskNotice[]>([]);
   const [navigationPending, setNavigationPending] = useState(false);
+  // The destination of the switch in progress, shown from the click until its guards finish.
+  const [pendingTarget, setPendingTarget] = useState<string | null>(null);
   const [historyNotice, setHistoryNotice] = useState("");
   const [apiConfigNotice, setApiConfigNotice] = useState("");
 
@@ -312,6 +314,7 @@ export function CreativeStudio({
       && activeView.current.surface === view.surface && activeView.current.batch === view.batch
       && activeView.current.kind === view.kind;
     setNavigationPending(true);
+    setPendingTarget(nextSurface || "video");
     setNavigationNotice("");
     try {
       const studio = view.kind === "image" && (view.batch || STUDIO_SURFACES.has(view.surface));
@@ -392,6 +395,7 @@ export function CreativeStudio({
       if (mounted.current && navigationEpoch.current === epoch) {
         navigating.current = false;
         setNavigationPending(false);
+        setPendingTarget(null);
       }
     }
   }
@@ -484,6 +488,9 @@ export function CreativeStudio({
       ? "生成视频"
       : current.label;
   const currentFrameId = batch ? BATCH_FRAME_ID : surface;
+  const pendingLabel = !pendingTarget || pendingTarget === currentFrameId ? ""
+    : pendingTarget === "video" ? "生成视频" : pendingTarget === BATCH_FRAME_ID ? "批量任务"
+      : ALL_IMAGE_SURFACES.find(item => item.id === pendingTarget)?.label || "创作入口";
   const taskTotals = backgroundTasks.reduce((total, task) => ({
     activeCount: total.activeCount + task.activeCount,
     pendingReceiptCount: total.pendingReceiptCount + task.pendingReceiptCount
@@ -529,6 +536,7 @@ export function CreativeStudio({
           {IMAGE_SURFACES.map((item) => {
             const selected = kind === "image" && !batch && surface === item.id;
             const task = backgroundTasks.find(task => task.id === item.id);
+            const switching = !!pendingLabel && pendingTarget === item.id;
             const Icon = item.icon;
             return (
               <button
@@ -536,12 +544,13 @@ export function CreativeStudio({
                 type="button"
                 aria-label={item.label}
                 aria-current={selected ? "page" : undefined}
-                className={`${styles.navItem} ${selected ? styles.active : ""}`}
+                aria-busy={switching || undefined}
+                className={`${styles.navItem} ${selected ? styles.active : ""} ${switching ? styles.switching : ""}`}
                 disabled={navigationPending}
                 onClick={() => void openImage(item.id)}
               >
                 <Icon size={17} aria-hidden="true" />
-                <span className={styles.navLabel}><span>{item.label}</span>{task ? <small>{taskCounts(task)}</small> : null}</span>
+                <span className={styles.navLabel}><span>{item.label}</span>{switching ? <small>正在切换…</small> : task ? <small>{taskCounts(task)}</small> : null}</span>
               </button>
             );
           })}
@@ -552,25 +561,27 @@ export function CreativeStudio({
             type="button"
             aria-label="生成视频"
             aria-current={kind === "video" && !batch ? "page" : undefined}
-            className={`${styles.navItem} ${kind === "video" && !batch ? styles.active : ""}`}
+            aria-busy={pendingTarget === "video" && !!pendingLabel || undefined}
+            className={`${styles.navItem} ${kind === "video" && !batch ? styles.active : ""} ${pendingTarget === "video" && pendingLabel ? styles.switching : ""}`}
             disabled={navigationPending}
             onClick={() => { void prepareNavigation().then((allowed) => { if (allowed) router.push("/dashboards/operating-network/video"); }); }}
           >
             <Clapperboard size={17} aria-hidden="true" />
-            <span className={styles.navLabel}><span>生成视频</span></span>
+            <span className={styles.navLabel}><span>生成视频</span>{pendingTarget === "video" && pendingLabel ? <small>正在切换…</small> : null}</span>
           </button>
         </nav>
         <button
           type="button"
           aria-label="批量任务"
-          className={`${styles.batchNav} ${batch ? styles.batchActive : ""}`}
+          className={`${styles.batchNav} ${batch ? styles.batchActive : ""} ${pendingTarget === BATCH_FRAME_ID && pendingLabel ? styles.switching : ""}`}
           aria-current={batch ? "page" : undefined}
+          aria-busy={pendingTarget === BATCH_FRAME_ID && !!pendingLabel || undefined}
           disabled={navigationPending}
           onClick={() => void openBatch()}
         >
           <Layers3 size={17} aria-hidden="true" />
           <span className={styles.navLabel}><span>批量任务</span>
-            {backgroundTasks.find(task => task.id === BATCH_FRAME_ID) ?
+            {pendingTarget === BATCH_FRAME_ID && pendingLabel ? <small>正在切换…</small> : backgroundTasks.find(task => task.id === BATCH_FRAME_ID) ?
               <small>{taskCounts(backgroundTasks.find(task => task.id === BATCH_FRAME_ID)!)}</small> : null}
           </span>
         </button>
@@ -581,6 +592,7 @@ export function CreativeStudio({
             <span>创作工作台</span>
             <ChevronRight size={14} aria-hidden="true" />
             <strong>{currentLabel}</strong>
+            {pendingLabel ? <span role="status" className={styles.switchingStatus}>正在打开{pendingLabel}…</span> : null}
           </div>
           <button
             type="button"

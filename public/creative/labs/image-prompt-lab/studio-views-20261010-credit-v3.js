@@ -988,7 +988,7 @@
     if(saved.snapshot?.tasks?.some(entry=>workspaceType(entry.plan?.settings||{})!==type))throw new Error('该图片类型的旧任务含有其他图片类型，原任务和回执仍保留，请先核对。');
   }
   const typeLabel = type => ({main:'主图',detail:'详情图',ad:'广告图'})[type];
-  async function loadWorkspace(type,scope) {
+  async function loadWorkspace(type,scope,beforeWrite) {
     const key=draftKey(scope),recoveryKey=`${key}:type-recovery-v1`;
     const recovered=await dbGet(recoveryKey);await ensureAccount();
     if(recovered){
@@ -1007,6 +1007,7 @@
     // Old versions saved all three types under the entry URL's fixed key.
     // Keep the complete record and its original receipt scope. Fresh task IDs
     // ensure that editable inputs cannot retry or impersonate an old request.
+    if(beforeWrite)await beforeWrite;
     const backupKey=`${key}:before-explicit-mode:${uid()}`;
     await dbPut(backupKey,saved);await ensureAccount();
     const defaults=engine.defaults(type==='detail'?'detail':'main');
@@ -1045,8 +1046,14 @@
     busy=true;render();
     const previous=workspaceBinding;
     try {
-      await persist();await ensureAccount();
-      const scope=scopeFor(next),loaded=await loadWorkspace(next,scope),saved=loaded.saved;await ensureAccount();
+      // Saving this type and reading the next type use different keys, so the
+      // reads overlap the save; each chain keeps its identity checks and order.
+      // Target migration writes wait behind the save, and a failed save is
+      // reported at once: the abandoned read can neither write nor install.
+      const scope=scopeFor(next),saving=persist().then(()=>ensureAccount()),reading=loadWorkspace(next,scope,saving);
+      reading.catch(()=>{});
+      await saving;
+      const loaded=await reading,saved=loaded.saved;await ensureAccount();
       let nextDraft;
       if(saved){validateWorkspace(saved,next);nextDraft=clone(saved.draft);}
       else {
