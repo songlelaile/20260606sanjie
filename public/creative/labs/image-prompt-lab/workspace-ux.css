@@ -268,6 +268,7 @@ html.studio-legacy-layout .sl-workspace :is(button, a, input, textarea, select, 
   #aestheticMirrorRoot :is(input:not([type=checkbox]):not([type=file]), select, textarea),
   #linkImageRoot :is(input:not([type=checkbox]):not([type=file]), select, textarea),
   #creativeToolsRoot :is(input:not([type=checkbox]):not([type=file]), select, textarea) { font-size: 16px; }
+  #studioGenesisRoot .sg-shot textarea { font-size: 16px !important; }
   #linkImageRoot :is(.li-button, .li-file-button), :is(.ct-card-actions .btn, .am-button, .am-image-actions .am-button),
   html.studio-legacy-layout .sl-workspace .btn { min-height: 44px; }
   html.studio-legacy-layout .sl-sku .sku-flow > :is(.sku-step, .sku-result-step) { grid-column: 1; grid-row: auto; }
