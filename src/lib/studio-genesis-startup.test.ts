@@ -100,6 +100,9 @@ class Element {
   querySelectorAll(selector: string) { return this.descendants().filter(element => element.matches(selector)); }
   querySelector(selector: string) { return this.querySelectorAll(selector)[0] || null; }
   hasAttribute(name: string) { return this.attributes.has(name); }
+  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+  setAttribute(name: string, value: string) { this.attributes.set(name, String(value)); }
+  removeAttribute(name: string) { this.attributes.delete(name); }
   focus() {}
   addEventListener(name: string, listener: (event: DomEvent) => void) {
     const list = this.listeners.get(name) || []; list.push(listener); this.listeners.set(name, list);
@@ -113,6 +116,7 @@ class Element {
 class TestDocument {
   readonly renders: string[] = [];
   readonly listeners = new Map<string, Array<(event: DomEvent) => void>>();
+  readonly documentElement = new Element("HTML", this);
   readonly body = new Element("BODY", this);
   readonly app = new Element("DIV", this);
   readonly readyState = "complete";
@@ -168,52 +172,67 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     setApiBusy: vi.fn(), openConfig: vi.fn(), analyze: vi.fn(), send: vi.fn()
   };
   // A keyed, serialized IndexedDB model of the production draft store: each key
-  // has its own value, absent keys read as undefined, readwrite puts are staged
-  // until the transaction completes and are discarded on abort or error.
+  // has its own value and absent keys read as undefined. Readwrite puts are staged
+  // and committed only on complete; a rejected read or write fails the request and
+  // the transaction (onerror), discarding every staged write.
   const persistedDrafts = new Map<string, unknown>();
   const initialDraftKey = `${accountKey}:${entry === "batch" ? "batch" : "single"}:${mode}${entry === "ad" ? ":ad" : ""}`;
-  let initialDraftSeeded = false, transactionQueue = Promise.resolve();
-  let activeWriteTransaction: { abort(): void } | undefined;
+  let initialDraftSeeded = false, transactionQueue = Promise.resolve(), transactionSequence = 0;
+  type FakeTransaction = { id: number; access: string; abort(): void; finished: boolean };
+  let runningTransaction: FakeTransaction | undefined;
   const db = {
     close: vi.fn(),
     transaction: (_store: string, access?: string) => {
       if (access !== undefined && access !== "readwrite") throw new Error(`Unexpected access: ${access}`);
       const prior = transactionQueue; let release!: () => void;
       transactionQueue = new Promise<void>(resolve => { release = resolve; });
-      const staged = new Map<string, unknown>(); let pending = 0, finished = false;
-      const tx = { oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: undefined as undefined | Error,
+      const staged = new Map<string, unknown>(); let pending = 0;
+      const tx = { id: ++transactionSequence, access: access || "readonly", finished: false,
+        oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: undefined as undefined | Error,
         abort: () => finish("abort"), objectStore: () => ({
           get: (key: string) => {
             reads.push(key);
-            const request = { result: undefined as unknown, onsuccess: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void) };
+            const request = { result: undefined as unknown, error: undefined as undefined | Error, onsuccess: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void) };
             pending++;
             prior.then(() => read.promise).then(value => {
-              if (finished) return;
+              pending--;
+              if (tx.finished) return;
               if (!initialDraftSeeded) { initialDraftSeeded = true; if (value !== undefined) persistedDrafts.set(initialDraftKey, clone(value)); }
               const saved = staged.has(key) ? staged.get(key) : persistedDrafts.get(key);
-              request.result = saved === undefined ? undefined : clone(saved); request.onsuccess?.();
-            }).finally(() => { pending--; idle(); });
+              request.result = saved === undefined ? undefined : clone(saved); request.onsuccess?.(); idle();
+            }, (error: Error) => {
+              pending--;
+              if (tx.finished) return;
+              request.error = error; tx.error = error; request.onerror?.(); finish("error");
+            });
             return request;
           },
           put: (value: unknown, key: string) => {
-            if (access !== "readwrite") throw new Error("ReadOnlyError");
-            const captured = clone(value); writes.push({ key, value: captured }); pending++;
+            if (tx.access !== "readwrite") throw new Error("ReadOnlyError");
+            // The invocation log and the staged value are independent copies.
+            writes.push({ key, value: clone(value) }); const stagedValue = clone(value); pending++;
             prior.then(() => writeControl.wait).then(() => {
-              if (finished) return;
-              if (writeControl.error) { tx.error = writeControl.error; finish("error"); }
-              else staged.set(key, captured);
-            }).finally(() => { pending--; idle(); });
+              pending--;
+              if (tx.finished) return;
+              if (writeControl.error) { tx.error = writeControl.error; finish("error"); return; }
+              staged.set(key, stagedValue); idle();
+            }, (error: Error) => {
+              pending--;
+              if (tx.finished) return;
+              tx.error = error; finish("error");
+            });
           }
         }) };
       function finish(kind: "complete" | "abort" | "error") {
-        if (finished) return; finished = true;
+        if (tx.finished) return; tx.finished = true;
         if (kind === "complete") staged.forEach((value, key) => persistedDrafts.set(key, clone(value)));
-        if (activeWriteTransaction === tx) activeWriteTransaction = undefined;
+        staged.clear();
+        if (runningTransaction === tx) runningTransaction = undefined;
         release(); queueMicrotask(() => { if (kind === "complete") tx.oncomplete?.(); else if (kind === "abort") tx.onabort?.(); else tx.onerror?.(); });
       }
-      const idle = () => queueMicrotask(() => { if (!pending && !finished) finish("complete"); });
-      if (access === "readwrite") activeWriteTransaction = tx;
-      prior.then(idle);
+      const idle = () => queueMicrotask(() => { if (!pending && !tx.finished) finish("complete"); });
+      // A transaction runs once every earlier transaction has finished.
+      prior.then(() => { if (!tx.finished) runningTransaction = tx; idle(); });
       return tx;
     }
   };
@@ -288,7 +307,9 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     return event;
   };
   return { document, bridge, refresh, catalog, read, restore, restoreStarted, recovery, recoveryStarted, reads, writes, saved, beforeUnload, storage, engine, context, writeControl,
-    persistedDrafts, firstPaint, abortPendingWrite: () => activeWriteTransaction?.abort(),
+    persistedDrafts, firstPaint, liveIntervals,
+    // Abort the transaction that is actually running, only if it is a readwrite one.
+    abortPendingWrite: () => { const running = runningTransaction; if (!running || running.access !== "readwrite") return false; running.abort(); return true; },
     controller: () => uiController, dispatchWindow,
     navigationGuard: () => context.SanjieStudioGenesisBridge as { canDeactivate(): Promise<{ allowed: boolean; reason?: string }> } };
 }
@@ -306,11 +327,13 @@ describe.each(["main", "detail"] as const)("%s studio first paint and safe start
     expect(h.document.root.textContent).toContain("正在读取创作工作台");
     expect(h.bridge.refresh).toHaveBeenCalledWith({ deferArchive: true });
     h.refresh.complete({ ok: true, accountKey });
-    await vi.waitFor(() => expect(h.reads).toEqual([`${accountKey}:single:${mode}`]));
+    // The separate type-recovery row is read first; the canonical draft row follows.
+    await vi.waitFor(() => expect(h.reads).toEqual([`${accountKey}:single:${mode}:type-recovery-v1`]));
     expect(h.document.root.querySelector("[data-files]")).toBeNull();
     expect(h.bridge.listBoundApis).not.toHaveBeenCalled();
     h.read.complete(h.saved);
     await vi.waitFor(() => expect(h.restoreStarted).toHaveBeenCalledOnce());
+    expect(h.reads).toEqual([`${accountKey}:single:${mode}:type-recovery-v1`, `${accountKey}:single:${mode}`]);
     expect(h.document.root.querySelector("[data-files]")).toBeNull();
     h.restore.complete();
     await vi.waitFor(() => expect(h.bridge.listBoundApis, h.document.root.textContent).toHaveBeenCalledOnce());
@@ -422,24 +445,25 @@ function completeStartup(h: ReturnType<typeof harness>) {
 }
 
 describe.each(["main", "detail", "ad", "batch"] as const)("%s account-level pending startup UI", entry => {
-  it("shows another entry's request before generation can unlock and preserves its journal", async () => {
+  it("isolates another entry's pending request while preserving its journal and enabling independent generation", async () => {
     const receipt = { ...externalReceipt, providerTaskId: "private-supplier-task", apiKey: "private-supplier-key", generationRoute: "private-supplier-route" };
     const raw = JSON.stringify(receipt), storage = new Map([[pendingKey, raw]]), h = harness(entry, false, storage);
     forbidSending(h);completeStartup(h);
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
     expect(h.recoveryStarted).toHaveBeenCalledOnce();
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    expect(h.document.control("[data-setting=model]").disabled).toBe(true);
-    expect(h.document.control("[data-action=resolve]").disabled).toBe(true);
-    expect(h.document.control("[data-receipt-job]").textContent).toBe(externalReceipt.jobId);
-    expect(h.document.control("[data-receipt-time]").textContent).toContain("2026/10/10 14:30:15");
-    expect(h.document.control("[data-receipt-task]").textContent).toBe(externalReceipt.taskId);
-    expect(h.document.control("[data-receipt-shot]").textContent).toBe("第 12 张（shot-12）");
+    // The original request stays bound to its own task and image; this workspace continues.
+    expect(h.document.control("[data-pending-receipt]").textContent).toContain("其他图片可继续生成，无需手动解除");
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.control("[data-setting=model]").disabled).toBe(false);
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
+    const pending = [...(h.controller().state.pendingReceipts || []), ...(h.controller().state.uncertain ? [h.controller().state.uncertain] : [])];
+    expect(pending.some((value: { jobId: string; taskId: string; shotId: string }) => value.jobId === receipt.jobId && value.taskId === receipt.taskId && value.shotId === receipt.shotId)).toBe(true);
+    // The task row names the original request without supplier secrets.
+    const row = h.document.control(`[data-task-row="${receipt.jobId}"]`);
+    expect(row.textContent).toContain("结果待确认 · 本次等待已结束"); expect(row.textContent).toContain(receipt.jobId);
+    expect(row.textContent).toContain("新生成按新任务计费");
     for (const secret of [receipt.providerTaskId, receipt.apiKey, receipt.generationRoute]) expect(h.document.root.textContent).not.toContain(secret);
-    click(h, "generate");click(h, "resolve");
-    check(h, "[data-uncertain-confirm]", true);
-    expect(h.document.control("[data-action=resolve]").disabled).toBe(false);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     expect(storage.get(pendingKey)).toBe(raw);expect(h.writes).toEqual([]);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.bridge.analyze).not.toHaveBeenCalled();
   });
@@ -453,7 +477,10 @@ describe.each(["main", "detail", "ad", "batch"] as const)("%s account-level pend
     expect(h.bridge.listBoundApis).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
     h.recovery.complete();
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    // Once recovery has registered the receipt, independent generation is available.
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.storage.get(pendingKey)).toBe(JSON.stringify(externalReceipt));
     expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
@@ -472,11 +499,21 @@ describe("pending startup failure and receipt-only resolution", () => {
   it("does not describe an old request with a label from the current edited plan", async () => {
     const h = harness("main"), task = h.saved.draft.tasks[0], receipt = { ...externalReceipt, taskId: task.id, shotId: "shot-1", batchId: "fixture-previous-detail-batch" };
     const currentLabel = (task.plan as { shots: Array<{ label: string }> }).shots[0].label;
-    h.storage.set(pendingKey, JSON.stringify(receipt));forbidSending(h);completeStartup(h);
+    const raw = JSON.stringify(receipt); h.storage.set(pendingKey, raw);forbidSending(h);completeStartup(h);
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.control("[data-receipt-shot]").textContent).toBe("第 1 张（shot-1）");
-    expect(h.document.control("[data-receipt-shot]").textContent).not.toContain(currentLabel);
-    expect(h.document.control("[data-receipt-job]").textContent).toBe(receipt.jobId);
+    // The pending notice never repeats the current plan's wording for the old request.
+    expect(h.document.root.querySelector("[data-receipt-shot]")).toBeNull();
+    expect(h.document.control("[data-pending-receipt]").textContent).not.toContain(currentLabel);
+    expect(h.document.control(`[data-task-row="${receipt.jobId}"]`).textContent).toContain(receipt.jobId);
+    // The request stays bound to its exact image; that image cannot be retried or resent.
+    expect(h.controller().state.uncertain.jobId).toBe(receipt.jobId);
+    expect(h.controller().state.tasks[0].slots[0].status).toBe("uncertain");
+    expect(h.document.root.querySelector("[data-action=retry-slot]")).toBeNull();
+    // A new generation is an explicit, separately billed task.
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.control("[data-new-generation]").textContent).toContain("按当前方案生成新图");
+    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 1 张新图，按新任务计费");
+    expect(h.storage.get(pendingKey)).toBe(raw);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.writes).toEqual([]);
   });
   it("allows leaving a failed corrupt snapshot startup without overwriting the original draft", async () => {
@@ -490,14 +527,29 @@ describe("pending startup failure and receipt-only resolution", () => {
     expect(h.recoveryStarted).not.toHaveBeenCalled();expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
-  it("opposite-type corrupt snapshot preserves the untouched draft without writes", async () => {
+  it("opposite-type corrupt snapshot preserves the untouched canonical draft and migrates through a backup and recovery row", async () => {
     const h = harness("ad");Object.assign(h.saved.draft.settings, { imageType: "main", mode: "main" });h.saved.snapshot.version = "corrupt-snapshot";
     const original = clone(h.saved);forbidSending(h);completeStartup(h);
-    await vi.waitFor(() => expect(h.document.root.textContent).toContain("创作工作台暂未就绪"));
-    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
-    expect(h.writes).toEqual([]);
+    const canonical = `${accountKey}:single:main:ad`, recovery = `${canonical}:type-recovery-v1`;
+    await vi.waitFor(() => expect(h.document.root.textContent).toContain("已保留旧版混合草稿"));
+    // The canonical row is untouched; exactly one backup and one recovery row are committed.
+    expect(h.persistedDrafts.get(canonical)).toEqual(original);
+    const backups = [...h.persistedDrafts.keys()].filter(key => key.startsWith(`${canonical}:before-explicit-mode:`));
+    expect(backups).toHaveLength(1);
+    const backup = h.persistedDrafts.get(backups[0]) as Record<string, unknown>;
+    expect({ ...backup, revision: undefined }).toEqual({ ...original, revision: undefined });
+    expect(typeof backup.revision).toBe("string");
+    expect(h.writes.map(write => write.key)).toEqual([backups[0], recovery]);
+    const recovered = h.persistedDrafts.get(recovery) as { draft: { legacyBackupKey: string; settings: { imageType: string }; tasks: Array<{ id: string; plan: unknown; confirmed: boolean; products: unknown }> } };
+    expect(recovered.draft.legacyBackupKey).toBe(backups[0]); expect(recovered.draft.settings.imageType).toBe("ad");
+    // Fresh task identities and unconfirmed plans: the corrupt snapshot's receipts are never transplanted.
+    expect(recovered.draft.tasks.map(entry => entry.id)).not.toContain(original.draft.tasks[0].id);
+    expect(recovered.draft.tasks.every(entry => entry.plan === null && entry.confirmed === false)).toBe(true);
+    expect(recovered.draft.tasks[0].products).toEqual(original.draft.tasks[0].products);
+    expect(h.controller().state.uncertain).toBeFalsy(); expect(h.controller().state.tasks).toEqual([]);
     expect(h.saved).toEqual(original);
-    expect(h.recoveryStarted).not.toHaveBeenCalled();expect(h.bridge.send).not.toHaveBeenCalled();
+    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
+    expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -565,7 +617,7 @@ describe("pending startup failure and receipt-only resolution", () => {
     expect(h.writes).toEqual([]);expect(h.bridge.send).not.toHaveBeenCalled();
   });
 
-  it("restores eleven completed results and the twelfth receipt without sending on confirmation or release", async () => {
+  it("restores eleven completed results and protects only the twelfth pending image without manual release", async () => {
     const h = harness("detail"), settings = { ...h.saved.draft.settings, count: 12 }, task = h.saved.draft.tasks[0];
     task.plan = h.engine.createPlan(task, settings);h.saved.draft.settings = settings;
     const receipt = { ...externalReceipt, taskId: task.id }, originalPlan = clone(task.plan);
@@ -574,21 +626,27 @@ describe("pending startup failure and receipt-only resolution", () => {
       error: "", archiveOk: index < 11, archiveSaving: false
     })) }];
     h.saved.snapshot.uncertain = { accountKey, taskId: task.id, shotId: "shot-12", restored: true };
-    const completed = clone(h.saved.snapshot.tasks[0].slots.slice(0, 11));
-    h.storage.set(pendingKey, JSON.stringify(receipt));forbidSending(h);completeStartup(h);
+    const completed = clone(h.saved.snapshot.tasks[0].slots.slice(0, 11)), raw = JSON.stringify(receipt);
+    h.storage.set(pendingKey, raw);forbidSending(h);completeStartup(h);
     await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
-    expect(h.document.control("[data-receipt-task]").textContent).toContain(task.name);
-    expect(h.document.control("[data-receipt-job]").textContent).toBe(receipt.jobId);
+    expect(h.document.control("[data-pending-receipt]").textContent).toContain("1 张图片的结果待确认");
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
     expect(h.document.root.querySelectorAll("[data-action=download]")).toHaveLength(11);
     expect(h.controller().snapshot().tasks[0].slots.slice(0, 11)).toEqual(completed);
-    check(h, "[data-uncertain-confirm]", true);
-    expect(h.storage.has(pendingKey)).toBe(true);expect(h.bridge.send).not.toHaveBeenCalled();
-    click(h, "resolve");
-    await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).toBeNull());
-    await vi.waitFor(() => expect(h.storage.has(pendingKey)).toBe(false));
+    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("uncertain");
+    expect(h.controller().state.uncertain.jobId).toBe(receipt.jobId);
+    expect(h.document.root.querySelectorAll("[data-action=retry-slot]").some(button => button.dataset.shotId === "shot-12")).toBe(false);
+    // Generating again is an explicit new paid task; the twelfth request stays bound to its image.
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 12 张新图，按新任务计费");
+    // A focus refresh re-runs recovery without clearing or resending anything.
+    h.dispatchWindow("focus");
+    await vi.waitFor(() => expect(h.recoveryStarted).toHaveBeenCalledTimes(2));
+    expect(h.storage.get(pendingKey)).toBe(raw);
     expect(h.controller().snapshot().tasks[0].slots.slice(0, 11)).toEqual(completed);
     expect(h.controller().snapshot().tasks[0].plan).toEqual(originalPlan);
-    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("failed");
+    expect(h.controller().snapshot().tasks[0].slots[11].status).toBe("uncertain");
     expect(h.document.root.querySelectorAll("[data-action=download]")).toHaveLength(11);
     expect(h.bridge.send).not.toHaveBeenCalled();expect(h.bridge.analyze).not.toHaveBeenCalled();
     expect(h.writes.every(write => write.key === `${accountKey}:single:detail`)).toBe(true);
@@ -622,30 +680,34 @@ function check(h: InteractionHarness, selector: string, checked: boolean) {
 }
 
 describe("real studio deactivation bridge", () => {
-  it.each(["main", "detail"] as const)("awaits durable %s storage while retaining idle receipts and the paid generation lock", async mode => {
-    const h = await ready(mode), write = deferred<void>();
+  it.each(["main", "detail"] as const)("awaits durable %s storage while retaining idle receipts and protecting the paid image", async mode => {
+    const h = await ready(mode), write = deferred<void>(), draftKey = `${accountKey}:single:${mode}`;
     const receipt = { accountKey, jobId: "unconfirmed-local-job", taskId: "saved-product", shotId: "shot-1" };
     const receiptKey = `sz_studio_genesis_pending_v1:${accountKey}`;
     h.storage.set(receiptKey, JSON.stringify(receipt));
     h.controller().state.uncertain = clone(receipt);
     h.controller().state.previousResults.push({ status: "done", item: { resultId: "retained-local-image", url: "https://fixture.test/retained.png" }, archiveOk: true });
     h.document.dispatch("cu-import-state");
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    const before = clone(h.persistedDrafts.get(draftKey));
     h.writeControl.wait = write.promise;
     let settled = false;
     const leaving = h.navigationGuard().canDeactivate().then(result => { settled = true; return result; });
     await vi.waitFor(() => expect(h.writes).toHaveLength(1));
-    expect(settled).toBe(false);
+    // While the write is held nothing is committed and the workspace is frozen.
+    expect(settled).toBe(false); expect(h.persistedDrafts.get(draftKey)).toEqual(before);
     expect(h.document.control("[data-task-field=name]").disabled).toBe(true);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
     click(h, "generate");expect(h.bridge.send).not.toHaveBeenCalled();
     write.complete();expect(await leaving).toEqual({ allowed: true });
-    const persisted = h.writes[0].value as { draft: unknown; snapshot: { uncertain: unknown; previousResults: unknown[] } };
+    const persisted = h.persistedDrafts.get(draftKey) as { draft: unknown; snapshot: { uncertain: unknown; previousResults: unknown[] } };
     expect(persisted.draft).toEqual(h.saved.draft);
     expect(persisted.snapshot.uncertain).toEqual(receipt);
     expect(persisted.snapshot.previousResults).toHaveLength(1);
     expect(h.storage.get(receiptKey)).toBe(JSON.stringify(receipt));
     expect(h.controller().state.uncertain).toEqual(receipt);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    // Idle receipts do not block leaving; only the paid image stays protected from a retry.
+    expect(h.document.root.querySelectorAll("[data-action=retry-slot]").some(button => button.dataset.shotId === "shot-1")).toBe(false);
+    expect(h.bridge.send).not.toHaveBeenCalled();
     expect(h.beforeUnload().preventDefault).not.toHaveBeenCalled();
   });
 
@@ -1144,31 +1206,31 @@ describe("real studio replica control interactions", () => {
     expect(JSON.parse(storage.get(`sz_studio_main_modules_v1:${accountKey}`) || "[]")).toHaveLength(1);
   });
 
-  it("allows an explicitly checked unknown receipt to be resolved while the rest of the workspace remains locked", async () => {
+  it("keeps an unknown receipt's exact image protected without a manual release while the rest of the workspace continues", async () => {
     const h = harness("main"), receipt = { jobId: "fixture-unknown-job", taskId: "saved-product", shotId: "shot-1", accountKey };
     h.saved.snapshot.uncertain = receipt;
     h.saved.snapshot.tasks[0].slots[0].status = "uncertain";
-    const journalKey = `sz_studio_genesis_pending_v1:${accountKey}`;
-    h.storage.set(journalKey, JSON.stringify(receipt));
+    const journalKey = `sz_studio_genesis_pending_v1:${accountKey}`, raw = JSON.stringify(receipt);
+    h.storage.set(journalKey, raw);
     h.refresh.complete({ ok: true, accountKey }); h.read.complete(h.saved);
     await vi.waitFor(() => expect(h.bridge.listBoundApis).toHaveBeenCalledOnce());
     h.catalog.complete({ ok: true, accountKey, providers: [provider] });
-    await vi.waitFor(() => expect(h.document.root.querySelector("[data-uncertain-confirm]")).not.toBeNull());
-    expect(h.document.control("[data-action=resolve]").disabled).toBe(true);
-    expect(h.document.control("[data-setting=model]").disabled).toBe(true);
-    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
-    click(h, "resolve");
-    expect(h.storage.has(journalKey)).toBe(true);
-    check(h, "[data-uncertain-confirm]", true);
-    expect(h.document.control("[data-action=resolve]").disabled).toBe(false);
-    click(h, "resolve");
-    await vi.waitFor(() => expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull());
-    await vi.waitFor(() => expect(h.storage.has(journalKey)).toBe(false));
-    expect(h.document.control("[data-action=retry]").disabled).toBe(false);
-    expect(h.document.control("[data-setting=model]").disabled).toBe(false);
-    const stored = await flushDraft(h), snapshot = (h.writes.at(-1)?.value as { snapshot: { uncertain: unknown; tasks: Array<{ slots: Array<{ status: string }> }> } }).snapshot;
-    expect(snapshot.uncertain).toBeNull();
-    expect(snapshot.tasks[0].slots[0].status).toBe("failed");
+    await vi.waitFor(() => expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
+    // No manual clear exists: the unknown request can only be settled by its own receipt.
+    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.document.root.querySelector("[data-action=retry-slot]")).toBeNull();
+    // The rest of the workspace continues; a new image is an explicit new paid task.
+    await vi.waitFor(() => expect(h.document.control("[data-setting=model]").disabled).toBe(false));
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 1 张新图，按新任务计费");
+    expect(h.document.control('[data-task-row="fixture-unknown-job"]').textContent).toContain("新生成按新任务计费");
+    h.dispatchWindow("focus");
+    await vi.waitFor(() => expect(h.recoveryStarted).toHaveBeenCalledTimes(2));
+    expect(h.storage.get(journalKey)).toBe(raw);
+    const stored = await flushDraft(h), persisted = h.persistedDrafts.get(`${accountKey}:single:main`) as { snapshot: { uncertain: unknown; tasks: Array<{ slots: Array<{ status: string }> }> } };
+    expect(persisted.snapshot.uncertain).toMatchObject({ jobId: receipt.jobId, taskId: receipt.taskId, shotId: receipt.shotId });
+    expect(persisted.snapshot.tasks[0].slots[0].status).toBe("uncertain");
     expect(stored.tasks[0].id).toBe("saved-product");
     expect(stored.tasks[0].plan).not.toBeNull();
     expect(h.bridge.send).not.toHaveBeenCalled();
