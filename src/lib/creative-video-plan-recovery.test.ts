@@ -17,7 +17,32 @@ class Node {
   setAttribute() {}
   addEventListener(name: string, fn: () => unknown) { this.listeners.set(name, fn); }
 }
-type Run = Record<string, any>;
+interface UncertainReceipt { status: string; stateUncertain?: boolean }
+interface Run extends UncertainReceipt {
+  id: string; taskId: string; purpose: string; accountKey: string; durationSeconds: number; prompt: string;
+  newPlanRequestedAt?: string;
+  plan: {
+    aiSeconds: number; options: { mode: string; budgetYuan: number; maxAttempts: number };
+    shots: Array<{ id: string; index: number; kind: string; durationSeconds: number; productKey: string; estimatedYuan: number }>;
+  };
+  shotRuns: Array<UncertainReceipt & { id: string; attempts: Array<{
+    requestId: string; reservedYuan: number; released?: boolean; details?: { stateUncertain?: boolean };
+  }> }>;
+  narrationRuns?: UncertainReceipt[];
+}
+interface RecoveryTestingApi {
+  state: {
+    accountKey: string; productionBusy: boolean; productionRun: Run | null; history: Run[];
+    modelCatalog: Array<{ productKey: string; configured: boolean }>;
+    settings: { creativeRoute: string }; productionOptions: { budgetYuan: number };
+    assets: { image: Array<{ id: string; kind: string; remoteUrl: string; mimeType?: string; width?: number; height?: number }> };
+  };
+  cacheDom(): void; bindProductionEvents(): void; renderProductionRun(): void;
+  draftSnapshot(): unknown; startNewProductionPlan(): Promise<boolean>; restoreHistory(): Promise<void>;
+  startProductionGeneration(): Promise<void>; executeProductionRun(run: Run): Promise<void>;
+  retryProductionShot(run: Run, shotId: string): Promise<void>;
+}
+interface RuntimeMessage { type: string; payload: { requestId?: string } }
 function harness() {
   const html = readFileSync(new URL("../../public/creative/labs/ecommerce-video-studio/video-studio.html", import.meta.url), "utf8");
   const nodes = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Node()]));
@@ -26,7 +51,7 @@ function harness() {
   const store = { saveRun: vi.fn(async (run: Run) => { saved.set(run.id, structuredClone(run)); return run; }),
     listRuns: vi.fn(async () => [...saved.values()].map(run => structuredClone(run))),
     removeAsset: vi.fn(), saveDraft: vi.fn() };
-  const messages = vi.fn((message: any, done: (reply: unknown) => void) => done({ ok: true, payload: {
+  const messages = vi.fn((message: RuntimeMessage, done: (reply: unknown) => void) => done({ ok: true, payload: {
     task: { id: `test-${messages.mock.calls.length}`, status: "failed", providerSubmitted: false,
       error: { code: "TEST_ONLY_REJECTION", message: "No supplier call is made by this fixture." } }
   } }));
@@ -39,11 +64,11 @@ function harness() {
   for (const file of ["video-studio-contract.js", "video-production.js", "video-studio.js"]) {
     vm.runInContext(readFileSync(new URL(`../../public/creative/labs/ecommerce-video-studio/${file}`, import.meta.url), "utf8"), context);
   }
-  const api = context.SZEcommerceVideoStudioTesting as any;
+  const api = context.SZEcommerceVideoStudioTesting as RecoveryTestingApi;
   api.cacheDom();
   Object.assign(api.state, { accountKey: "tenant:alice", backendConnected: true, credentialAvailable: true,
     prompt: "商品细节展示", productionOptions: { mode: "quality", totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 17, maxAttempts: 1 } });
-  api.state.modelCatalog.find((model: any) => model.productKey === "seedance-2.0").configured = true;
+  api.state.modelCatalog.find(model => model.productKey === "seedance-2.0")!.configured = true;
   api.state.settings.creativeRoute = "free_direct";
   function run(): Run {
     return { id: "old-plan", taskId: "old-plan", purpose: "production", accountKey: "tenant:alice", status: "failed",
@@ -110,7 +135,7 @@ describe("explicit recovery from a definitively failed video plan", () => {
     const h = harness(); h.select(); await h.api.startNewProductionPlan();
     h.saved.get("old-plan")!.shotRuns[0].status = "unknown";
     await h.api.restoreHistory(); h.api.renderProductionRun();
-    expect(h.api.state.productionRun.id).toBe("old-plan");
+    expect(h.api.state.productionRun!.id).toBe("old-plan");
     expect(h.nodes.get("production-resume")!.disabled).toBe(false);
     expect(h.nodes.get("production-new-plan")!.hidden).toBe(true);
     expect(h.messages).not.toHaveBeenCalled();
@@ -138,14 +163,14 @@ describe("explicit recovery from a definitively failed video plan", () => {
     const h = harness(); const old = h.select();
     await h.api.startNewProductionPlan();
     await h.api.startProductionGeneration();
-    const next = h.api.state.productionRun;
+    const next = h.api.state.productionRun!;
     expect(next.id).not.toBe(old.id); expect(h.api.state.history).toHaveLength(2);
     expect(next.plan.options.maxAttempts).toBe(1); expect(next.plan.options.budgetYuan).toBe(17);
     expect(h.messages).toHaveBeenCalledTimes(1);
     expect(h.messages.mock.calls[0][0].payload.requestId).toContain(next.id);
     expect(h.saved.get(old.id)!.shotRuns[0].attempts[0].requestId).toBe("old-plan:shot-1:1");
     const count = h.messages.mock.calls.length;
-    await h.api.executeProductionRun(h.saved.get(old.id)); await h.api.retryProductionShot(h.saved.get(old.id), "shot-1");
+    await h.api.executeProductionRun(h.saved.get(old.id)!); await h.api.retryProductionShot(h.saved.get(old.id)!, "shot-1");
     expect(h.messages).toHaveBeenCalledTimes(count);
   });
 });

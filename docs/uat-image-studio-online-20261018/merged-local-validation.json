@@ -1,0 +1,56 @@
+{
+  "buildExitCode": 0,
+  "context": "Fresh merged source after type-only lint fixes; Linux validation and deployment not implied",
+  "lint": {
+    "errors": 0,
+    "existingWarnings": 52,
+    "exitCode": 0
+  },
+  "logs": {
+    "buildLog": {
+      "bytes": 18612,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-build.log",
+      "sha256": "0dde963a58c25a1f8cf1a99902946ec0fc50df6bebb06d8536ed80f9ac53e94f"
+    },
+    "lintLog": {
+      "bytes": 6989,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-lint.log",
+      "sha256": "d8e39b2b7e10525ec90218690785fbf269d19bf01624ceab54e182199434f868"
+    },
+    "nodeTapLog": {
+      "bytes": 1068,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-video-node-tests.log",
+      "sha256": "ee14734bbe0efe9dc70160774fabf77c0177eea5ee845a4859e11d24490f47a5"
+    },
+    "typecheckLog": {
+      "bytes": 0,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-typecheck.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "vitestLog": {
+      "bytes": 87,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-full-tests.log",
+      "sha256": "7c2c7a5e3c820bfb27d0ad6ba65c2613428d56dd0c07e1eeea4a06d493a6c213"
+    },
+    "vitestReport": {
+      "bytes": 1581791,
+      "localFile": "/tmp/sanjie-online-uat-20261018/merged-r2-local-full-tests.json",
+      "sha256": "36ae008717a80f224eaa3bc5e69d6ed3ca17fdb489d513f8dfbc6f3bb2d1ad4d"
+    }
+  },
+  "node": {
+    "command": "node --test --test-reporter=tap scripts/video-provider-error.node-test.cjs",
+    "failed": 0,
+    "passed": 4
+  },
+  "ordinaryTenantB": "pending: tenant@demo.local is the same tenant as A",
+  "productionImageFixDeployed": false,
+  "typecheckExitCode": 0,
+  "version": 1,
+  "vitest": {
+    "failed": 0,
+    "passed": 3886,
+    "skipped": 277,
+    "total": 4163
+  }
+}

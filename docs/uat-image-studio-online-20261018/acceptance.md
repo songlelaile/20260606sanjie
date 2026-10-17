@@ -81,3 +81,38 @@ Screenshots, native reports and original downloads are retained locally under
 `/tmp/sanjie-online-uat-20261018/`; no customer content or credentials are included
 in this repository report. The existing finance pause, provider backend, UAT,
 protected packages and live database are outside these source corrections.
+
+## Concurrent production video repair preserved
+
+The first candidate preparation stopped before creating its directory because
+four live video assets had changed in a separately authorized video repair.
+The immutable v2 release receipt and original 748-file manifest were retained.
+The video commit `399342af0a09d981ed96b1c60d13928625384d1e` was merged
+without overlapping the image changes. Its exact four-file overlay is recorded
+in `live-video-overlay-provenance.json`; the R1, R2 and R3 server receipts
+were read back and matched the committed raw SHA-256 values.
+
+The independently pinned baseline commit
+`565dd3535829ccb46d00a507197f9596a503e106` contains the original source plus
+only those four deployed assets. Its 748-file manifest is
+`live-v2-source-sha256.json`, SHA-256
+`9fe3173f6a164244bd125ccf01e189df252750ecc5b8730a01c1a49574f232f1`.
+This overlay is a separate inherited change, not a rewrite of the old release
+evidence or permission to accept other production drift.
+
+Fresh merged-source local full regression: **3886 passed, 0 failed,
+277 skipped**, 4163 total. The separate Node video-provider suite also passed
+all **4** tests. These are fresh runs after the complete video merge; they do
+not establish paid video generation or trusted-portrait provider acceptance.
+
+The user later identified `tenant@demo.local` as the intended B login. It is
+the same account and tenant ID as A, so the independent ordinary-tenant gate
+remains pending. No replacement tenant was created.
+
+After the type-only fixes in the two new video test fixtures, the full suite
+was rerun: **3886 passed, 0 failed, 277 skipped**, plus the explicit TAP
+Node command **4 passed, 0 failed**. Fresh typecheck, standard lint (0 errors,
+52 existing warnings) and the complete standard Next.js build all exited 0.
+No production code or test assertions changed in those lint corrections.
+Native local output digests are recorded in `merged-local-validation.json`;
+the Linux and release gates remain separate.

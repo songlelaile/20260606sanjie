@@ -13,6 +13,38 @@ class Node {
   closest(selector: string) { return selector === ".upload-tile" ? new Node() : null; }
   setAttribute() {} addEventListener() {}
 }
+interface StorageReference { dbName: string; storeName: string; id: string }
+interface PortraitReference { uri: string; accountKey: string }
+interface LocalImage {
+  id: string; kind: string; name: string; mimeType: string; size: number; width: number; height: number; role: string;
+  storageRef: StorageReference; previewUrl: string; trustedPortrait?: PortraitReference;
+}
+interface SerializedImage extends Omit<LocalImage, "previewUrl"> { remoteUrl: string }
+interface RequestImage { remoteUrl: string; storageRef: StorageReference | null }
+interface ProductionOptions {
+  mode: string; totalDurationSeconds: number; hybridAiSeconds: number; budgetYuan: number; maxAttempts: number;
+}
+interface ProductionPlan { shots: Array<{ sourceAssetId: string; request: { images: RequestImage[] } }> }
+interface PortraitTestingApi {
+  state: {
+    accountKey: string; backendConnected: boolean; credentialAvailable: boolean | null; legacySingle: boolean; mode: string;
+    capabilities: { provider: string; adapter: string; remoteAssets?: boolean; localAssets?: string[] } | null;
+    modelCatalog: Array<{ productKey: string; configured: boolean; nativePlatform: boolean }>;
+    assets: { image: LocalImage[] }; productionOptions: ProductionOptions;
+    rightsConfirmed: boolean; rightsConfirmedAt: string; rightsFingerprint: string;
+    review: { state: string; confirmed: boolean; confirmedAt: string; script: string };
+  };
+  cacheDom(): void; renderAssets(): void; refreshCapabilities(): Promise<void>;
+  normalizeTrustedPortraitUri(value: string): string; personalArkPortraitAvailable(): boolean;
+  associateTrustedPortrait(id: string, value: string | null): Promise<boolean>;
+  assetForRequest(asset: LocalImage, options?: { analysis: boolean }): RequestImage;
+  serializeAsset(asset: LocalImage): SerializedImage; hydrateAsset(asset: SerializedImage): Promise<LocalImage | null>;
+  buildRequest(stage: "draft" | "submit"): { images: RequestImage[] }; assetRightsFingerprint(): string;
+  productionTemplate(options: { confirmed: boolean }): unknown;
+  productionValidationErrors(options: { requireReview: boolean }): string[];
+  productionSourceAsset(run: { accountKey: string; plan: ProductionPlan }, id: string): Promise<{ blob: Blob }>;
+}
+interface ProductionTestingApi { buildPlan(template: unknown, options: ProductionOptions): ProductionPlan }
 function harness() {
   const root = "../../public/creative/labs/ecommerce-video-studio/";
   const html = readFileSync(new URL(root + "video-studio.html", import.meta.url), "utf8");
@@ -31,11 +63,11 @@ function harness() {
   for (const file of ["video-studio-contract.js", "video-production.js", "video-studio.js"]) {
     vm.runInContext(readFileSync(new URL(root + file, import.meta.url), "utf8"), context);
   }
-  const api = context.SZEcommerceVideoStudioTesting as any;
+  const api = context.SZEcommerceVideoStudioTesting as PortraitTestingApi;
   api.cacheDom();
   Object.assign(api.state, { accountKey: "tenant:alice", backendConnected: true, credentialAvailable: true,
     capabilities: { provider: "doubao", adapter: "ark" }, prompt: "展示白色西装细节", legacySingle: true });
-  api.state.modelCatalog.find((model: any) => model.productKey === "seedance-2.0").configured = true;
+  api.state.modelCatalog.find(model => model.productKey === "seedance-2.0")!.configured = true;
   api.state.assets.image = vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify([{ ...record, blob: undefined,
     storageRef: { dbName: store.DB_NAME, storeName: "assets", id: record.id }, previewUrl: "blob:test-original" }]))})`, context);
   const image = () => api.state.assets.image[0];
@@ -46,7 +78,7 @@ function harness() {
     });
     await api.refreshCapabilities();
   }
-  return { api, production: context.SZEcommerceVideoProduction as any, nodes, store, record, image, allNodes, runtime, refresh };
+  return { api, production: context.SZEcommerceVideoProduction as ProductionTestingApi, nodes, store, record, image, allNodes, runtime, refresh };
 }
 
 describe("explicit trusted Ark portrait references", () => {
@@ -72,7 +104,7 @@ describe("explicit trusted Ark portrait references", () => {
     const h = harness(); await h.refresh(capabilityPayload({ provider: "shaozhuang-native",
       capabilities: { provider: "doubao", adapter: "ark", remoteAssets: true }, models: [{ id: "seedance-2.0",
         providerModel: "seedance-2.0", configured: true, nativePlatform: true, limits: { durations: [5], resolutions: ["720p"], ratios: ["9:16"] } }] }));
-    expect(h.api.state.capabilities.provider).toBe("shaozhuang-native");
+    expect(h.api.state.capabilities!.provider).toBe("shaozhuang-native");
     const button = h.allNodes(h.nodes.get("asset-list")!).find(node => node.dataset.trustedPortraitAsset);
     expect(button?.disabled).toBe(true); expect(h.api.personalArkPortraitAvailable()).toBe(false);
   });
@@ -110,7 +142,7 @@ describe("explicit trusted Ark portrait references", () => {
     const h = harness(); await h.api.associateTrustedPortrait(h.image().id, "asset-person-approved");
     const saved = h.api.serializeAsset(h.image());
     expect(saved.remoteUrl).toBe(""); expect(saved.storageRef.id).toBe(h.record.id);
-    const restored = await h.api.hydrateAsset(saved);
+    const restored = (await h.api.hydrateAsset(saved))!;
     expect(restored.previewUrl).toBe("blob:test-original"); expect(restored.trustedPortrait).toEqual(saved.trustedPortrait);
     expect(h.api.assetForRequest(restored).remoteUrl).toBe("asset://asset-person-approved");
     expect(h.store.getAsset).toHaveBeenCalledWith(h.record.id);
@@ -150,7 +182,7 @@ describe("explicit trusted Ark portrait references", () => {
       expect(JSON.stringify(shot.request)).not.toContain("blob:test-original");
     }
     expect(h.image().storageRef.id).toBe(h.record.id); expect(h.image().previewUrl).toBe("blob:test-original");
-    expect(h.api.buildRequest("draft").images[0].storageRef.id).toBe(h.record.id);
+    expect(h.api.buildRequest("draft").images[0].storageRef!.id).toBe(h.record.id);
   });
 
   it("keeps the original local blob available to composition and rejects stale rights after association", async () => {
@@ -168,7 +200,7 @@ describe("explicit trusted Ark portrait references", () => {
     const plan = h.production.buildPlan(h.api.productionTemplate({ confirmed: true }), h.api.state.productionOptions);
     const local = await h.api.productionSourceAsset({ accountKey: "tenant:alice", plan }, plan.shots[0].sourceAssetId);
     expect(local.blob).toBe(h.record.blob); expect(h.store.getAsset).toHaveBeenCalledWith(h.record.id);
-    expect(h.image().trustedPortrait.uri).toBe("asset://asset-person-approved");
+    expect(h.image().trustedPortrait!.uri).toBe("asset://asset-person-approved");
     expect(h.store.deleteAsset).not.toHaveBeenCalled(); expect(h.store.saveAsset).not.toHaveBeenCalled();
   });
 
@@ -184,14 +216,14 @@ describe("explicit trusted Ark portrait references", () => {
 
   it("disables platform associations and blocks existing references after a platform/account switch", async () => {
     const h = harness(); await h.api.associateTrustedPortrait(h.image().id, "asset-person-approved");
-    const model = h.api.state.modelCatalog.find((item: any) => item.productKey === "seedance-2.0");
-    model.nativePlatform = true; h.api.state.capabilities.provider = "shaozhuang-native";
+    const model = h.api.state.modelCatalog.find(item => item.productKey === "seedance-2.0")!;
+    model.nativePlatform = true; h.api.state.capabilities!.provider = "shaozhuang-native";
     expect(await h.api.associateTrustedPortrait(h.image().id, "asset-other")).toBe(false);
     expect(() => h.api.assetForRequest(h.image())).toThrow("个人火山方舟 API");
     h.api.renderAssets();
     const associate = h.allNodes(h.nodes.get("asset-list")!).find(node => node.dataset.trustedPortraitAsset);
     expect(associate?.disabled).toBe(true);
-    model.nativePlatform = false; h.api.state.capabilities.provider = "doubao"; h.api.state.accountKey = "tenant:bob";
+    model.nativePlatform = false; h.api.state.capabilities!.provider = "doubao"; h.api.state.accountKey = "tenant:bob";
     expect(() => h.api.assetForRequest(h.image())).toThrow("原账号");
     expect(h.api.assetForRequest(h.image(), { analysis: true }).remoteUrl).toBe("");
     expect(await h.api.associateTrustedPortrait(h.image().id, null)).toBe(true);
@@ -200,7 +232,7 @@ describe("explicit trusted Ark portrait references", () => {
   it("does not silently fall back to uploading the original when saved portrait metadata is invalid", async () => {
     const h = harness(); const saved = h.api.serializeAsset(h.image());
     saved.trustedPortrait = { uri: "asset://asset-ok?bad=1", accountKey: "tenant:alice" };
-    const restored = await h.api.hydrateAsset(saved);
+    const restored = (await h.api.hydrateAsset(saved))!;
     expect(() => h.api.assetForRequest(restored)).toThrow("引用无效");
     expect(h.api.assetForRequest(restored, { analysis: true })).toMatchObject({ remoteUrl: "", storageRef: { id: h.record.id } });
   });
