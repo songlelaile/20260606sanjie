@@ -8,16 +8,24 @@ const nativeConfig = { apiKey: "", provider: "shaozhuang-native", platformVideo:
   { id: "seedance-2.0", durations: [5], resolutions: ["720p"], ratios: ["16:9"], generateAudio: true }
 ] };
 
-function hostRuntime(key: string | null = fixtureVideoKey, switchOnRead = false) {
-  let account = "fixture-alice";
-  const read = vi.fn((_keys: string[], callback: (stored: unknown) => void) => {
-    if (switchOnRead) account = "fixture-bob";
-    callback({ sz_web_video_api_key_v1: key === null ? {} : { "fixture-alice": key } });
+interface HostOptions { modes?: Record<string, string>; profiles?: unknown; switchOnReadNumber?: number; failReadNumber?: number }
+function hostRuntime(key: string | null = fixtureVideoKey, switchOnRead = false, options: HostOptions = {}) {
+  let account = "fixture-alice", reads = 0;
+  // Key-aware storage: each read returns only the keys it requested.
+  const stored: Record<string, unknown> = { sz_web_video_api_key_v1: key === null ? {} : { "fixture-alice": key } };
+  if (options.modes) stored.sz_web_video_billing_mode_v1 = options.modes;
+  if (options.profiles !== undefined) stored.sz_image_prompt_lab_config_profiles_v2 = options.profiles;
+  const runtime: { lastError?: { message: string }; onMessage: { addListener: ReturnType<typeof vi.fn> } } = { onMessage: { addListener: vi.fn() } };
+  const read = vi.fn((keys: string[], callback: (stored: unknown) => void) => {
+    reads++;
+    if (switchOnRead || options.switchOnReadNumber === reads) account = "fixture-bob";
+    if (options.failReadNumber === reads) { runtime.lastError = { message: "fixture read failed" }; callback({}); runtime.lastError = undefined; return; }
+    callback(Object.fromEntries(keys.filter(name => Object.prototype.hasOwnProperty.call(stored, name)).map(name => [name, stored[name]])));
   });
   const fetch = vi.fn(async () => Response.json({ configured: true, models: nativeConfig.platformModels }));
-  const context = vm.createContext({ Response, fetch,
+  const context = vm.createContext({ Response, fetch, URL,
     authCheck: async () => ({ ok: true, user: { id: account } }),
-    chrome: { storage: { local: { get: read } }, runtime: { onMessage: { addListener: vi.fn() } } },
+    chrome: { storage: { local: { get: read } }, runtime },
     SZ_WEB_SUPPLY: { usesServerCredentials: () => true }
   });
   vm.runInContext(asset("web-video-host.js"), context);
@@ -86,10 +94,44 @@ describe("fresh production video credential priority", () => {
   });
   it("keeps script analysis separate from the saved Doubao video key", async () => {
     const runtime = hostRuntime();
-    expect(await runtime.resolve("analysis")).toMatchObject({ ok: true,
-      config: { apiKey: "", visionBaseUrl: "https://sub.shaozhuangai.com/v1", visionModel: "chatGPT5.5" } });
+    const result = await runtime.resolve("analysis");
+    expect(result).toMatchObject({ ok: true, accountKey: "fixture-alice",
+      config: { apiKey: "", provider: "shaozhuang", visionBaseUrl: "https://sub.shaozhuangai.com/v1", visionModel: "chatGPT5.5" } });
+    expect(JSON.stringify(result)).not.toContain(fixtureVideoKey);
+    // The analysis route reads the billing mode first, then (outside the platform
+    // wallet) only the image analysis profile; the video key map is never consulted for a key.
+    expect(runtime.read).toHaveBeenCalledTimes(2);
+    expect(runtime.read.mock.calls.map(call => call[0])).toEqual([
+      ["sz_web_video_api_key_v1", "sz_web_video_billing_mode_v1"], ["sz_image_prompt_lab_config_profiles_v2"]
+    ]);
+    expect(runtime.fetch).not.toHaveBeenCalled();
+  });
+  it("uses the platform wallet analysis profile with one billing-mode read and no personal profile read", async () => {
+    const runtime = hostRuntime(fixtureVideoKey, false, { modes: { "fixture-alice": "platform_wallet" },
+      profiles: { accounts: { "user:fixture-alice": { activeProvider: "openai", configs: { openai: { apiKey: "fixture-personal-analysis-key" } } } } } });
+    const result = await runtime.resolve("analysis");
+    expect(result).toMatchObject({ ok: true, accountKey: "fixture-alice",
+      config: { apiKey: "", provider: "openai-compatible", visionBaseUrl: "https://sub.shaozhuangai.com/v1", visionModel: "chatGPT5.5" } });
+    expect(JSON.stringify(result)).not.toContain(fixtureVideoKey);
+    expect(JSON.stringify(result)).not.toContain("fixture-personal-analysis-key");
     expect(runtime.read).toHaveBeenCalledOnce();
-    expect(runtime.read).toHaveBeenCalledWith(["sz_image_prompt_lab_config_profiles_v2"], expect.any(Function));
+    expect(runtime.read).toHaveBeenCalledWith(["sz_web_video_api_key_v1", "sz_web_video_billing_mode_v1"], expect.any(Function));
+    expect(runtime.fetch).not.toHaveBeenCalled();
+  });
+  it.each([1, 2])("rejects an account change observed after analysis storage read %i", async readNumber => {
+    const runtime = hostRuntime(fixtureVideoKey, false, { switchOnReadNumber: readNumber,
+      profiles: { accounts: { "user:fixture-alice": { activeProvider: "openai", configs: { openai: { apiKey: "fixture-personal-analysis-key",
+        visionBaseUrl: "https://vision.fixture.test/v1", visionModel: "fixture-vision" } } } } } });
+    const result = await runtime.resolve("analysis");
+    expect(result).toMatchObject({ ok: false, code: "ACCOUNT_CHANGED" });
+    expect(JSON.stringify(result)).not.toContain("fixture-personal-analysis-key");
+    expect(runtime.read).toHaveBeenCalledTimes(readNumber);
+    expect(runtime.fetch).not.toHaveBeenCalled();
+  });
+  it.each([1, 2])("stops analysis when storage read %i fails instead of falling back to platform credits", async readNumber => {
+    const runtime = hostRuntime(fixtureVideoKey, false, { failReadNumber: readNumber });
+    expect(await runtime.resolve("analysis")).toMatchObject({ ok: false, accountKey: "fixture-alice", code: "ANALYZER_PROFILE_READ_FAILED" });
+    expect(runtime.read).toHaveBeenCalledTimes(readNumber);
     expect(runtime.fetch).not.toHaveBeenCalled();
   });
   it("does not switch an unsuccessful personal video request to a platform request", async () => {

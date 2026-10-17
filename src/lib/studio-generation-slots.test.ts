@@ -11,8 +11,13 @@ describe('shared studio browser concurrency slots',()=>{
     const storage={get length(){return local.size;},key:(index:number)=>[...local.keys()][index]||null,getItem:(key:string)=>local.get(key)??null,
       setItem:(key:string,value:string)=>local.set(key,value),removeItem:(key:string)=>local.delete(key)};
     const context=createContext({localStorage:storage,account,environment:'',workspaceScope:scope});
-    const start=source.indexOf('  function journal()'),end=source.indexOf('  // Shared browser slots',start);
-    runInContext(source.slice(start,end),context);
+    // journal(scope=workspaceScope) is extracted alone, bounded by the next helper.
+    const start=source.indexOf('  function journal('),end=source.indexOf('\n  function createWorkspace(',start);
+    expect(start).toBeGreaterThanOrEqual(0);expect(end).toBeGreaterThan(start);
+    const helper=source.slice(start,end);
+    expect(helper.startsWith('  function journal(scope=workspaceScope) {')).toBe(true);
+    expect(helper.match(/\n  function /g)).toBeNull();expect(helper.trimEnd().endsWith('}')).toBe(true);
+    runInContext(helper,context);
     const journal=context.journal(),receipt={jobId:'one',accountKey:account,taskId:'task',shotId:'shot-1',batchId:'batch',createdAt:100},other={...receipt,jobId:'two',shotId:'shot-2'};
     journal.write(receipt);journal.write(other);
     const foreignKey=`sz_studio_genesis_pending_v2:${account}:single:detail:foreign`;
@@ -21,6 +26,10 @@ describe('shared studio browser concurrency slots',()=>{
     expect(journal.compareAndClear({...other,taskId:'changed'})).toBe(false);expect(local.size).toBe(3);
     expect(journal.compareAndClear(other)).toBe(true);expect(journal.readReceipt(other)).toBeNull();expect(journal.read()).toEqual(receipt);
     expect(journal.compareAndClear(receipt)).toBe(true);expect(journal.read()).toBeNull();expect(local.has(foreignKey)).toBe(true);
+    // Another workspace scope never reads or clears this workspace's receipts.
+    const detail=context.journal('single:detail'),again={...receipt,jobId:'three'};journal.write(again);
+    expect(detail.readAll()).toEqual([{...receipt,jobId:'foreign'}]);expect(detail.compareAndClear(again)).toBe(false);
+    expect(journal.readReceipt(again)).toEqual(again);expect(local.has(foreignKey)).toBe(true);
   });
   it('caps two workspaces at 100 live requests and keeps a slot until its provider reply',async()=>{
     const held=new Set<string>();

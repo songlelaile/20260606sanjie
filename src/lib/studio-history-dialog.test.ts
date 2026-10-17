@@ -359,9 +359,27 @@ describe("studio generation history dialog", () => {
     const h = harness(); expect(h.context.SZ_CREATIVE_TOOLS_BRIDGE.openHistory).toBe(h.context.openArchiveHistory);
     expect(runtime).toMatch(/openArchiveBtn[\s\S]{0,180}openArchiveHistory/);
     const studio = asset("studio-genesis-ui.js");
-    // Single and batch workspaces now reuse the same common action toolbar.
-    expect(studio.match(/data-action="history"/g)).toHaveLength(1);
+    const helper = (name: string) => {
+      const start = studio.indexOf(`  function ${name}(`), end = studio.indexOf("\n  function ", start + 1);
+      expect(start, name).toBeGreaterThanOrEqual(0); expect(end, name).toBeGreaterThan(start);
+      return studio.slice(start, end);
+    };
+    // Exactly two openers exist: the common toolbar and the retained legacy-task
+    // recovery dialog. A third (duplicate) opener anywhere still fails here.
+    expect(studio.match(/data-action="history"/g)).toHaveLength(2);
+    expect(helper("commonActions").match(/data-action="history"/g)).toHaveLength(1);
+    expect(helper("showLegacyTasks").match(/data-action="history"/g)).toHaveLength(1);
+    expect(helper("showLegacyTasks")).toContain("openDialog('保留的旧任务',content)");
+    // Single and batch workspaces reuse the one common action toolbar.
+    expect(helper("renderSingle")).toContain("${commonActions()}");
+    expect(helper("renderBatch")).toContain("${commonActions()}");
+    expect(studio.match(/\$\{commonActions\(\)\}/g)).toHaveLength(2);
+    // The recovery dialog delegates its buttons to the same action handler,
+    // so both openers share the account check and bridge.openHistory below.
+    expect(helper("openDialog")).toMatch(/closest\('\[data-action\]'\);if\(button\)action\(button\)/);
     const action = studio.match(/if\(name==='history'\)[^\n]*/)?.[0] || "";
+    expect(studio.match(/if\(name==='history'\)/g)).toHaveLength(1);
+    expect(action).toMatch(/await ensureAccount\(\);await bridge\.openHistory\(button\);/);
     expect(action).toContain("bridge.openHistory"); expect(action).not.toMatch(/scrollIntoView|studio-visible|creative-visible/);
   });
 });

@@ -12,7 +12,7 @@ interface FixtureElement {
   id: string; value: string; textContent: string; dataset: Record<string, string>;
   attributes: Record<string, string>; children: FixtureElement[];
   listeners: Record<string, (...args: unknown[]) => void>; tagName?: string;
-  disabled?: boolean; hidden?: boolean;
+  disabled?: boolean; hidden?: boolean; className?: string;
   classList: { contains(name: string): boolean; add(name: string): void; remove(name: string): void; toggle(name: string, on: boolean): void };
   setAttribute(name: string, value: string): void;
   appendChild(child: FixtureElement): FixtureElement;
@@ -302,15 +302,31 @@ test('场景档案不显示旧引导重生；案例和焕新保留各自可用�
   function buttons(node: FixtureElement): FixtureElement[] {
     return (node.tagName === 'BUTTON' ? [node] : []).concat(node.children.flatMap(buttons));
   }
+  function descendants(node: FixtureElement): FixtureElement[] {
+    return [node].concat(node.children.flatMap(descendants));
+  }
   for (const route of ['scene-extension', 'case', 'style-refresh']) {
     c.state.viralCoreRoute = route;
     const card = c.renderArchiveAssetCard({}, {
       surfaceMode: 'viral', creativeRoute: route, archiveAssetId: route,
       businessRoleName: '测试角色', imageIndex: 1
     }, false);
-    const actions = buttons(card);
-    assert.deepEqual(actions.map((button) => button.textContent), route === 'scene-extension' ? ['下载'] : ['下载', '引导重生']);
+    // The card also carries an image preview opener; route actions are the
+    // archive-result-actions row and stay exactly as the route permits.
+    const all = buttons(card);
+    const actionRows = descendants(card).filter((node) => node.className === 'archive-result-actions');
+    assert.equal(actionRows.length, 1);
+    const actions = buttons(actionRows[0]);
+    assert.deepEqual(actions.map((button) => button.textContent), route === 'scene-extension' ? ['下载原图'] : ['下载原图', '引导重生']);
+    assert.equal(actions[0].attributes['aria-label'], '下载原图：测试角色 · V1');
+    assert.equal(actions[0].disabled, false);
     if (route !== 'scene-extension') assert.equal(actions[1].disabled, false);
+    assert.equal(all.some((button) => button.textContent === '引导重生'), route !== 'scene-extension');
+    const previews = all.filter((button) => button.className === 'archive-preview-open');
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].attributes['aria-label'], '预览原图：测试角色 · V1');
+    assert.equal(previews[0].disabled, false);
+    assert.deepEqual(all.filter((button) => !actions.includes(button) && !previews.includes(button)), []);
   }
 });
 
@@ -376,6 +392,20 @@ function deferred<T = RouteReply>(): Deferred<T> {
   let reject!: Deferred<T>["reject"];
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
+}
+
+// Yield whole event-loop turns so chained microtasks and archive commits settle.
+async function settleTurns(turns: number) {
+  for (let turn = 0; turn < turns; turn++) await new Promise((resolve) => setImmediate(resolve));
+}
+
+// Wait for an observable condition, bounded so a missing dispatch fails loudly.
+async function settleUntil(condition: () => boolean, label: string, maxTurns = 500) {
+  for (let turn = 0; turn < maxTurns; turn++) {
+    if (condition()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`Timed out waiting for ${label}`);
 }
 
 // Keep actual generateOne/worker/completion code; replace provider I/O and only
@@ -519,13 +549,63 @@ test('风格路线未切换时四槽位与一次自动QA完整保留', async () 
   assert.equal(requests.length, 4);
   requests[2].resolve({ ok: true, images: ['blob:style-3'] });
   requests[3].resolve({ ok: true, images: ['blob:style-4'] });
-  for (let index = 0; index < 16; index++) await Promise.resolve();
+  // generateOne awaits post-processing and every archive commit before the
+  // next chunk; wait for the actual QA dispatch instead of a fixed tick count.
+  await settleUntil(() => requests.length >= 5, 'automatic style QA dispatch');
+  await settleTurns(20);
   assert.equal(requests.length, 5);
-  assert.equal(requests[4].type, 'ANALYZE_STYLE_REFRESH_QA');
+  assert.deepEqual(requests.map((request) => request.type), ['GENERATE_IMAGE', 'GENERATE_IMAGE', 'GENERATE_IMAGE', 'GENERATE_IMAGE', 'ANALYZE_STYLE_REFRESH_QA']);
   requests[4].resolve({ ok: true, assessments: [1, 2, 3, 4].map(() => ({ status: 'passed' })) });
   const response = await pending;
   assert.equal(response.ok, true);
   assert.equal(c.state.styleRefresh.run.phase, 'complete');
   assert.equal(c.state.results.length, 4);
   assert.ok(c.state.results.every((item: RouteResult) => item.creativeRoute === 'style-refresh' && item.styleRefreshQa?.status === 'passed'));
+});
+
+test('风格焕新自动QA等待四张图片的本机档案全部提交后才发送', async () => {
+  const { context: c, requests, archives } = loadAsyncGeneration();
+  // One held commit per image, so every archive write gates QA individually.
+  const commits: Array<Deferred<void>> = [];
+  c.queueArchiveResult = (item: RouteResult) => {
+    archives.push(item);
+    const commit = deferred<void>();
+    commits.push(commit);
+    return commit.promise.then(() => ({ ok: true }));
+  };
+  const qaCount = () => requests.filter((request) => request.type === 'ANALYZE_STYLE_REFRESH_QA').length;
+  c.setViralCoreRoute('style-refresh');
+  const pending = c.generateStyleRefreshImages({ id: 'style-held', data: { '风格焕新配置': { copyMode: 'none' } }, prompt: 'style-held' });
+  assert.equal(requests.length, 2);
+  requests[0].resolve({ ok: true, images: ['blob:held-1'] });
+  requests[1].resolve({ ok: true, images: ['blob:held-2'] });
+  await settleUntil(() => commits.length >= 2, 'first two archive commits queued');
+  await settleTurns(20);
+  // Held commits keep both workers on their first image.
+  assert.equal(requests.length, 2);
+  commits[0].resolve();
+  await settleUntil(() => requests.length >= 3, 'third generation slot after the first commit');
+  commits[1].resolve();
+  await settleUntil(() => requests.length >= 4, 'fourth generation slot after the second commit');
+  assert.deepEqual(requests.map((request) => request.type), ['GENERATE_IMAGE', 'GENERATE_IMAGE', 'GENERATE_IMAGE', 'GENERATE_IMAGE']);
+  requests[2].resolve({ ok: true, images: ['blob:held-3'] });
+  requests[3].resolve({ ok: true, images: ['blob:held-4'] });
+  await settleUntil(() => commits.length >= 4, 'third and fourth archive commits queued');
+  await settleTurns(20);
+  assert.equal(qaCount(), 0);
+  commits[2].resolve();
+  await settleTurns(20);
+  assert.equal(qaCount(), 0);
+  assert.equal(requests.length, 4);
+  commits[3].resolve();
+  await settleUntil(() => qaCount() >= 1, 'automatic style QA after the fourth commit');
+  await settleTurns(20);
+  assert.equal(qaCount(), 1);
+  assert.equal(requests.length, 5);
+  assert.equal(requests[4].type, 'ANALYZE_STYLE_REFRESH_QA');
+  assert.equal(archives.length, 4);
+  requests[4].resolve({ ok: true, assessments: [1, 2, 3, 4].map(() => ({ status: 'passed' })) });
+  const response = await pending;
+  assert.equal(response.ok, true);
+  assert.equal(c.state.results.length, 4);
 });

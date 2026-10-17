@@ -1,8 +1,12 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { GatewayBillingError } from "@/lib/model-gateway/billing-contract";
 const mocks = vi.hoisted(() => ({ user: vi.fn(), overview: vi.fn(), proposalView: vi.fn(), receipt: vi.fn(),
-  prepare: vi.fn(), prepareRefresh: vi.fn(), initialize: vi.fn(), refresh: vi.fn(), sourceRead: vi.fn() }));
+  prepare: vi.fn(), prepareRefresh: vi.fn(), initialize: vi.fn(), refresh: vi.fn(), sourceRead: vi.fn(), giftPlans: vi.fn() }));
+// The source route reaches the server-only shared wallet module; route tests run in Node.
+vi.mock("server-only", () => ({}));
 vi.mock("@/lib/server-session", () => ({ getCurrentUser: mocks.user }));
+// Pending gift-plan processing is a separate database service; routes only trigger it.
+vi.mock("@/lib/model-gateway/credit-gift-plans", () => ({ tryProcessPendingGiftPlans: mocks.giftPlans }));
 vi.mock("@/lib/model-gateway/credit-pool-management-view", () => ({ getCreditPoolManagementOverview: mocks.overview, getCreditPoolProposalView: mocks.proposalView, getCreditPoolOperationReceipt: mocks.receipt }));
 vi.mock("@/lib/model-gateway/credit-pool-accounting", () => ({ prepareGatewayPoolAdoption: mocks.prepare, prepareGatewayPoolRefresh: mocks.prepareRefresh, initializeGatewayCreditPool: mocks.initialize, refreshGatewayCreditPool: mocks.refresh, persistGatewaySharedSourceSnapshot: mocks.sourceRead }));
 import { GET as overview } from "./route";
@@ -18,7 +22,7 @@ const apply = { proposalId: "proposal-1", version: 1, snapshotHash: hash, reques
 const request = (body: unknown, headers: Record<string, string> = { origin: "https://shaozhuangai.com" }) => new Request("https://shaozhuangai.com/api/management/credit-pool", { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 const get = () => new Request("https://shaozhuangai.com/api/management/credit-pool");
 const opGet = (query = "operation=adoption", requestKey = key) => operation(new Request(`https://shaozhuangai.com/api/management/credit-pool/operations/${requestKey}?${query}`), { params: Promise.resolve({ requestKey }) });
-const writes = [{ name: "source", run: sourceRead, body: {}, service: mocks.sourceRead }, { name: "prepare", run: prepare, body: prep, service: mocks.prepare }, { name: "initialize", run: initialize, body: apply, service: mocks.initialize }, { name: "refresh", run: refresh, body: apply, service: mocks.refresh }];
+const writes = [{ name: "source", run: sourceRead, body: { requestKey: key }, service: mocks.sourceRead }, { name: "prepare", run: prepare, body: prep, service: mocks.prepare }, { name: "initialize", run: initialize, body: apply, service: mocks.initialize }, { name: "refresh", run: refresh, body: apply, service: mocks.refresh }];
 const privateHeaders = (r: Response) => expect(r.headers.get("cache-control")).toBe("private, no-store");
 beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("NODE_ENV", "production"); vi.stubEnv("PUBLIC_APP_ORIGIN", "");
   mocks.user.mockResolvedValue({ id: "admin-real", authRole: "admin", role: "operator", status: "active" });
@@ -27,6 +31,7 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("NODE_ENV", "production"); vi.
   mocks.proposalView.mockResolvedValue({ id: "proposal-1", capacityCents: "1000", walletTotalCents: "200", state: "reviewable" });
   mocks.initialize.mockResolvedValue({ initialized: true, replayed: false, eventId: `adoption:${key}` });
   mocks.refresh.mockResolvedValue({ refreshed: true, replayed: true }); mocks.receipt.mockResolvedValue(null);
+  mocks.giftPlans.mockResolvedValue({ state: "checked", attempted: 0 });
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("active platform admin management pool boundary", () => {
@@ -46,7 +51,17 @@ describe("active platform admin management pool boundary", () => {
     it(`${w.name} surfaces missing trusted source without leakage or fake success`, async () => { w.service.mockRejectedValue(new GatewayBillingError("POOL_SOURCE_UNVERIFIED", "private-password at provider", 409)); const r = await w.run(request(w.body)); expect(r.status).toBe(409); const body = JSON.stringify(await r.json()); expect(body).toContain("POOL_SOURCE_UNVERIFIED"); expect(body).not.toContain("private-password"); expect(body).not.toContain('"committed":true'); privateHeaders(r); });
   }
   it("preparation delegates canonical references to atomic adoption and scopes the view to actual admin", async () => { const r = await prepare(request(prep)); expect(r.status).toBe(200); expect(mocks.prepare).toHaveBeenCalledWith("admin-real", { snapshotId: "source-1", snapshotHash: hash }); expect(mocks.proposalView).toHaveBeenCalledWith("admin-real", "proposal-1"); expect(mocks.prepareRefresh).not.toHaveBeenCalled(); });
-  it("source collects only server binding for actual admin and returns the allowlisted overview", async () => { mocks.sourceRead.mockResolvedValue({ apiKey: "must-not-return", proof: { private: true } }); const r = await sourceRead(request({})); expect(r.status).toBe(200); expect(mocks.sourceRead).toHaveBeenCalledWith("admin-real"); expect(JSON.stringify(await r.json())).not.toContain("must-not-return"); });
+  it("source collects only server binding for actual admin and returns the allowlisted overview", async () => { mocks.sourceRead.mockResolvedValue({ apiKey: "must-not-return", proof: { private: true } }); const r = await sourceRead(request({ requestKey: key.toUpperCase() })); expect(r.status).toBe(200); expect(mocks.sourceRead).toHaveBeenCalledWith("admin-real", key); expect(JSON.stringify(await r.json())).not.toContain("must-not-return"); expect(mocks.giftPlans).not.toHaveBeenCalled(); });
+  it("source verification requires exactly one client request key and never reaches the service without it", async () => {
+    for (const body of [{}, { requestKey: "not-a-key" }, { requestKey: key, extra: true }]) { const r = await sourceRead(request(body)); expect(r.status).toBe(400); privateHeaders(r); }
+    expect(mocks.sourceRead).not.toHaveBeenCalled(); expect(mocks.overview).not.toHaveBeenCalled(); expect(mocks.giftPlans).not.toHaveBeenCalled();
+  });
+  it("a ready source verification processes pending gift plans once before building the overview", async () => {
+    mocks.sourceRead.mockResolvedValue({ ready: true, snapshotId: "source-1" }); const r = await sourceRead(request({ requestKey: key }));
+    expect(r.status).toBe(200); expect(mocks.sourceRead).toHaveBeenCalledWith("admin-real", key); expect(mocks.giftPlans).toHaveBeenCalledOnce();
+    expect(mocks.sourceRead.mock.invocationCallOrder[0]).toBeLessThan(mocks.giftPlans.mock.invocationCallOrder[0]);
+    expect(mocks.giftPlans.mock.invocationCallOrder[0]).toBeLessThan(mocks.overview.mock.invocationCallOrder[0]);
+  });
   it.each([
     [new Error("private database key"), 503, "CREDIT_POOL_SERVICE_UNAVAILABLE"],
     [new GatewayBillingError("FX_RATE_STALE", "private provider key", 409), 409, "FX_RATE_STALE"]
@@ -54,7 +69,7 @@ describe("active platform admin management pool boundary", () => {
     let sourceUpdated = false;
     mocks.sourceRead.mockImplementationOnce(async () => { sourceUpdated = true; return { snapshotId: "committed-source" }; });
     mocks.overview.mockImplementationOnce(async () => { expect(sourceUpdated).toBe(true); throw failure; });
-    const response = await sourceRead(request({}));
+    const response = await sourceRead(request({ requestKey: key }));
     expect(sourceUpdated).toBe(true); expect(response.status).toBe(status); expect(mocks.sourceRead).toHaveBeenCalledOnce(); expect(mocks.overview).toHaveBeenCalledOnce();
     expect(mocks.sourceRead.mock.invocationCallOrder[0]).toBeLessThan(mocks.overview.mock.invocationCallOrder[0]);
     const body = await response.json(); expect(body.code).toBe(code); expect(JSON.stringify(body)).not.toContain("private");
@@ -62,7 +77,7 @@ describe("active platform admin management pool boundary", () => {
   });
   it.each(["privateKeyRef", "origin", "ownerId", "groupId", "credentialFingerprint", "externalCommittedUsd"])("source clients cannot choose %s", async field => { const r = await sourceRead(request({ [field]: "client-authority" })); expect(r.status).toBe(400); expect(mocks.sourceRead).not.toHaveBeenCalled(); });
   it("refresh proposal delegates to same-cycle service rather than adoption", async () => { expect((await prepare(request({ ...prep, operation: "source_refresh" }))).status).toBe(200); expect(mocks.prepareRefresh).toHaveBeenCalledWith("admin-real", { snapshotId: "source-1", snapshotHash: hash }); expect(mocks.prepare).not.toHaveBeenCalled(); });
-  it("initialization preserves normalized original key and returns allowlisted commit", async () => { mocks.initialize.mockResolvedValue({ initialized: true, replayed: true, eventId: `adoption:${key}`, secret: "not-allowed" }); const r = await initialize(request({ ...apply, requestKey: key.toUpperCase() })); expect(mocks.initialize).toHaveBeenCalledWith("admin-real", apply); expect(await r.json()).toEqual({ data: { operation: "adoption", committed: true, replayed: true, eventId: `adoption:${key}`, requestKey: key } }); });
+  it("initialization preserves normalized original key and returns allowlisted commit", async () => { mocks.initialize.mockResolvedValue({ initialized: true, replayed: true, eventId: `adoption:${key}`, secret: "not-allowed" }); const r = await initialize(request({ ...apply, requestKey: key.toUpperCase() })); expect(mocks.initialize).toHaveBeenCalledWith("admin-real", apply); expect(await r.json()).toEqual({ data: { operation: "adoption", committed: true, replayed: true, eventId: `adoption:${key}`, requestKey: key, automaticGifts: { state: "checked", attempted: 0 } } }); expect(mocks.giftPlans).toHaveBeenCalledOnce(); expect(mocks.initialize.mock.invocationCallOrder[0]).toBeLessThan(mocks.giftPlans.mock.invocationCallOrder[0]); });
   it("same-cycle refresh retains original references and idempotent receipt", async () => { const r = await refresh(request(apply)); expect(mocks.refresh).toHaveBeenCalledWith("admin-real", apply); expect(await r.json()).toMatchObject({ data: { operation: "source_refresh", committed: true, replayed: true, eventId: `source-refresh:${key}`, requestKey: key } }); });
   it("proposal reads bind to current admin and invalid IDs never reach DB view", async () => { expect((await proposal(get(), { params: Promise.resolve({ id: "proposal-1" }) })).status).toBe(200); expect(mocks.proposalView).toHaveBeenCalledWith("admin-real", "proposal-1"); mocks.proposalView.mockClear(); expect((await proposal(get(), { params: Promise.resolve({ id: "../secret" }) })).status).toBe(400); expect(mocks.proposalView).not.toHaveBeenCalled(); });
   it("original operation recovery is read-only and scoped by actor, kind and normalized key", async () => { mocks.receipt.mockResolvedValue({ eventId: `adoption:${key}`, capacityCents: "12345678901234567890" }); const r = await opGet("operation=adoption", key.toUpperCase()); expect(mocks.receipt).toHaveBeenCalledWith("admin-real", "adoption", key); expect(await r.json()).toMatchObject({ data: { state: "committed", requestKey: key, receipt: { capacityCents: "12345678901234567890" } } }); expect(mocks.initialize).not.toHaveBeenCalled(); });

@@ -8,10 +8,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 type Element = React.ReactElement<Record<string, unknown>>;
 const state = { cursor: 0, values: new Map<number, unknown>(), refs: new Map<number, { current: unknown }>(), effects: [] as (() => void)[], mounted: false };
 const requireDependency = createRequire(import.meta.url);
-const component = { exports: {} as typeof import("./CreditGiftPanel") };
-new Function("require", "exports", ts.transpileModule(readFileSync(new URL("./CreditGiftPanel.tsx", import.meta.url), "utf8"), {
+const transpile = (file: string) => ts.transpileModule(readFileSync(new URL(file, import.meta.url), "utf8"), {
   compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }
-}).outputText)((id: string) => {
+}).outputText;
+const cssModule = () => new Proxy({}, { get: (_target, key) => String(key) });
+// The panel embeds the real gift-plan panel. It renders with React's own hooks
+// inside renderToStaticMarkup, so its effects (and requests) never run here.
+const plansPanel = { exports: {} as typeof import("./CreditGiftPlansPanel") };
+new Function("require", "exports", transpile("./CreditGiftPlansPanel.tsx"))((id: string) => {
+  if (id.endsWith(".module.css")) return cssModule();
+  return requireDependency(id);
+}, plansPanel.exports);
+const component = { exports: {} as typeof import("./CreditGiftPanel") };
+new Function("require", "exports", transpile("./CreditGiftPanel.tsx"))((id: string) => {
+  if (id === "./CreditGiftPlansPanel") return plansPanel.exports;
   if (id === "react") return {
     ...React,
     useState: (initial: unknown) => {
@@ -26,7 +36,7 @@ new Function("require", "exports", ts.transpileModule(readFileSync(new URL("./Cr
     },
     useEffect: (effect: () => void) => { if (!state.mounted) state.effects.push(effect); }
   };
-  if (id.endsWith(".module.css")) return new Proxy({}, { get: (_target, key) => String(key) });
+  if (id.endsWith(".module.css")) return cssModule();
   return requireDependency(id);
 }, component.exports);
 const { CreditGiftPanel, parseCreditGiftPoints } = component.exports;
@@ -47,6 +57,7 @@ const overview = (gifts: unknown[] = [], ready = true) => ({ data: { pool: { rea
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 let storage: Map<string, string>;
 let listeners: Map<string, () => void>;
+let dispatched: string[];
 
 function resetHooks() { state.cursor = 0; state.values.clear(); state.refs.clear(); state.effects = []; state.mounted = false; }
 function render(props: Partial<Parameters<typeof CreditGiftPanel>[0]> = {}) {
@@ -94,7 +105,9 @@ beforeEach(() => {
   resetHooks();
   storage = new Map();
   listeners = new Map();
-  vi.stubGlobal("window", { confirm: vi.fn(() => true), addEventListener: (name: string, listener: () => void) => listeners.set(name, listener), removeEventListener: (name: string) => listeners.delete(name), sessionStorage: {
+  dispatched = [];
+  vi.stubGlobal("window", { confirm: vi.fn(() => true), addEventListener: (name: string, listener: () => void) => listeners.set(name, listener), removeEventListener: (name: string) => listeners.delete(name),
+    dispatchEvent: (event: Event) => { dispatched.push(event.type); listeners.get(event.type)?.(); return true; }, sessionStorage: {
     getItem: vi.fn((key: string) => storage.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => { storage.set(key, value); }),
     removeItem: vi.fn((key: string) => { storage.delete(key); })
@@ -119,6 +132,11 @@ describe("credit gift form and pool readiness", () => {
     expect(html).not.toContain("60618.0775600000");
     expect(html).not.toContain("Codex_credit");
     expect(html).not.toContain("客户乙");
+    // The real preset/allocation panel is embedded with the same administrator scope.
+    const plans = elements(tree).filter((row) => row.type === plansPanel.exports.CreditGiftPlansPanel);
+    expect(plans).toHaveLength(1);
+    expect(plans[0].props).toEqual({ users, initialUserId: "user-a", adminId: "admin-a" });
+    expect(html).toContain('aria-label="预设赠送与累计分配上限"');
     expect(button(tree, "确认赠送积分").props.disabled).toBe(true);
     await click(tree, "确认赠送积分");
     expect(fetch).toHaveBeenCalledTimes(1);
@@ -300,6 +318,9 @@ describe("credit gift uncertainty and idempotent recovery", () => {
     const html = renderToStaticMarkup(render());
     expect(html).toContain("赠送成功");
     expect(html).toContain("已确认的赠送成功记录保留");
+    // A confirmed gift announces the pool change once; the in-flight guard keeps it from re-reading.
+    expect(dispatched).toEqual(["sanjie-credit-pool-updated"]);
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(4);
     expect(html).toContain("30 → 130.5");
     expect(html).toContain("500 → 399.5");
     expect(storage.has(STORAGE_KEY)).toBe(false);

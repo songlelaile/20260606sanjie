@@ -169,7 +169,11 @@ describe("website scene backend contract", () => {
     const h = backend();
     expect(await h.api.verifyKnowledgeBeforeImage(payload(h.contract))).toMatchObject({ ok: true, knowledgeMeta: { code: "scene_extension_scope" } });
     expect((await h.api.verifyKnowledgeBeforeImage({ promptSource: "scene-extension" })).ok).toBe(false);
-    expect(await h.api.verifyKnowledgeBeforeImage({ labMode: "detail", detailMode: "link", promptSource: "link" })).toMatchObject({ ok: false, code: "missing_knowledge_batch" });
+    // Optional business knowledge no longer gates a saved link prompt (background
+    // verifyKnowledgeBeforeImage); it must take the ordinary route, never the scene bypass.
+    expect(await h.api.verifyKnowledgeBeforeImage({ labMode: "detail", detailMode: "link", promptSource: "link" })).toMatchObject({ ok: true, knowledgeMeta: { code: "prompt_input_scope", provider: "none" } });
+    // Subject identity fingerprints remain a hard gate on that ordinary route.
+    expect(await h.api.verifyKnowledgeBeforeImage({ labMode: "detail", detailMode: "link", promptSource: "link", subjectTaskId: "S-1" })).toMatchObject({ ok: false, code: "subject_binding_incomplete" });
     expect(h.requests).toHaveLength(0);
   });
   it("blocks a scene transport marker smuggled into the old reference knowledge bypass", async () => {

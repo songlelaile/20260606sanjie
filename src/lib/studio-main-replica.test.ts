@@ -203,10 +203,23 @@ describe("main module replica contract", () => {
     const tasks = [{ ...input, plan: api.createPlan(input, settings) }];
     await f.controller.run(tasks, settings);
     const original = clone(f.controller.state.tasks[0].slots[0].item);
-    f.journal.write({ jobId: "unknown-receipt", accountKey: "user:main-replica" });
+    const unknown = { jobId: "unknown-receipt", accountKey: "user:main-replica" };
+    f.journal.write(unknown);
+    // A persisted receipt that is not yet loaded reports the pending-receipt code.
+    expect((await f.controller.retrySlot(input.id, "shot-1", tasks, settings)).code).toBe("STUDIO_RECEIPT_PENDING");
+    expect(f.controller.state.tasks[0].slots[0].item).toEqual(original);
+    expect(f.controller.state.tasks[0].slots[0].status).toBe("done");
+    expect(f.controller.state.previousResults).toEqual([]);
+    expect(f.journal.read()).toEqual(unknown);
+    expect(f.submitted).toHaveLength(1);
+    // A loaded unconfirmed receipt still requires explicit confirmation first.
+    f.controller.state.uncertain = { ...unknown, taskId: input.id, shotId: "shot-1" };
     expect((await f.controller.retrySlot(input.id, "shot-1", tasks, settings)).code).toBe("STUDIO_CONFIRM_REQUIRED");
     expect(f.controller.state.tasks[0].slots[0].item).toEqual(original);
+    expect(f.controller.state.previousResults).toEqual([]);
+    expect(f.journal.read()).toEqual(unknown);
     expect(f.submitted).toHaveLength(1);
+    expect(f.archived).toHaveLength(1);
   });
 
   it("never clears another tab's newer receipt when resolving a stale local job", async () => {

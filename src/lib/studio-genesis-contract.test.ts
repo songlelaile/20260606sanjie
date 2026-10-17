@@ -233,6 +233,9 @@ describe("actual website background product route",()=>{
     for(const input of [{...payload,prompt:"forged"},{...payload,detailMode:"reference"},{...payload,promptSource:"link",knowledgeBatchId:"fake"},{...payload,referenceDetailAuthorization:"fake"}])expect((await h.background.createImageTask(configuration,input)).ok).toBe(false);
     expect((await h.background.createImageTask({...configuration,imageModel:"deepseek-text"},payload)).code).toBe("CONFIG_STUDIO_REFERENCE_REQUIRED");
     expect(h.requests).toHaveLength(0);
-    expect((await h.background.verifyKnowledgeBeforeImage({labMode:"detail",detailMode:"link",promptSource:"link"})).code).toBe("missing_knowledge_batch");
+    // Saved link prompts are no longer gated by optional business knowledge, so they
+    // take the ordinary prompt scope rather than any studio bypass; subject binding stays mandatory.
+    expect(await h.background.verifyKnowledgeBeforeImage({labMode:"detail",detailMode:"link",promptSource:"link"})).toMatchObject({ok:true,knowledgeMeta:{code:"prompt_input_scope",provider:"none"}});
+    expect(await h.background.verifyKnowledgeBeforeImage({labMode:"detail",detailMode:"link",promptSource:"link",subjectTaskId:"S-1"})).toMatchObject({ok:false,code:"subject_binding_incomplete"});
   });
 });
