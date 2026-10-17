@@ -1,0 +1,22 @@
+{
+  "relatedVitestFiles": 5,
+  "relatedVitestPassed": 72,
+  "providerNodeRegressionPassed": 4,
+  "typecheck": "passed",
+  "javascriptSyntax": "passed",
+  "gitDiffWhitespace": "passed",
+  "productionProcessesRestarted": false,
+  "paidGenerationSucceeded": false,
+  "trustedPortraitMaterialVerified": false,
+  "pending": "The receiver account still has zero authorized real-person groups after refresh. Awaiting the actor upload/authorization result or a usable Asset ID; no retained-person generation success is claimed.",
+  "liveAuthorizedPortraitGroupCount": 0,
+  "authorizationInvitationCreated": true,
+  "authorizationValidFrom": "2026-10-18",
+  "authorizationValidThrough": "2026-10-25",
+  "authorizationInvitationSecretsIncluded": false,
+  "liveTrustedPortraitAssociationButtonsEnabled": 3,
+  "liveAssociationPromptOpenedAndCancelled": true,
+  "originalDraftImageCount": 3,
+  "originalDraftAudioCount": 1,
+  "originalProductionHistoryRetained": true
+}

@@ -1,0 +1,62 @@
+{
+  "appliedAt": 1792256752.9174101,
+  "root": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2",
+  "backup": "/opt/sanjie-private/video-http400-repair-20261018-r2",
+  "files": [
+    {
+      "path": "public/creative/src/ecommerce-video-background.js",
+      "before": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+      "after": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.css",
+      "before": "7b8e083917eedfba902a49812127637b35525bb3b0bc295de491b20110272cee",
+      "after": "d56afb19d8f919b1efb7a963211a6874ff07b293d8eb520cf342530b32e54f91"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "592c7720ec0d05c97536331ff367123930976294191a813f9ebb4fac695c0c32",
+      "after": "13b58bdc98a3e30259253f90674b91e61cf083e47efa206d3d46b9e7d5b31241"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "31e75f1f645139761b2e9b9fb8be3555905f9c6e6d39238d0c8998183e28ceb9",
+      "after": "4dead9da739ff6c72d965c6b06891adacf6491fcbebda2a0715a8f1d8b7de0be"
+    }
+  ],
+  "nginxHashUnchanged": "7ecee59857a43530e58e49f6b7f4665662af1d71d61e05f3849da08ad8b094bc",
+  "processesUnchanged": {
+    "50": {
+      "pid": 3612108,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/credit-pool-shared-wallet-20261009-v1"
+    },
+    "88": {
+      "pid": 229880,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/link-image-workspace-20261015-v1"
+    },
+    "89": {
+      "pid": 644499,
+      "status": "online",
+      "cwd": "/opt/sanjie-platform-modules-pause-20261016-tools-r1"
+    },
+    "90": {
+      "pid": 965082,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-optimize-v1"
+    },
+    "91": {
+      "pid": 989625,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2"
+    }
+  },
+  "readOnlyHttpStatus": {
+    "/login": 200,
+    "/api/creative/proxy": 405,
+    "/api/creative/assets/src/ecommerce-video-background.js": 401
+  },
+  "processRestarted": false,
+  "databaseOrProviderConfigurationChanged": false
+}
