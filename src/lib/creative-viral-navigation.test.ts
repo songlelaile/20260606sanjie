@@ -46,7 +46,7 @@ function bridge() {
   const state = { busy: false, pendingReceipts: 0 };
   // The real task bridges also report live task state to the host's task notices.
   return { state, canDeactivate: vi.fn<DeactivationBridge["canDeactivate"]>(() => ({ allowed: !state.busy, reason: state.busy ? "任务仍在执行" : undefined })),
-    activate: vi.fn(async () => ({ ok: true })),
+    activate: vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true })),
     getTaskState: vi.fn(() => ({ ready: true, busy: state.busy, activeCount: state.busy ? 1 : 0, pendingReceiptCount: state.pendingReceipts, summary: "" })) };
 }
 
