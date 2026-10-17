@@ -3546,10 +3546,8 @@ function promptTaskRun(type, payload, options, dispatch) {
 }
 // END_PROMPT_TASK_LIFECYCLE_V1
 function sendRuntime(type, payload, options) {
-  var accountAtDispatch = promptTaskOwner();
   function finish(resp) {
     resp = resp || { ok: false, error: '无响应' };
-    if (accountAtDispatch === promptTaskOwner()) applyModelFallbackFromResponse(resp);
     return resp;
   }
   function dispatch(requestPayload) {
@@ -3608,21 +3606,6 @@ function refreshBusinessKnowledgeStatus() {
     }
     return { local: resp };
   });
-}
-
-function applyModelFallbackFromResponse(resp) {
-  var fallback = resp && resp.modelFallback;
-  if (!fallback || !fallback.to) return;
-  ['visionModel', 'textModel'].forEach(function (id) {
-    var input = $(id);
-    if (input && sameModelValue(input.value, fallback.from)) input.value = fallback.to;
-  });
-  updateConfigSummary(cfgFromForm());
-  setPill('configState', '已自动切换到 ' + fallback.to, 'ok');
-}
-
-function sameModelValue(a, b) {
-  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
 }
 
 function setPill(id, text, kind) {
@@ -3914,6 +3897,12 @@ function cfgFromForm() {
   var preset = presetForProvider(provider);
   var cfg = normalizeCfg({
     provider: provider,
+    _accountKey: configApiKey.accountOwner,
+    _ownerFingerprint: configApiKey.ownerFingerprint,
+    _supplyChannel: configApiKey.provider === provider ? configApiKey.supplyChannel : '',
+    _profileRevision: configApiKey.provider === provider ? configApiKey.profileRevision : undefined,
+    _accountRevision: configApiKey.provider === provider ? configApiKey.accountRevision : undefined,
+    _keyEdited: configApiKey.provider === provider && configApiKey.editDirty,
     imageAdapter: $('imageAdapter').value || preset.imageAdapter,
     apiKey: acceptedConfigApiKey(provider),
     visionBaseUrl: $('visionBaseUrl').value.trim() || preset.visionBaseUrl || DEFAULT_CFG.visionBaseUrl,
@@ -3922,7 +3911,7 @@ function cfgFromForm() {
     imageEndpoint: $('imageEndpoint').value.trim() || preset.imageEndpoint || DEFAULT_CFG.imageEndpoint,
     imageModel: $('imageModel').value.trim() || preset.imageModel || DEFAULT_CFG.imageModel
   });
-  if (pendingProviderProfile || configWalletSwitchPending) { cfg.apiKey = ''; cfg._configLoading = true; }
+  if (pendingProviderProfile || configWalletSwitchPending || configKeyUnlinkPending || configSavePending) { cfg.apiKey = ''; cfg._configLoading = true; }
   return cfg;
 }
 
@@ -3962,15 +3951,11 @@ function creativeSupplyChannel(kind, cfg) {
 if (typeof window !== 'undefined') window.SZCreativeCreditChannel = creativeSupplyChannel;
 
 function normalizeHostedTextModel(cfg, model) {
-  var value = String(model || '').trim();
-  if (!value || !isShaozhuangHostedConfig(cfg)) return value;
-  return HOSTED_TEXT_MODEL_MIGRATIONS[value.toLowerCase()] || value;
+  return String(model || '').trim();
 }
 
 function normalizeHostedImageModel(cfg, model) {
-  var value = String(model || '').trim();
-  if (!value || !isShaozhuangHostedImageConfig(cfg)) return value;
-  return HOSTED_IMAGE_MODEL_MIGRATIONS[value.toLowerCase()] || value;
+  return String(model || '').trim();
 }
 
 function normalizeCfg(cfg) {
@@ -3991,21 +3976,21 @@ function normalizeCfg(cfg) {
     if (!cfg[field] && preset[field]) cfg[field] = preset[field];
   });
   if (cfg.provider === 'openai-compatible') {
-    if (!cfg.visionBaseUrl || cfg.visionBaseUrl === 'https://api.example.com/v1') cfg.visionBaseUrl = PRESETS['openai-compatible'].visionBaseUrl;
-    if (!cfg.imageEndpoint || cfg.imageEndpoint === 'https://api.example.com/v1/images/generations') cfg.imageEndpoint = PRESETS['openai-compatible'].imageEndpoint;
-    if (!cfg.visionModel || cfg.visionModel === 'vision-model' || cfg.visionModel === 'chat-model') cfg.visionModel = PRESETS['openai-compatible'].visionModel;
-    if (!cfg.textModel || cfg.textModel === 'chat-model' || cfg.textModel === 'vision-model') cfg.textModel = PRESETS['openai-compatible'].textModel;
-    if (!cfg.imageModel || cfg.imageModel === 'image-model') cfg.imageModel = PRESETS['openai-compatible'].imageModel;
+    if (!cfg.visionBaseUrl) cfg.visionBaseUrl = PRESETS['openai-compatible'].visionBaseUrl;
+    if (!cfg.imageEndpoint) cfg.imageEndpoint = PRESETS['openai-compatible'].imageEndpoint;
+    if (!cfg.visionModel) cfg.visionModel = PRESETS['openai-compatible'].visionModel;
+    if (!cfg.textModel) cfg.textModel = PRESETS['openai-compatible'].textModel;
+    if (!cfg.imageModel) cfg.imageModel = PRESETS['openai-compatible'].imageModel;
     cfg.visionModel = normalizeHostedTextModel(cfg, cfg.visionModel);
     cfg.textModel = normalizeHostedTextModel(cfg, cfg.textModel);
     cfg.imageModel = normalizeHostedImageModel(cfg, cfg.imageModel);
   }
   var isVolc = cfg.provider === 'doubao' || /^https:\/\/ark\.cn-beijing\.volces\.com/.test(cfg.visionBaseUrl || '');
   if (isVolc) {
-    if (!cfg.visionModel || /^doubao-1\.5/.test(cfg.visionModel)) cfg.visionModel = 'doubao-seed-evolving';
-    if (!cfg.textModel || /^doubao-1\.5/.test(cfg.textModel)) cfg.textModel = 'doubao-seed-evolving';
+    if (!cfg.visionModel) cfg.visionModel = 'doubao-seed-evolving';
+    if (!cfg.textModel) cfg.textModel = 'doubao-seed-evolving';
     if (!cfg.imageEndpoint) cfg.imageEndpoint = PRESETS.doubao.imageEndpoint;
-    if (!cfg.imageModel || /^doubao-seedream-3-0/i.test(cfg.imageModel)) cfg.imageModel = VOLC_SEEDREAM_DEFAULT;
+    if (!cfg.imageModel) cfg.imageModel = VOLC_SEEDREAM_DEFAULT;
   }
   return cfg;
 }
@@ -4015,11 +4000,21 @@ var configReadEpoch = 0;
 var pendingProviderSelection = 0;
 var pendingProviderProfile = 0;
 var configFormDirty = false;
+var configSavePending = false;
+var configKeyUnlinkPending = false;
 // The password field is a display/editor, not a credential source. Only an
 // accepted profile or an explicit manual edit may replace this in-memory key.
-var configApiKey = { provider: '', value: '', editing: false, editAccount: '', editProvider: '', pendingInput: '', history: [], historyIndex: 0 };
+var configApiKey = { provider: '', value: '', accountOwner: '', ownerFingerprint: undefined, supplyChannel: '', profileRevision: undefined, accountRevision: undefined, hasBoundKey: false, editing: false, editDirty: false, editAccount: '', editProvider: '', pendingInput: '', history: [], historyIndex: 0 };
 function acceptedConfigApiKey(provider) {
   return configApiKey.provider === provider ? configApiKey.value : '';
+}
+function syncApiKeyControls() {
+  var unlink = $('unlinkApiKeyBtn');
+  if (unlink && configApiKey) unlink.disabled = !configApiKey.hasBoundKey ||
+    !state.archiveAccountKey || configApiKey.accountOwner !== String(state.archiveAccountKey) || configApiKey.provider !== $('provider').value ||
+    (configApiKey.editing && (configApiKey.editAccount !== String(state.archiveAccountKey) || configApiKey.editProvider !== $('provider').value)) ||
+    creativeWebIsBusy() || configWalletSwitchPending || configKeyUnlinkPending || configSavePending ||
+    !!pendingProviderProfile || !!pendingProviderSelection;
 }
 function apiKeyAutofilled(input) {
   if (!input || typeof input.matches !== 'function') return false;
@@ -4029,13 +4024,14 @@ function apiKeyAutofilled(input) {
 function manualApiKeyEvent(event, input) {
   var modal = $('configModal');
   return !!(event && event.isTrusted && configApiKey.editing && !input.readOnly && !input.disabled &&
-    !creativeWebIsBusy() && !configWalletSwitchPending &&
+    !creativeWebIsBusy() && !configWalletSwitchPending && !configKeyUnlinkPending && !configSavePending &&
     configApiKey.editAccount === String(state.archiveAccountKey || '') &&
     configApiKey.editProvider === $('provider').value && configApiKey.provider === configApiKey.editProvider &&
     modal && !modal.hidden && document.activeElement === input && !apiKeyAutofilled(input));
 }
 function acceptManualApiKey(value, remember) {
   configApiKey.value = String(value || '').trim();
+  if (configApiKey.value || configApiKey.hasBoundKey) configApiKey.supplyChannel = 'external_key';
   if (remember) {
     configApiKey.history = configApiKey.history.slice(0, configApiKey.historyIndex + 1);
     configApiKey.history.push(configApiKey.value);
@@ -4045,29 +4041,32 @@ function acceptManualApiKey(value, remember) {
   configFormDirty = true;
   if (!pendingProviderProfile) updateConfigSummary(cfgFromForm());
   setPill('configState', configApiKey.value ? '待保存' : '未配置', configApiKey.value ? '' : 'warn');
+  syncApiKeyControls();
 }
-function bindApiKeyEditor(input) {
-  var edit = $('editApiKeyBtn');
-  if (edit) edit.addEventListener('click', function (event) {
-    var modal = $('configModal');
-    if (!event || !event.isTrusted || !modal || modal.hidden || input.disabled || creativeWebIsBusy() ||
-        configWalletSwitchPending || configApiKey.provider !== $('provider').value) return;
-    input.value = configApiKey.value;
-    input.readOnly = false;
+function beginApiKeyEdit(event, input) {
+  var modal = $('configModal');
+  if (!event || !event.isTrusted || !modal || modal.hidden || input.disabled || input.readOnly || creativeWebIsBusy() ||
+      configWalletSwitchPending || configKeyUnlinkPending || configSavePending || configApiKey.provider !== $('provider').value ||
+      document.activeElement !== input || apiKeyAutofilled(input)) return false;
+  if (!configApiKey.editing) {
     configApiKey.editing = true;
+    configApiKey.editDirty = false;
     configApiKey.editAccount = String(state.archiveAccountKey || '');
     configApiKey.editProvider = $('provider').value;
     configApiKey.pendingInput = '';
     configApiKey.history = [configApiKey.value];
     configApiKey.historyIndex = 0;
-    ++configApplySeq;
-    configFormDirty = true;
-    input.focus();
-    input.select();
-  });
+  }
+  // Never rebind an existing editor after an account or provider change.
+  return manualApiKeyEvent(event, input);
+}
+function bindApiKeyEditor(input) {
+  input.addEventListener('focus', function (event) { beginApiKeyEdit(event, input); });
+  var unlink = $('unlinkApiKeyBtn');
+  if (unlink) unlink.addEventListener('click', unlinkConfigApiKey);
   input.addEventListener('beforeinput', function (event) {
     configApiKey.pendingInput = '';
-    if (!manualApiKeyEvent(event, input) || input.value.trim() !== configApiKey.value) {
+    if (!beginApiKeyEdit(event, input) || input.value.trim() !== configApiKey.value) {
       if (event && event.preventDefault) event.preventDefault();
       input.value = configApiKey.value;
       return;
@@ -4084,6 +4083,11 @@ function bindApiKeyEditor(input) {
       return;
     }
     if (/^(?:insertText|insertFromPaste|insertFromDrop|insertCompositionText|insertFromComposition|deleteCompositionText|deleteContentBackward|deleteContentForward|deleteWordBackward|deleteWordForward|deleteSoftLineBackward|deleteSoftLineForward|deleteHardLineBackward|deleteHardLineForward|deleteByCut|deleteByDrag)$/.test(type)) {
+      if (!configApiKey.editDirty) {
+        configApiKey.editDirty = true;
+        ++configApplySeq;
+        configFormDirty = true;
+      }
       configApiKey.pendingInput = type;
     } else {
       event.preventDefault();
@@ -4100,6 +4104,7 @@ function bindApiKeyEditor(input) {
   });
   input.addEventListener('change', function () { input.value = configApiKey.value; });
   input.addEventListener('blur', function () { configApiKey.pendingInput = ''; input.value = configApiKey.value; });
+  syncApiKeyControls();
 }
 function configReadIsCurrent(seq, accountKey, epoch) {
   return seq === configApplySeq && String(state.archiveAccountKey) === String(accountKey) && (epoch === undefined || epoch === configReadEpoch);
@@ -4113,8 +4118,15 @@ function applyCfg(cfg) {
   configFormDirty = false;
   cfg = normalizeCfg(cfg);
   configApiKey.provider = cfg.provider;
+  configApiKey.accountOwner = cfg._accountKey || String(state.archiveAccountKey || '');
+  configApiKey.ownerFingerprint = cfg._ownerFingerprint;
   configApiKey.value = cfg.apiKey || '';
+  configApiKey.supplyChannel = cfg._supplyChannel === 'external_key' || cfg._supplyChannel === 'platform_wallet' ? cfg._supplyChannel : '';
+  configApiKey.profileRevision = cfg._profileRevision;
+  configApiKey.accountRevision = cfg._accountRevision;
+  configApiKey.hasBoundKey = !!configApiKey.value;
   configApiKey.editing = false;
+  configApiKey.editDirty = false;
   configApiKey.editAccount = '';
   configApiKey.editProvider = '';
   configApiKey.pendingInput = '';
@@ -4123,7 +4135,7 @@ function applyCfg(cfg) {
   $('provider').value = cfg.provider || 'dashscope';
   $('imageAdapter').value = cfg.imageAdapter || 'dashscope-wan';
   $('apiKey').value = cfg.apiKey || '';
-  $('apiKey').readOnly = true;
+  $('apiKey').readOnly = false;
   $('visionBaseUrl').value = cfg.visionBaseUrl || DEFAULT_CFG.visionBaseUrl;
   $('visionModel').value = cfg.visionModel || DEFAULT_CFG.visionModel;
   $('textModel').value = cfg.textModel || DEFAULT_CFG.textModel;
@@ -4133,6 +4145,7 @@ function applyCfg(cfg) {
   var platformWallet = creativeUsesPlatformWallet(cfg, 'image');
   setPill('configState', platformWallet ? '使用本站积分' : apiReady ? '已配置' : '未配置', apiReady ? 'ok' : 'warn');
   updateConfigSummary(cfg);
+  syncApiKeyControls();
   return cfg;
 }
 
@@ -4146,12 +4159,13 @@ function applyProviderPreset(provider) {
 
 var configWalletSwitchPending = false;
 function loadProviderProfile(provider) {
-  if (configWalletSwitchPending) return;
+  if (configWalletSwitchPending || configKeyUnlinkPending || configSavePending) return;
   // Clear the previous provider's key and endpoint together before any read.
   pendingProviderSelection = 0;
   applyProviderPreset(provider);
   var seq = ++configApplySeq, accountKey = state.archiveAccountKey, epoch = configReadEpoch;
   pendingProviderProfile = seq;
+  syncApiKeyControls();
   setPill('configState', '正在载入已保存配置...', '');
   var timer, expired = false;
   return Promise.race([send('GET_CONFIG_PROFILE', { provider: provider }), new Promise(function (resolve) {
@@ -4168,66 +4182,144 @@ function loadProviderProfile(provider) {
     if (r && r.accountKey) setArchiveAccountKey(r.accountKey, { refresh: true });
     if (r && r.ok && r.config) {
       applyCfg(r.config);
-      send('SET_ACTIVE_PROVIDER', { provider: provider });
       setPill(
         'configState',
-        r.migrated ? '已自动修复旧模型配置' : (r.saved ? '已载入账号配置' : '已载入服务商预设'),
+        r.migrated ? '已载入旧版配置' : (r.saved ? '已载入账号配置' : '已载入服务商预设'),
         (r.saved || r.migrated) ? 'ok' : ''
       );
       return;
     }
-    applyProviderPreset(provider);
-    send('SET_ACTIVE_PROVIDER', { provider: provider });
-    setPill('configState', '新服务商预设，保存后生效', '');
+    setPill('configState', r && r.code === 'CONFIG_LEGACY_ALIAS_CONFLICT'
+      ? '旧版服务商别名存在不同绑定，请先明确选择并核对原配置，再重新载入。'
+      : 'API 配置未能载入，请重新选择服务商或刷新后核对绑定。', 'warn');
   }).catch(function () {
-    if (configReadIsCurrent(seq, accountKey, epoch)) setPill('configState', 'API 配置载入失败，请重新选择。', 'warn');
+    if (configReadIsCurrent(seq, accountKey, epoch)) setPill('configState', 'API 配置未能载入，请重新选择服务商或刷新后核对绑定。', 'warn');
   }).finally(function () {
     clearTimeout(timer);
     if (pendingProviderProfile === seq) {
       pendingProviderProfile = 0;
       updateConfigSummary(cfgFromForm());
+      syncApiKeyControls();
     }
   });
 }
 
 function saveCfg() {
-  if (configWalletSwitchPending) return;
+  if (configWalletSwitchPending || configKeyUnlinkPending || configSavePending) return;
   if (pendingProviderProfile) {
     setPill('configState', 'API 配置仍在载入，请等待完成后再保存。', 'warn');
     return { ok: false, code: 'CONFIG_LOADING' };
   }
   var cfg = cfgFromForm();
   if (creativeUsesPlatformWallet(cfg, 'chat') && creativeUsesPlatformWallet(cfg, 'image') &&
-      !String(cfg.apiKey || '').trim()) {
+      !String(cfg.apiKey || '').trim() && !configApiKey.hasBoundKey) {
     return usePlatformWallet(cfg);
   }
-  // 保存前立即把官方托管别名回显到表单，避免界面仍显示直连 OpenAI 模型名。
-  applyCfg(cfg);
-  var seq = configApplySeq, accountKey = state.archiveAccountKey;
+  // Keep manual Key edits until the server confirms this form. A failed save
+  // must retry with the same explicit Key, owner and revision metadata.
+  var seq = ++configApplySeq, accountKey = state.archiveAccountKey;
   configFormDirty = true;
-  send('SAVE_CONFIG', { config: cfg }).then(function (r) {
+  configSavePending = true;
+  syncApiKeyControls();
+  return send('SAVE_CONFIG', { config: cfg }).then(function (r) {
     if (!configReadIsCurrent(seq, accountKey)) return;
     if (r && r.ok && !configReplyMatchesAccount(r, accountKey)) {
       setPill('configState', '登录账号已变化，请重新打开工作台。', 'warn'); return;
     }
+    if (r && r.ok && (!r.config || r.config.provider !== cfg.provider || r.provider !== cfg.provider)) {
+      setPill('configState', '保存结果与当前服务商不一致，请重新载入。', 'warn'); return;
+    }
+    if (r && r.ok) applyCfg(r.config);
     if (r && r.accountKey) setArchiveAccountKey(r.accountKey, { refresh: true });
-    setPill('configState', r && r.ok ? '已保存到账号配置' : '保存失败', r && r.ok ? 'ok' : 'warn');
+    var conflict = r && (r.code === 'CONFIG_CONFLICT' || r.code === 'CONFIG_REVISION_CONFLICT');
+    var cacheNotSaved = r && r.ok && r.cacheSaved === false;
+    var saveErrors = {
+      CONFIG_CREDENTIAL_SCOPE_CHANGED: '接口地址已变化，请直接输入对应 API Key 后再保存。',
+      KEY_SCOPE_CHANGED: '接口地址已变化，请直接输入对应 API Key 后再保存。',
+      CONFIG_BUSY: '账号配置正在保存，请稍后重试。',
+      ACCOUNT_CHANGED: '登录账号已变化，请重新载入工作台后再保存。'
+    };
+    var errorCode = r && typeof r.code === 'string' ? r.code : '';
+    var saveErrorMessage = Object.prototype.hasOwnProperty.call(saveErrors, errorCode) ? saveErrors[errorCode]
+      : conflict ? '配置已在其他页面更新，请重新载入后再保存。' : '保存结果暂无法确认，请重新载入核对绑定。';
+    setPill('configState', r && r.ok ? cacheNotSaved ? '已保存到账号配置；本机缓存未更新，请刷新后恢复。' : '已保存到账号配置' : saveErrorMessage, r && r.ok && !cacheNotSaved ? 'ok' : 'warn');
     if (r && r.ok) {
       configFormDirty = false;
-      setTimeout(closeConfigModal, 180);
+      if (!cacheNotSaved) setTimeout(closeConfigModal, 180);
       var savedConfigParams = new URLSearchParams(location.search);
       if (['creative', 'mirror', 'link-image'].indexOf(savedConfigParams.get('mode')) >= 0 || savedConfigParams.get('studio') === '1') window.dispatchEvent(new CustomEvent('sz-bound-api-changed'));
     }
+    return r;
+  }).catch(function () {
+    if (configReadIsCurrent(seq, accountKey)) setPill('configState', '保存结果暂无法确认，请重新载入核对绑定。', 'warn');
+    return { ok: false, code: 'CONFIG_SAVE_FAILED' };
+  }).finally(function () {
+    configSavePending = false;
+    syncApiKeyControls();
+  });
+}
+
+function unlinkConfigApiKey(event) {
+  syncApiKeyControls();
+  var button = $('unlinkApiKeyBtn'), modal = $('configModal');
+  if (!event || !event.isTrusted || !button || button.disabled || !modal || modal.hidden) return;
+  var accountKey = configApiKey.accountOwner, provider = $('provider').value;
+  if (!accountKey || accountKey !== String(state.archiveAccountKey || '')) return;
+  var seq = ++configApplySeq;
+  ++configReadEpoch;
+  configKeyUnlinkPending = true;
+  creativeWebSetApiBusy('configKeyUnlink', true);
+  var controls = [], unlinked = false;
+  Array.prototype.forEach.call(modal.querySelectorAll('input, select, button'), function (control) {
+    controls.push({ node: control, disabled: control.disabled });
+    control.disabled = true;
+  });
+  setPill('configState', '正在解除当前服务商的 Key 绑定…', '');
+  var request = { accountKey: accountKey, provider: provider };
+  if (typeof configApiKey.ownerFingerprint === 'string') request.ownerFingerprint = configApiKey.ownerFingerprint;
+  if (Number.isSafeInteger(configApiKey.profileRevision) && configApiKey.profileRevision >= 0) request.revision = configApiKey.profileRevision;
+  return send('UNLINK_CONFIG_KEY', request).then(function (response) {
+    if (!configReadIsCurrent(seq, accountKey) || $('provider').value !== provider || configApiKey.provider !== provider) {
+      return { ok: false, code: 'CONFIG_STALE' };
+    }
+    if (response && !response.ok && (response.code === 'CONFIG_CONFLICT' || response.code === 'CONFIG_REVISION_CONFLICT')) {
+      setPill('configState', '绑定已在其他页面更新，请重新载入后再解除。', 'warn');
+      return response;
+    }
+    if (!response || !response.ok || response.accountKey !== accountKey || response.provider !== provider ||
+        !response.config || response.config.provider !== provider || response.config._supplyChannel !== 'external_key' ||
+        typeof response.config.apiKey !== 'string' || response.config.apiKey.trim()) {
+      throw new Error('解除绑定未完成，请重新核对账号与服务商后重试。');
+    }
+    applyCfg(response.config);
+    referenceDetailBatchNotifySettingsChanged();
+    var cacheNotSaved = response.cacheSaved === false;
+    setPill('configState', cacheNotSaved ? '账号中的 Key 绑定已解除；本机缓存未更新，请刷新后恢复。' : '已解除绑定，可直接填写新的 Key', cacheNotSaved ? 'warn' : '');
+    unlinked = true;
+    return response;
+  }).catch(function () {
+    if (configReadIsCurrent(seq, accountKey)) setPill('configState', '解除绑定结果暂无法确认，请重新载入核对绑定。', 'warn');
+    return { ok: false, code: 'CONFIG_UNLINK_FAILED' };
+  }).finally(function () {
+    configKeyUnlinkPending = false;
+    creativeWebSetApiBusy('configKeyUnlink', false);
+    controls.forEach(function (control) { control.node.disabled = control.disabled; });
+    syncApiKeyControls();
+    if (unlinked) window.dispatchEvent(new CustomEvent('sz-bound-api-changed'));
   });
 }
 
 function usePlatformWallet(config) {
-  if (configWalletSwitchPending) return;
+  if (configWalletSwitchPending || configKeyUnlinkPending || configSavePending) return;
   if (creativeWebIsBusy()) {
     setPill('configState', '请等待当前任务结束后切换积分。', 'warn');
     return;
   }
-  var accountKey = state.archiveAccountKey;
+  var accountKey = configApiKey.accountOwner, ownerFingerprint = configApiKey.ownerFingerprint;
+  if (!accountKey || accountKey !== String(state.archiveAccountKey || '')) {
+    setPill('configState', '登录账号已变化，请重新打开配置。', 'warn');
+    return;
+  }
   if (!accountKey || accountKey === 'local' || !creativeUsesPlatformWallet(DEFAULT_CFG, 'chat') || !creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
     setPill('configState', '请先登录网站账号，再使用本站积分。', 'warn');
     return;
@@ -4249,14 +4341,17 @@ function usePlatformWallet(config) {
   });
   setPill('configState', '正在切换为本站积分…', '');
   var walletConfig = config && config.provider ? normalizeCfg(config) : normalizeCfg(DEFAULT_CFG);
-  return send('USE_PLATFORM_WALLET', { accountKey: accountKey, config: walletConfig }).then(function (response) {
+  walletConfig._supplyChannel = 'platform_wallet';
+  walletConfig._ownerFingerprint = ownerFingerprint;
+  return send('USE_PLATFORM_WALLET', { accountKey: accountKey, ownerFingerprint: ownerFingerprint, config: walletConfig }).then(function (response) {
     if (!response || !response.ok || !response.config || String(response.accountKey) !== String(accountKey) || !configReadIsCurrent(switchSeq, accountKey)) {
       throw new Error(response && response.error || '积分切换失败，请重试。');
     }
     applyCfg(response.config);
-    setPill('configState', '使用本站积分', 'ok');
+    var cacheNotSaved = response.cacheSaved === false;
+    setPill('configState', cacheNotSaved ? '账号已切换为本站积分；本机缓存未更新，请刷新后恢复。' : '使用本站积分', cacheNotSaved ? 'warn' : 'ok');
     referenceDetailBatchNotifySettingsChanged();
-    closeConfigModal();
+    if (!cacheNotSaved) closeConfigModal();
     switched = true;
     return response;
   }).catch(function (error) {
@@ -4266,6 +4361,7 @@ function usePlatformWallet(config) {
     configWalletSwitchPending = false;
     creativeWebSetApiBusy('configWalletSwitch', false);
     controls.forEach(function (control) { control.node.disabled = control.disabled; });
+    syncApiKeyControls();
     if (switched) window.dispatchEvent(new CustomEvent('sz-bound-api-changed'));
   });
 }
@@ -24400,6 +24496,7 @@ function creativeWebIsBusy() { return Object.keys(creativeWebBusy).some(function
 function creativeWebSetApiBusy(scope, on) {
   if (!!on !== !!creativeWebBusy[scope] && !pendingProviderSelection && !pendingProviderProfile) ++configReadEpoch;
   creativeWebBusy[scope] = !!on;
+  syncApiKeyControls();
 }
 function creativeWebProfile(provider, includeBoundApis, preferActiveWallet) {
   var request = { provider: provider || '' };
@@ -24487,26 +24584,35 @@ function creativeWebSelectBoundApi(provider) {
   pendingProviderProfile = 0;
   var accountKey = state.archiveAccountKey, seq = ++configApplySeq;
   pendingProviderSelection = seq;
-  return creativeWebProfile(provider, false, provider === DEFAULT_CFG.provider).then(function (profile) {
+  syncApiKeyControls();
+  return creativeWebProfile(provider, true, false).then(function (profile) {
     if (!configReadIsCurrent(seq, accountKey)) return { ok: false, code: 'CONFIG_STALE', error: 'API 配置已变化，请重新选择。' };
-    var config = profile.config || {};
-    // The catalog offers platform credits when this provider has no usable
-    // external Key. Select that temporary route without replacing its profile.
+    var config = profile.config || {}, ownerFingerprint = config._ownerFingerprint;
+    // A click on the explicitly labelled platform entry is a wallet selection.
+    // Missing/failed personal profiles must never trigger this during refresh
+    // or generation, and a stale selector must not invent a different route.
+    var selectedEntry = profile.boundApis && profile.boundApis.providers && profile.boundApis.providers.filter(function (entry) { return entry.provider === provider; })[0];
     if (provider === DEFAULT_CFG.provider && !String(config.apiKey || '').trim() &&
-        !creativeUsesPlatformWallet(config, 'image') && creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
+        selectedEntry && selectedEntry.platformWallet === true && creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
       config = normalizeCfg(DEFAULT_CFG);
+      config._supplyChannel = 'platform_wallet';
+      config._ownerFingerprint = ownerFingerprint;
     }
     var platformWallet = creativeUsesPlatformWallet(config, 'image');
     if (String(profile.accountKey) !== String(accountKey) || !platformWallet && (!profile.saved || !String(config.apiKey || '').trim())) throw new Error('该账号尚未保存此 API 配置。');
-    var keepWallet = profile.activeSupplyChannel === 'platform_wallet' && platformWallet;
-    return send(keepWallet ? 'USE_PLATFORM_WALLET' : 'SET_ACTIVE_PROVIDER', { provider: provider, accountKey: accountKey, config: keepWallet ? config : undefined }).then(function (changed) {
+    var keepWallet = platformWallet;
+    return send(keepWallet ? 'USE_PLATFORM_WALLET' : 'SET_ACTIVE_PROVIDER', { provider: provider, accountKey: accountKey, ownerFingerprint: ownerFingerprint, config: keepWallet ? config : undefined }).then(function (changed) {
       if (!changed || !changed.ok || String(changed.accountKey) !== String(accountKey)) throw new Error(changed && changed.error || '账号已变化，API 切换已停止。');
       if (!configReadIsCurrent(seq, accountKey)) return { ok: false, code: 'CONFIG_STALE', error: 'API 配置已变化，请重新选择。' };
-      applyCfg(config);
+      var acceptedConfig = changed.config || config;
+      if (changed.provider !== provider || acceptedConfig.provider !== provider ||
+          acceptedConfig._accountKey && acceptedConfig._accountKey !== accountKey) throw new Error('切换结果与当前账号或服务商不一致，请重新载入。');
+      applyCfg(acceptedConfig);
       return { ok: true, accountKey: accountKey, provider: provider };
     });
   }).catch(function (error) { return { ok: false, error: error.message || String(error) }; }).finally(function () {
     if (pendingProviderSelection === seq) pendingProviderSelection = 0;
+    syncApiKeyControls();
   });
 }
 
@@ -24856,7 +24962,6 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) 
     normalizeCfg: normalizeCfg,
     normalizeHostedTextModel: normalizeHostedTextModel,
     normalizeHostedImageModel: normalizeHostedImageModel,
-    applyModelFallbackFromResponse: applyModelFallbackFromResponse,
     syncModelDatalistTargets: syncModelDatalistTargets,
     unifiedApiSettingsUnavailable: unifiedApiSettingsUnavailable,
     openUnifiedApiSettings: openUnifiedApiSettings,

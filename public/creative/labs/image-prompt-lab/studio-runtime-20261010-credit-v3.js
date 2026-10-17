@@ -2596,14 +2596,6 @@ var PROVIDER_DEFAULTS = {
     imageModel: 'image2'
   }
 };
-var HOSTED_TEXT_MODEL_MIGRATIONS = {
-  'chatgpt5.6': 'chatGPT5.5',
-  'gpt-5.5': 'chatGPT5.5',
-  'gpt-5.6-sol': 'chatGPT5.5'
-};
-var HOSTED_IMAGE_MODEL_MIGRATIONS = {
-  'gpt-image-2': 'image2'
-};
 var HOSTED_TEXT_UPSTREAM = { 'chatgpt5.5': 'gpt-5.6-sol' };
 var HOSTED_IMAGE_UPSTREAM = { 'image2': 'gpt-image-2' };
 var PROVIDER_CATALOG = [
@@ -2826,18 +2818,16 @@ function hasModelApiCredential(cfg, kind) {
 }
 
 function normalizeHostedTextModel(cfg, model) {
-  var value = String(model || '').trim();
-  if (!value || !isShaozhuangHostedConfig(cfg)) return value;
-  return HOSTED_TEXT_MODEL_MIGRATIONS[value.toLowerCase()] || value;
+  return String(model || '').trim();
 }
 
 function normalizeHostedImageModel(cfg, model) {
-  var value = String(model || '').trim();
-  if (!value || !isShaozhuangHostedImageConfig(cfg)) return value;
-  return HOSTED_IMAGE_MODEL_MIGRATIONS[value.toLowerCase()] || value;
+  return String(model || '').trim();
 }
 
 function hostedTextUpstreamModel(cfg, model) {
+  // A personal key owns its exact model namespace, including advertised aliases.
+  if (String(cfg && cfg.apiKey || '').trim()) return String(model || '').trim();
   var canonical = normalizeHostedTextModel(cfg, model);
   if (!canonical || !isShaozhuangHostedConfig(cfg)) return canonical;
   return HOSTED_TEXT_UPSTREAM[canonical.toLowerCase()] || canonical;
@@ -2854,9 +2844,9 @@ function isShaozhuangOpenAIImageAliasRoute(cfg) {
 }
 
 function hostedImageUpstreamModel(cfg, model) {
+  if (String(cfg && cfg.apiKey || '').trim()) return String(model || '').trim();
   var value = String(model || '').trim();
-  // Resolve the task's public alias at dispatch without changing its saved plan,
-  // configured API key, or billing route. Other gateways own their model aliases.
+  // Only the explicitly chosen platform route resolves its public alias.
   if (value.toLowerCase() === 'image2') return isShaozhuangOpenAIImageAliasRoute(cfg) ? HOSTED_IMAGE_UPSTREAM.image2 : value;
   var canonical = normalizeHostedImageModel(cfg, model);
   if (!canonical || !isShaozhuangHostedImageConfig(cfg)) return canonical;
@@ -2868,10 +2858,10 @@ function normalizeCfg(cfg) {
   ['provider', 'imageAdapter', 'visionBaseUrl', 'visionModel', 'textModel', 'imageEndpoint', 'imageModel', 'apiKey'].forEach(function (field) {
     if (typeof incoming[field] === 'string') incoming[field] = incoming[field].trim();
   });
+  if (incoming.provider === 'jimeng') incoming.provider = 'doubao';
   var provider = incoming.provider || DEFAULT_CFG.provider;
   var preset = PROVIDER_DEFAULTS[provider] || {};
   cfg = Object.assign({}, DEFAULT_CFG, preset, incoming);
-  if (cfg.provider === 'jimeng') cfg.provider = 'doubao';
   if (cfg.imageAdapter === 'jimeng-image') cfg.imageAdapter = 'doubao-image';
   if (cfg.imageAdapter === 'volcengine-image') cfg.imageAdapter = 'doubao-image';
   if (cfg.imageAdapter === 'gemini-image') cfg.imageAdapter = 'nano-banana';
@@ -2881,21 +2871,21 @@ function normalizeCfg(cfg) {
     if (!cfg[field] && preset[field]) cfg[field] = preset[field];
   });
   if (cfg.provider === 'openai-compatible') {
-    if (!cfg.visionBaseUrl || cfg.visionBaseUrl === 'https://api.example.com/v1') cfg.visionBaseUrl = DEFAULT_CFG.visionBaseUrl;
-    if (!cfg.imageEndpoint || cfg.imageEndpoint === 'https://api.example.com/v1/images/generations') cfg.imageEndpoint = DEFAULT_CFG.imageEndpoint;
-    if (!cfg.visionModel || cfg.visionModel === 'vision-model' || cfg.visionModel === 'chat-model') cfg.visionModel = DEFAULT_CFG.visionModel;
-    if (!cfg.textModel || cfg.textModel === 'chat-model' || cfg.textModel === 'vision-model') cfg.textModel = DEFAULT_CFG.textModel;
-    if (!cfg.imageModel || cfg.imageModel === 'image-model') cfg.imageModel = DEFAULT_CFG.imageModel;
+    if (!cfg.visionBaseUrl) cfg.visionBaseUrl = DEFAULT_CFG.visionBaseUrl;
+    if (!cfg.imageEndpoint) cfg.imageEndpoint = DEFAULT_CFG.imageEndpoint;
+    if (!cfg.visionModel) cfg.visionModel = DEFAULT_CFG.visionModel;
+    if (!cfg.textModel) cfg.textModel = DEFAULT_CFG.textModel;
+    if (!cfg.imageModel) cfg.imageModel = DEFAULT_CFG.imageModel;
     cfg.visionModel = normalizeHostedTextModel(cfg, cfg.visionModel);
     cfg.textModel = normalizeHostedTextModel(cfg, cfg.textModel);
     cfg.imageModel = normalizeHostedImageModel(cfg, cfg.imageModel);
   }
   var isVolc = cfg.provider === 'doubao' || /^https:\/\/ark\.cn-beijing\.volces\.com/.test(cfg.visionBaseUrl || '');
   if (isVolc) {
-    if (!cfg.visionModel || /^doubao-1\.5/.test(cfg.visionModel)) cfg.visionModel = 'doubao-seed-evolving';
-    if (!cfg.textModel || /^doubao-1\.5/.test(cfg.textModel)) cfg.textModel = 'doubao-seed-evolving';
+    if (!cfg.visionModel) cfg.visionModel = 'doubao-seed-evolving';
+    if (!cfg.textModel) cfg.textModel = 'doubao-seed-evolving';
     if (!cfg.imageEndpoint) cfg.imageEndpoint = 'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-    if (!cfg.imageModel || /^doubao-seedream-3-0/i.test(cfg.imageModel)) cfg.imageModel = VOLC_SEEDREAM_DEFAULT;
+    if (!cfg.imageModel) cfg.imageModel = VOLC_SEEDREAM_DEFAULT;
   }
   return cfg;
 }
@@ -3259,6 +3249,7 @@ function migrateStoredConfigMap(configs) {
     var raw = configs[provider];
     if (!raw || typeof raw !== 'object') return;
     var normalized = normalizeCfg(Object.assign({ provider: provider }, raw));
+    if (!Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, normalized.provider)) return;
     if (JSON.stringify(normalized) !== JSON.stringify(raw)) {
       configs[provider] = normalized;
       changed = true;
@@ -3351,26 +3342,8 @@ function configCatalog() {
   });
 }
 
-function sameModelName(a, b) {
-  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
-}
-
-function replaceUnavailableHostedTextModel(cfg, failedModel, fallbackModel) {
-  if (!cfg || typeof cfg !== 'object') return false;
-  var scope = Object.assign({}, DEFAULT_CFG, cfg);
-  if (!isShaozhuangHostedConfig(scope)) return false;
-  var changed = false;
-  ['visionModel', 'textModel'].forEach(function (field) {
-    if (sameModelName(cfg[field], failedModel)) {
-      cfg[field] = fallbackModel;
-      changed = true;
-    }
-  });
-  return changed;
-}
-
-// 配置读改写必须串行覆盖完整的 auth -> get -> compare -> set 事务。否则模型回退
-// 和用户点击“保存配置”可能同时读到旧 store，后完成者会覆盖先完成者。
+// 配置读改写必须串行覆盖完整的 auth -> get -> compare -> set 事务，
+// 防止并行读取和用户保存配置互相覆盖。
 var configMutationTail = Promise.resolve();
 var configMutationGeneration = 0;
 var configResolveInflight = Object.create(null);
@@ -3395,69 +3368,204 @@ function queueConfigMutation(work, invalidatesResolvedConfig) {
   return run;
 }
 
-function persistHostedTextModelFallback(requestCfg, failedModel, fallbackModel, cb) {
-  queueConfigMutation(function (done) {
-    withConfigProfiles(function (accountKey, _r, store, account) {
-      if (requestCfg && requestCfg._accountKey && requestCfg._accountKey !== accountKey) { done(false); return; }
-      // Wallet text requests have a separate persisted profile. A late fallback
-      // must not update the same-provider personal API or legacy credential copy.
-      var walletRequest = requestCfg && (requestCfg._supplyChannel === 'platform_wallet' || usesPlatformWallet(requestCfg, 'chat'));
-      if (walletRequest) {
-        var readError = chrome.runtime && chrome.runtime.lastError;
-        var requestedWallet = validPlatformWalletConfig(requestCfg);
-        if (readError || accountKey === 'local' || !requestedWallet) { done(false); return; }
-        delete requestedWallet._accountKey;
-        delete requestedWallet._configSignature;
-        delete requestedWallet._supplyChannel;
-        var walletConfig = selectedPlatformWalletConfig(account);
-        var walletSignature = requestCfg._configSignature || configSignature(requestedWallet);
-        if (configSignature(walletConfig) !== walletSignature) { done(false); return; }
-        var currentWallet = Object.assign({}, walletConfig);
-        delete currentWallet._accountKey;
-        delete currentWallet._configSignature;
-        delete currentWallet._supplyChannel;
-        if (!replaceUnavailableHostedTextModel(currentWallet, failedModel, fallbackModel)) { done(false); return; }
-        account.platformWalletConfig = currentWallet;
-        var walletOut = {}; walletOut[CONFIG_PROFILES_KEY] = store;
-        chrome.storage.local.set(walletOut, function () { done(!chrome.runtime.lastError); });
-        return;
-      }
-      var provider = (requestCfg && requestCfg.provider) || DEFAULT_CFG.provider;
-      var storedConfig = account.configs && account.configs[provider];
-      // 运行中的模型回退只能修改它实际发起请求时看到的那一版配置。若用户已经改过
-      // Key、模型或端点，旧请求不得把旧快照覆盖回当前账号。
-      if (requestCfg && requestCfg._configSignature &&
-          (!storedConfig || configSignature(storedConfig) !== requestCfg._configSignature)) { done(false); return; }
-      var current = Object.assign({}, storedConfig || requestCfg || {});
-      delete current._accountKey;
-      delete current._configSignature;
-      if (!replaceUnavailableHostedTextModel(current, failedModel, fallbackModel)) { done(false); return; }
-
-      // model_not_found 是当前账号组的运行时结果，只修复当前账号；其他账号可能已开通该模型。
-      account.configs[provider] = current;
-      account.activeProvider = provider;
-      store.activeAccount = accountKey;
-      store.activeProvider = provider;
-      migrateAllStoredProfiles(store);
-
-      var out = {}; out[CONFIG_PROFILES_KEY] = store;
-      // legacy 始终写入这次已成功重试的当前配置，避免复活旧账号的端点或凭据。
-      markLegacyOwner(store, current, accountKey);
-      out[CONFIG_KEY] = current;
-      chrome.storage.local.set(out, function () {
-        var writeError = chrome.runtime.lastError;
-        done(!writeError);
-      });
-    });
-  }, true).then(cb, function () { cb(false); });
+function accountProfileService() {
+  var bridge = globalThis.SZ_WEB_ACCOUNT;
+  return bridge && bridge.supportsConfigProfiles === true && typeof bridge.configProfileRequest === 'function' ? bridge.configProfileRequest : null;
 }
 
-function withConfigProfiles(cb) {
-  resolveConfigAccountKey(function (accountKey) {
+function profileConfigForServer(cfg) {
+  var out = {};
+  ['provider', 'imageAdapter', 'apiKey', 'visionBaseUrl', 'visionModel', 'textModel', 'imageEndpoint', 'imageModel'].forEach(function (name) {
+    if (typeof cfg[name] === 'string') out[name] = cfg[name];
+  });
+  return out;
+}
+
+function serverProfilesOwnerFingerprint(data, accountKey) {
+  if (!data || data.accountKey !== accountKey || typeof data.ownerFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(data.ownerFingerprint)) {
+    throw Object.assign(new Error('账号配置身份无法确认，请重新载入核对绑定。'), { code: 'ACCOUNT_CHANGED' });
+  }
+  return data.ownerFingerprint;
+}
+
+function acceptServerProfiles(data, accountKey, account) {
+  var ownerFingerprint = serverProfilesOwnerFingerprint(data, accountKey);
+  if (account._serverOwnerFingerprint && account._serverOwnerFingerprint !== ownerFingerprint) {
+    throw Object.assign(new Error('当前账号已变化，旧配置未导入或修改，请重新载入核对绑定。'), { code: 'ACCOUNT_CHANGED' });
+  }
+  if (!data || data.accountKey !== accountKey || !Array.isArray(data.profiles) || !Number.isSafeInteger(data.accountRevision)) throw new Error('账号配置身份无法确认。');
+  var revisions = {};
+  data.profiles.forEach(function (profile) {
+    if (!profile || !profile.provider || !profile.config || !Number.isSafeInteger(profile.revision)) throw new Error('账号配置内容无法确认。');
+    account.configs[profile.provider] = Object.assign({}, profile.config, { _supplyChannel: 'external_key' });
+    revisions[profile.provider] = profile.revision;
+  });
+  var selection = data.selection || {};
+  if (selection.activeProvider) {
+    account.activeProvider = selection.activeProvider;
+    account.activeSupplyChannel = selection.activeSupplyChannel || 'external_key';
+    if (selection.platformWalletConfig) account.platformWalletConfig = selection.platformWalletConfig;
+  }
+  account._serverRevision = data.accountRevision;
+  account._serverOwnerFingerprint = ownerFingerprint;
+  account._profileRevisions = revisions;
+  Object.keys(revisions).forEach(function (provider) {
+    account.configs[provider]._profileRevision = revisionsForProfile(account, provider);
+    account.configs[provider]._accountRevision = account._serverRevision;
+    account.configs[provider]._ownerFingerprint = ownerFingerprint;
+  });
+}
+
+function hydrateAccountProfiles(accountKey, r, store, account, expectedFingerprint) {
+  var service = accountProfileService();
+  if (!service) return Promise.resolve();
+  if (!accountKey || accountKey === 'local') return Promise.reject(new Error('登录身份暂不可用，原绑定已保留，请重新登录后重试。'));
+  return service('POST', { operation: 'resolveAll', accountKey: accountKey }).then(async function (data) {
+    var ownerFingerprint = serverProfilesOwnerFingerprint(data, accountKey);
+    if (account._serverOwnerFingerprint && account._serverOwnerFingerprint !== ownerFingerprint || expectedFingerprint && expectedFingerprint !== ownerFingerprint) {
+      throw Object.assign(new Error('当前账号已变化，旧配置未导入或修改，请重新载入核对绑定。'), { code: 'ACCOUNT_CHANGED' });
+    }
+    account._serverOwnerFingerprint = ownerFingerprint;
+    // Import only credentials already attributed to this exact local owner.
+    // A server profile or unlink tombstone always wins over a stale browser.
+    var known = {};
+    data.profiles.forEach(function (profile) { known[profile.provider] = true; });
+    var candidates = {};
+    Object.keys(account.configs).forEach(function (provider) {
+      var cfg = account.configs[provider];
+      if (!cfg || !String(cfg.apiKey || '').trim()) return;
+      var normalized = normalizeCfg(Object.assign({ provider: provider }, cfg));
+      var target = normalized.provider;
+      if (!Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, target) || known[target]) return;
+      if (!candidates[target]) candidates[target] = [];
+      candidates[target].push({ source: provider, config: normalized });
+    });
+    // Resolve every alias collision before the first import. Otherwise object
+    // insertion order could silently bind an old alias Key to the canonical
+    // profile, or a later conflict could leave an earlier partial import.
+    var imports = Object.keys(candidates).map(function (target) {
+      var entries = candidates[target];
+      var canonical = entries.filter(function (entry) { return entry.source === target; })[0];
+      var active = entries.filter(function (entry) { return entry.source === account.activeProvider; })[0];
+      var signature = JSON.stringify(profileConfigForServer(entries[0].config));
+      var equivalent = entries.every(function (entry) { return JSON.stringify(profileConfigForServer(entry.config)) === signature; });
+      if (entries.length === 1 || equivalent) return (canonical || active || entries[0]).config;
+      if (canonical && account.activeProvider === target) return canonical.config;
+      if (!canonical && active) return active.config;
+      throw Object.assign(new Error('旧版服务商别名存在不同的模型或 Key 绑定，请先明确选择并核对原配置；尚未导入或修改绑定。'), { code: 'CONFIG_LEGACY_ALIAS_CONFLICT' });
+    });
+    var imported = false;
+    for (var normalized of imports) {
+      await service('PUT', { accountKey: accountKey, ownerFingerprint: ownerFingerprint, provider: normalized.provider, config: profileConfigForServer(normalized), revision: 0, importOnly: true });
+      imported = true;
+    }
+    if (imported) data = await service('POST', { operation: 'resolveAll', accountKey: accountKey });
+    // Preserve an established browser's explicit selection during the first
+    // account backup, while never replacing an existing server selection.
+    var initialProvider = account.activeProvider && normalizeCfg({ provider: account.activeProvider }).provider;
+    if (!(data.selection && data.selection.activeProvider) && initialProvider && Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, initialProvider)) {
+      try {
+        await service('PUT', { accountKey: accountKey, ownerFingerprint: ownerFingerprint, accountRevision: data.accountRevision,
+          selection: { activeProvider: initialProvider, activeSupplyChannel: account.activeSupplyChannel || 'external_key',
+            ...(account.activeSupplyChannel === 'platform_wallet' ? { platformWalletConfig: profileConfigForServer(selectedPlatformWalletConfig(account)) } : {}) } });
+      } catch (error) {
+        // Only this implicit first-selection CAS may reconcile a concurrent
+        // winner. Never retry a mutation or accept a conflict without an
+        // existing authoritative selection; auth/service failures propagate.
+        if (!error || ['CONFIG_REVISION_CONFLICT', 'CONFIG_CONFLICT'].indexOf(error.code) < 0) throw error;
+        data = await service('POST', { operation: 'resolveAll', accountKey: accountKey });
+        if (!data.selection || !data.selection.activeProvider) throw error;
+        acceptServerProfiles(data, accountKey, account);
+        return;
+      }
+      data = await service('POST', { operation: 'resolveAll', accountKey: accountKey });
+    }
+    acceptServerProfiles(data, accountKey, account);
+  });
+}
+
+function revisionsForProfile(account, provider) {
+  return account._profileRevisions && account._profileRevisions[provider] || 0;
+}
+
+function persistAccountProfile(accountKey, account, provider, cfg, selection, unlink) {
+  var service = accountProfileService();
+  if (!service) return Promise.resolve();
+  var request = { accountKey: accountKey, ownerFingerprint: account._serverOwnerFingerprint };
+  if (provider) {
+    request.provider = provider;
+    request.revision = account._profileRevisions && account._profileRevisions[provider] || 0;
+    if (!unlink) {
+      request.config = profileConfigForServer(cfg);
+      if (revisionsForProfile(account, provider) > 0 && cfg._keyEdited !== true) delete request.config.apiKey;
+    }
+  }
+  if (selection) {
+    request.selection = selection;
+    request.accountRevision = account._serverRevision || 0;
+  }
+  return service(unlink ? 'DELETE' : 'PUT', request).then(function () {
+    return service('POST', { operation: 'resolveAll', accountKey: accountKey });
+  }).then(function (data) {
+    acceptServerProfiles(data, accountKey, account);
+    return { serverConfirmed: true };
+  });
+}
+
+function configMutationReply(response, accountKey, account, confirmation) {
+  if (!confirmation || !confirmation.serverConfirmed) return response;
+  response.accountRevision = account._serverRevision;
+  response.config = Object.assign({}, response.config || normalizeCfg(account.configs[response.provider] || { provider: response.provider }), {
+    _accountKey: accountKey,
+    _profileRevision: revisionsForProfile(account, response.provider),
+    _accountRevision: account._serverRevision,
+    _ownerFingerprint: account._serverOwnerFingerprint
+  });
+  return response;
+}
+
+// A confirmed account write and its browser cache are separate outcomes. A
+// cache failure must not hide the authoritative revisions or invite a stale
+// retry; without server confirmation the local write remains mandatory.
+function cacheConfigMutation(items, response, confirmation, done, failureMessage) {
+  var settled = false;
+  function finish(error) {
+    if (settled) return;
+    settled = true;
+    if (!error) { done(response); return; }
+    if (confirmation && (confirmation.serverConfirmed || confirmation.verifiedSnapshot)) {
+      done(Object.assign({}, response, { cacheSaved: false, cacheWarning: confirmation.serverConfirmed
+        ? '账号配置已保存，本机缓存未更新，请刷新后恢复。' : '账号配置已核对，本机缓存未更新，请刷新后恢复。' }));
+      return;
+    }
+    done({ ok: false, code: 'CONFIG_WRITE_FAILED', error: failureMessage || '本机配置缓存保存失败，请重试。' });
+  }
+  try {
+    var pending = chrome.storage.local.set(items, function () { finish(chrome.runtime.lastError); });
+    if (pending && typeof pending.catch === 'function') pending.catch(finish);
+  } catch (error) { finish(error); }
+}
+
+function withConfigProfiles(cb, expectedOwner, requireExpected, expectedFingerprint) {
+  resolveConfigAccountKey(function (accountKey, auth) {
+    if (expectedOwner && expectedOwner !== accountKey || requireExpected && accountProfileService() &&
+        (!expectedOwner || typeof expectedFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(expectedFingerprint))) {
+      cb(accountKey, { _configProfileError: { ok: false, code: 'ACCOUNT_CHANGED', error: '登录账号已变化，原绑定未修改，请重新载入。' } }, {}, {}); return;
+    }
     chrome.storage.local.get([CONTEXT_KEY, CONFIG_KEY, CONFIG_PROFILES_KEY], function (r) {
       var store = normalizeProfileStore(r[CONFIG_PROFILES_KEY]);
       var account = profileAccount(store, accountKey);
-      cb(accountKey, r || {}, store, account);
+      var beforeHydration = JSON.stringify(store);
+      function fail(error) {
+        cb(accountKey, { _configProfileError: { ok: false, code: error.code || 'CONFIG_SERVICE_UNAVAILABLE', error: error.message || '账号配置暂不可用，原绑定已保留。' } }, store, account);
+      }
+      if (globalThis.SZ_WEB_ACCOUNT && (!auth || !auth.ok || !auth.user || accountKey === 'local')) {
+        fail(new Error('登录身份暂不可用，原绑定已保留，请重新登录后重试。')); return;
+      }
+      hydrateAccountProfiles(accountKey, r, store, account, expectedFingerprint).then(function () {
+        if (JSON.stringify(store) !== beforeHydration) r._configProfilesHydrated = true;
+        cb(accountKey, r || {}, store, account);
+      }, fail);
     });
   });
 }
@@ -3466,6 +3574,7 @@ function readConfigProfile(provider, cb, includeBoundApis, options) {
   options = options || {};
   queueConfigMutation(function (done) {
     withConfigProfiles(function (accountKey, r, store, account) {
+    if (r._configProfileError) { done(r._configProfileError); return; }
     if (includeBoundApis) {
       var readError = chrome.runtime && chrome.runtime.lastError;
       if (readError) { done({ ok: false, code: 'CONFIG_READ_FAILED', error: readError.message || '无法读取已配置 API。' }); return; }
@@ -3476,7 +3585,7 @@ function readConfigProfile(provider, cb, includeBoundApis, options) {
     var legacyNormalized = !!(legacyRaw && JSON.stringify(legacy) !== JSON.stringify(legacyRaw));
     var legacyClaim = claimLegacyConfig(store, legacy, accountKey);
     var profileStoreMigrated = migrateAllStoredProfiles(store);
-    var changed = profileStoreMigrated || legacyClaim.changed;
+    var changed = profileStoreMigrated || legacyClaim.changed || r._configProfilesHydrated === true;
     var migrated = profileStoreMigrated || legacyNormalized;
     var legacyBelongsToAccount = !!(legacy && legacyClaim.owner === accountKey);
     if (legacyBelongsToAccount && legacy.provider && !account.configs[legacy.provider]) {
@@ -3504,7 +3613,7 @@ function readConfigProfile(provider, cb, includeBoundApis, options) {
     if (!cfg) cfg = normalizeCfg({ provider: targetProvider });
     // A website session can use platform credits without a local provider Key.
     // Keep this fallback in the response; never replace the account's saved API.
-    if (!provider && accountKey !== 'local' && !String(cfg.apiKey || '').trim() &&
+    if (!provider && !account.activeProvider && !saved && accountKey !== 'local' && !String(cfg.apiKey || '').trim() &&
         !usesPlatformWallet(cfg, 'image') && usesPlatformWallet(DEFAULT_CFG, 'image')) {
       cfg = normalizeCfg(DEFAULT_CFG);
       targetProvider = cfg.provider;
@@ -3517,8 +3626,15 @@ function readConfigProfile(provider, cb, includeBoundApis, options) {
       targetProvider = cfg.provider;
       saved = false;
     }
+    cfg._supplyChannel = activeWallet || !saved && !account.activeProvider && usesPlatformWallet(cfg, 'image') ? 'platform_wallet' : 'external_key';
+    if (accountProfileService()) {
+      cfg._accountKey = accountKey;
+      cfg._profileRevision = revisionsForProfile(account, targetProvider);
+      cfg._accountRevision = account._serverRevision;
+      cfg._ownerFingerprint = account._serverOwnerFingerprint;
+    }
 
-    function finish() {
+    function responseSnapshot() {
       var response = {
         ok: true,
         accountKey: accountKey,
@@ -3533,19 +3649,15 @@ function readConfigProfile(provider, cb, includeBoundApis, options) {
       // selector. Return them from this same authenticated storage snapshot;
       // later reads, saves and model calls still resolve the current account.
       if (includeBoundApis) response.boundApis = boundImageApisFromSnapshot(accountKey, r, store, account);
-      done(response);
+      return response;
     }
     if (changed || migrated) {
       var o = {}; o[CONFIG_PROFILES_KEY] = store;
       // legacy 只在自身需要模型别名迁移时回写；不再用其他账号的当前 cfg 覆盖它。
       if (legacyNormalized) o[CONFIG_KEY] = legacy;
-      chrome.storage.local.set(o, function () {
-        var writeError = chrome.runtime.lastError;
-        if (writeError) done({ ok: false, error: writeError.message || '配置迁移保存失败' });
-        else finish();
-      });
+      cacheConfigMutation(o, responseSnapshot(), accountProfileService() ? { verifiedSnapshot: true } : null, done, '配置迁移保存失败');
     } else {
-      finish();
+      done(responseSnapshot());
     }
     });
   }, true).then(cb, function (error) { cb({ ok: false, error: (error && error.message) || String(error) }); });
@@ -3566,7 +3678,8 @@ function boundImageApisFromSnapshot(accountKey, r, store, account) {
     var cfg = raw ? normalizeCfg(Object.assign({ provider: entry.provider }, raw)) : null;
     if (!cfg && legacyBelongsToAccount && legacy.provider === entry.provider) { cfg = legacy; saved = true; }
     if (!cfg) cfg = normalizeCfg({ provider: entry.provider });
-    if (account.activeSupplyChannel === 'platform_wallet' && entry.provider === DEFAULT_CFG.provider && usesPlatformWallet(DEFAULT_CFG, 'image')) {
+    if (account.activeSupplyChannel === 'platform_wallet' && entry.provider === DEFAULT_CFG.provider &&
+        !String(raw && raw.apiKey || '').trim() && usesPlatformWallet(DEFAULT_CFG, 'image')) {
       cfg = selectedPlatformWalletConfig(account);
       saved = false;
     }
@@ -3587,6 +3700,7 @@ function boundImageApisFromSnapshot(accountKey, r, store, account) {
 function readBoundImageApis(cb) {
   queueConfigMutation(function (done) {
     withConfigProfiles(function (accountKey, r, store, account) {
+      if (r._configProfileError) { done(r._configProfileError); return; }
       var readError = chrome.runtime && chrome.runtime.lastError;
       if (readError) { done({ ok: false, code: 'CONFIG_READ_FAILED', error: readError.message || '无法读取已配置 API。' }); return; }
       done(boundImageApisFromSnapshot(accountKey, r, store, account));
@@ -3596,11 +3710,31 @@ function readBoundImageApis(cb) {
 
 function saveConfigProfile(config, cb) {
   var cfg = normalizeCfg(config);
+  if (accountProfileService() && (!config || !config._accountKey)) { cb({ ok: false, code: 'ACCOUNT_CHANGED', error: '请重新载入当前账号配置后再保存。' }); return; }
   queueConfigMutation(function (done) {
     withConfigProfiles(function (accountKey, r, store, account) {
+    if (r._configProfileError) { done(r._configProfileError); return; }
     var legacy = r[CONFIG_KEY] && typeof r[CONFIG_KEY] === 'object' ? normalizeCfg(r[CONFIG_KEY]) : null;
     claimLegacyConfig(store, legacy, accountKey);
     migrateAllStoredProfiles(store);
+    var previous = account.configs[cfg.provider];
+    // A partial model edit must not reset the other model/endpoint fields to
+    // provider defaults. Merge only after reading this account's fresh profile.
+    cfg = normalizeCfg(Object.assign({}, previous || {}, config || {}, { provider: cfg.provider }));
+    if (accountProfileService() && (!Number.isSafeInteger(config._profileRevision) || config._profileRevision !== revisionsForProfile(account, cfg.provider) ||
+        !Number.isSafeInteger(config._accountRevision) || config._accountRevision !== account._serverRevision)) {
+      done({ ok: false, code: 'CONFIG_CONFLICT', error: '配置已在其他页面更新，请重新载入后再保存。' }); return;
+    }
+    if (!String(cfg.apiKey || '').trim() && previous && previous.apiKey) {
+      if (cfg.visionBaseUrl !== previous.visionBaseUrl || cfg.imageEndpoint !== previous.imageEndpoint) {
+        done({ ok: false, code: 'KEY_SCOPE_CHANGED', error: '接口地址已变化，请填写对应 Key；原绑定仍保留。' }); return;
+      }
+      cfg.apiKey = previous.apiKey;
+    }
+    cfg._supplyChannel = 'external_key';
+    persistAccountProfile(accountKey, account, cfg.provider, cfg,
+      { activeProvider: cfg.provider, activeSupplyChannel: 'external_key' }).then(function (confirmation) {
+    if (confirmation && confirmation.serverConfirmed) cfg = normalizeCfg(account.configs[cfg.provider]);
     account.configs[cfg.provider] = cfg;
     account.activeProvider = cfg.provider;
     account.activeSupplyChannel = 'external_key';
@@ -3608,39 +3742,65 @@ function saveConfigProfile(config, cb) {
     store.activeProvider = cfg.provider;
     var o = {};
     o[CONFIG_PROFILES_KEY] = store;
-    chrome.storage.local.set(o, function () {
-      var writeError = chrome.runtime.lastError;
-      done(writeError
-        ? { ok: false, error: writeError.message || '配置保存失败' }
-        : { ok: true, accountKey: accountKey, provider: cfg.provider, config: cfg });
-    });
-    });
+    cacheConfigMutation(o, configMutationReply({ ok: true, accountKey: accountKey, provider: cfg.provider, config: cfg }, accountKey, account, confirmation),
+      confirmation, done, '配置保存失败');
+    }, function (error) { done({ ok: false, code: error.code || 'CONFIG_WRITE_FAILED', error: error.message || '保存结果暂无法确认，请重新载入核对绑定。' }); });
+    }, config && config._accountKey, true, config && config._ownerFingerprint);
   }, true).then(cb, function (error) { cb({ ok: false, error: (error && error.message) || String(error) }); });
 }
 
-function setActiveConfigProvider(provider, cb) {
+function unlinkConfigKey(request, cb) {
+  queueConfigMutation(function (done) {
+    withConfigProfiles(function (accountKey, r, store, account) {
+      if (r._configProfileError) { done(r._configProfileError); return; }
+      if (!request || request.accountKey !== accountKey || !Object.prototype.hasOwnProperty.call(PROVIDER_DEFAULTS, request.provider)) {
+        done({ ok: false, code: 'ACCOUNT_CHANGED', error: '账号或服务商已变化，原绑定仍保留。' }); return;
+      }
+      var cfg = normalizeCfg(account.configs[request.provider] || { provider: request.provider });
+      if (accountProfileService() && (!Number.isSafeInteger(request.revision) || request.revision !== revisionsForProfile(account, request.provider))) {
+        done({ ok: false, code: 'CONFIG_CONFLICT', error: '绑定已在其他页面更新，请重新载入后再解除。' }); return;
+      }
+      cfg.apiKey = '';
+      cfg._supplyChannel = 'external_key';
+      persistAccountProfile(accountKey, account, request.provider, cfg, null, true).then(function (confirmation) {
+        if (confirmation && confirmation.serverConfirmed) cfg = normalizeCfg(account.configs[request.provider]);
+        cfg.apiKey = ''; cfg._supplyChannel = 'external_key';
+        account.configs[request.provider] = cfg;
+        // Keep a tombstone in the legacy slot as well so a stale copy cannot be
+        // re-imported in standalone/browser compatibility paths.
+        var out = {}; out[CONFIG_PROFILES_KEY] = store;
+        var legacy = r[CONFIG_KEY];
+        if (legacy && legacy.provider === request.provider && claimLegacyConfig(store, normalizeCfg(legacy), accountKey).owner === accountKey) out[CONFIG_KEY] = cfg;
+        cacheConfigMutation(out, configMutationReply({ ok: true, accountKey: accountKey, provider: request.provider, config: cfg }, accountKey, account, confirmation),
+          confirmation, done, '本机解绑配置保存失败');
+      }, function (error) { done({ ok: false, code: error.code || 'CONFIG_WRITE_FAILED', error: error.message || '解绑结果暂无法确认，请重新载入核对绑定。' }); });
+    }, request && request.accountKey, true, request && request.ownerFingerprint);
+  }, true).then(cb, function () { cb({ ok: false, code: 'CONFIG_WRITE_FAILED', error: '解绑未确认，请重试。' }); });
+}
+
+function setActiveConfigProvider(provider, cb, expectedOwner, expectedFingerprint) {
   provider = provider || DEFAULT_CFG.provider;
   queueConfigMutation(function (done) {
     withConfigProfiles(function (accountKey, r, store, account) {
+    if (r._configProfileError) { done(r._configProfileError); return; }
     var legacy = r[CONFIG_KEY] && typeof r[CONFIG_KEY] === 'object' ? normalizeCfg(r[CONFIG_KEY]) : null;
     claimLegacyConfig(store, legacy, accountKey);
     migrateAllStoredProfiles(store);
+    persistAccountProfile(accountKey, account, null, null,
+      { activeProvider: provider, activeSupplyChannel: 'external_key' }).then(function (confirmation) {
     account.activeProvider = provider;
     account.activeSupplyChannel = 'external_key';
     store.activeAccount = accountKey;
     store.activeProvider = provider;
     var o = {}; o[CONFIG_PROFILES_KEY] = store;
-    chrome.storage.local.set(o, function () {
-      var writeError = chrome.runtime.lastError;
-      done(writeError
-        ? { ok: false, error: writeError.message || '服务商切换保存失败' }
-        : { ok: true, accountKey: accountKey, provider: provider });
-    });
-    });
+    cacheConfigMutation(o, configMutationReply({ ok: true, accountKey: accountKey, provider: provider }, accountKey, account, confirmation),
+      confirmation, done, '服务商切换保存失败');
+    }, function (error) { done({ ok: false, code: error.code || 'CONFIG_WRITE_FAILED', error: error.message || '切换结果暂无法确认，请重新载入核对绑定。' }); });
+    }, expectedOwner, true, expectedFingerprint);
   }, true).then(cb, function (error) { cb({ ok: false, error: (error && error.message) || String(error) }); });
 }
 
-function usePlatformWallet(accountRef, config, cb) {
+function usePlatformWallet(accountRef, config, cb, expectedFingerprint) {
   if (!usesPlatformWallet(DEFAULT_CFG, 'image') || !usesPlatformWallet(DEFAULT_CFG, 'chat')) {
     cb({ ok: false, code: 'PLATFORM_WALLET_UNAVAILABLE', error: '当前环境不支持使用本站积分。' });
     return;
@@ -3656,6 +3816,7 @@ function usePlatformWallet(accountRef, config, cb) {
   }
   queueConfigMutation(function (done) {
     withConfigProfiles(function (accountKey, _r, store, account) {
+      if (_r._configProfileError) { done(_r._configProfileError); return; }
       var readError = chrome.runtime && chrome.runtime.lastError;
       if (readError || !accountKey || accountKey === 'local') {
         done({ ok: false, code: 'ACCOUNT_UNAVAILABLE', error: readError && readError.message || '当前登录身份已失效，请刷新工作台。' });
@@ -3665,6 +3826,8 @@ function usePlatformWallet(accountRef, config, cb) {
         done({ ok: false, code: 'account_changed', error: '登录账号已变化，积分切换已停止。' });
         return;
       }
+      persistAccountProfile(accountKey, account, null, null, { activeProvider: DEFAULT_CFG.provider,
+        activeSupplyChannel: 'platform_wallet', platformWalletConfig: profileConfigForServer(walletConfig) }).then(function (confirmation) {
       // The platform route is an account selection, not a provider profile.
       // Preserve all saved endpoint/Key values, including same-provider APIs.
       account.activeSupplyChannel = 'platform_wallet';
@@ -3673,13 +3836,10 @@ function usePlatformWallet(accountRef, config, cb) {
       store.activeAccount = accountKey;
       store.activeProvider = DEFAULT_CFG.provider;
       var out = {}; out[CONFIG_PROFILES_KEY] = store;
-      chrome.storage.local.set(out, function () {
-        var writeError = chrome.runtime.lastError;
-        done(writeError
-          ? { ok: false, code: 'CONFIG_WRITE_FAILED', error: writeError.message || '积分使用方式保存失败' }
-          : { ok: true, accountKey: accountKey, provider: DEFAULT_CFG.provider, activeSupplyChannel: 'platform_wallet', config: walletConfig });
-      });
-    });
+      cacheConfigMutation(out, configMutationReply({ ok: true, accountKey: accountKey, provider: DEFAULT_CFG.provider, activeSupplyChannel: 'platform_wallet', config: walletConfig }, accountKey, account, confirmation),
+        confirmation, done, '积分使用方式保存失败');
+      }, function (error) { done({ ok: false, code: error.code || 'CONFIG_WRITE_FAILED', error: error.message || '切换结果暂无法确认，请重新载入核对绑定。' }); });
+    }, accountRef, true, expectedFingerprint);
   }, true).then(cb, function (error) { cb({ ok: false, code: 'CONFIG_WRITE_FAILED', error: (error && error.message) || String(error) }); });
 }
 
@@ -3694,9 +3854,16 @@ function resolveUnifiedConfigReference(ref) {
   if (canCoalesce && configResolveInflight[inflightKey]) return configResolveInflight[inflightKey];
   var pending = queueConfigMutation(function (resolve) {
     resolveConfigAccountKey(function (currentAccountKey, authMeta) {
-      chrome.storage.local.get([CONFIG_PROFILES_KEY], function (r) {
+      chrome.storage.local.get([CONFIG_PROFILES_KEY], async function (r) {
         var store = normalizeProfileStore(r[CONFIG_PROFILES_KEY]);
         var before = JSON.stringify(store);
+        if (accountProfileService()) {
+          if (!authMeta || !authMeta.ok || !authMeta.user || currentAccountKey === 'local') {
+            resolve({ ok: false, code: 'ACCOUNT_UNAVAILABLE', error: '登录身份暂不可用，原绑定已保留。' }); return;
+          }
+          try { await hydrateAccountProfiles(currentAccountKey, r, store, profileAccount(store, currentAccountKey)); }
+          catch (error) { resolve({ ok: false, code: error.code || 'CONFIG_SERVICE_UNAVAILABLE', error: error.message || '账号配置暂不可用，原绑定已保留。' }); return; }
+        }
         migrateAllStoredProfiles(store);
         // auth/me 临时超时或5xx时只能沿用本机最后确认且与任务引用一致的账号，
         // 不能退成 local，也不能凭消息里的任意账号引用跨账号取 Key。
@@ -3724,8 +3891,13 @@ function resolveUnifiedConfigReference(ref) {
             return;
           }
           var platformCfg = selectedPlatformWalletConfig(account);
-          resolve({ ok: true, accountKey: currentAccountKey, provider: platformCfg.provider, activeSupplyChannel: 'platform_wallet',
-            config: Object.assign({}, platformCfg, { _accountKey: currentAccountKey, _supplyChannel: 'platform_wallet', _configSignature: configSignature(platformCfg) }) });
+          var walletResponse = { ok: true, accountKey: currentAccountKey, provider: platformCfg.provider, activeSupplyChannel: 'platform_wallet',
+            config: Object.assign({}, platformCfg, { _accountKey: currentAccountKey, _ownerFingerprint: account && account._serverOwnerFingerprint,
+              _supplyChannel: 'platform_wallet', _configSignature: configSignature(platformCfg) }) };
+          if (JSON.stringify(store) !== before) {
+            var walletCache = {}; walletCache[CONFIG_PROFILES_KEY] = store;
+            cacheConfigMutation(walletCache, walletResponse, accountProfileService() ? { verifiedSnapshot: true } : null, resolve, '配置缓存保存失败');
+          } else resolve(walletResponse);
           return;
         }
         var raw = account && account.configs && account.configs[provider];
@@ -3739,7 +3911,7 @@ function resolveUnifiedConfigReference(ref) {
             };
           if (JSON.stringify(store) !== before) {
             var sanitized = {}; sanitized[CONFIG_PROFILES_KEY] = store;
-            chrome.storage.local.set(sanitized, function () { resolve(missing); });
+            cacheConfigMutation(sanitized, missing, accountProfileService() ? { verifiedSnapshot: true } : null, resolve, '配置缓存保存失败');
           } else {
             resolve(missing);
           }
@@ -3748,22 +3920,22 @@ function resolveUnifiedConfigReference(ref) {
         account = store.accounts[currentAccountKey];
         var cfg = normalizeCfg(Object.assign({ provider: provider }, account.configs[provider]));
         account.configs[provider] = cfg;
-        function finish() {
-          resolve({
+        var response = {
             ok: true,
             accountKey: currentAccountKey,
             provider: provider,
             config: Object.assign({}, cfg, {
               _accountKey: currentAccountKey,
+              _ownerFingerprint: account._serverOwnerFingerprint,
+              _supplyChannel: 'external_key',
               _configSignature: configSignature(cfg)
             })
-          });
-        }
+          };
         if (JSON.stringify(store) !== before) {
           var out = {}; out[CONFIG_PROFILES_KEY] = store;
-          chrome.storage.local.set(out, finish);
+          cacheConfigMutation(out, response, accountProfileService() ? { verifiedSnapshot: true } : null, resolve, '配置缓存保存失败');
         } else {
-          finish();
+          resolve(response);
         }
       });
     });
@@ -6127,7 +6299,7 @@ function waitForDetailPromptServiceRetry(retryNumber) {
 
 // 详情提词专用：网关瞬时错误与已有的一次 JSON 结构修复共用
 // 同一个 3 次真实 HTTP 请求总预算。服务错误重试始终复用原模型、原消息和原图片证据，
-// 不新增换模型/降级路由、不删减主体/模特/参考图；chatJson 已有的托管默认模型 fallback 也必须消耗该预算。
+// 不换模型或降级路由，不删减主体/模特/参考图；所有请求都必须消耗同一预算。
 function runDetailPromptWithServiceRetry(cfg, messages, model, temperature, timeoutMs, validator, context, externalSignal) {
   validator = typeof validator === 'function' ? validator : function (response) { return response; };
   context = context && typeof context === 'object' ? context : {};
@@ -6409,7 +6581,42 @@ function modelRequestFailure(status, responseText, options) {
   return modelRequestAttachDiagnostics(result, hint, options, body);
 }
 
+function verifySelectedAccountConfig(cfg) {
+  var service = accountProfileService();
+  if (!service) return Promise.resolve({ ok: true });
+  return new Promise(function (resolve) {
+    resolveConfigAccountKey(function (accountKey, auth) {
+      if (!auth || !auth.ok || !auth.user || !accountKey || accountKey === 'local' || cfg._accountKey !== accountKey) {
+        resolve({ ok: false, code: 'ACCOUNT_UNAVAILABLE', error: '登录身份已变化或暂不可用，尚未提交请求。' }); return;
+      }
+      service('POST', { operation: 'resolveAll', accountKey: accountKey }).then(function (data) {
+        if (cfg._ownerFingerprint !== serverProfilesOwnerFingerprint(data, accountKey)) throw new Error('binding_changed');
+        var current;
+        if (cfg._supplyChannel === 'platform_wallet') {
+          var initialWallet = data.accountRevision === 0 && data.profiles.length === 0 && data.selection && !data.selection.activeProvider;
+          if (!initialWallet && (!data.selection || data.selection.activeSupplyChannel !== 'platform_wallet')) throw new Error('binding_changed');
+          current = normalizeCfg(data.selection.platformWalletConfig || DEFAULT_CFG);
+        } else {
+          var profile = data.profiles.filter(function (entry) { return entry.provider === cfg.provider; })[0];
+          if (!profile || profile.tombstone || !profile.linked || !Number.isSafeInteger(cfg._profileRevision) || profile.revision !== cfg._profileRevision) throw new Error('binding_changed');
+          current = normalizeCfg(profile.config);
+        }
+        if (['provider', 'imageAdapter', 'apiKey', 'visionBaseUrl', 'visionModel', 'textModel', 'imageEndpoint', 'imageModel'].some(function (name) {
+          return String(cfg[name] || '').trim() !== String(current[name] || '').trim();
+        })) throw new Error('binding_changed');
+        resolve({ ok: true });
+      }).catch(function () { resolve({ ok: false, code: 'CONFIG_BINDING_CHANGED', error: '所选模型或 Key 绑定已变化，请重新载入并确认配置；尚未提交请求。' }); });
+    });
+  }).then(function (result) { return result.ok ? result : Object.assign(result, { providerSubmitted: false, definitiveFailure: true, stateUncertain: false }); });
+}
+
 function chatJson(cfg, messages, model, temperature, timeoutMs, requestBudget, externalSignal) {
+  if (!accountProfileService()) return chatJsonSelected(cfg, messages, model, temperature, timeoutMs, requestBudget, externalSignal);
+  return verifySelectedAccountConfig(cfg || {}).then(function (checked) {
+    return checked.ok ? chatJsonSelected(cfg, messages, model, temperature, timeoutMs, requestBudget, externalSignal) : checked;
+  });
+}
+function chatJsonSelected(cfg, messages, model, temperature, timeoutMs, requestBudget, externalSignal) {
   return new Promise(function (resolve) {
     cfg = normalizeCfg(cfg);
     if (cfg.provider === 'nano-banana' || cfg.imageAdapter === 'nano-banana' || cfg.imageAdapter === 'gemini-image') {
@@ -6459,58 +6666,13 @@ function chatJson(cfg, messages, model, temperature, timeoutMs, requestBudget, e
         var modelMissing = failure.code === 'model_not_found' || failure.code === 'MODEL_NOT_FOUND';
         if (failure.stateUncertain || failure.providerSubmitted === true) modelMissing = false;
         if (modelMissing) {
-          var fallbackModel = DEFAULT_CFG.textModel;
-          var fallbackWire = hostedTextUpstreamModel(cfg, fallbackModel);
-          if (isShaozhuangHostedConfig(cfg) && !sameModelName(wireModel, fallbackWire)) {
-            chatJson(cfg, messages, fallbackModel, temperature, timeoutMs, requestBudget, externalSignal).then(function (fallbackResp) {
-              if (fallbackResp && fallbackResp.ok) {
-                persistHostedTextModelFallback(cfg, requestedModel, fallbackModel, function (persisted) {
-                  fallbackResp.modelFallback = { from: requestedModel, to: fallbackModel, persisted: persisted };
-                  fallbackResp.warning = '模型“' + requestedModel + '”未开通，已自动切换为 ' + fallbackModel + '。';
-                  resolve(fallbackResp);
-                });
-                return;
-              }
-              // 默认模型若遇到限流、网络、超时或鉴权错误，保留真实错误分类交给
-              // 链接任务的降档/退避逻辑；只有默认模型也确实不存在才全局 fatal。
-              if (fallbackResp && fallbackResp.code !== 'model_not_found') {
-                if (fallbackResp.code === 'request_budget_exhausted') {
-                  resolve(Object.assign({}, failure, {
-                    ok: false,
-                    code: 'model_not_found',
-                    model: requestedModel,
-                    fallbackModel: fallbackModel,
-                    requestBudgetExhausted: true,
-                    error: '模型“' + requestedModel + '”当前账号不可用；本次详情提词已达到 ' +
-                      (modelRequestBudgetLimit(requestBudget) || 3) + ' 次 HTTP 请求上限，未再请求默认模型 ' + fallbackModel +
-                      '。请在' + CONFIG_UI_LABEL + '改用当前账号已开通的模型，或稍后只重试失败编号。'
-                  }));
-                  return;
-                }
-                resolve(Object.assign({}, fallbackResp, {
-                  model: fallbackModel,
-                  error: '自动切换默认模型 ' + fallbackModel + ' 后请求失败：' + (fallbackResp.error || '未知错误')
-                }));
-                return;
-              }
-              resolve(Object.assign({}, fallbackResp || failure, {
-                ok: false,
-                code: 'model_not_found',
-                model: requestedModel,
-                fallbackModel: fallbackModel,
-                error: '模型“' + requestedModel + '”当前账号不可用；已尝试默认模型 ' + fallbackModel + '，但仍失败：' + ((fallbackResp && fallbackResp.error) || '未知错误')
-              }));
-            });
-            return;
-          }
-          var hostedHint = isShaozhuangHostedConfig(cfg)
-            ? '请打开' + CONFIG_UI_LABEL + '，使用少壮托管默认模型 ' + DEFAULT_CFG.textModel + '，或填写当前账号组实际开通的模型名。'
-            : '请打开' + CONFIG_UI_LABEL + '，填写当前 API 账号实际开通的模型名。';
+          // Keep the selected model and its key. A rejected analysis request must
+          // never create a second paid request or mutate the saved configuration.
           resolve(Object.assign({}, failure, {
             ok: false,
             code: 'model_not_found',
             model: requestedModel,
-            error: '模型“' + requestedModel + '”当前账号不可用。' + hostedHint
+            error: '模型“' + requestedModel + '”当前账号不可用。请打开' + CONFIG_UI_LABEL + '核对该模型及对应 API Key；本次不会自动切换模型。'
           }));
           return;
         }
@@ -8002,6 +8164,12 @@ function referenceDetailFetchJson(url, options, timeoutMs, signal, budget, reser
 }
 
 function referenceDetailModelJson(cfg, messages, signal, budget, reserve, preconsumed) {
+  if (!accountProfileService()) return referenceDetailModelJsonSelected(cfg, messages, signal, budget, reserve, preconsumed);
+  return verifySelectedAccountConfig(cfg || {}).then(function (checked) {
+    return checked.ok ? referenceDetailModelJsonSelected(cfg, messages, signal, budget, reserve, preconsumed) : checked;
+  });
+}
+function referenceDetailModelJsonSelected(cfg, messages, signal, budget, reserve, preconsumed) {
   cfg = normalizeCfg(cfg || {});
   if (!hasModelApiCredential(cfg, 'chat')) return Promise.resolve({ ok: false, code: 'missing_api_key', error: '未配置 API Key，已使用确定性蓝图。' });
   var context = { platform: usesPlatformWallet(cfg, 'chat') };
@@ -16867,6 +17035,12 @@ function referenceDetailBatchRecordImageResult(gate, result) {
 }
 
 function createImageTask(cfg, payload, validatedBatchGate, requestSignal) {
+  if (!accountProfileService()) return createImageTaskSelected(cfg, payload, validatedBatchGate, requestSignal);
+  return verifySelectedAccountConfig(cfg || {}).then(function (checked) {
+    return checked.ok ? createImageTaskSelected(cfg, payload, validatedBatchGate, requestSignal) : checked;
+  });
+}
+function createImageTaskSelected(cfg, payload, validatedBatchGate, requestSignal) {
   payload = payload || {};
   // Retain this controller across asynchronous preflight and same-id replacements.
   requestSignal = requestSignal || signalForPayload(payload);
@@ -17055,6 +17229,12 @@ function imageTranslationEditPrompt(mode, ocr, targetLanguage) {
 }
 
 function createImageTranslationEdit(cfg, payload, dataUrl, ocr) {
+  if (!accountProfileService()) return createImageTranslationEditSelected(cfg, payload, dataUrl, ocr);
+  return verifySelectedAccountConfig(cfg || {}).then(function (checked) {
+    return checked.ok ? createImageTranslationEditSelected(cfg, payload, dataUrl, ocr) : checked;
+  });
+}
+function createImageTranslationEditSelected(cfg, payload, dataUrl, ocr) {
   var adapter = String(cfg.imageAdapter || '');
   var editPayload = {
     prompt: imageTranslationEditPrompt(payload.mode, ocr, imageTranslationLanguage(payload.targetLanguage)),
@@ -17339,6 +17519,7 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_BACKGROUND_TE
     referenceDetailFetchSourceBlob: referenceDetailFetchSourceBlob,
     referenceDetailMaterializeImageSlice: referenceDetailMaterializeImageSlice,
     referenceDetailPrepareChunkMessages: referenceDetailPrepareChunkMessages,
+    referenceDetailModelJson: referenceDetailModelJson,
     referenceDetailAnalyzeChunk: referenceDetailAnalyzeChunk,
     referenceDetailConcurrencyPlan: referenceDetailConcurrencyPlan,
     referenceDetailRecordBackpressure: referenceDetailRecordBackpressure,
@@ -17451,15 +17632,19 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     return true;
   }
   if (msg.type === 'USE_PLATFORM_WALLET') {
-    usePlatformWallet(msg.accountKey, msg.config, sendResponse);
+    usePlatformWallet(msg.accountKey, msg.config, sendResponse, msg.ownerFingerprint);
     return true;
   }
   if (msg.type === 'SAVE_CONFIG') {
     saveConfigProfile(msg.config, function (r) { sendResponse(r); });
     return true;
   }
+  if (msg.type === 'UNLINK_CONFIG_KEY') {
+    unlinkConfigKey(msg, sendResponse);
+    return true;
+  }
   if (msg.type === 'SET_ACTIVE_PROVIDER') {
-    setActiveConfigProvider(msg.provider || '', function (r) { sendResponse(r); });
+    setActiveConfigProvider(msg.provider || '', function (r) { sendResponse(r); }, msg.accountKey, msg.ownerFingerprint);
     return true;
   }
   if (msg.type === 'RESOLVE_CONFIG_PROFILE') {
@@ -17562,7 +17747,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
         // saved external profile that happens to use the same provider name.
         analysisConfig = normalizeCfg(Object.assign({}, msg.platformConfig, { apiKey: '' }));
       }
-      analyzeSubjectAsset(Object.assign({}, analysisConfig, { _accountKey: profile.accountKey }), msg.payload || {}).then(sendResponse).catch(function (error) {
+      analyzeSubjectAsset(Object.assign({}, analysisConfig, { _accountKey: profile.accountKey, _ownerFingerprint: profile.config._ownerFingerprint }), msg.payload || {}).then(sendResponse).catch(function (error) {
         sendResponse({ ok: false, code: error && error.code || 'subject_analysis_failed', error: (error && error.message) || String(error) });
       });
     });

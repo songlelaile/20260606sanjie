@@ -94,6 +94,7 @@ export async function GET(request: Request) {
   return NextResponse.json(
     {
       data: {
+        creativeConfigProfilesVersion: 1,
         username: session.username,
         name: session.name,
         role: session.role,

@@ -229,7 +229,9 @@ describe("hosted Image 2 uses the fixed Sub2API OpenAI image input protocol", ()
     const request = h.requests[0], form = request.form!;
     expect(request.url).toBe(edits);
     expect(request.credentials).toBe("same-origin");
-    expect(form.get("model")).toBe("gpt-image-2");
+    // Personal credentials retain the user's exact model namespace. Only the
+    // explicitly selected platform route resolves its advertised image2 alias.
+    expect(form.get("model")).toBe(apiKey ? imageModel : "gpt-image-2");
     expect(form.get("n")).toBe("1");
     expect(form.get("size")).toBe("1024x1024");
     expect(form.get("prompt")).toContain("保留商品纹理");

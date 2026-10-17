@@ -163,9 +163,54 @@
     return "user:" + String(id).replace(/[^\w@.+:-]/g, "_").slice(0, 120);
   }
 
+  // Credentials are backed by the authenticated account, independently of the
+  // browser cache and release directory. Never log bodies or retry mutations.
+  function configProfileRequest(method, body) {
+    body = body || {};
+    return requireAccount().then(function (id) {
+      var owner = profileKey(id);
+      if (body.accountKey !== owner) throw new Error("登录账号已变化，配置未修改，请刷新工作台。");
+      var controller = new global.AbortController();
+      var timer = global.setTimeout(function () { controller.abort(); }, 15000);
+      return nativeFetch("/api/creative/config-profiles", {
+        method: method, credentials: "same-origin", cache: "no-store",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      }).then(function (response) {
+        return response.json().catch(function () { return null; }).then(function (result) {
+          if (!response.ok || !result || !result.data || result.data.accountKey !== owner) {
+            var conflict = response.status === 409;
+            // Only these public protocol codes have actionable meanings. Keep
+            // their distinction without reflecting arbitrary response text.
+            var safeErrors = {
+              CONFIG_CREDENTIAL_SCOPE_CHANGED: "接口地址已变化，请填写对应 API Key；原接口绑定仍保留。",
+              ACCOUNT_CHANGED: "登录账号已变化，请重新载入工作台后再操作。",
+              CONFIG_BUSY: "账号配置正在保存，请稍后重试。",
+              CONFIG_REVISION_CONFLICT: "配置已在其他页面更新，请重新载入后再修改。",
+              CONFIG_PROVIDER_INVALID: "请选择有效的模型服务商。",
+              CONFIG_ENDPOINT_INVALID: "模型接口必须是公开 HTTPS 地址且不含凭据或查询参数。",
+              CONFIG_INVALID: "模型配置格式无效，请核对后再保存。"
+            };
+            var knownCode = !response.ok && result && Object.prototype.hasOwnProperty.call(safeErrors, result.code) ? result.code : '';
+            var errorCode = knownCode || (conflict ? "CONFIG_CONFLICT" : "CONFIG_SERVICE_UNAVAILABLE");
+            throw Object.assign(new Error(knownCode ? safeErrors[knownCode] : conflict ? "配置已在其他页面更新，请重新载入后再修改。" : "账号配置结果暂无法确认，请稍后重新载入核对绑定。"), { code: errorCode });
+          }
+          // A login change during the request must not expose the old owner's
+          // hydration to the new session or apply its save result to the form.
+          return requireAccount().then(function (current) {
+            if (profileKey(current) !== owner) throw new Error("登录账号已变化，请刷新工作台。");
+            return result.data;
+          });
+        });
+      }).finally(function () { global.clearTimeout(timer); });
+    });
+  }
+
   global.SZ_WEB_ACCOUNT = {
     require: requireAccount,
     storageKey: profileKey,
+    configProfileRequest: configProfileRequest,
+    supportsConfigProfiles: false,
     usesPlatformWallet: usesPlatformWallet,
     requireAccess: function () {
       // Identity and entitlement must come from the same current response.
@@ -533,6 +578,7 @@
 
   function usesPlatformWallet(config, kind) {
     if (!config || config.provider !== "openai-compatible") return false;
+    if (config._supplyChannel === "external_key") return false;
     if (String(config.apiKey || "").trim()) return false;
     var endpoint = kind === "image" ? config.imageEndpoint : kind === "chat" ? config.visionBaseUrl : "";
     if (typeof endpoint !== "string" || !endpoint.trim()) return false;
@@ -1137,6 +1183,7 @@
           var id = String(data.tenantId) + ":" + String(data.username);
           if (pinnedAccount && pinnedAccount !== id) { blockAccount(); return { ok: false, reason: "account_changed" }; }
           pinnedAccount = id;
+          global.SZ_WEB_ACCOUNT.supportsConfigProfiles = global.SZ_WEB_ACCOUNT.supportsConfigProfiles || data.creativeConfigProfilesVersion === 1;
           return { ok: true, creativeEntitlement: data.creativeEntitlement || null, user: { id: id, username: data.username, email: data.username, name: data.name || data.username } };
         });
       })

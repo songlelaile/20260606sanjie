@@ -33,6 +33,7 @@ function harness(responder) {
     fetch: async (input, init) => {
       const url = String(input);
       if (url === '/api/auth/me') return Response.json({ data: { id: 'alice', tenantId: 'shop', username: 'alice', creativeEntitlement: { allowed: true } } });
+      if (url === '/api/creative/billing/quote') return Response.json({ billingMode: 'prepaid_quote', quoteCents: 50 });
       assert.equal(url, '/api/creative/proxy');
       const envelope = JSON.parse(String(init.body));
       const request = { url: envelope.url, method: envelope.method, body: envelope.bodyText ? JSON.parse(envelope.bodyText) : null };
@@ -45,7 +46,7 @@ function harness(responder) {
     const primary = resolve(assetRoot, file);
     runInContext(readFileSync(existsSync(primary) ? primary : resolve(baselineRoot, file), 'utf8'), context, { filename: file });
   }
-  return { api: context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__, requests };
+  return { api: context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__, requests, saved };
 }
 
 function rejection(status, body, trusted = false) {
@@ -59,14 +60,16 @@ function chat(h, cfg = customerConfig, model = cfg.visionModel) {
   return h.api.chatJson(cfg, [{ role: 'user', content: 'fixture' }], model, 0.2, 1000);
 }
 function imageRequest(h, url = customerConfig.imageEndpoint, body = {}) {
-  return h.api.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 1000);
+  return h.api.fetchJson(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: customerConfig.imageModel, n: 1, ...body }) }, 1000);
 }
 
 test('real chatJson converts the legacy pool 409 and every source diagnostic to safe tenant copy', async () => {
   for (const body of [{ error: privateDiagnostic }, { code: 'POOL_SOURCE_SNAPSHOT_STALE', error: privateDiagnostic }, { code: 'CREDIT_POOL_INVALID', error: privateDiagnostic }]) {
     const h = harness(() => rejection(409, body));
     const result = await chat(h);
-    assertSafe(result); assert.equal(result.error, '生成服务暂时繁忙，请稍后查看原任务进度，避免重复生成。');
+    // Existing chat copy differs from image copy; submission safety assertions
+    // below still require one request, uncertainty and no invented no-charge proof.
+    assertSafe(result); assert.equal(result.error, '提示词分析请求失败，本次等待已结束；可手动重新跑，原请求记录已保留，其他任务可继续。');
     assert.equal(result.stateUncertain, true);
     assert.equal(result.status, 409); assert.equal(h.requests.length, 1);
     assert.equal(result.providerSubmitted, undefined);
@@ -76,7 +79,7 @@ test('real chatJson converts the legacy pool 409 and every source diagnostic to 
 test('trusted pre-dispatch rejection preserves submission proof without leaking diagnostics', async () => {
   const h = harness(() => rejection(503, { code: 'CREATIVE_SUPPLY_UNAVAILABLE', error: privateDiagnostic, providerSubmitted: false, definitiveFailure: true }, true));
   const result = await imageRequest(h);
-  assertSafe(result); assert.equal(result.error, '生成服务暂时繁忙，请稍后重试。');
+  assertSafe(result); assert.equal(result.error, '本次未提交生图。生成服务暂时繁忙，请稍后重试。');
   assert.equal(result.code, 'CREATIVE_SUPPLY_UNAVAILABLE'); assert.equal(result.providerSubmitted, false);
   assert.equal(result.definitiveFailure, true); assert.equal(result.stateUncertain, false); assert.equal(h.requests.length, 1);
 });
@@ -84,7 +87,7 @@ test('trusted pre-dispatch rejection preserves submission proof without leaking 
 test('402 distinguishes wallet credit from an API account and never derives no-charge from status', async () => {
   const h = harness(() => rejection(402, { code: 'INSUFFICIENT_BALANCE', error: 'private vendor detail', providerSubmitted: false, definitiveFailure: true, purchaseUrl: '/models' }, true));
   const result = await imageRequest(h);
-  assertSafe(result); assert.equal(result.error, '可用积分不足，请补充积分后继续。');
+  assertSafe(result); assert.equal(result.error, '本次未提交生图。可用积分不足，请补充积分后继续。');
   assert.equal(result.purchaseUrl, '/models'); assert.equal(result.providerSubmitted, false);
   const own = harness(() => rejection(402, { error: 'balance insufficient' }));
   const ownResult = await chat(own, ownConfig);
@@ -166,11 +169,16 @@ test('bounded retry is allowed only after a trusted local proxy receipt proves t
   assert.equal(result.ok, true); assert.equal(result.serviceRetry.retries, 1); assert.equal(h.requests.length, 2);
 });
 
-test('model_not_found retains the hosted text fallback and the own-API setup error', async () => {
+// The user now requires exact selected models/keys; the old hosted auto-fallback
+// contract is intentionally replaced with one failed request and no config write.
+test('model_not_found preserves the selected hosted or own-API model without fallback or saved-config mutation', async () => {
   const h = harness((_req, count) => count === 1 ? rejection(404, { error: { code: 'model_not_found', message: 'model not supported' } })
     : Response.json({ choices: [{ message: { content: '{"ready":true}' } }] }));
+  const before = [...h.saved.entries()];
   const result = await chat(h, { ...customerConfig, visionModel: 'unavailable-fixture', textModel: 'unavailable-fixture' }, 'unavailable-fixture');
-  assert.equal(result.ok, true); assert.equal(h.requests.length, 2); assert.equal(result.modelFallback.to, 'chatGPT5.5');
+  assertSafe(result); assert.equal(result.code, 'model_not_found'); assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].body.model, 'unavailable-fixture'); assert.equal(result.model, 'unavailable-fixture');
+  assert.equal(result.modelFallback, undefined); assert.deepEqual([...h.saved.entries()], before);
   const own = harness(() => rejection(404, { error: { code: 'model_not_found', message: 'model not supported' } }));
   const ownResult = await chat(own, ownConfig);
   assertSafe(ownResult); assert.equal(ownResult.code, 'model_not_found'); assert.equal(own.requests.length, 1);

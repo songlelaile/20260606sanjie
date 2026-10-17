@@ -10,6 +10,8 @@ const { webcrypto } = require("node:crypto");
 const candidate = process.cwd();
 const read = name => fs.readFileSync(path.join(candidate, name), "utf8");
 const profileKey = "sz_image_prompt_lab_config_profiles_v2";
+const videoKey = "sz_web_video_api_key_v1";
+const billingModeKey = "sz_web_video_billing_mode_v1";
 const localPrefix = "sz.chrome.local.v1:";
 const accountId = "tenant-a:alice";
 const personalKey = "fixture-personal-analysis-key";
@@ -66,6 +68,7 @@ function browserRuntime(options = {}) {
   const fixtureDoc = fakeDocument();
   const calls = [];
   const posts = [];
+  const quotes = [];
   function saveProfiles(value) { storage.setItem(localPrefix + profileKey, JSON.stringify(value)); }
   if (options.store !== undefined) saveProfiles(options.store);
   else saveProfiles(profile());
@@ -75,6 +78,12 @@ function browserRuntime(options = {}) {
     if (url === "/api/auth/me") {
       const [tenantId, username] = currentId.split(":");
       return Response.json({ data: { tenantId, username } });
+    }
+    if (url === "/api/creative/billing/quote") {
+      // The published wallet transport quotes before dispatch; the rejection
+      // fixture below must reach its one proxy request through that real gate.
+      quotes.push(JSON.parse(init.body));
+      return Response.json({ billingMode: "prepaid_quote", quoteCents: 50 });
     }
     if (url === "/api/creative/proxy") {
       const envelope = JSON.parse(init.body);
@@ -110,7 +119,7 @@ function browserRuntime(options = {}) {
     context.fixtureMessage = JSON.stringify(message);
     return vm.runInContext("controller.analyze(JSON.parse(fixtureMessage))", context);
   }
-  return { context, calls, posts, analyze, saveProfiles, storage, prompts: fixtureDoc.promptCount,
+  return { context, calls, posts, quotes, analyze, saveProfiles, storage, prompts: fixtureDoc.promptCount,
     switchAccount(id) { currentId = id; }, capabilities() { return vm.runInContext("controller.capabilities()", context); } };
 }
 
@@ -119,7 +128,7 @@ test("analysis selects only the current account's active text/vision profile, in
   const result = await runtime.resolve();
   assert.equal(result.ok, true); assert.equal(result.accountKey, accountId);
   assert.equal(result.config.apiKey, personalKey); assert.equal(result.config.visionModel, personalConfig.visionModel);
-  assert.deepEqual(runtime.reads, [[profileKey]]); assert.equal(runtime.fetches.length, 0);
+  assert.deepEqual(runtime.reads, [[videoKey, billingModeKey], [profileKey]]); assert.equal(runtime.fetches.length, 0);
   assert.ok(!JSON.stringify(result).includes("fixture-other-account-key"));
   assert.ok(!JSON.stringify(result).includes("fixture-shared-key"));
 });
@@ -199,7 +208,7 @@ test("video generation continues to use its separate current-account video key",
   const runtime = hostRuntime({ store: profile({ ...personalConfig, provider: "nano-banana" }) });
   const result = await runtime.resolve({ accountKey: accountId });
   assert.equal(result.config.apiKey, "fixture-video-only-key"); assert.equal(result.config.provider, "doubao");
-  assert.deepEqual(runtime.reads, [["sz_web_video_api_key_v1"]]);
+  assert.deepEqual(runtime.reads, [[videoKey, billingModeKey]]);
 });
 
 test("real website shim carries the personal API and selected model to exactly one proxy request", async () => {
@@ -209,7 +218,7 @@ test("real website shim carries the personal API and selected model to exactly o
   assert.equal(runtime.posts[0].url, "https://sub.shaozhuangai.com/v1/chat/completions");
   assert.equal(new Headers(runtime.posts[0].headers).get("Authorization"), "Bearer " + personalKey);
   assert.equal(JSON.parse(runtime.posts[0].bodyText).model, personalConfig.visionModel);
-  assert.equal(runtime.prompts(), 0);
+  assert.equal(runtime.prompts(), 0); assert.equal(runtime.quotes.length, 0);
 });
 
 test("a saved shaozhuang personal key is forwarded as BYOK, without assuming model permissions or using points", async () => {
@@ -247,6 +256,12 @@ test("no personal API omits Authorization and trusted local insufficient points 
       { status: 402, headers: { "X-Sanjie-Provider-Submission": "not-submitted" } }) });
   await assert.rejects(runtime.analyze()); await new Promise(resolve => setImmediate(resolve));
   assert.equal(runtime.posts.length, 1); assert.equal(new Headers(runtime.posts[0].headers).has("Authorization"), false);
+  assert.equal(runtime.quotes.length, 1);
+  assert.equal(runtime.quotes[0].endpoint, "chat.completions");
+  assert.equal(runtime.quotes[0].model, "chatGPT5.5");
+  assert.equal(runtime.quotes[0].expectedAccount, accountId);
+  assert.equal(runtime.posts[0].expectedQuoteCents, 50);
+  assert.equal(runtime.posts[0].expectedAccount, accountId);
   assert.equal(runtime.prompts(), 1);
 });
 
@@ -267,8 +282,12 @@ test("material-read points-to-API change is also blocked before any POST", async
 
 test("material-read account change is blocked before any POST without leaking a key", async () => {
   const runtime = browserRuntime({ onMaterialRead: ({ switchAccount }) => switchAccount("tenant-b:bob") });
-  await assert.rejects(runtime.analyze(true), cause => cause.code === "ACCOUNT_CHANGED" && !JSON.stringify(cause).includes(personalKey));
+  // The website first blocks its pinned account. The resolver then reports
+  // ACCOUNT_UNAVAILABLE instead of exposing a new account's credentials.
+  await assert.rejects(runtime.analyze(true), cause => cause.code === "ACCOUNT_UNAVAILABLE" && !JSON.stringify(cause).includes(personalKey));
+  assert.equal((await runtime.context.authCheck()).reason, "account_changed");
   assert.equal(runtime.posts.length, 0);
+  assert.equal(runtime.quotes.length, 0); assert.equal(runtime.prompts(), 0);
 });
 
 test("public capabilities explain personal versus points mode without exposing the saved key", async () => {

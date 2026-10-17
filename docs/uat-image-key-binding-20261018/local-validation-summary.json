@@ -1,0 +1,63 @@
+{
+  "baselineCommit": "a36fb47fa78979417aa254afe4f3266b0d8c940f",
+  "scope": "Local macOS preliminary validation; not Linux, deployment or live acceptance.",
+  "nodeVersion": "v24.12.0",
+  "vitest": {
+    "passed": 4178,
+    "failed": 0,
+    "skipped": 277,
+    "total": 4455,
+    "nativeReportSha256": "a2c4def59c977bcb47adfccbee12df27ffc8dd39d601afbff4b5a519744e3ad4",
+    "newSkips": 0,
+    "all3886OriginalV3PassedCasesRetained": true
+  },
+  "checks": {
+    "tests": {
+      "exitCode": 0,
+      "durationSeconds": 72.526,
+      "logSha256": "6b674a9422902d029c46ff59b3f3ab43c1b64e420fde727a3667f6bac05b2451"
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "durationSeconds": 2.297,
+      "logSha256": "444697a17d02c54f2873a0b5202c4d7c107f793304ec5671cc511fe3bba81749"
+    },
+    "lint": {
+      "exitCode": 0,
+      "durationSeconds": 1.503,
+      "logSha256": "d7420878e907b734f99c4e9e79cd4519198182577270701a2564ea1373ae41c3"
+    },
+    "node-video": {
+      "exitCode": 0,
+      "durationSeconds": 0.112,
+      "logSha256": "c990a49a7c30392f6bbd6de41cb7532bbd19a0eccdb874e551933e8db5dfca68"
+    },
+    "build": {
+      "exitCode": 0,
+      "durationSeconds": 28.557,
+      "logSha256": "1021a812c3c6f5aaab9c2513cbb0ade388aacd16cc3590ce72e0d87869d98f72"
+    }
+  },
+  "runtime": {
+    "raw": "73fe6b87f2803895048a5f621ee80243590d935e5a6a61a86f980a490d5b87c2",
+    "loaded": "66408e59cbd2d306eca0002de588b4591888cb52e5739e6223e9a41238bd9f3d",
+    "runtime": "a49a07db2be60feb0b01b97752625a6080999e70b419060050e5c049f2e6eff5",
+    "runtimeMarkers": 9,
+    "onlyBackgroundPinsChanged": true,
+    "review": "3way merge of a36 raw and loaded baseline with new raw; loaded-only image alias helper preserved with exact BYOK guard, all other leaves unchanged"
+  },
+  "boundaries": {
+    "databaseMigrationsRun": false,
+    "seedOrResetRun": false,
+    "paidProviderCalls": 0,
+    "ordinaryLiveTenantBVerified": false,
+    "claudeExecutableTestingComplete": false,
+    "linuxValidationComplete": false,
+    "trafficSwitched": false
+  },
+  "earlierFailedAttempts": [
+    "Node24 r5 worker shutdown timeout with4 unfinished cases",
+    "Node24 r6 worker shutdown timeout with14 unfinished cases"
+  ],
+  "latestFullRunHasWorkerOrUnhandledWarnings": false
+}

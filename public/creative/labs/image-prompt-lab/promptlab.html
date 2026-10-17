@@ -458,11 +458,11 @@
       }, { once: true });
     })();
   </script>
-  <link rel="preload" as="script" href="/creative/web-chrome.js?v=20261017-studio-optimize-v2" fetchpriority="high">
+  <link rel="preload" as="script" href="/creative/web-chrome.js?v=20261018-key-binding-v4" fetchpriority="high">
   <link rel="preload" as="script" href="studio-prerequisites-20261009-v1.js?v=20261017-image-studio-optimize-v1">
   <link rel="preload" as="script" href="viral-series-contract.js?v=20260721-v1875-viral-20">
-  <link rel="preload" as="script" href="studio-runtime-20261010-credit-v3.js?v=20261018-online-uat-v3">
-  <link rel="preload" as="script" href="promptlab.js?v=20261018-online-uat-v3">
+  <link rel="preload" as="script" href="studio-runtime-20261010-credit-v3.js?v=20261018-key-binding-v4">
+  <link rel="preload" as="script" href="promptlab.js?v=20261018-api-key-direct-v1">
   <link rel="preload" as="script" href="studio-views-20261010-credit-v3.js?v=20261018-online-uat-v3">
   <link id="labWorkspaceStyles" rel="stylesheet" href="studio-workspace-20261009-v1.css?v=20261017-image-studio-optimize-v1" media="print" fetchpriority="high" onload="window.SZ_LAB_STYLES.loaded(this)" onerror="window.SZ_LAB_STYLES.failed(this)">
   <noscript><link rel="stylesheet" href="studio-workspace-20261009-v1.css?v=20261017-image-studio-optimize-v1"></noscript>
@@ -502,7 +502,7 @@
     </div>
   </section>
   <script id="labFirstPaintMeasure">if (window.SZ_LAB_STYLES) window.SZ_LAB_STYLES.bodyReady(); if (window.SZ_LAB_FIRST_PAINT) window.SZ_LAB_FIRST_PAINT.bodyReady();</script>
-  <script src="/creative/web-chrome.js?v=20261017-studio-optimize-v2"></script>
+  <script src="/creative/web-chrome.js?v=20261018-key-binding-v4"></script>
   <main class="app">
     <header class="hero">
       <div class="hero-brand-block">
@@ -2106,8 +2106,9 @@
             </select>
           </label>
           <label>API Key
-            <input id="apiKey" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off" data-lpignore="true" data-1p-ignore="true" readonly placeholder="网站少壮托管无需填写；自有接口填写对应 Key">
-            <button id="editApiKeyBtn" class="btn secondary" type="button">修改 Key</button>
+            <input id="apiKey" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="off" autocorrect="off" data-lpignore="true" data-1p-ignore="true" aria-describedby="apiKeyEditHint" placeholder="网站少壮托管无需填写；自有接口填写对应 Key">
+            <small id="apiKeyEditHint">可直接编辑。清空后保存会保留已绑定的 Key；仅“解除绑定”会清除当前服务商的绑定。</small>
+            <button id="unlinkApiKeyBtn" class="btn secondary" type="button" disabled>解除绑定</button>
           </label>
           <label>生图适配器
             <select id="imageAdapter">
@@ -2238,11 +2239,11 @@
   </div>
   <script src="studio-prerequisites-20261009-v1.js?v=20261017-image-studio-optimize-v1"></script>
   <script src="viral-series-contract.js?v=20260721-v1875-viral-20"></script>
-  <script src="studio-runtime-20261010-credit-v3.js?v=20261018-online-uat-v3"></script>
+  <script src="studio-runtime-20261010-credit-v3.js?v=20261018-key-binding-v4"></script>
   <script src="sku-region-ui.js?v=20261012-sku-region-v1"></script>
   <script src="sku-delivery-store.js?v=20261013-sku-delivery-v1"></script>
   <script src="sku-durable-receipt.js?v=20261013-sku-paid-workspace-v8c"></script>
-  <script src="promptlab.js?v=20261018-online-uat-v3"></script>
+  <script src="promptlab.js?v=20261018-api-key-direct-v1"></script>
   <script src="studio-views-20261010-credit-v3.js?v=20261018-online-uat-v3"></script>
   <script src="aesthetic-mirror-contract.js?v=20261014-mirror-v2"></script>
   <script src="aesthetic-mirror-ui.js?v=20261014-mirror-v2"></script>

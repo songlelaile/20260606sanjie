@@ -33,6 +33,8 @@ function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
   const epochStart = script.indexOf("var configReadEpoch = 0;"), epochEnd = script.indexOf("\n", script.indexOf("var pendingProviderProfile = 0;", epochStart));
   const busyStart = script.indexOf("var creativeWebBusy = Object.create(null);"), busyEnd = script.indexOf("\nfunction creativeWebProfile(", busyStart);
   if ([epochStart, epochEnd, busyStart, busyEnd].some(index => index < 0)) throw new Error("Production API busy helpers were not found");
+  const keyControlsStart = script.indexOf("function syncApiKeyControls() {"), keyControlsEnd = script.indexOf("\nfunction apiKeyAutofilled(", keyControlsStart);
+  if (keyControlsStart < 0 || keyControlsEnd < 0) throw new Error("Production API key controls helper was not found");
   expect(script.slice(epochStart, epochEnd).split("\n")).toEqual(["var configReadEpoch = 0;", "var pendingProviderSelection = 0;", "var pendingProviderProfile = 0;"]);
   expect(script.slice(busyStart, busyEnd).match(/\nfunction /g)).toHaveLength(2);
   const calls: Array<{ type: string; envelope: Envelope }> = [];
@@ -49,6 +51,9 @@ function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
   });
   context.window = context;
   runInContext(script.slice(epochStart, epochEnd), context, { filename: "promptlab-production-config-epoch.js" });
+  // The actual control synchronizer is a no-op when this bridge-only fixture has
+  // no config modal, matching its production DOM guard rather than stubbing it.
+  runInContext(script.slice(keyControlsStart, keyControlsEnd), context, { filename: "promptlab-production-api-key-controls.js" });
   runInContext(script.slice(busyStart, busyEnd), context, { filename: "promptlab-production-api-busy.js" });
   runInContext(script.slice(credentialStart, credentialEnd), context, { filename: "promptlab-production-credentials.js" });
   runInContext(script.slice(start, end + "\n  };".length), context, { filename: "promptlab-production-bridge.js" });

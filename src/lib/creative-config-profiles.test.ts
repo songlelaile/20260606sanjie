@@ -102,9 +102,11 @@ describe("bound image API selector snapshots", () => {
     const before = [...h.localStorage.values.entries()];
     const response = await h.send("GET_BOUND_IMAGE_APIS");
     expect(response.providers).toEqual([
-      { provider: "openai-compatible", label: "少壮托管 / Auto Mode", imageModel: "image2", imageAdapter: "generic-json" },
-      { provider: "doubao", label: "集梦 / 豆包 / 火山方舟", imageModel: "doubao-seedream-5-0-260128", imageAdapter: "doubao-image" }
+      { provider: "openai-compatible", label: "少壮托管 / Auto Mode", imageModel: "image2", imageAdapter: "generic-json" }
     ]);
+    // Seedream 3 is not a supported reference-image configuration. Retain its
+    // exact binding instead of silently upgrading it to a different model.
+    expect(h.normalize({ provider: "doubao", imageModel: "doubao-seedream-3-0-t2i-250415" }).imageModel).toBe("doubao-seedream-3-0-t2i-250415");
     expect(h.calls.writes).toBe(0);
     expect([...h.localStorage.values.entries()]).toEqual(before);
   });
