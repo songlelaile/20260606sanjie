@@ -1,0 +1,66 @@
+.overlay { position: fixed; inset: 0; z-index: 10000; display: flex; align-items: center; justify-content: center; padding: 24px; overflow-y: auto; background: rgb(21 27 38 / 42%); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); }
+.dialog { width: 344px; max-width: 100%; max-height: calc(100dvh - 48px); overflow-y: auto; background: #fff; border: 1px solid rgb(255 255 255 / 70%); border-radius: 16px; box-shadow: 0 24px 80px rgb(15 23 42 / 20%); color: #17202c; font-family: inherit; font-size: 13px; line-height: 1.5; text-align: left; }
+.dialog * { box-sizing: border-box; }
+.dialog button, .dialog select { font: inherit; }
+.dialog button { cursor: pointer; }
+.dialog button:disabled { cursor: default; opacity: .48; }
+.dialog button:focus-visible, .dialog select:focus-visible, .dialog a:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.header { display: flex; align-items: center; justify-content: space-between; padding: 13px 14px 13px 20px; border-bottom: 1px solid #eef0f4; }
+.header h2 { margin: 0; font-size: 13px; font-weight: 650; color: #27303c; }
+.close { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: #9ba1aa; background: transparent; }
+.close:hover { background: #f4f5f8; color: #4b5563; }
+.content { padding: 22px 24px 19px; text-align: center; }
+.planName { margin: 0 0 3px; color: #818995; font-size: 12px; }
+.amount { margin: 0; color: #17202c; font-size: 34px; line-height: 1.25; font-weight: 750; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+.amount > span { margin-right: 2px; font-size: 24px; font-weight: 650; }
+.credit { margin: 6px 0 19px; color: #a0a6af; font-size: 11px; }
+.planPicker { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; color: #687283; font-size: 11px; }
+.planPicker select { min-width: 0; max-width: 210px; padding: 6px 8px; border: 1px solid #e7eaf0; border-radius: 6px; color: #394252; background: #fff; font-size: 12px; }
+.channels { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.channels button { position: relative; display: flex; align-items: center; gap: 8px; min-height: 64px; padding: 12px 9px; border: 1px solid #e5e8ef; border-radius: 9px; color: #38404c; background: #fff; text-align: left; }
+.channels button[aria-pressed="true"] { border-color: #799ffc; background: #f6f8ff; box-shadow: 0 0 0 1px #799ffc; }
+.channels button small { display: block; margin-top: 2px; color: #9299a4; font-size: 10px; }
+.selected { position: absolute; top: 5px; right: 5px; color: #4e77d9; }
+.paymentMark { display: inline-grid; place-items: center; flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px; font-size: 17px; line-height: 1; color: #fff; }
+.paymentMark svg { width: 19px; height: 19px; }
+.alipayMark { background: #1677ff; font-weight: 650; }
+.wechatMark { background: #07c160; }
+.hint { min-height: 32px; margin: 14px 0 10px; color: #969daa; font-size: 11px; line-height: 1.7; }
+.primary { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 39px; padding: 9px 12px; border: 0; border-radius: 8px; background: #2965e8; color: #fff; font-size: 12px; font-weight: 600; }
+.primary:hover:not(:disabled) { background: #1f55cb; }
+.manual { margin: 12px 0 0; padding: 3px 0; border: 0; color: #929aa6; background: transparent; font-size: 10px !important; }
+.manual:hover:not(:disabled) { color: #4b617d; }
+.qrFrame { display: grid; place-items: center; width: 224px; height: 224px; margin: 0 auto; padding: 12px; border: 1px solid #f0f1f5; border-radius: 11px; background: #fff; }
+.qrFrame img { display: block; width: 200px; height: 200px; object-fit: contain; }
+.cashierFrame { width: 252px; height: 292px; padding: 5px; overflow: hidden; }
+.cashierIframe { display: block; width: 240px; height: 280px; border: 0; background: #fff; }
+.cashierFallback { display: block; margin: 12px 0 0; padding: 8px 10px; border: 1px solid #dfe7f6; border-radius: 7px; background: #f8faff; color: #2965e8; font-size: 11px; text-decoration: none; }
+.cashierFallback:hover { background: #eef4ff; }
+.cashierHint { margin: 7px 0 0; color: #929aa6; font-size: 10px; line-height: 1.6; }
+.qrUnavailable { color: #929aa6; font-size: 12px; }
+.qrUnavailable svg { margin: 0 auto; }
+.qrUnavailable p { margin: 8px 0 4px; }
+.qrUnavailable small { font-size: 10px; }
+.scanHint { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 15px 0 9px; color: #7f8794; font-size: 11px; }
+.scanHint .paymentMark { width: 15px; height: 15px; border-radius: 3px; font-size: 12px; }
+.scanHint .paymentMark svg { width: 13px; height: 13px; }
+.waiting { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 0; color: #a1a7b1; font-size: 10px; }
+.waiting > span { width: 4px; height: 4px; border-radius: 50%; background: #c0c6d2; }
+.footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 10px 18px; border-top: 1px solid #eef0f4; color: #a0a7b1; font-size: 10px; font-variant-numeric: tabular-nums; }
+.footer > span, .footer button { display: flex; align-items: center; gap: 4px; }
+.footer button { border: 0; padding: 3px 0; background: transparent; color: #7f8998; font-size: 10px; }
+.footer .secure { justify-content: center; width: 100%; }
+.result { padding: 12px 0 0; color: #9aA3b1; }
+.result > svg { margin: 0 auto; }
+.result h3, .manualOrder h3 { margin: 12px 0 8px; color: #394252; font-size: 16px; }
+.result p, .manualOrder p { margin: 8px 0 20px; color: #8b94a2; font-size: 12px; line-height: 1.8; }
+.successIcon { display: inline-grid; width: 52px; height: 52px; place-items: center; border-radius: 50%; background: #eafaf1; color: #07a352; }
+.manualOrder code { display: block; margin: 6px 0 0; padding: 8px; border-radius: 6px; background: #f6f8fb; color: #687283; font-size: 10px; overflow-wrap: anywhere; }
+.manualOrder a { color: #2965e8; font-size: 12px; }
+.error, .notice { margin: 13px 0 0; padding: 8px 10px; border-radius: 7px; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.error { background: #fff2ef; color: #bd5147; }
+.notice { background: #f5f7fa; color: #768193; }
+.spinning { animation: paymentSpin 1s linear infinite; }
+@keyframes paymentSpin { to { transform: rotate(360deg); } }
+@media (max-width: 480px) { .overlay { padding: 16px; } .dialog { max-height: calc(100dvh - 32px); } }
+@media (prefers-reduced-motion: reduce) { .spinning { animation: none; } }

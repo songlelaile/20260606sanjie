@@ -8,7 +8,6 @@ import {
   runThreeStageCalculation
 } from "@/lib/algorithm/three-stage";
 import { Prisma } from "@prisma/client";
-import { hashPassword } from "@/lib/accounts";
 import {
   assessComparisonWindow,
   canConcludeComparison
@@ -21,10 +20,6 @@ import {
 } from "@/lib/dashboard-share";
 import type { BusinessDiagnosisSource } from "@/lib/business-diagnosis";
 import { prisma } from "@/lib/db";
-import {
-  getDmpAutomationAccessForUserIds,
-  NO_DMP_AUTOMATION_ACCESS
-} from "@/lib/tool-entitlements";
 import { resolveAiEncryptionKeySource } from "@/lib/ai-encryption-key";
 import {
   DEFAULT_AI_PROVIDER,
@@ -74,7 +69,6 @@ import {
 } from "@/lib/store/daily-metrics";
 import {
   pruneAdminVersionSnapshots,
-  pruneHistoryRecordsByMonths,
   retentionPolicy,
   validateTenantDatasetSize
 } from "@/lib/retention-policy";
@@ -108,18 +102,12 @@ import type {
   GrowthProfitConfigRow,
   Intervention,
   InterventionComparison,
-  InviteCode,
   ManagementDashboard,
   ProductBreakthroughResult,
   ProductComparison,
   ProductInvestmentResult,
   ImportBatch,
   ImportValidationResult,
-  ManagementHistoryRecord,
-  ManagementHistoryReport,
-  ManagementHistoryRetention,
-  ManagementHistoryState,
-  ManagedUser,
   PrefillItem,
   ProductTag,
   ProductSourceRow,
@@ -155,9 +143,6 @@ interface WorkspaceData {
   growthProfitConfig: GrowthProfitConfigRow[];
   // calcRun 已外置到独立 CalcRun 表（见 calcRunUpsertOp/getLatestCalcRun），不再随 blob 反复读写。
   versions: VersionSnapshot[];
-  historyRecords: ManagementHistoryRecord[];
-  historyReports: ManagementHistoryReport[];
-  historyRetention: ManagementHistoryRetention;
   dailyRetentionDays?: number; // 分日明细保留天数（相对最新日期）；缺省视为 365，<=0 永久
   /** 业务诊断看板专用源表：本店类目月度数据 + 市场大盘数据，按当前店铺隔离。 */
   businessDiagnosisSource?: BusinessDiagnosisSource;
@@ -429,15 +414,7 @@ export function buildInitialWorkspaceData(context: WorkspaceContext): WorkspaceD
     prefillItems: [],
     productTags: [],
     growthProfitConfig: initialGrowthProfitConfig,
-    versions: [],
-    historyRecords: [],
-    historyReports: [],
-    historyRetention: {
-      tenantId: context.tenant.id,
-      months: 12,
-      updatedAt: new Date().toISOString(),
-      updatedBy: context.user.name
-    }
+    versions: []
   };
 }
 
@@ -691,7 +668,7 @@ const getShopScope = cache(async (): Promise<ShopScope> => {
   const user = userDomainFrom(userRow, session);
   let shops = await prisma.shop.findMany({
     where: { tenantId: session.tenantId },
-    orderBy: { createdAt: "asc" }
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
   });
   if (shops.length === 0) {
     shops = [await ensureDefaultShop({ tenant, user })];
@@ -1507,7 +1484,7 @@ export async function getShopSwitcherData(): Promise<{
   const scope = await requireShopScope();
   const rows = await prisma.shop.findMany({
     where: { tenantId: scope.tenantId },
-    orderBy: { createdAt: "asc" }
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }]
   });
   const shops = rows.map(toDomainShop);
   const limit = scope.isAdmin ? null : TENANT_SHOP_LIMIT;
@@ -1631,7 +1608,7 @@ export async function deleteShop(
     }
     const fallback = await tx.shop.findFirst({
       where: { tenantId: scope.tenantId, id: { not: shopId } },
-      orderBy: { createdAt: "asc" }
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
     });
     await Promise.all([
       tx.dailyProductMetric.deleteMany({ where: { tenantId: scope.tenantId, shopId } }),
@@ -1642,7 +1619,7 @@ export async function deleteShop(
     await tx.shop.delete({ where: { id: shopId } });
     const rows = await tx.shop.findMany({
       where: { tenantId: scope.tenantId },
-      orderBy: { createdAt: "asc" }
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }]
     });
     const activeShopId = fallback?.id ?? rows[0]?.id;
     if (!activeShopId) {
@@ -1731,374 +1708,17 @@ export async function getVersions(cycleId?: string): Promise<VersionSnapshot[]> 
 // 邀请码（关系表，跨租户索引）
 // ——————————————————————————————————————————————————————————————
 
-export async function getInviteCodes(): Promise<InviteCode[]> {
-  const { tenantId } = await requireShopScope();
-  const rows = await prisma.inviteCode.findMany({
-    where: { tenantId },
-    orderBy: { createdAt: "desc" }
-  });
-  return rows.map(toDomainInvite);
-}
-
-export async function createInviteCode(input: {
-  note: string;
-  maxUses: number;
-}): Promise<InviteCode> {
-  const { tenantId } = await requireShopScope();
-  const actor = await currentActorName();
-  const code = await generateUniqueInviteCode();
-  const row = await prisma.inviteCode.create({
-    data: {
-      tenantId,
-      code,
-      registrationUrl: `/login?invite=${code}`,
-      usedCount: 0,
-      maxUses: input.maxUses,
-      note: input.note.trim() || "未备注",
-      createdBy: actor
-    }
-  });
-  return toDomainInvite(row);
-}
-
-export async function deleteInviteCode(id: string): Promise<boolean> {
-  const { tenantId } = await requireShopScope();
-  const result = await prisma.inviteCode.deleteMany({ where: { id, tenantId } });
-  return result.count > 0;
-}
-
-/**
- * 消费一个邀请码（注册时调用，无会话上下文）：校验存在性与剩余次数，
- * 成功后 usedCount + 1。被吊销（删除）的码自然失效。
- */
-export async function consumeInviteCode(rawCode: string): Promise<{ ok: true; invite: InviteCode } | { ok: false; error: string }> {
-  const code = rawCode.trim().toUpperCase();
-  if (!code) {
-    return { ok: false, error: "请输入邀请码" };
-  }
-  const invite = await prisma.inviteCode.findUnique({ where: { code } });
-  if (!invite) {
-    return { ok: false, error: "邀请码无效或已失效" };
-  }
-  if (invite.usedCount >= invite.maxUses) {
-    return { ok: false, error: "邀请码使用次数已用尽" };
-  }
-  const consumed = await prisma.inviteCode.updateMany({
-    where: { id: invite.id, usedCount: { lt: invite.maxUses } },
-    data: { usedCount: { increment: 1 } }
-  });
-  if (consumed.count === 0) {
-    return { ok: false, error: "邀请码使用次数已用尽" };
-  }
-  const updated = await prisma.inviteCode.findUnique({ where: { id: invite.id } });
-  if (!updated) {
-    return { ok: false, error: "邀请码无效或已失效" };
-  }
-  return { ok: true, invite: toDomainInvite(updated) };
-}
-
-export async function getManagedUsers(): Promise<ManagedUser[]> {
-  const scope = await requireShopScope();
-  const users = await prisma.user.findMany({
-    where: scope.isAdmin ? {} : { tenantId: scope.tenantId },
-    orderBy: { createdAt: "desc" }
-  });
-  const dmpAccessByUserId = await getDmpAutomationAccessForUserIds(users.map((user) => user.id));
-  return users.map((u) => ({
-    id: u.id,
-    tenantId: u.tenantId,
-    name: u.name,
-    username: u.username,
-    email: u.email,
-    role: u.role as ManagedUser["role"],
-    shopName: u.shopName,
-    status: u.status as ManagedUser["status"],
-    dmpAutomationAccess: dmpAccessByUserId.get(u.id) ?? { ...NO_DMP_AUTOMATION_ACCESS },
-    createdAt: u.createdAt.toISOString(),
-    lastActiveAt: u.lastActiveAt.toISOString()
-  }));
-}
-
-type ManagedUserActionResult =
-  | { ok: true }
-  | { ok: false; error: string; status: number };
-
-/** 校验目标用户可被当前管理员操作：非本人、非管理员账号；管理账号可跨租户管理租户账号。 */
-async function guardManagedUserAction(id: string): Promise<ManagedUserActionResult> {
-  const scope = await requireShopScope();
-  const session = await getServerSession();
-  if (!session || !scope.isAdmin) {
-    return { ok: false, error: "仅管理员可执行此操作", status: 403 };
-  }
-  const user = await prisma.user.findUnique({ where: { id } });
-  if (!user) {
-    return { ok: false, error: "用户不存在", status: 404 };
-  }
-  if (session && user.username === session.username) {
-    return { ok: false, error: "不能对当前登录的账号执行此操作", status: 400 };
-  }
-  if (user.authRole === "admin") {
-    return { ok: false, error: "不能操作管理员账号", status: 403 };
-  }
-  return { ok: true };
-}
-
-/** 禁用/启用租户成员。禁用后该账号无法登录。 */
-export async function setManagedUserStatus(
-  id: string,
-  status: "active" | "disabled"
-): Promise<ManagedUserActionResult> {
-  const guard = await guardManagedUserAction(id);
-  if (!guard.ok) {
-    return guard;
-  }
-  await prisma.user.update({ where: { id }, data: { status } });
-  return { ok: true };
-}
-
-/** 删除租户成员（硬删除，账号即刻失效）。 */
-export async function deleteManagedUser(id: string): Promise<ManagedUserActionResult> {
-  const guard = await guardManagedUserAction(id);
-  if (!guard.ok) {
-    return guard;
-  }
-  await prisma.user.delete({ where: { id } });
-  return { ok: true };
-}
-
-/** 重置租户成员密码：生成 10 位临时密码并写库，明文仅随本次响应返回一次。 */
-export async function resetManagedUserPassword(
-  id: string
-): Promise<{ ok: true; password: string } | { ok: false; error: string; status: number }> {
-  const guard = await guardManagedUserAction(id);
-  if (!guard.ok) {
-    return guard;
-  }
-  // 去掉易混淆字符（0O1lI），降低口头/抄写传达出错率。
-  const alphabet = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
-  const { randomInt } = await import("node:crypto");
-  let password = "";
-  for (let index = 0; index < 10; index += 1) {
-    password += alphabet[randomInt(alphabet.length)];
-  }
-  await prisma.user.update({ where: { id }, data: { password: hashPassword(password) } });
-  return { ok: true, password };
-}
-
-// ——————————————————————————————————————————————————————————————
-// 管理历史
-// ——————————————————————————————————————————————————————————————
-
-export async function getManagementHistory(): Promise<ManagementHistoryState> {
-  const { state } = await ctx();
-  return {
-    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
-    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
-    retention: { ...state.historyRetention }
-  };
-}
-
-export async function updateManagementHistoryRetention(
-  months: number
-): Promise<ManagementHistoryState> {
-  const { tenantId, shopId, state } = await ctx();
-  const actor = await currentActorName();
-  const normalizedMonths = normalizeHistoryMonths(months);
-  state.historyRetention = {
-    ...state.historyRetention,
-    months: normalizedMonths,
-    updatedAt: new Date().toISOString(),
-    updatedBy: actor
-  };
-  state.historyRecords = pruneHistoryRecordsByMonths(state.historyRecords, normalizedMonths, new Date());
-  state.historyReports = pruneHistoryReportsByMonths(state.historyReports, normalizedMonths, new Date());
-  pushHistoryVersion(
-    state,
-    "历史保留策略更新",
-    `历史数据保留期调整为 ${normalizedMonths === 0 ? "永久保留" : `最近 ${normalizedMonths} 个月`}。`,
-    actor
-  );
-  await saveWorkspace(tenantId, shopId, state);
-  return {
-    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
-    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
-    retention: { ...state.historyRetention }
-  };
-}
-
-export async function clearManagementHistory(): Promise<ManagementHistoryState> {
-  const { tenantId, shopId, state } = await ctx();
-  const actor = await currentActorName();
-  const removed = state.historyRecords.length + state.historyReports.length;
-  state.historyRecords = [];
-  state.historyReports = [];
-  pushHistoryVersion(state, "清空历史数据", `清空全部管理历史，移除 ${removed} 条记录与报表。`, actor);
-  await saveWorkspace(tenantId, shopId, state);
-  return getManagementHistorySnapshot(state);
-}
-
-export async function deleteManagementHistoryBefore(beforeDate: string): Promise<ManagementHistoryState> {
-  const { tenantId, shopId, state } = await ctx();
-  const actor = await currentActorName();
-  const cutoff = parseDate(beforeDate);
-  if (!cutoff) {
-    return getManagementHistorySnapshot(state);
-  }
-  const before = state.historyRecords.length + state.historyReports.length;
-  state.historyRecords = state.historyRecords.filter(
-    (record) => new Date(record.uploadAt).getTime() >= cutoff.getTime()
-  );
-  state.historyReports = state.historyReports.filter(
-    (report) => new Date(`${report.endDate}T23:59:59.999Z`).getTime() >= cutoff.getTime()
-  );
-  const after = state.historyRecords.length + state.historyReports.length;
-  pushHistoryVersion(
-    state,
-    "按日期清理历史数据",
-    `删除 ${beforeDate} 之前的历史，移除 ${before - after} 条记录与报表。`,
-    actor
-  );
-  await saveWorkspace(tenantId, shopId, state);
-  return getManagementHistorySnapshot(state);
-}
-
-export async function deleteManagementHistoryRange(
-  startDate: string,
-  endDate: string
-): Promise<ManagementHistoryState> {
-  const { tenantId, shopId, state } = await ctx();
-  const actor = await currentActorName();
-  const start = parseDate(startDate);
-  const end = parseDate(endDate);
-  if (!start || !end) {
-    return getManagementHistorySnapshot(state);
-  }
-  const before = state.historyRecords.length + state.historyReports.length;
-  const normalizedStart = start.getTime();
-  const normalizedEnd = end.getTime();
-  state.historyRecords = state.historyRecords.filter((record) => {
-    const uploadTime = new Date(record.uploadAt).getTime();
-    return uploadTime < normalizedStart || uploadTime > normalizedEnd;
-  });
-  state.historyReports = state.historyReports.filter((report) => {
-    const reportStart = new Date(report.startDate).getTime();
-    const reportEnd = new Date(`${report.endDate}T23:59:59.999Z`).getTime();
-    return reportEnd < normalizedStart || reportStart > normalizedEnd;
-  });
-  const after = state.historyRecords.length + state.historyReports.length;
-  pushHistoryVersion(
-    state,
-    "按区间清理历史数据",
-    `删除 ${startDate} ~ ${endDate} 区间的历史，移除 ${before - after} 条记录与报表。`,
-    actor
-  );
-  await saveWorkspace(tenantId, shopId, state);
-  return getManagementHistorySnapshot(state);
-}
-
-export async function saveManagementHistoryReport(input: {
-  name: string;
-  startDate: string;
-  endDate: string;
-  categories: ManagementHistoryReport["categories"];
-}): Promise<ManagementHistoryReport> {
-  const { tenantId, shopId, state } = await ctx();
-  const actor = await currentActorName();
-  const report: ManagementHistoryReport = {
-    id: `history-report-${Date.now()}`,
-    tenantId,
-    shopId: state.context.shop.id,
-    cycleId: state.context.cycle.id,
-    name: input.name.trim(),
-    createdAt: new Date().toISOString(),
-    createdBy: actor,
-    startDate: input.startDate,
-    endDate: input.endDate,
-    categories: [...input.categories]
-  };
-  state.historyReports = [report, ...state.historyReports];
-  await saveWorkspace(tenantId, shopId, state);
-  return report;
-}
+export {
+  getInviteCodes, createInviteCode, deleteInviteCode, consumeInviteCode,
+  getManagedUsers, setManagedUserStatus, deleteManagedUser, resetManagedUserPassword
+} from "@/lib/store/user-store";
 
 // ——————————————————————————————————————————————————————————————
 // 内部工具
 // ——————————————————————————————————————————————————————————————
 
-function getManagementHistorySnapshot(state: WorkspaceData): ManagementHistoryState {
-  return {
-    records: [...state.historyRecords].sort((l, r) => r.uploadAt.localeCompare(l.uploadAt)),
-    reports: [...state.historyReports].sort((l, r) => r.createdAt.localeCompare(l.createdAt)),
-    retention: { ...state.historyRetention }
-  };
-}
-
-function pushHistoryVersion(state: WorkspaceData, title: string, summary: string, actor?: string) {
-  pushVersion(state, {
-    id: `version-history-${Date.now()}`,
-    cycleId: state.context.cycle.id,
-    shopId: state.context.shop.id,
-    kind: "history",
-    title,
-    createdAt: new Date().toISOString(),
-    createdBy: actor ?? state.context.user.name,
-    summary
-  });
-}
-
 function pushVersion(state: WorkspaceData, version: VersionSnapshot) {
   state.versions = pruneAdminVersionSnapshots([version, ...state.versions]);
-}
-
-function toDomainInvite(row: {
-  id: string;
-  tenantId: string;
-  code: string;
-  registrationUrl: string;
-  usedCount: number;
-  maxUses: number;
-  note: string;
-  createdBy: string;
-  createdAt: Date;
-}): InviteCode {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    code: row.code,
-    registrationUrl: row.registrationUrl,
-    usedCount: row.usedCount,
-    maxUses: row.maxUses,
-    note: row.note,
-    createdAt: row.createdAt.toISOString(),
-    createdBy: row.createdBy
-  };
-}
-
-async function generateUniqueInviteCode(): Promise<string> {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    let code = "";
-    for (let index = 0; index < 10; index += 1) {
-      code += alphabet[Math.floor(Math.random() * alphabet.length)];
-    }
-    const existing = await prisma.inviteCode.findUnique({ where: { code } });
-    if (!existing) {
-      return code;
-    }
-  }
-  throw new Error("生成邀请码失败，请重试");
-}
-
-function normalizeHistoryMonths(months: number) {
-  if (!Number.isFinite(months) || months < 0) {
-    return 0;
-  }
-  return Math.floor(months);
-}
-
-function parseDate(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 export class ImportRetentionError extends Error {
@@ -2146,21 +1766,6 @@ function normalizeGrowthProfitConfig(rows: GrowthProfitConfigRow[]) {
 function growthProfitConfigToMarginMatrix(rows: GrowthProfitConfigRow[]): ProfitMarginMatrix {
   const normalized = normalizeGrowthProfitConfig(rows);
   return Object.fromEntries(normalized.map((row) => [row.grade, { ...row.values }])) as ProfitMarginMatrix;
-}
-
-function pruneHistoryReportsByMonths(
-  reports: ManagementHistoryReport[],
-  months: number,
-  referenceDate = new Date()
-) {
-  if (!Number.isFinite(months) || months <= 0) {
-    return [...reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
-  }
-  const cutoff = new Date(referenceDate);
-  cutoff.setMonth(cutoff.getMonth() - months);
-  return [...reports]
-    .filter((report) => new Date(`${report.endDate}T23:59:59.999Z`).getTime() >= cutoff.getTime())
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 function formatMegabytes(bytes: number) {

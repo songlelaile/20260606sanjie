@@ -1,0 +1,14 @@
+[Unit]
+Description=Remove unreferenced old release build artifacts
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/libexec/sanjie-release-build-retention.py --apply --max-gib 10
+User=root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=30min
+MemoryMax=128M
+NoNewPrivileges=true

@@ -226,19 +226,27 @@ export function mergeDmpReportGroupDaily(
   const base = ordered.find((record) => record.id === selectedId) ?? ordered[0] ?? null;
   if (!base) return null;
   const baseShopId = String(base.shopId ?? "").trim();
-  const sorted = ordered.filter((record) => String(record.shopId ?? "").trim() === baseShopId);
+  const baseIdentityKey = dmpMergeIdentityKey(base);
+  const sorted = ordered.filter((record) => (
+    String(record.shopId ?? "").trim() === baseShopId
+    && dmpMergeIdentityKey(record) === baseIdentityKey
+  ));
   if (sorted.length < 2) return base;
   if (dmpReportIdentity(base).reportType === "market") return mergeMarketReportGroupDaily(sorted, base);
   if (dmpReportIdentity(base).reportType !== "growth") return base;
 
   const dailySources = sorted.map((record) => dailySource(record)).filter((source): source is DailySource => Boolean(source));
   if (dailySources.length < 2) return base;
-  const baseDaily = dailySources.find((source) => source.record.id === base.id)?.table ?? dailySources[0].table;
+  const baseSource = dailySources.find((source) => source.record.id === base.id);
+  if (!baseSource) return base;
+  const connectedSources = connectedDailySources(dailySources, baseSource);
+  if (connectedSources.length < 2) return base;
+  const baseDaily = baseSource.table;
   const columns = baseDaily.columns.map(normalizedDailyColumn);
-  for (const source of dailySources) {
+  for (const source of connectedSources) {
     for (const column of source.columns) if (!columns.includes(column)) columns.push(column);
   }
-  const hasSubjectDaily = dailySources.some((source) => source.subjectByDate.size > 0 || source.columns.includes("主体日GMV"));
+  const hasSubjectDaily = connectedSources.some((source) => source.subjectByDate.size > 0 || source.columns.includes("主体日GMV"));
   if (hasSubjectDaily && !columns.includes("主体日GMV")) columns.splice(Math.min(1, columns.length), 0, "主体日GMV");
   if (columns[0] !== "日期") {
     const dateIndex = columns.indexOf("日期");
@@ -246,7 +254,7 @@ export function mergeDmpReportGroupDaily(
   }
 
   const byDate = new Map<string, Map<string, string>>();
-  for (const source of dailySources) {
+  for (const source of connectedSources) {
     for (const row of source.table.rows) {
       const date = String(row.cells[source.dateIndex] ?? "").trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
@@ -384,6 +392,8 @@ interface DailySource {
   table: DmpBusinessReportRecord["report"]["tables"][number];
   columns: string[];
   dateIndex: number;
+  startDate: string;
+  endDate: string;
   subjectByDate: Map<string, string>;
 }
 
@@ -393,6 +403,16 @@ function dailySource(record: DmpBusinessReportRecord): DailySource | null {
   const columns = table.columns.map(normalizedDailyColumn);
   const dateIndex = columns.indexOf("日期");
   if (dateIndex < 0) return null;
+  const dates = table.rows
+    .map((row) => String(row.cells[dateIndex] ?? "").trim())
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .sort();
+  if (
+    !dates.length
+    || dates.some((date) => !Number.isFinite(dateDayNumber(date)))
+    || new Set(dates).size !== dates.length
+    || !isContinuousDateSequence(dates)
+  ) return null;
   const sanitized = sanitizeDmpReportRenderData(record.report.render_data, {
     itemId: record.report.item_id,
     period: record.report.period,
@@ -404,8 +424,60 @@ function dailySource(record: DmpBusinessReportRecord): DailySource | null {
     table,
     columns,
     dateIndex,
+    startDate: dates[0],
+    endDate: dates.at(-1) ?? dates[0],
     subjectByDate: new Map((sanitized?.subject_daily_gmv ?? []).map((row) => [row.date, row.gmv]))
   };
+}
+
+function connectedDailySources(sources: DailySource[], base: DailySource) {
+  const connected = new Set([base.record.id]);
+  let startDate = base.startDate;
+  let endDate = base.endDate;
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const source of sources) {
+      if (connected.has(source.record.id) || !dateRangesTouch(startDate, endDate, source.startDate, source.endDate)) continue;
+      connected.add(source.record.id);
+      if (source.startDate < startDate) startDate = source.startDate;
+      if (source.endDate > endDate) endDate = source.endDate;
+      expanded = true;
+    }
+  }
+  // 保留原本“最新报告整行优先”的顺序，只缩小到与所选报告实际日期连通的分量。
+  return sources.filter((source) => connected.has(source.record.id));
+}
+
+function dateRangesTouch(
+  leftStart: string,
+  leftEnd: string,
+  rightStart: string,
+  rightEnd: string
+) {
+  const leftStartDay = dateDayNumber(leftStart);
+  const leftEndDay = dateDayNumber(leftEnd);
+  const rightStartDay = dateDayNumber(rightStart);
+  const rightEndDay = dateDayNumber(rightEnd);
+  return rightStartDay <= leftEndDay + 1 && rightEndDay >= leftStartDay - 1;
+}
+
+function isContinuousDateSequence(dates: string[]) {
+  for (let index = 1; index < dates.length; index += 1) {
+    if (dateDayNumber(dates[index]) !== dateDayNumber(dates[index - 1]) + 1) return false;
+  }
+  return true;
+}
+
+function dateDayNumber(value: string) {
+  return Math.floor(Date.parse(`${value}T00:00:00Z`) / 86_400_000);
+}
+
+function dmpMergeIdentityKey(record: DmpBusinessReportRecord) {
+  const identity = dmpReportIdentity(record);
+  return identity.reportType === "market"
+    ? [identity.reportType, identity.marketScope?.category_path.join("/"), identity.subjectItemId].join(":")
+    : [identity.reportType, identity.subjectItemId, identity.competitorItemIds.join(",")].join(":");
 }
 
 function normalizedDailyColumn(column: string) {

@@ -41,10 +41,12 @@ model User {
   lastActiveAt     DateTime            @default(now())
   gatewayWallet    GatewayWallet?
   gatewayApiKeys   GatewayApiKey[]
+  supplyCredentials GatewaySupplyCredential[]
   gatewayOrders    GatewayOrder[]
   gatewayUsages    GatewayUsage[]
   toolEntitlements ToolEntitlement[]
   dmpReports       DmpBusinessReport[]
+  aiAccessGrants   AIAccessGrant[]
 
   @@index([tenantId])
 }
@@ -179,6 +181,7 @@ model DmpBusinessReport {
   quality          String           @default("complete")
   sourceVersion    String           @default("")
   fingerprint      String?
+  summary          Json?
   report           Json
   createdAt        DateTime         @default(now())
   shares           DmpReportShare[]
@@ -186,6 +189,8 @@ model DmpBusinessReport {
   @@unique([tenantId, userId, fingerprint])
   @@index([tenantId, userId, createdAt])
   @@index([tenantId, userId, shopId, createdAt])
+  @@index([tenantId, userId, shopId, createdAt, id])
+  @@index([tenantId, userId, shopId, subjectItemId, competitorItemId, createdAt], map: "dmp_report_pair_created_idx")
 }
 
 // 管理员在插件中导出达摩盘报告表格版 XLSX 的最小审计记录。
@@ -390,6 +395,45 @@ model GatewayWallet {
   updatedAt         DateTime @updatedAt
 }
 
+// Unified accounting system's allocatable balance. No capacity is seeded or inferred.
+// Only that system may activate id="total" after all purchases/reservations share this pool.
+model GatewayCreditPool {
+  id           String   @id @default("total")
+  status       String   @default("pending") // pending | ready
+  balanceCents Int      @default(0)
+  createdAt    DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+  updatedAt    DateTime @updatedAt
+}
+
+// Immutable identity and balance snapshots; account removal must not delete gift history.
+model GatewayCreditGift {
+  id                String   @id @default(cuid())
+  requestKey        String   @unique
+  billingEventId    String   @unique
+  billingLedger     GatewayBillingLedger @relation(fields: [billingEventId], references: [billingEventId], onDelete: Restrict)
+  adminId           String
+  adminUsername     String
+  adminName         String
+  adminTenantId     String
+  adminTenantName   String
+  userId            String
+  username          String
+  userName          String
+  tenantId          String
+  tenantName        String
+  amountCents       Int
+  poolBeforeCents   Int
+  poolAfterCents    Int
+  walletBeforeCents Int
+  walletAfterCents  Int
+  reason            String
+  createdAt         DateTime @default(dbgenerated("(CURRENT_TIMESTAMP AT TIME ZONE 'UTC'::text)"))
+
+  @@index([userId, createdAt])
+  @@index([adminId, createdAt])
+  @@index([createdAt])
+}
+
 // 用户在网关里创建的 API Key。只保存哈希和前缀，不保存明文。
 model GatewayApiKey {
   id         String         @id @default(cuid())
@@ -406,6 +450,32 @@ model GatewayApiKey {
   @@index([userId, status])
 }
 
+// Outbound provider credentials are encrypted, never exposed as client GatewayApiKey records.
+// Pending secrets are committed before provider issuance for idempotent crash recovery.
+model GatewaySupplyCredential {
+  id              String   @id
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slot            String
+  name            String
+  sealedKey       String
+  status          String   @default("pending")
+  providerKeyId   String?
+  providerOwnerId String?
+  providerGroupId String?
+  leaseToken      String?
+  leaseUntil      DateTime?
+  retryAfter      DateTime?
+  attempts        Int      @default(0)
+  lastErrorCode   String   @default("")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now())
+  readyAt         DateTime?
+
+  @@unique([userId, slot], map: "GatewaySupplyCredential_user_slot_key")
+  @@index([status, retryAfter], map: "GatewaySupplyCredential_status_idx")
+}
+
 // 套餐/充值订单。真实支付接入后由支付回调把 status 改为 paid 并充值钱包。
 model GatewayOrder {
   id              String    @id @default(cuid())
@@ -418,6 +488,10 @@ model GatewayOrder {
   status          String    @default("pending")
   paymentProvider String    @default("manual")
   paymentUrl      String    @default("")
+  paymentReceipt  String?   @unique
+  confirmedBy     String?
+  confirmationNote String?
+  receivedAmountCents Int?
   paidAt          DateTime?
   createdAt       DateTime  @default(now())
 
@@ -433,6 +507,7 @@ model GatewayUsage {
   apiKeyId         String?
   apiKey           GatewayApiKey? @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
   requestId        String         @default("")
+  billingEventId   String?        @unique
   endpoint         String
   provider         String
   model            String
@@ -448,4 +523,132 @@ model GatewayUsage {
 
   @@index([userId, createdAt])
   @@index([apiKeyId, createdAt])
+}
+
+// One adjustable multiplier per plan. Versioned changes are appended to the audit table.
+model GatewayBillingRule {
+  planCode      String   @id
+  planName      String
+  multiplierBps Int     @default(10000)
+  version       Int     @default(0)
+  updatedBy     String?
+  updatedAt     DateTime @updatedAt
+}
+
+// Identity snapshots intentionally have no cascading foreign keys: history survives account deletion.
+model GatewayBillingRuleAudit {
+  id                    String   @id @default(cuid())
+  planCode              String
+  planName              String
+  previousMultiplierBps Int
+  multiplierBps         Int
+  previousVersion       Int
+  version               Int
+  updatedBy             String
+  updatedByUsername     String
+  updatedByName         String
+  reason                String
+  createdAt             DateTime @default(now())
+
+  @@unique([planCode, version])
+  @@index([createdAt])
+}
+
+// Append-only billing journal. RMB cents remain the authoritative, unrounded wallet unit.
+model GatewayBillingLedger {
+  id                 String   @id @default(cuid())
+  billingEventId     String   @unique
+  kind               String
+  userId             String
+  tenantId           String
+  tenantName         String   @default("")
+  username           String
+  userName           String
+  planCode           String
+  planName           String
+  multiplierBps      Int      @default(10000)
+  ruleVersion        Int      @default(0)
+  deltaCents         Int
+  balanceBeforeCents Int
+  balanceAfterCents  Int
+  baseCostCents      Int      @default(0)
+  chargedCostCents   Int      @default(0)
+  endpoint           String   @default("")
+  provider           String   @default("")
+  model              String   @default("")
+  requestId          String   @default("")
+  apiKeyId           String?
+  keyPrefix          String   @default("")
+  usageId            String?  @unique
+  orderId            String?
+  promptTokens       Int      @default(0)
+  completionTokens   Int      @default(0)
+  totalTokens        Int      @default(0)
+  imageCount         Int      @default(0)
+  durationMs         Int?
+  upstreamStatus     Int?
+  status             String
+  error              String   @default("")
+  actorId            String?
+  actorUsername      String?
+  actorName          String?
+  reason             String?
+  metadata           Json     @default("{}")
+  createdAt          DateTime @default(now())
+  creditGift         GatewayCreditGift?
+
+  @@index([tenantId, userId, createdAt])
+  @@index([userId, createdAt])
+  @@index([planCode, createdAt])
+  @@index([kind, createdAt])
+}
+
+// Shared security quotas. No credentials, request bodies or plain account/IP values.
+model SecurityRateBucket {
+  bucketKey   String   @db.Char(64)
+  windowStart DateTime @db.Timestamptz(6)
+  expiresAt   DateTime @db.Timestamptz(6)
+  hits        Int      @default(1)
+
+  @@id([bucketKey, windowStart], map: "SecurityRateBucket_pkey")
+  @@index([expiresAt], map: "SecurityRateBucket_expiresAt_idx")
+}
+
+// Explicit administrator approval, controlled by manual enable/disable.
+model AIAccessGrant {
+  id           String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username     String
+  tenantId     String
+  name         String          @db.VarChar(80)
+  scope        String
+  tokenHash    String          @unique @db.Char(64)
+  activeShopId String?
+  createdAt    DateTime        @default(now()) @db.Timestamptz(6)
+  expiresAt    DateTime        @db.Timestamptz(6)
+  manualControl Boolean       @default(false)
+  disabledAt   DateTime?       @db.Timestamptz(6)
+  revokedAt    DateTime?       @db.Timestamptz(6)
+  lastUsedAt   DateTime?       @db.Timestamptz(6)
+  events       AIAccessEvent[]
+
+  @@index([userId, createdAt(sort: Desc)], map: "AIAccessGrant_userId_createdAt_idx")
+  @@index([expiresAt], map: "AIAccessGrant_expiresAt_idx")
+}
+
+// No User FK: audit history is retained when an account is removed.
+model AIAccessEvent {
+  id        String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String
+  grantId   String?        @db.Uuid
+  grant     AIAccessGrant? @relation(fields: [grantId], references: [id], onDelete: SetNull)
+  type      String
+  method    String?        @db.VarChar(10)
+  path      String?
+  status    Int?
+  createdAt DateTime       @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)], map: "AIAccessEvent_userId_createdAt_idx")
+  @@index([grantId, createdAt(sort: Desc)], map: "AIAccessEvent_grantId_createdAt_idx")
 }

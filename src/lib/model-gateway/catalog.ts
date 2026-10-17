@@ -1,4 +1,5 @@
 import "server-only";
+import { SHAOZHUANG_RELAY_UPSTREAM } from "@/lib/shaozhuang-relay-models";
 
 export type GatewayPlan = {
   code: string;
@@ -24,14 +25,16 @@ export type GatewayModel = {
   label: string;
   provider: GatewayProvider;
   upstreamModel: string;
-  kind: "chat" | "image";
-  endpoint: "chat.completions" | "images.generations";
+  kind: "chat" | "image" | "video";
+  endpoint: "chat.completions" | "images.generations" | "videos";
   baseUrlEnv: string;
   apiKeyEnv: string;
   defaultBaseUrl: string;
   promptCentsPer1K?: number;
   completionCentsPer1K?: number;
   imageCents?: number;
+  /** Fixed fee per accepted upstream video task; never charged on polling. */
+  videoCents?: number;
 };
 
 export const GATEWAY_PROVIDER_LABELS: Record<GatewayProvider, string> = {
@@ -79,7 +82,7 @@ export const GATEWAY_MODELS: GatewayModel[] = [
     id: "chatGPT5.5",
     label: "少壮中转 · chatGPT5.5",
     provider: "shaozhuang",
-    upstreamModel: "chatGPT5.5",
+    upstreamModel: SHAOZHUANG_RELAY_UPSTREAM["chatGPT5.5"],
     kind: "chat",
     endpoint: "chat.completions",
     baseUrlEnv: "MODEL_GATEWAY_SHAOZHUANG_BASE_URL",
@@ -92,7 +95,7 @@ export const GATEWAY_MODELS: GatewayModel[] = [
     id: "image2",
     label: "少壮中转 · image2",
     provider: "shaozhuang",
-    upstreamModel: "image2",
+    upstreamModel: SHAOZHUANG_RELAY_UPSTREAM.image2,
     kind: "image",
     endpoint: "images.generations",
     baseUrlEnv: "MODEL_GATEWAY_SHAOZHUANG_BASE_URL",

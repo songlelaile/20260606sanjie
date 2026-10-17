@@ -1,17 +1,30 @@
 import "server-only";
 import ExcelJS from "exceljs";
 import { dmpCellSemantic, formatDmpCell } from "@/lib/dmp-report-format";
-import { canonicalToDmpReport } from "@/lib/dmp-report-import";
-import type { DmpCanonicalReport } from "@/lib/dmp-report-types";
+import { normalizeDmpCanonicalReportForUse } from "@/lib/dmp-report-import";
+import { assessDmpEffectiveReportQuality } from "@/lib/dmp-report-quality";
+import type { DmpCanonicalReport, DmpReportQuality } from "@/lib/dmp-report-types";
 
-export async function buildDmpReportWorkbook(report: DmpCanonicalReport) {
+export async function buildDmpReportWorkbook(
+  report: DmpCanonicalReport,
+  declaredQuality: DmpReportQuality = "complete"
+) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "少壮AI";
   workbook.created = new Date();
+  const prepared = normalizedReport(report, declaredQuality);
 
-  reportTables(report).forEach((table, index) => {
+  prepared.tables.forEach((table, index) => {
     const worksheet = workbook.addWorksheet(sheetName(table.name, index));
-    worksheet.views = [{ state: "frozen", ySplit: 1 }];
+    const showQualityNotice = index === 0 && prepared.quality.effectiveQuality === "partial";
+    if (showQualityNotice) {
+      const notice = worksheet.addRow(["数据完整性提示", prepared.quality.notice]);
+      notice.font = { bold: true, color: { argb: "FF6F4F0F" } };
+      notice.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF3CD" } };
+      worksheet.addRow([]);
+    }
+    const headerRow = showQualityNotice ? 3 : 1;
+    worksheet.views = [{ state: "frozen", ySplit: headerRow }];
     const header = worksheet.addRow(table.columns);
     header.font = { bold: true, color: { argb: "FFFFFFFF" } };
     header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF16744A" } };
@@ -19,7 +32,10 @@ export async function buildDmpReportWorkbook(report: DmpCanonicalReport) {
     table.rows.forEach((row) => worksheet.addRow(row.map((value, columnIndex) => safeSpreadsheetValue(
       formatDmpCell(value, dmpCellSemantic(table.name, table.columns, row, columnIndex))
     ))));
-    worksheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, table.rows.length + 1), column: table.columns.length } };
+    worksheet.autoFilter = {
+      from: { row: headerRow, column: 1 },
+      to: { row: Math.max(headerRow, table.rows.length + headerRow), column: table.columns.length }
+    };
     worksheet.columns.forEach((column, columnIndex) => {
       const longest = Math.max(
         String(table.columns[columnIndex] ?? "").length,
@@ -32,9 +48,16 @@ export async function buildDmpReportWorkbook(report: DmpCanonicalReport) {
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
-export function buildDmpReportCsv(report: DmpCanonicalReport) {
+export function buildDmpReportCsv(
+  report: DmpCanonicalReport,
+  declaredQuality: DmpReportQuality = "complete"
+) {
   const lines: string[] = [];
-  reportTables(report).forEach((table, index) => {
+  const prepared = normalizedReport(report, declaredQuality);
+  if (prepared.quality.effectiveQuality === "partial") {
+    lines.push(csvLine(["数据完整性提示", prepared.quality.notice]), "");
+  }
+  prepared.tables.forEach((table, index) => {
     if (index) lines.push("");
     lines.push(csvLine([table.name]));
     lines.push(csvLine(table.columns));
@@ -45,12 +68,17 @@ export function buildDmpReportCsv(report: DmpCanonicalReport) {
   return `\ufeff${lines.join("\r\n")}`;
 }
 
-function reportTables(report: DmpCanonicalReport) {
-  return canonicalToDmpReport(report)?.tables ?? report.tables.map((table) => ({
+function normalizedReport(report: DmpCanonicalReport, declaredQuality: DmpReportQuality) {
+  const normalized = normalizeDmpCanonicalReportForUse(report);
+  const tables = normalized?.tables ?? report.tables.map((table) => ({
     name: table.name,
     columns: table.columns,
     rows: table.rows.map((row) => [...row.cells])
   }));
+  return {
+    tables,
+    quality: assessDmpEffectiveReportQuality(report, declaredQuality, normalized)
+  };
 }
 
 function sheetName(value: string, index: number) {

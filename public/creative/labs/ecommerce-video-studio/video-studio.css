@@ -789,6 +789,18 @@ button {
   border-radius: 7px;
 }
 
+.final-audio-card { grid-column: 1 / -1; }
+.final-audio-card .asset-info { flex: 1; }
+.final-audio-card .asset-role-select { max-width: 220px; }
+.final-audio-preview { display: block; width: 100%; max-width: 420px; height: 32px; margin-top: 8px; }
+.final-audio-volume { display: block; margin-top: 8px; color: var(--muted); font-size: 11px; }
+.final-audio-volume input { display: block; width: 100%; max-width: 420px; }
+.final-audio-loop { display: flex; align-items: center; gap: 6px; margin-top: 5px; color: var(--muted); font-size: 11px; }
+.production-final-audio { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+.production-final-audio > strong { font-size: 12px; }
+.production-final-audio p, .production-final-audio label { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.production-final-audio input[type="range"] { width: 100%; }
+
 .remove-asset {
   position: absolute;
   top: 7px;
@@ -1742,6 +1754,8 @@ input[type="range"]::-moz-range-thumb {
 
 .history-controls {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
@@ -1757,6 +1771,18 @@ input[type="range"]::-moz-range-thumb {
   gap: 9px;
 }
 
+.history-summary {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.history-load-more {
+  display: block;
+  margin: 14px auto 0;
+}
+
 .history-row {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) 100px 110px 120px auto;
@@ -1766,6 +1792,8 @@ input[type="range"]::-moz-range-thumb {
   background: rgba(22, 32, 13, 0.72);
   border: 1px solid var(--line);
   border-radius: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 76px;
 }
 
 .history-main {
@@ -1902,8 +1930,11 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .result-media {
+  position: relative;
   display: grid;
-  min-height: 250px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: clamp(250px, 52vh, 640px);
   place-items: center;
   overflow: hidden;
   background: #050903;
@@ -1914,7 +1945,11 @@ input[type="range"]::-moz-range-thumb {
 .result-media img {
   display: block;
   width: 100%;
-  max-height: 62vh;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
 }
 
@@ -1928,8 +1963,12 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .result-playback-note {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
-  margin-top: 10px;
+  margin: 0;
   padding: 10px 12px;
   color: var(--warn);
   font-size: 11px;
@@ -2203,3 +2242,21 @@ input[type="range"]::-moz-range-thumb {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Costed production plans reuse the existing workbench and account history. */
+.production-modes { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.production-modes button { display:grid; gap:6px; padding:12px 5px; border:1px solid var(--line); border-radius:10px; color:var(--ink); background:var(--field); cursor:pointer; }
+.production-modes button[aria-pressed="true"] { border-color:var(--purple); background:var(--purple-soft); }
+.production-modes small { color:var(--muted); font-size:11px; }
+.production-fields { display:grid; gap:12px; margin:18px 0; }
+.production-fields label { display:grid; gap:7px; color:var(--ink); font-size:13px; }
+.production-fields input,.production-fields select { min-height:40px; padding:8px 10px; color:var(--ink); background:var(--field); border:1px solid var(--line); border-radius:8px; }
+.production-fields small { color:var(--muted); }
+.production-panel { margin-top:20px; padding:22px; }
+.production-shot-list { display:grid; gap:9px; }
+.production-shot-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid var(--line); border-radius:10px; padding:12px; }
+.production-shot-row small { display:block; margin-top:5px; color:var(--muted); }
+.production-shot-row.is-unknown { border-color:var(--amber); }
+.production-shot-row.is-succeeded { border-color:var(--green); }
+.production-shot-actions { display:flex; gap:8px; flex-wrap:wrap; }
+.production-panel .panel-heading { gap:14px; flex-wrap:wrap; }

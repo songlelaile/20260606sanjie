@@ -49,10 +49,28 @@ export const DMP_GROWTH_METRIC_ALIASES = {
   ppc: ["PPC", "CPC", "点击成本", "平均点击成本", "点击单价"],
   feeRatio: ["费比", "推广费比", "广告费比"],
   roas: ["全域ROAS", "ROAS"],
+  paidShare: ["付费金额占比", "付费成交额占比", "付费GMV贡献率", "广告GMV贡献率", "广告归因GMV贡献率"],
   keywordShare: ["关键词消耗占比", "关键词花费占比", "关键词推广消耗占比"],
   marketingClicks: ["营销推广点击量", "营销推广点击数", "营销推广点击", "广告点击量", "广告点击数", "推广点击量", "推广点击数", "付费点击量"],
   totalGmv: ["总GMV", "全渠道总GMV", "30日GMV"]
 } as const;
+
+/**
+ * 商品成长报告总览的固定八项业务指标。这份合同同时供规范化、完整性
+ * 复核、官网展示与导出使用，不因单个值缺失而删掉卡位。
+ */
+export const DMP_GROWTH_OVERVIEW_METRICS = [
+  { key: "totalGmv", label: "总GMV", aliases: DMP_GROWTH_METRIC_ALIASES.totalGmv },
+  { key: "paidGmv", label: "付费成交额", aliases: DMP_GROWTH_METRIC_ALIASES.paidGmv },
+  { key: "spend", label: "推广消耗", aliases: DMP_GROWTH_METRIC_ALIASES.spend },
+  { key: "feeRatio", label: "费比", aliases: DMP_GROWTH_METRIC_ALIASES.feeRatio },
+  { key: "roi", label: "ROI", aliases: DMP_GROWTH_METRIC_ALIASES.roi },
+  { key: "ppc", label: "PPC", aliases: DMP_GROWTH_METRIC_ALIASES.ppc },
+  { key: "paidShare", label: "付费金额占比", aliases: DMP_GROWTH_METRIC_ALIASES.paidShare },
+  { key: "roas", label: "全域ROAS", aliases: DMP_GROWTH_METRIC_ALIASES.roas }
+] as const;
+
+export type DmpGrowthOverviewMetricKey = typeof DMP_GROWTH_OVERVIEW_METRICS[number]["key"];
 
 export const DMP_GROWTH_REQUIRED_SUBJECT_METRICS = [
   { key: "spend", label: "推广消耗", aliases: DMP_GROWTH_METRIC_ALIASES.spend },
@@ -139,7 +157,7 @@ export function auditDmpGrowthSubjectMetrics(
 export function dmpMetricCellIsDisclosed(value: unknown) {
   if (value == null) return false;
   const text = String(value).trim();
-  return !/^(?:|[-–—]+|n\/?a|暂无|无数据|null|undefined)$/i.test(text);
+  return !/^(?:|[-–—]+|n\/?a|不适用|暂无|无数据|未返回|缺失|null|undefined)$/i.test(text);
 }
 
 function dmpGrowthSubjectMetricValue(
@@ -168,15 +186,18 @@ function dmpGrowthSubjectMetricValue(
 
 function dmpSubjectPeriodRow(table: DmpReportTableSnapshot, itemId: string) {
   const idIndex = dmpColumnIndex(table.columns, ["商品ID", "商品编号"]);
+  let exactRows: DmpReportTableSnapshot["rows"] = [];
   if (idIndex >= 0 && itemId) {
-    const exact = table.rows.find((row) => String(row.cells[idIndex] ?? "").trim() === itemId);
-    if (exact) return exact;
+    exactRows = table.rows.filter((row) => String(row.cells[idIndex] ?? "").trim() === itemId);
+    if (exactRows.length === 1) return exactRows[0];
   }
   const roleIndex = dmpColumnIndex(table.columns, ["对象", "角色"]);
   if (roleIndex >= 0) {
-    const subject = table.rows.find((row) => /主体|本店/.test(String(row.cells[roleIndex] ?? "")));
+    const subject = (exactRows.length ? exactRows : table.rows)
+      .find((row) => /主体|本店/.test(String(row.cells[roleIndex] ?? "")));
     if (subject) return subject;
   }
+  if (exactRows.length) return exactRows[0];
   return table.rows.length === 2 ? table.rows[0] : undefined;
 }
 
@@ -205,6 +226,33 @@ export type DmpReportQuality = "complete" | "partial";
 export interface DmpReportShop {
   id: string;
   name: string;
+}
+
+export interface DmpReportSummaryThumbnail {
+  url: string;
+  title: string;
+}
+
+/**
+ * 报告中心列表专用的轻量投影。这个类型故意不包含 report/tables/rows；
+ * 正文只能在用户选中某个 reportId 后单独读取。
+ */
+export interface DmpBusinessReportSummary {
+  id: string;
+  reportType: DmpReportKind;
+  shopId: string;
+  shopName: string;
+  subjectItemId: string;
+  competitorItemId: string;
+  period: string;
+  quality: DmpReportQuality;
+  createdAt: string;
+  title: string;
+  marketScope?: DmpMarketScope;
+  subjectThumbnail: DmpReportSummaryThumbnail;
+  competitorThumbnail: DmpReportSummaryThumbnail;
+  coverageStart?: string;
+  coverageEnd?: string;
 }
 
 export interface DmpBusinessReportRecord {

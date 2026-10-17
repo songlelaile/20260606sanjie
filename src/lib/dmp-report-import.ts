@@ -1,8 +1,10 @@
 import {
   auditDmpGrowthSubjectMetrics,
   DMP_GROWTH_METRIC_ALIASES,
+  DMP_GROWTH_OVERVIEW_METRICS,
   DMP_GROWTH_REPORT_TABLES,
   DMP_GROWTH_REQUIRED_SUBJECT_METRICS,
+  dmpMetricCellIsDisclosed,
   sanitizeDmpReportRenderData,
   type DmpReportRenderData,
   type DmpReportTableSnapshot
@@ -154,7 +156,7 @@ export function isFullDmpReport(input: unknown): input is DmpReport {
 }
 
 function isBlankCell(value: DmpCell | undefined) {
-  return value == null || value === "" || value === "—";
+  return !dmpMetricCellIsDisclosed(value);
 }
 
 function numericCell(value: DmpCell | undefined) {
@@ -241,6 +243,13 @@ function scalarDividedByRange(value: number, divisor: DmpCell | undefined, digit
   if (!Number.isFinite(value) || value < 0) return null;
   const range = metricRange(divisor);
   if (!range) return null;
+  // 0 除以“肯定为正数”的点值/区间才能确定为 0。例如点击量 <20
+  // 仍可能是 0，不能伪造为“>0”；点击量 >20 则可安全返回 0。
+  if (value === 0) {
+    const guaranteedPositive = range.min != null
+      && (range.min > 0 || (range.min === 0 && range.lowerOpen === true));
+    return guaranteedPositive ? 0 : null;
+  }
   const minDivisor = range.min != null && range.min > 0 ? range.min : null;
   const maxDivisor = range.max != null && range.max > 0 ? range.max : null;
   if (minDivisor != null && maxDivisor != null) {
@@ -311,18 +320,21 @@ function periodRoleRow(
   competitorItemId: string
 ) {
   if (!table) return undefined;
+  const roleIndex = columnIndexByAliases(table, ["对象", "角色"]);
+  const rolePattern = side === "subject" ? /主体/ : /目标对手|对手|竞品/;
+  const roleRow = roleIndex >= 0
+    ? table.rows.find((row) => rolePattern.test(String(row[roleIndex] ?? "")))
+    : undefined;
+  // 主体与对手允许引用同一商品时，商品 ID 无法区分两行，必须以显式角色为准。
+  // 普通 X≠Y 报告仍保持原有的 ID 优先规则，以兼容没有规范角色文案的旧归档。
+  if (subjectItemId && subjectItemId === competitorItemId && roleRow) return roleRow;
   const itemId = side === "subject" ? subjectItemId : competitorItemId;
   const idIndex = columnIndexByAliases(table, ["商品ID", "商品编号"]);
   if (idIndex >= 0 && itemId) {
     const exact = table.rows.find((row) => String(row[idIndex] ?? "").trim() === itemId);
     if (exact) return exact;
   }
-  const roleIndex = columnIndexByAliases(table, ["对象", "角色"]);
-  if (roleIndex >= 0) {
-    const pattern = side === "subject" ? /主体/ : /目标对手|对手|竞品/;
-    const matched = table.rows.find((row) => pattern.test(String(row[roleIndex] ?? "")));
-    if (matched) return matched;
-  }
+  if (roleRow) return roleRow;
   if (table.rows.length === 2) return table.rows[side === "subject" ? 0 : 1];
   return undefined;
 }
@@ -438,7 +450,7 @@ function ensureRequiredMetricRows(tables: DmpReportTable[], createMissingTables:
     const metricIndex = columnIndexByAliases(table, spec.metricColumn);
     const moduleIndex = spec.moduleColumn ? columnIndexByAliases(table, spec.moduleColumn) : -1;
     if (metricIndex < 0) continue;
-    for (const metric of DMP_GROWTH_REQUIRED_SUBJECT_METRICS) {
+    for (const metric of DMP_GROWTH_OVERVIEW_METRICS) {
       if (metricRow(table, metric.aliases)) continue;
       const row = table.columns.map(() => "" as DmpCell);
       row[metricIndex] = metric.label;
@@ -647,6 +659,21 @@ function reconcileRequiredDerivedMetrics(
   competitorItemId: string
 ) {
   for (const side of ["subject", "competitor"] as const) {
+    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
+    const totalGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
+    if (!isBlankCell(totalGmv)) {
+      fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.totalGmv, totalGmv as DmpCell, "", subjectItemId, competitorItemId);
+    }
+    if (!isBlankCell(paidGmv)) {
+      fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidGmv, paidGmv as DmpCell, "", subjectItemId, competitorItemId);
+    }
+    const total = numericCell(totalGmv);
+    const disclosedPaidShare = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidShare, subjectItemId, competitorItemId);
+    const paidShare = isBlankCell(disclosedPaidShare) && total != null
+      ? rangeDividedByScalar(paidGmv, total, 6)
+      : disclosedPaidShare as DmpCell | undefined;
+    fillMetricAcrossTables(tables, side, CROSS_TABLE_METRICS.paidShare, paidShare ?? null, "", subjectItemId, competitorItemId);
+
     const spendCell = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.spend, subjectItemId, competitorItemId);
     const spend = numericCell(spendCell);
     if (spend == null || spend < 0) continue;
@@ -659,13 +686,12 @@ function reconcileRequiredDerivedMetrics(
       subjectItemId,
       competitorItemId
     );
-    const paidGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.paidGmv, subjectItemId, competitorItemId);
-    const totalGmv = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.totalGmv, subjectItemId, competitorItemId);
     const marketingClicks = disclosedMetricCell(tables, side, CROSS_TABLE_METRICS.marketingClicks, subjectItemId, competitorItemId);
     const derived = [
       [CROSS_TABLE_METRICS.roi, rangeDividedByScalar(paidGmv, spend, 6)],
       [CROSS_TABLE_METRICS.ppc, scalarDividedByRange(spend, marketingClicks, 6)],
-      [CROSS_TABLE_METRICS.feeRatio, scalarDividedByRange(spend, totalGmv, 6)]
+      [CROSS_TABLE_METRICS.feeRatio, scalarDividedByRange(spend, totalGmv, 6)],
+      [CROSS_TABLE_METRICS.roas, rangeDividedByScalar(totalGmv, spend, 6)]
     ] as const;
     for (const [aliases, calculated] of derived) {
       const disclosed = disclosedMetricCell(tables, side, aliases, subjectItemId, competitorItemId);
@@ -697,8 +723,12 @@ export function reconcileDmpCrossTableMetrics(
 ) {
   ensureRequiredMetricRows(tables, false);
   const gmvByItemId = new Map<string, DmpCell>();
+  const gmvByRole = new Map<ReportSide, DmpCell>();
   const remember = (itemId: string, value: DmpCell | undefined) => {
     if (itemId && !isBlankCell(value) && !gmvByItemId.has(itemId)) gmvByItemId.set(itemId, value as DmpCell);
+  };
+  const rememberRole = (side: ReportSide, value: DmpCell | undefined) => {
+    if (!isBlankCell(value) && !gmvByRole.has(side)) gmvByRole.set(side, value as DmpCell);
   };
 
   const periodTable = tables.find((table) => table.name === "周期汇总");
@@ -706,6 +736,8 @@ export function reconcileDmpCrossTableMetrics(
   const periodGmvIndex = periodTable?.columns.indexOf("总GMV") ?? -1;
   if (periodIdIndex >= 0 && periodGmvIndex >= 0) {
     periodTable?.rows.forEach((row) => remember(String(row[periodIdIndex] ?? ""), row[periodGmvIndex]));
+    rememberRole("subject", periodRoleRow(periodTable, "subject", subjectItemId, competitorItemId)?.[periodGmvIndex]);
+    rememberRole("competitor", periodRoleRow(periodTable, "competitor", subjectItemId, competitorItemId)?.[periodGmvIndex]);
   }
 
   const benchmark = tables.find((table) => table.name === "对标总表");
@@ -716,6 +748,8 @@ export function reconcileDmpCrossTableMetrics(
   if (benchmarkGmv) {
     remember(subjectItemId, benchmarkGmv[benchmarkSubjectIndex]);
     remember(competitorItemId, benchmarkGmv[benchmarkCompetitorIndex]);
+    rememberRole("subject", benchmarkGmv[benchmarkSubjectIndex]);
+    rememberRole("competitor", benchmarkGmv[benchmarkCompetitorIndex]);
   }
 
   const base = tables.find((table) => table.name === "基础指标对比");
@@ -726,15 +760,25 @@ export function reconcileDmpCrossTableMetrics(
   if (baseGmv) {
     remember(subjectItemId, baseGmv[baseSubjectIndex]);
     remember(competitorItemId, baseGmv[baseCompetitorIndex]);
+    rememberRole("subject", baseGmv[baseSubjectIndex]);
+    rememberRole("competitor", baseGmv[baseCompetitorIndex]);
   }
 
   const itemTable = tables.find((table) => table.name === "商品与成功品");
   const itemIdIndex = itemTable?.columns.indexOf("商品ID") ?? -1;
+  const itemRoleIndex = itemTable?.columns.findIndex((column) => /^(?:对象|角色)$/.test(column)) ?? -1;
   const itemGmvIndex = itemTable?.columns.indexOf("30日GMV") ?? -1;
   const itemAverageIndex = itemTable?.columns.findIndex((column) => /日均成交/.test(column)) ?? -1;
   if (itemIdIndex >= 0 && itemGmvIndex >= 0) {
     itemTable?.rows.forEach((row) => {
-      const gmv = gmvByItemId.get(String(row[itemIdIndex] ?? ""));
+      const role = itemRoleIndex >= 0 && /主体/.test(String(row[itemRoleIndex] ?? ""))
+        ? "subject"
+        : itemRoleIndex >= 0 && /目标对手|对手|竞品/.test(String(row[itemRoleIndex] ?? ""))
+          ? "competitor"
+          : null;
+      const gmv = subjectItemId === competitorItemId && role
+        ? gmvByRole.get(role)
+        : gmvByItemId.get(String(row[itemIdIndex] ?? ""));
       if (gmv === undefined) return;
       if (isBlankCell(row[itemGmvIndex])) row[itemGmvIndex] = gmv;
       const numericGmv = numericCell(gmv);
@@ -761,36 +805,35 @@ export function reconcileDmpCrossTableMetrics(
 
     const daily = tables.find((table) => table.name === "日GMV与费比");
     const dailyDateIndex = daily?.columns.indexOf("日期") ?? -1;
-    const fillDailyStatistics = (itemId: string, columnPatterns: RegExp[]) => {
+    const fillDailyStatistics = (side: ReportSide, itemId: string, columnPatterns: RegExp[]) => {
       const gmvIndex = daily?.columns.findIndex((column) => columnPatterns.some((pattern) => pattern.test(column))) ?? -1;
       if (!daily || dailyDateIndex < 0 || gmvIndex < 0) return;
       const values = daily.rows
         .map((row) => ({ date: String(row[dailyDateIndex] ?? ""), gmv: numericCell(row[gmvIndex]) }))
         .filter((row): row is { date: string; gmv: number } => Boolean(row.date) && row.gmv != null);
-      const periodGmv = numericCell(gmvByItemId.get(itemId));
+      const periodGmv = numericCell(subjectItemId === competitorItemId ? gmvByRole.get(side) : gmvByItemId.get(itemId));
       const sum = values.reduce((total, row) => total + row.gmv, 0);
       if (values.length !== days || periodGmv == null || Math.abs(sum - periodGmv) > 0.01) return;
       const peak = values.reduce((best, row) => row.gmv > best.gmv ? row : best, values[0]);
       const volatility = populationVolatility(values.map((row) => row.gmv));
-      periodTable.rows.filter((row) => String(row[periodIdIndex] ?? "") === itemId).forEach((row) => {
-        if (peakIndex >= 0 && isBlankCell(row[peakIndex])) row[peakIndex] = peak.date;
-        if (volatilityIndex >= 0 && isBlankCell(row[volatilityIndex]) && volatility != null) row[volatilityIndex] = roundMetric(volatility, 6);
-      });
+      const targetRow = periodRoleRow(periodTable, side, subjectItemId, competitorItemId);
+      if (targetRow) {
+        if (peakIndex >= 0 && isBlankCell(targetRow[peakIndex])) targetRow[peakIndex] = peak.date;
+        if (volatilityIndex >= 0 && isBlankCell(targetRow[volatilityIndex]) && volatility != null) targetRow[volatilityIndex] = roundMetric(volatility, 6);
+      }
     };
-    fillDailyStatistics(subjectItemId, [/^主体日GMV$/]);
-    fillDailyStatistics(competitorItemId, [/^对手日GMV$/, /^日GMV$/]);
+    fillDailyStatistics("subject", subjectItemId, [/^主体日GMV$/]);
+    fillDailyStatistics("competitor", competitorItemId, [/^对手日GMV$/, /^日GMV$/]);
   }
 
   const spendByRole = new Map<string, number>();
   if (periodTable) {
     const spendIndex = periodTable.columns.findIndex((column) => /^(广告消耗|推广消耗)$/.test(column));
-    periodTable.rows.forEach((row) => {
-      const itemId = String(row[periodIdIndex] ?? "");
-      const spend = numericCell(row[spendIndex]);
-      if (spend == null) return;
-      if (itemId === subjectItemId) spendByRole.set("主体", spend);
-      if (itemId === competitorItemId) spendByRole.set("对手", spend);
-    });
+    for (const [side, label] of [["subject", "主体"], ["competitor", "对手"]] as const) {
+      const row = periodRoleRow(periodTable, side, subjectItemId, competitorItemId);
+      const spend = numericCell(row?.[spendIndex]);
+      if (spend != null) spendByRole.set(label, spend);
+    }
   }
 
   const reconcileScenes = (sceneTable: DmpReportTable | undefined, parentSpend?: Map<string, number>) => {
@@ -837,7 +880,7 @@ export function reconcileDmpCrossTableMetrics(
   return tables;
 }
 
-export function canonicalToDmpReport(input: unknown): DmpReport | null {
+export function normalizeDmpCanonicalReportForUse(input: unknown): DmpReport | null {
   if (!isObject(input) || input.schema_version !== "3.0" || !Array.isArray(input.tables)) return null;
   const growthReport = input.report_type !== "competition" && input.report_type !== "market";
   const snapshots: DmpReportTableSnapshot[] = input.tables.filter(isObject).map((table) => ({
@@ -953,6 +996,9 @@ export function canonicalToDmpReport(input: unknown): DmpReport | null {
     } : { status: "canonical", complete: true, expected: tables.length, observed: tables.length }
   };
 }
+
+/** @deprecated 使用 normalizeDmpCanonicalReportForUse，保留旧名以兼容插件与现有测试。 */
+export const canonicalToDmpReport = normalizeDmpCanonicalReportForUse;
 
 function mergeSubjectDailyGmv(tables: DmpReportTable[], rows: DmpReportRenderData["subject_daily_gmv"] | undefined) {
   if (!rows?.length) return;

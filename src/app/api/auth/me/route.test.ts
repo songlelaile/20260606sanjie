@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   parseSession: vi.fn(),
   isSessionAccountValid: vi.fn(),
-  getDmpAutomationAccessForSession: vi.fn()
+  getDmpAutomationAccessForSession: vi.fn(),
+  getCreativeAccessForSession: vi.fn()
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -24,6 +25,11 @@ vi.mock("@/lib/tool-entitlements", () => ({
   }
 }));
 
+vi.mock("@/lib/creative-entitlements", () => ({
+  getCreativeAccessForSession: mocks.getCreativeAccessForSession,
+  UNAVAILABLE_CREATIVE_ACCESS: { allowed: false, reason: "unavailable", expiresAt: null }
+}));
+
 import { GET } from "./route";
 
 const SESSION = {
@@ -39,6 +45,8 @@ describe("GET /api/auth/me", () => {
     mocks.isSessionAccountValid.mockReset();
     mocks.getDmpAutomationAccessForSession.mockReset();
     mocks.parseSession.mockResolvedValue(SESSION);
+    mocks.getCreativeAccessForSession.mockReset();
+    mocks.getCreativeAccessForSession.mockResolvedValue({ allowed: false, reason: "payment_required", expiresAt: null });
     mocks.isSessionAccountValid.mockResolvedValue(true);
     mocks.getDmpAutomationAccessForSession.mockResolvedValue({
       allowed: true,
@@ -97,7 +105,7 @@ describe("GET /api/auth/me", () => {
       })
     );
     const payload = await response.json();
-    expect(payload.data.capabilities).toEqual({
+    expect(payload.data.capabilities).toMatchObject({
       dmpAutomation: true,
       dmpDownload: true,
       dmpJsonImport: true,
@@ -140,12 +148,29 @@ describe("GET /api/auth/me", () => {
     const payload = await response.json();
     expect(response.status).toBe(200);
     expect(payload.data.service.online).toBe(true);
-    expect(payload.data.capabilities).toEqual({
+    expect(payload.data.capabilities).toMatchObject({
       dmpAutomation: false,
       dmpDownload: false,
       dmpJsonImport: false,
       dmpReportExport: false
     });
+  });
+
+  it("reports creative permission separately from DMP permission", async () => {
+    mocks.getCreativeAccessForSession.mockResolvedValueOnce({ allowed: true, reason: "invited", expiresAt: null });
+    const response = await GET(new Request("http://localhost/api/auth/me", { headers: { "x-sanjie-session": "signed-token" } }));
+    const payload = await response.json();
+    expect(payload.data.creativeEntitlement.reason).toBe("invited");
+    expect(payload.data.capabilities.creativeStudio).toBe(true);
+    expect(payload.data.capabilities.creativeVideo).toBe(true);
+  });
+
+  it("fails closed for creative permission without disabling unrelated DMP service", async () => {
+    mocks.getCreativeAccessForSession.mockRejectedValueOnce(new Error("offline"));
+    const response = await GET(new Request("http://localhost/api/auth/me", { headers: { "x-sanjie-session": "signed-token" } }));
+    const payload = await response.json();
+    expect(payload.data.capabilities.creativeStudio).toBe(false);
+    expect(payload.data.capabilities.dmpAutomation).toBe(true);
   });
 
   it("rejects a signed session whose database tenant or role no longer matches", async () => {

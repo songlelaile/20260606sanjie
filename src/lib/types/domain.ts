@@ -335,46 +335,6 @@ export interface AudiencePlanItem {
   observedDays?: number;
 }
 
-export type HistoryDataKey =
-  | "product"
-  | "promotionProduct"
-  | "promotionContent"
-  | "keyword"
-  | "audience";
-
-export interface ManagementHistoryRecord {
-  id: string;
-  tenantId: string;
-  shopId: string;
-  cycleId: string;
-  uploadAt: string;
-  dataRangeStart: string;
-  dataRangeEnd: string;
-  counts: Record<HistoryDataKey, number>;
-  note: string;
-  reportName?: string;
-}
-
-export interface ManagementHistoryReport {
-  id: string;
-  tenantId: string;
-  shopId: string;
-  cycleId: string;
-  name: string;
-  createdAt: string;
-  createdBy: string;
-  startDate: string;
-  endDate: string;
-  categories: HistoryDataKey[];
-}
-
-export interface ManagementHistoryRetention {
-  tenantId: string;
-  months: number;
-  updatedAt: string;
-  updatedBy: string;
-}
-
 export interface ManagementDashboard {
   productCount: number;
   monthlyNetSales: number | null;
@@ -646,10 +606,4 @@ export interface AudienceComparison {
   intervention: Intervention;
   window: ComparisonWindow;
   rows: AudienceComparisonRow[];
-}
-
-export interface ManagementHistoryState {
-  records: ManagementHistoryRecord[];
-  reports: ManagementHistoryReport[];
-  retention: ManagementHistoryRetention;
 }

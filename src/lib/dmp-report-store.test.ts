@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DMP_COMPETITION_REPORT_TABLES, DMP_GROWTH_REPORT_TABLES } from "@/lib/dmp-report-types";
+import { serializeSession } from "@/lib/auth";
+import {
+  auditDmpGrowthSubjectMetrics,
+  DMP_COMPETITION_REPORT_TABLES,
+  DMP_GROWTH_REPORT_TABLES
+} from "@/lib/dmp-report-types";
 
 const mocks = vi.hoisted(() => ({
   upsert: vi.fn(),
@@ -9,8 +14,14 @@ const mocks = vi.hoisted(() => ({
   shopFindFirst: vi.fn(),
   shopFindMany: vi.fn(),
   reportFindFirst: vi.fn(),
+  transactionReportFindMany: vi.fn(),
   reportCount: vi.fn(),
-  reportUpdateMany: vi.fn()
+  reportUpdateMany: vi.fn(),
+  executeRaw: vi.fn(),
+  userFindUnique: vi.fn(),
+  rootShopFindFirst: vi.fn(),
+  getCurrentSession: vi.fn(),
+  getDmpAutomationAccessForSession: vi.fn()
 }));
 
 vi.mock("server-only", () => ({}));
@@ -18,19 +29,26 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     dmpBusinessReport: {
       findMany: mocks.findMany,
-      findFirst: mocks.reportGetFindFirst
+      findFirst: mocks.reportGetFindFirst,
+      count: mocks.reportCount
     },
+    user: { findUnique: mocks.userFindUnique },
+    shop: { findFirst: mocks.rootShopFindFirst },
     $transaction: mocks.transaction
   }
 }));
-vi.mock("@/lib/server-session", () => ({ getCurrentSession: vi.fn() }));
-vi.mock("@/lib/tool-entitlements", () => ({ getDmpAutomationAccessForSession: vi.fn() }));
+vi.mock("@/lib/server-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
+vi.mock("@/lib/tool-entitlements", () => ({
+  getDmpAutomationAccessForSession: mocks.getDmpAutomationAccessForSession
+}));
 
 import {
   assignDmpBusinessReportsShop,
   dmpBusinessReportFingerprint,
   getDmpBusinessReport,
+  listDmpBusinessReportSummaries,
   listDmpBusinessReports,
+  resolveDmpReportRequestContext,
   saveDmpBusinessReport,
   validateDmpCanonicalReport
 } from "@/lib/dmp-report-store";
@@ -118,6 +136,163 @@ function marketReport() {
     }]
   };
 }
+
+describe("DMP strict request shop context", () => {
+  beforeEach(() => {
+    mocks.getCurrentSession.mockReset();
+    mocks.getDmpAutomationAccessForSession.mockReset();
+    mocks.userFindUnique.mockReset();
+    mocks.rootShopFindFirst.mockReset();
+    mocks.getCurrentSession.mockResolvedValue({
+      username: "demo", role: "tenant", name: "演示", tenantId: "tenant-a"
+    });
+    mocks.getDmpAutomationAccessForSession.mockResolvedValue({ allowed: true });
+    mocks.userFindUnique.mockResolvedValue({ id: "user-a", tenantId: "tenant-a" });
+    mocks.rootShopFindFirst.mockResolvedValue({ id: "shop-a", name: "店铺 A" });
+  });
+
+  it("fails closed when browser header and activity cookie name different shops", async () => {
+    await expect(resolveDmpReportRequestContext({
+      browserHeaderShopId: "shop-a",
+      browserCookieShopId: "shop-b"
+    })).resolves.toEqual({
+      ok: false,
+      status: 409,
+      code: "SHOP_MISMATCH",
+      error: "页面店铺与当前官网活动店铺不一致，请刷新后重试"
+    });
+    expect(mocks.rootShopFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("accepts one explicit browser shop and verifies it inside the access tenant", async () => {
+    await expect(resolveDmpReportRequestContext({ browserCookieShopId: "shop-a" }))
+      .resolves.toEqual({
+        ok: true,
+        access: { userId: "user-a", tenantId: "tenant-a" },
+        shop: { id: "shop-a", name: "店铺 A" }
+      });
+    expect(mocks.rootShopFindFirst).toHaveBeenCalledWith({
+      where: { id: "shop-a", tenantId: "tenant-a" },
+      select: { id: true, name: true }
+    });
+  });
+
+  it("uses the authenticated tenant's first-created shop only for the default-shop scope", async () => {
+    await expect(resolveDmpReportRequestContext({ allowDefaultShop: true }))
+      .resolves.toEqual({
+        ok: true,
+        access: { userId: "user-a", tenantId: "tenant-a" },
+        shop: { id: "shop-a", name: "店铺 A" }
+      });
+    expect(mocks.rootShopFindFirst).toHaveBeenCalledWith({
+      where: { tenantId: "tenant-a" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, name: true }
+    });
+  });
+
+  it("uses the same tenant default for a valid extension session with no shop header", async () => {
+    const extensionToken = await serializeSession({
+      username: "demo", role: "tenant", name: "演示", tenantId: "tenant-a"
+    });
+    await expect(resolveDmpReportRequestContext({ extensionToken, allowDefaultShop: true }))
+      .resolves.toMatchObject({
+        ok: true,
+        access: { userId: "user-a", tenantId: "tenant-a" },
+        shop: { id: "shop-a", name: "店铺 A" }
+      });
+    expect(mocks.rootShopFindFirst).toHaveBeenCalledWith({
+      where: { tenantId: "tenant-a" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      select: { id: true, name: true }
+    });
+  });
+
+  it("keeps an unspecified shop closed outside the dedicated default-shop scope", async () => {
+    await expect(resolveDmpReportRequestContext({}))
+      .resolves.toEqual({
+        ok: false,
+        status: 400,
+        code: "SHOP_REQUIRED",
+        error: "当前官网店铺未明确，请先选择店铺"
+      });
+    expect(mocks.rootShopFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back when an explicitly supplied shop is invalid for the tenant", async () => {
+    mocks.rootShopFindFirst.mockResolvedValueOnce(null);
+    await expect(resolveDmpReportRequestContext({ browserHeaderShopId: "foreign-shop" }))
+      .resolves.toEqual({
+        ok: false,
+        status: 404,
+        code: "SHOP_INVALID",
+        error: "店铺不存在或不属于当前账号"
+      });
+    expect(mocks.rootShopFindFirst).toHaveBeenCalledWith({
+      where: { id: "foreign-shop", tenantId: "tenant-a" },
+      select: { id: true, name: true }
+    });
+  });
+});
+
+describe("DMP paginated summary projection", () => {
+  it("selects summary JSON instead of the full report body and keeps partial reports visible", async () => {
+    const createdAt = new Date("2026-08-30T00:00:00.000Z");
+    mocks.reportCount.mockResolvedValueOnce(25);
+    mocks.findMany.mockResolvedValueOnce([{
+      id: "summary-a",
+      shopId: "shop-a",
+      shop: { id: "shop-a", name: "店铺 A" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: "2026-08-01 至 2026-08-30",
+      quality: "partial",
+      createdAt,
+      summary: {
+        version: 1,
+        reportType: "growth",
+        title: "商品报告",
+        subjectThumbnail: { url: "", title: "主体" },
+        competitorThumbnail: { url: "", title: "竞品" }
+      }
+    }]);
+
+    await expect(listDmpBusinessReportSummaries(
+      { tenantId: "tenant-a", userId: "user-a" },
+      { shopId: "shop-a", page: 1, pageSize: 24 }
+    )).resolves.toMatchObject({
+      total: 25,
+      totalPages: 2,
+      hasNext: true,
+      summaries: [{ id: "summary-a", quality: "partial" }]
+    });
+    expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { tenantId: "tenant-a", userId: "user-a", shopId: "shop-a" },
+      take: 24,
+      select: expect.objectContaining({ summary: true })
+    }));
+    expect(mocks.findMany.mock.calls.at(-1)?.[0]?.select).not.toHaveProperty("report");
+  });
+});
+
+describe("DMP same-item role contract", () => {
+  it("audits the subject role instead of the first matching ID when both sides share one item", () => {
+    const itemId = "593063365092";
+    const audit = auditDmpGrowthSubjectMetrics({
+      item_id: itemId,
+      tables: [{
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "推广消耗", "费比", "ROI", "PPC"],
+        rows: [
+          { cells: [itemId, "目标对手", "20", "0.1", "4", "2"] },
+          { cells: [itemId, "主体", "10", "0.1", "", "2"] }
+        ]
+      }]
+    });
+
+    expect(audit.missing.map((metric) => metric.label)).toEqual(["ROI"]);
+  });
+});
 
 describe("DMP category market report storage contract", () => {
   it("preserves the market kind and normalized Chinese category scope without competitors", () => {
@@ -220,11 +395,16 @@ describe("DMP growth render_data storage contract", () => {
     mocks.shopFindFirst.mockReset();
     mocks.shopFindMany.mockReset();
     mocks.reportFindFirst.mockReset();
+    mocks.transactionReportFindMany.mockReset();
     mocks.reportCount.mockReset();
     mocks.reportUpdateMany.mockReset();
+    mocks.executeRaw.mockReset();
     mocks.reportFindFirst.mockResolvedValue(null);
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
     mocks.shopFindMany.mockResolvedValue([]);
+    mocks.executeRaw.mockResolvedValue(0);
     mocks.transaction.mockImplementation(async (work: (tx: unknown) => unknown) => work({
+      $executeRaw: mocks.executeRaw,
       shop: {
         findFirst: mocks.shopFindFirst,
         findMany: mocks.shopFindMany
@@ -232,6 +412,7 @@ describe("DMP growth render_data storage contract", () => {
       dmpBusinessReport: {
         upsert: mocks.upsert,
         findFirst: mocks.reportFindFirst,
+        findMany: mocks.transactionReportFindMany,
         count: mocks.reportCount,
         updateMany: mocks.reportUpdateMany
       }
@@ -287,6 +468,46 @@ describe("DMP growth render_data storage contract", () => {
     ];
 
     expect(validateDmpCanonicalReport(report).issues).toBeUndefined();
+  });
+
+  it("rechecks effective quality on save and read without rewriting the archived report JSON", async () => {
+    const canonical = validateDmpCanonicalReport(growthReport()).report!;
+    const originalText = JSON.stringify(canonical);
+    const createdAt = new Date("2026-08-22T00:00:00.000Z");
+    const stored = {
+      id: "server-quality-report",
+      shopId: "shop-a",
+      shop: { id: "shop-a", name: "西西礼" },
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      period: canonical.period,
+      // 模拟旧记录和不可信客户端曾把不完整报告写成 complete。
+      quality: "complete",
+      createdAt,
+      report: canonical
+    };
+    mocks.upsert.mockResolvedValue(stored);
+    mocks.findMany.mockResolvedValue([stored]);
+    mocks.reportGetFindFirst.mockResolvedValue(stored);
+
+    const saved = await saveDmpBusinessReport({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
+      sourceShop: { shopId: "shop-a" },
+      report: canonical,
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317",
+      quality: "complete",
+      sourceVersion: "2.3.13"
+    });
+
+    expect(mocks.upsert.mock.calls[0]?.[0]?.create?.quality).toBe("partial");
+    expect(saved.quality).toBe("partial");
+    await expect(listDmpBusinessReports({ tenantId: "tenant-a", userId: "user-a" }))
+      .resolves.toMatchObject([{ id: stored.id, quality: "partial" }]);
+    await expect(getDmpBusinessReport({ tenantId: "tenant-a", userId: "user-a" }, stored.id, "shop-a"))
+      .resolves.toMatchObject({ id: stored.id, quality: "partial" });
+    expect(JSON.stringify(canonical)).toBe(originalText);
   });
 
   it("preserves only closed, ordered and HTTPS-safe optional render data", () => {
@@ -459,7 +680,7 @@ describe("DMP growth render_data storage contract", () => {
       competitorItemId: "563697874317",
       report: { item_id: "768239824008" }
     }]);
-    await expect(getDmpBusinessReport(access, "legacy-report")).resolves.toMatchObject({
+    await expect(getDmpBusinessReport(access, "legacy-report", "shop-a")).resolves.toMatchObject({
       id: "legacy-report",
       report: { item_id: "768239824008" }
     });
@@ -474,7 +695,7 @@ describe("DMP growth render_data storage contract", () => {
     const createdAt = new Date("2026-08-22T00:00:00.000Z");
     mocks.upsert.mockResolvedValue({
       id: "report-with-images",
-      shop: null,
+      shop: { id: "shop-a", name: "西西礼" },
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       period: canonical.period,
@@ -485,6 +706,8 @@ describe("DMP growth render_data storage contract", () => {
 
     const saved = await saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
+      sourceShop: { shopId: "shop-a" },
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -537,16 +760,16 @@ describe("DMP growth render_data storage contract", () => {
       subjectItemId: "768239824008",
       competitorItemId: "563697874317"
     };
-    const fingerprint = dmpBusinessReportFingerprint({ ...identity, report: first });
+    const fingerprint = dmpBusinessReportFingerprint({ ...identity, report: first, shopId: "shop-a" });
 
     expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(dmpBusinessReportFingerprint({ ...identity, report: retry })).toBe(fingerprint);
-    expect(dmpBusinessReportFingerprint({ ...identity, report: changed })).not.toBe(fingerprint);
+    expect(dmpBusinessReportFingerprint({ ...identity, report: retry, shopId: "shop-a" })).toBe(fingerprint);
+    expect(dmpBusinessReportFingerprint({ ...identity, report: changed, shopId: "shop-a" })).not.toBe(fingerprint);
 
     const createdAt = new Date("2026-08-22T04:00:00.000Z");
     mocks.upsert.mockResolvedValue({
       id: "one-id-for-both-attempts",
-      shop: null,
+      shop: { id: "shop-a", name: "西西礼" },
       ...identity,
       period: first.period,
       quality: "complete",
@@ -555,6 +778,8 @@ describe("DMP growth render_data storage contract", () => {
     });
     const save = (report: typeof first) => saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
+      sourceShop: { shopId: "shop-a" },
       report,
       ...identity,
       quality: "complete",
@@ -582,10 +807,11 @@ describe("DMP growth render_data storage contract", () => {
     }
   });
 
-  it("inherits the latest shop for the same user and canonical subject/competitor pair", async () => {
+  it("does not inherit the latest shop now that every archive is explicitly frozen", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T01:00:00.000Z");
     mocks.reportFindFirst.mockResolvedValue({ shop: { id: "shop-recent", name: "最近店铺" } });
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-recent", name: "最近店铺" });
     mocks.upsert.mockResolvedValue({
       id: "report-inherited-shop",
       shop: { id: "shop-recent", name: "最近店铺" },
@@ -599,6 +825,8 @@ describe("DMP growth render_data storage contract", () => {
 
     const saved = await saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-recent",
+      sourceShop: { shopId: "shop-recent" },
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -606,15 +834,10 @@ describe("DMP growth render_data storage contract", () => {
       sourceVersion: "2.1.6"
     });
 
-    expect(mocks.reportFindFirst).toHaveBeenCalledWith({
-      where: {
-        tenantId: "tenant-a",
-        userId: "user-a",
-        subjectItemId: "768239824008",
-        competitorItemId: "563697874317"
-      },
-      orderBy: { createdAt: "desc" },
-      select: { shop: { select: { id: true, name: true } } }
+    expect(mocks.reportFindFirst).not.toHaveBeenCalled();
+    expect(mocks.shopFindFirst).toHaveBeenCalledWith({
+      where: { id: "shop-recent", tenantId: "tenant-a" },
+      select: { id: true, name: true }
     });
     expect(mocks.shopFindMany).not.toHaveBeenCalled();
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -640,6 +863,7 @@ describe("DMP growth render_data storage contract", () => {
 
     const saved = await saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-source",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -666,6 +890,7 @@ describe("DMP growth render_data storage contract", () => {
 
     await expect(saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "foreign-shop",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -680,7 +905,7 @@ describe("DMP growth render_data storage contract", () => {
     expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("maps an external numeric source ID only through a unique normalized tenant shop name", async () => {
+  it("does not map an external numeric source ID through a shop name", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T01:40:00.000Z");
     mocks.shopFindMany.mockResolvedValue([
@@ -698,31 +923,24 @@ describe("DMP growth render_data storage contract", () => {
       report: canonical
     });
 
-    const saved = await saveDmpBusinessReport({
+    await expect(saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-match",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       quality: "complete",
       sourceVersion: "2.2.0",
       sourceShop: { sourceShopId: "123456789012", shopName: "  西西礼　旗舰店  " }
-    });
+    })).rejects.toMatchObject({ code: "DMP_REPORT_SOURCE_SHOP_INVALID", status: 400 });
 
     expect(mocks.shopFindFirst).not.toHaveBeenCalled();
-    expect(mocks.shopFindMany).toHaveBeenCalledWith({
-      where: { tenantId: "tenant-a" },
-      orderBy: { createdAt: "asc" },
-      take: 201,
-      select: { id: true, name: true }
-    });
+    expect(mocks.shopFindMany).not.toHaveBeenCalled();
     expect(mocks.reportFindFirst).not.toHaveBeenCalled();
-    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ shopId: "shop-match" })
-    }));
-    expect(saved).toMatchObject({ shopId: "shop-match", shopName: "西西礼 旗舰店" });
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("matches a name-only source to one existing tenant shop without creating a relationship from text", async () => {
+  it("does not match a name-only source to an existing tenant shop", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T01:45:00.000Z");
     mocks.shopFindMany.mockResolvedValue([
@@ -740,23 +958,22 @@ describe("DMP growth render_data storage contract", () => {
       report: canonical
     });
 
-    const saved = await saveDmpBusinessReport({
+    await expect(saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-match",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       quality: "complete",
       sourceVersion: "2.2.0",
       sourceShop: { shopName: " 西西礼 " }
-    });
+    })).rejects.toMatchObject({ code: "DMP_REPORT_SOURCE_SHOP_INVALID", status: 400 });
 
-    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ shopId: "shop-match" })
-    }));
-    expect(saved).toMatchObject({ shopId: "shop-match", shopName: "西西礼" });
+    expect(mocks.shopFindMany).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("does not guess a shop when a source name has no unique match in a multi-shop tenant", async () => {
+  it("does not accept an unmatched external source without an explicit shop", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T01:50:00.000Z");
     mocks.shopFindMany.mockResolvedValue([
@@ -774,24 +991,22 @@ describe("DMP growth render_data storage contract", () => {
       report: canonical
     });
 
-    const saved = await saveDmpBusinessReport({
+    await expect(saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       quality: "complete",
       sourceVersion: "2.2.0",
       sourceShop: { sourceShopId: "123456789012", shopName: "不存在的店铺" }
-    });
+    })).rejects.toMatchObject({ code: "DMP_REPORT_SOURCE_SHOP_INVALID", status: 400 });
 
-    expect(mocks.reportFindFirst).toHaveBeenCalled();
-    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ shopId: null })
-    }));
-    expect(saved).not.toHaveProperty("shopId");
+    expect(mocks.reportFindFirst).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("keeps unmatched external shops in separate dedup scopes without writing them as internal relations", async () => {
+  it("does not create unassigned dedup scopes for unmatched external shops", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T01:55:00.000Z");
     mocks.shopFindMany.mockResolvedValue([
@@ -812,6 +1027,7 @@ describe("DMP growth render_data storage contract", () => {
     }));
     const save = (sourceShopId: string) => saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -820,22 +1036,18 @@ describe("DMP growth render_data storage contract", () => {
       sourceShop: { sourceShopId, shopName: "未匹配店铺" }
     });
 
-    await save("123456789012");
-    await save("987654321098");
-
-    const firstCreate = mocks.upsert.mock.calls[0]?.[0]?.create;
-    const secondCreate = mocks.upsert.mock.calls[1]?.[0]?.create;
-    expect(firstCreate.shopId).toBeNull();
-    expect(secondCreate.shopId).toBeNull();
-    expect(firstCreate).not.toHaveProperty("sourceShopId");
-    expect(firstCreate.fingerprint).toMatch(/^[a-f0-9]{64}$/);
-    expect(secondCreate.fingerprint).not.toBe(firstCreate.fingerprint);
+    await expect(save("123456789012"))
+      .rejects.toMatchObject({ code: "DMP_REPORT_SOURCE_SHOP_INVALID", status: 400 });
+    await expect(save("987654321098"))
+      .rejects.toMatchObject({ code: "DMP_REPORT_SOURCE_SHOP_INVALID", status: 400 });
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 
-  it("uses the tenant's only shop when the canonical pair has no previous assignment", async () => {
+  it("does not fall back to the tenant's only shop", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T02:00:00.000Z");
     mocks.shopFindMany.mockResolvedValue([{ id: "only-shop", name: "唯一店铺" }]);
+    mocks.shopFindFirst.mockResolvedValue({ id: "only-shop", name: "唯一店铺" });
     mocks.upsert.mockResolvedValue({
       id: "report-only-shop",
       shop: { id: "only-shop", name: "唯一店铺" },
@@ -849,6 +1061,8 @@ describe("DMP growth render_data storage contract", () => {
 
     const saved = await saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "only-shop",
+      sourceShop: { shopId: "only-shop" },
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -856,10 +1070,9 @@ describe("DMP growth render_data storage contract", () => {
       sourceVersion: "2.1.6"
     });
 
-    expect(mocks.shopFindMany).toHaveBeenCalledWith({
-      where: { tenantId: "tenant-a" },
-      orderBy: { createdAt: "asc" },
-      take: 2,
+    expect(mocks.shopFindMany).not.toHaveBeenCalled();
+    expect(mocks.shopFindFirst).toHaveBeenCalledWith({
+      where: { id: "only-shop", tenantId: "tenant-a" },
       select: { id: true, name: true }
     });
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
@@ -868,16 +1081,17 @@ describe("DMP growth render_data storage contract", () => {
     expect(saved).toMatchObject({ shopId: "only-shop", shopName: "唯一店铺" });
   });
 
-  it("leaves a new report unassigned when multiple shops exist and the pair has no history", async () => {
+  it("does not leave a new report unassigned when the shop is explicit", async () => {
     const canonical = validateDmpCanonicalReport(growthReport()).report!;
     const createdAt = new Date("2026-08-22T03:00:00.000Z");
     mocks.shopFindMany.mockResolvedValue([
       { id: "shop-a", name: "店铺 A" },
       { id: "shop-b", name: "店铺 B" }
     ]);
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "店铺 A" });
     mocks.upsert.mockResolvedValue({
       id: "report-unassigned",
-      shop: null,
+      shop: { id: "shop-a", name: "店铺 A" },
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
       period: canonical.period,
@@ -888,6 +1102,8 @@ describe("DMP growth render_data storage contract", () => {
 
     const saved = await saveDmpBusinessReport({
       access: { tenantId: "tenant-a", userId: "user-a" },
+      shopId: "shop-a",
+      sourceShop: { shopId: "shop-a" },
       report: canonical,
       subjectItemId: "768239824008",
       competitorItemId: "563697874317",
@@ -896,24 +1112,26 @@ describe("DMP growth render_data storage contract", () => {
     });
 
     expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
-      create: expect.objectContaining({ shopId: null })
+      create: expect.objectContaining({ shopId: "shop-a" })
     }));
-    expect(saved).not.toHaveProperty("shopId");
-    expect(saved).not.toHaveProperty("shopName");
+    expect(saved).toMatchObject({ shopId: "shop-a", shopName: "店铺 A" });
   });
 
   it("assigns only owned reports to a tenant-scoped shop and supports returning to unassigned", async () => {
     mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
-    mocks.reportCount.mockResolvedValue(2);
+    mocks.transactionReportFindMany.mockResolvedValue([{ id: "report-a" }, { id: "report-b" }]);
     mocks.reportUpdateMany.mockResolvedValue({ count: 2 });
 
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a", "report-b", "report-a"],
-      shopId: "shop-a"
+      sourceShopId: "shop-source",
+      targetShopId: "shop-a"
     })).resolves.toEqual({
       ok: true,
       reportIds: ["report-a", "report-b"],
+      count: 2,
+      truncated: false,
       shop: { id: "shop-a", name: "西西礼" }
     });
     expect(mocks.shopFindFirst).toHaveBeenCalledWith({
@@ -921,17 +1139,59 @@ describe("DMP growth render_data storage contract", () => {
       select: { id: true, name: true }
     });
     expect(mocks.reportUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ tenantId: "tenant-a", userId: "user-a" }),
+      where: expect.objectContaining({ tenantId: "tenant-a", userId: "user-a", shopId: "shop-source" }),
       data: { shopId: "shop-a" }
     }));
 
-    mocks.reportCount.mockResolvedValue(1);
+    mocks.transactionReportFindMany.mockResolvedValue([{ id: "report-a" }]);
+    mocks.reportUpdateMany.mockResolvedValueOnce({ count: 1 });
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a"],
-      shopId: ""
-    })).resolves.toEqual({ ok: true, reportIds: ["report-a"], shop: null });
+      sourceShopId: "shop-a",
+      targetShopId: ""
+    })).resolves.toEqual({
+      ok: true,
+      reportIds: ["report-a"],
+      count: 1,
+      truncated: false,
+      shop: null
+    });
     expect(mocks.reportUpdateMany).toHaveBeenLastCalledWith(expect.objectContaining({ data: { shopId: null } }));
+  });
+
+  it("locks both shops and moves an identity group larger than the returned 200-id preview atomically", async () => {
+    mocks.shopFindFirst.mockResolvedValue({ id: "shop-b", name: "店铺 B" });
+    mocks.transactionReportFindMany.mockResolvedValue(
+      Array.from({ length: 200 }, (_, index) => ({ id: `report-${index}` }))
+    );
+    mocks.reportUpdateMany.mockResolvedValue({ count: 250 });
+
+    await expect(assignDmpBusinessReportsShop({
+      access: { tenantId: "tenant-a", userId: "user-a" },
+      sourceShopId: "shop-a",
+      targetShopId: "shop-b",
+      reportType: "growth",
+      subjectItemId: "768239824008",
+      competitorItemId: "563697874317"
+    })).resolves.toMatchObject({
+      ok: true,
+      count: 250,
+      truncated: true,
+      reportIds: expect.arrayContaining(["report-0", "report-199"])
+    });
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(2);
+    expect(mocks.reportUpdateMany).toHaveBeenCalledWith({
+      where: {
+        tenantId: "tenant-a",
+        userId: "user-a",
+        shopId: "shop-a",
+        subjectItemId: "768239824008",
+        competitorItemId: "563697874317",
+        summary: { path: ["reportType"], equals: "growth" }
+      },
+      data: { shopId: "shop-b" }
+    });
   });
 
   it("rejects foreign shops and mixed-ownership report batches before updating", async () => {
@@ -939,16 +1199,18 @@ describe("DMP growth render_data storage contract", () => {
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a"],
-      shopId: "foreign-shop"
+      sourceShopId: "shop-source",
+      targetShopId: "foreign-shop"
     })).resolves.toMatchObject({ ok: false, status: 404 });
     expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
 
     mocks.shopFindFirst.mockResolvedValue({ id: "shop-a", name: "西西礼" });
-    mocks.reportCount.mockResolvedValue(1);
+    mocks.transactionReportFindMany.mockResolvedValue([{ id: "report-a" }]);
     await expect(assignDmpBusinessReportsShop({
       access: { tenantId: "tenant-a", userId: "user-a" },
       reportIds: ["report-a", "foreign-report"],
-      shopId: "shop-a"
+      sourceShopId: "shop-source",
+      targetShopId: "shop-a"
     })).resolves.toMatchObject({ ok: false, status: 404 });
     expect(mocks.reportUpdateMany).not.toHaveBeenCalled();
   });

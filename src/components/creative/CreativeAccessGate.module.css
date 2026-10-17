@@ -1,0 +1,13 @@
+.panel { padding: 32px; background: #fff; border: 1px solid #e2e8f0; border-radius: 18px; max-width: 1100px; margin: 24px auto; }
+.panel h1 { font-size: 28px; margin: 12px 0; color: #0f172a; }
+.panel p { color: #64748b; line-height: 1.7; overflow-wrap: anywhere; }
+.kicker { font-size: 13px; letter-spacing: .12em; }
+.plans { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 16px; margin: 28px 0; }
+.plans article, .order { padding: 22px; border: 1px solid #dbe3ef; border-radius: 12px; }
+.plans h2, .order h2 { font-size: 19px; margin: 0 0 16px; color: #0f172a; }
+.plans strong { font-size: 30px; color: #0f172a; }
+.panel button { padding: 10px 18px; border: 0; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; }
+.panel button:disabled { opacity: .5; cursor: default; }
+.panel a, .status a { color: #2563eb; }
+.status { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; font-size: 13px; padding: 12px 18px; background: #edf8f4; border-radius: 10px; margin-bottom: 16px; color: #16634c; }
+@media(max-width: 760px) { .plans { grid-template-columns: 1fr; } .panel { padding: 20px; } }

@@ -4,24 +4,24 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import('next').NextConfig} */
-const retiredAnalytics = [
-  "/dashboards/management",
-  "/dashboards/product-breakthrough",
-  "/dashboards/audience-plan",
-  "/dashboards/business-diagnosis",
-  "/dashboards/product-opportunity",
-  "/dashboards/diagnostics",
-  "/imports",
-  "/prefill"
-];
-
 const nextConfig = {
   outputFileTracingRoot: __dirname,
+  poweredByHeader: false,
+  productionBrowserSourceMaps: false,
+  // Preserve the raw server origin for internal rewrites behind the TLS proxy.
+  skipMiddlewareUrlNormalize: true,
+  async headers() {
+    return [{ source: "/:path*", headers: [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "X-Frame-Options", value: "SAMEORIGIN" },
+      { key: "Content-Security-Policy", value: "frame-ancestors 'self'" }
+    ] }];
+  },
   async redirects() {
-    return retiredAnalytics.flatMap((source) => [
-      { source, destination: "/dashboards/operating-network", permanent: false },
-      { source: `${source}/:path*`, destination: "/dashboards/operating-network", permanent: false }
-    ]);
+    return [
+      { source: "/dashboards/product-opportunity", destination: "/dashboards/product-breakthrough", permanent: false },
+      { source: "/dashboards/product-opportunity/:path*", destination: "/dashboards/product-breakthrough", permanent: false }
+    ];
   }
 };
 

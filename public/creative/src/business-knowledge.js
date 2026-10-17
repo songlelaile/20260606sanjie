@@ -181,34 +181,6 @@
     });
   }
 
-  function yamlScalar(value) {
-    return JSON.stringify(cleanText(value, 240) || '');
-  }
-
-  function obsidianMarkdown(value) {
-    value = normalize(value);
-    var titleIdentity = value.fields.product || value.fields.brand || value.fields.category || value.name;
-    var lines = [
-      '---',
-      'title: ' + yamlScalar(titleIdentity + '业务事实'),
-      'status: active',
-      'scope: all',
-      'category: ' + yamlScalar(value.fields.category || 'ALL'),
-      'priority: 100',
-      'knowledge_type: business_profile',
-      '---',
-      '',
-      '# ' + titleIdentity + '业务事实',
-      '',
-      '> 只填写已经确认的业务事实；参数、功效、认证和对比结论请保留证据来源。'
-    ];
-    FIELD_ORDER.forEach(function (item) {
-      lines.push('', '## ' + item[1], '', value.fields[item[0]] || '待补充');
-    });
-    lines.push('', '## 证据与更新时间', '', '- 证据来源：待补充', '- 最后核验：待补充', '');
-    return lines.join('\n');
-  }
-
   function productionOrder(scope) {
     scope = scope === 'detail' ? 'detail' : (scope === 'main' ? 'main' : 'link');
     return PRODUCTION_ORDERS[scope].slice();
@@ -280,7 +252,6 @@
     summary: summary,
     readiness: readiness,
     starterFromAnswers: starterFromAnswers,
-    obsidianMarkdown: obsidianMarkdown,
     productionOrder: productionOrder,
     productionOrderText: productionOrderText,
     contextForScope: contextForScope,

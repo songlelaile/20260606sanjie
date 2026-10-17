@@ -7,15 +7,16 @@
   <meta name="theme-color" content="#080f04">
   <meta name="description" content="支持多种创作路线、视觉风格、脚本与分镜确认的生成视频工作台。">
   <title>生成视频工作台</title>
+  <style id="account-menu-config-entry">#open-api-settings { display: none !important; }</style>
   <link rel="icon" href="../../icons/icon48.png">
-  <link rel="stylesheet" href="./video-studio.css">
+  <link rel="stylesheet" href="./video-studio.css?v=task-list-cleanup-20261016-v1">
 </head>
 <body>
   <a class="skip-link" href="#studio-main">跳到主要内容</a>
 
   <header class="topbar">
     <div class="brand-lockup" aria-label="生成视频工作台">
-      <span class="brand-mark" aria-hidden="true">映</span>
+      <span class="brand-mark" aria-hidden="true">少</span>
       <span>
         <strong>生成视频工作台</strong>
         <small>路线 · 风格 · 分镜 · 生成</small>
@@ -157,7 +158,7 @@
                 </label>
                 <label class="upload-tile" for="audio-input">
                   <span class="upload-symbol audio-symbol" aria-hidden="true">♫</span>
-                  <span><strong>配乐 / 音效</strong><small><span id="audio-quota">0 / 3</span> · 单个 ≤ 15 MB</small></span>
+                  <span><strong id="audio-upload-label">配乐 / 音效</strong><small><span id="audio-quota">0 / 3</span> · MP3 / WAV，单个 ≤ 15 MB</small></span>
                   <input id="audio-input" type="file" accept="audio/mpeg,audio/wav" multiple hidden>
                 </label>
               </div>
@@ -273,9 +274,44 @@
             <button id="view-result" class="button button-primary" type="button" hidden>查看生成结果</button>
           </div>
         </section>
+        <section id="production-panel" class="panel production-panel" aria-labelledby="production-run-title" hidden>
+          <div class="panel-heading"><div><h2 id="production-run-title">镜头进度与合成</h2><p id="production-run-summary"></p></div><button id="production-resume" type="button" class="button button-primary">继续 / 核对已提交镜头</button><button id="production-new-plan" type="button" class="button button-primary" hidden>新建动态视频计划</button><button id="production-stop" type="button" class="button button-secondary" hidden>停止本地合成</button></div>
+          <div id="production-shot-list" class="production-shot-list" aria-live="polite"></div>
+          <div id="production-run-notice" class="inline-notice" role="status" hidden></div>
+        </section>
       </div>
 
       <aside class="settings-rail" aria-label="生成设置">
+        <section class="panel production-card" aria-labelledby="production-title">
+          <div class="panel-heading compact"><div><h2 id="production-title">动态视频计划</h2><p>按确认分镜生成连续动作；模型与清晰度使用下方选择。</p></div></div>
+          <div id="production-modes" class="production-modes" role="radiogroup" aria-label="视频成本方案">
+            <button type="button" data-production-mode="quality" aria-pressed="true"><strong>按脚本生成动态视频</strong><small>使用当前模型与清晰度</small></button>
+          </div>
+          <div id="production-model-wrap" class="field-group">
+            <label for="production-model">低成本动态模型</label>
+            <select id="production-model" aria-describedby="production-model-help">
+              <option value="seedance-2.0-mini">Seedance 2.0 Mini · 检查中</option>
+              <option value="seedance-2.0-fast">Seedance 2.0 Fast · 检查中</option>
+            </select>
+            <p id="production-model-help" class="field-help">经济方案的 AI 镜头、均衡方案的低成本镜头使用此模型。</p>
+          </div>
+          <div class="production-fields">
+            <label>成片时长<select id="production-duration"><option>15</option><option>20</option><option>25</option><option>30</option><option>35</option><option>40</option><option>45</option><option>50</option><option>55</option><option>60</option></select><small>秒，AI 每镜 5 秒</small></label>
+            <label id="production-ai-wrap" hidden>动态画面<select id="production-ai-seconds"><option value="15">全部镜头生成动态视频</option></select></label>
+            <label>上游估算预算（元）<input id="production-budget" type="number" min="0" max="10000" step="0.01" value="30"></label>
+            <label>每镜最多尝试<select id="production-attempts"><option value="1">1 次</option><option value="2">2 次 · 失败后手动重试</option></select></label>
+          </div>
+          <div id="production-estimate" class="estimate-card" role="status"></div>
+          <p id="production-note" class="field-help">参考图片用于锁定商品与人物，每个镜头都按分镜动作生成视频。</p>
+          <div id="production-final-audio" class="production-final-audio">
+            <strong>按脚本配音</strong>
+            <p>口播由 AI 按已确认分镜的台词重新配音。上传的声音只作对照参考；配音能力或计费未就绪时会明确提示并保留计划。</p>
+            <p id="production-narration-capability" class="field-help" role="status">配音能力尚未读取；点击“刷新能力”可核对模型、音色和计价。</p>
+            <label for="production-source-volume" hidden>旧计划原声 <output id="production-source-volume-output">0%</output></label>
+            <input id="production-source-volume" type="range" min="0" max="1" step="0.05" value="0" aria-label="旧计划原声音量" hidden>
+            <p id="production-audio-summary" class="field-help">请检查分镜台词。</p>
+          </div>
+        </section>
         <section class="panel settings-card">
           <div class="panel-heading compact">
             <div>
@@ -287,6 +323,8 @@
           <div class="field-group">
             <label for="model-select">视频模型</label>
             <select id="model-select">
+              <option value="seedance-2.0-mini">Seedance 2.0 Mini · 检查中</option>
+              <option value="seedance-2.0-fast">Seedance 2.0 Fast · 检查中</option>
               <option value="seedance-2.0">Seedance 2.0 · 检查中</option>
               <option value="seedance-2.5">Seedance 2.5 · 检查中</option>
             </select>
@@ -296,7 +334,7 @@
           <fieldset class="field-group">
             <legend>分辨率</legend>
             <div class="segmented-control resolution-control">
-              <label><input type="radio" name="resolution" value="480p"><span>480P · 流畅</span></label>
+              <label><input type="radio" name="resolution" value="480p"><span>480P · 标清</span></label>
               <label><input type="radio" name="resolution" value="720p" checked><span>720P · 高清</span></label>
               <label><input type="radio" name="resolution" value="1080p"><span>1080P · 超清</span></label>
               <label><input type="radio" name="resolution" value="4k"><span>4K · 专业</span></label>
@@ -334,20 +372,20 @@
             </div>
           </div>
 
-          <fieldset class="field-group audio-fieldset">
-            <legend>声音方案</legend>
+          <fieldset id="supplier-audio-fieldset" class="field-group audio-fieldset">
+            <legend>成片声音</legend>
             <div class="audio-options">
               <label>
                 <input type="radio" name="audio-mode" value="silent">
                 <span><strong>无声音</strong><small>纯画面输出</small></span>
               </label>
-              <label>
-                <input type="radio" name="audio-mode" value="sound_only" checked>
+              <label hidden>
+                <input type="radio" name="audio-mode" value="sound_only">
                 <span><strong>生成声音</strong><small>配乐 / 环境音，尽量无口播</small></span>
               </label>
               <label>
-                <input type="radio" name="audio-mode" value="narration">
-                <span><strong>有口播</strong><small>生成声音并合成人声</small></span>
+                <input type="radio" name="audio-mode" value="narration" checked>
+                <span><strong>按脚本口播</strong><small>逐镜台词重新配音</small></span>
               </label>
             </div>
           </fieldset>
@@ -392,7 +430,7 @@
       <div class="panel-heading history-heading">
         <div>
           <h2 id="history-title">生成历史</h2>
-          <p>仅保存任务元数据和服务返回的结果地址，不在 chrome.storage 存放素材 Blob。火山方舟结果地址通常仅保留 24 小时，请及时转存。</p>
+          <p>镜头任务与费用记录保存在当前账号；完成镜头和合成结果转存到本地素材库。旧火山方舟结果地址通常仅保留 24 小时，请及时转存。</p>
         </div>
         <div class="history-controls">
           <label class="sr-only" for="history-filter">筛选生成历史</label>
@@ -404,9 +442,13 @@
             <option value="cancelled">已取消</option>
           </select>
           <button id="refresh-history" class="button button-secondary button-small" type="button">刷新状态</button>
+          <button id="clear-ended-history" class="button button-secondary button-small" type="button" title="从当前列表收起已结束任务，生成结果与费用记录保留">清理已结束</button>
+          <button id="toggle-hidden-history" class="button button-secondary button-small" type="button" aria-pressed="false" hidden>显示已清理</button>
         </div>
       </div>
+      <p id="history-summary" class="history-summary" role="status" aria-live="polite">任务分批显示；清理仅收起列表，生成结果与费用记录保留。</p>
       <div id="history-list" class="history-list"></div>
+      <button id="load-more-history" class="button button-secondary button-small history-load-more" type="button" hidden>再显示 20 个任务</button>
       <div id="history-empty" class="history-empty">
         <span aria-hidden="true">◫</span>
         <strong>还没有生成任务</strong>
@@ -422,7 +464,7 @@
     <div class="dialog-content">
       <div class="step-kicker">生成结果</div>
       <h2 id="result-dialog-title">视频已完成</h2>
-      <p class="result-expiry-note">结果地址可能过期；火山方舟当前通常仅保留 24 小时，请立即打开并下载或转存。</p>
+      <p id="result-expiry-note" class="result-expiry-note">结果地址可能过期；火山方舟当前通常仅保留 24 小时，请立即打开并下载或转存。</p>
       <div id="result-media" class="result-media"></div>
       <div id="result-details" class="result-details"></div>
     </div>
@@ -431,10 +473,13 @@
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
   <script src="/creative/web-chrome.js"></script>
-  <script src="./video-studio-contract.js"></script>
-  <script src="/creative/web-video-host.js"></script>
-  <script src="/creative/src/ecommerce-video-background.js"></script>
+  <script src="./video-studio-contract.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="/creative/web-video-host.js?v=20261011-wallet-switch-v1"></script>
+  <script src="/creative/src/ecommerce-video-background.js?v=fish-audio-script-motion-20261016-v3"></script>
   <script src="./video-studio-store.js"></script>
-  <script src="./video-studio.js"></script>
+  <script src="./video-production.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="./video-narration.js?v=fish-audio-script-motion-20261016-v3"></script>
+  <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
+  <script src="./video-studio.js?v=task-list-cleanup-20261016-v1"></script>
 </body>
 </html>

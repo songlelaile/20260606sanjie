@@ -584,7 +584,7 @@ export function PrefillEditor({
         <p className="form-message">
           {message}
           {items.some(isPrefillReady) ? (
-            <Link href="/dashboards/operating-network">查看经营网络</Link>
+            <Link href="/reports/operating-network">查看经营网络</Link>
           ) : null}
         </p>
       ) : null}

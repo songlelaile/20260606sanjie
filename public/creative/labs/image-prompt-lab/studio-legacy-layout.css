@@ -1,0 +1,881 @@
+/* Presentation only. Existing panels keep their original parents, visibility and route gates. */
+/* Scene inputs own their controls; the result area follows the same studio rhythm. */
+html.studio-legacy-layout body.scene-extension-route .sl-viral > #sceneMaterialPanel {
+  grid-column: 1;
+  grid-row: 4;
+}
+html.studio-legacy-layout body.scene-extension-route .sl-viral > #sceneConfigPanel {
+  grid-column: 2;
+  grid-row: 3 / span 2;
+}
+html.studio-legacy-layout body.scene-extension-route .sl-viral > #sceneResultsPanel {
+  grid-column: 1 / -1;
+  grid-row: 5;
+  min-height: 230px;
+}
+html.studio-legacy-layout .sl-viral .scene-material-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+html.studio-legacy-layout .sl-viral .scene-fields { grid-template-columns: minmax(0, 1fr); }
+html.studio-legacy-layout .sl-viral .scene-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+html.studio-legacy-layout .sl-viral .scene-material-card { padding: 12px; background: var(--panel-2); border-color: var(--border); }
+html.studio-legacy-layout .sl-viral .scene-material-card h3 { font-size: 13px; }
+html.studio-legacy-layout .sl-viral .scene-material-card p { min-height: 52px; font-size: 11px; }
+html.studio-legacy-layout .sl-viral .scene-material-preview { height: 118px; border-color: var(--border); background: var(--panel); color: var(--muted); }
+html.studio-legacy-layout .sl-viral .scene-heading { gap: 12px; margin-bottom: 20px; }
+html.studio-legacy-layout .sl-viral .scene-heading p { font-size: 12px; line-height: 1.65; color: var(--muted); }
+html.studio-legacy-layout .sl-viral .scene-step { width: 34px; height: 34px; border-radius: 12px; background: var(--panel-3); color: var(--accent); font-size: 12px; }
+html.studio-legacy-layout .sl-viral .scene-note { color: var(--muted); font-size: 12px; line-height: 1.65; }
+html.studio-legacy-layout .sl-viral .scene-shot { border-color: var(--border); background: var(--panel-2); padding: 12px; }
+html.studio-legacy-layout .sl-viral .scene-shot:has(input:checked) { border-color: var(--accent); background: var(--panel-3); }
+html.studio-legacy-layout .sl-viral .scene-shot strong { color: var(--text); font-size: 14px; }
+html.studio-legacy-layout .sl-viral .scene-shot span { color: var(--muted); font-size: 11px; }
+html.studio-legacy-layout .sl-viral .scene-shot-count { color: var(--accent); font-style: normal; }
+html.studio-legacy-layout .sl-viral .scene-confirm { font-size: 12px; line-height: 1.65; }
+html.studio-legacy-layout .sl-viral .scene-state { border-color: var(--border); background: var(--panel-2); color: var(--text); }
+html.studio-legacy-layout .sl-viral .scene-plan-card { border-color: var(--border); background: var(--panel-2); }
+html.studio-legacy-layout .sl-viral .scene-count-summary { color: var(--accent); }
+@media (max-width: 900px) {
+  html.studio-legacy-layout body.scene-extension-route .app.sl-workspace.sl-viral:not([hidden]) { grid-template-columns: minmax(0, 1fr); }
+  html.studio-legacy-layout body.scene-extension-route .sl-viral > :is(#viralCoreRouteStep, #sceneMaterialPanel, #sceneConfigPanel, #sceneResultsPanel) { grid-column: 1 / -1; grid-row: auto; }
+  html.studio-legacy-layout .sl-viral .scene-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 540px) {
+  html.studio-legacy-layout .sl-viral :is(.scene-fields, .scene-settings, .scene-shot-grid, .scene-plan-grid, .scene-result-grid) { grid-template-columns: minmax(0, 1fr); }
+  html.studio-legacy-layout .sl-viral .scene-material-card p { min-height: 64px; }
+  html.studio-legacy-layout .sl-viral .scene-actions { flex-wrap: wrap; }
+}
+html.studio-legacy-layout body {
+  background: var(--bg);
+  font: 14px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+
+html.studio-legacy-layout .app.sl-workspace:not([hidden]) {
+  display: grid;
+  grid-template-columns: minmax(290px, 350px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+  width: min(1160px, 100%);
+  margin: 0 auto;
+  padding: 0 28px 40px;
+}
+
+html.studio-legacy-layout .sl-workspace > * {
+  min-width: 0;
+}
+
+html.studio-legacy-layout .sl-workspace > .panel,
+html.studio-legacy-layout .sl-workspace > .sl-hero,
+html.studio-legacy-layout .sl-workspace > .sl-steps,
+html.studio-legacy-layout .sl-workspace > .local-archive-panel {
+  grid-column: 1 / -1;
+}
+
+html.studio-legacy-layout .app .hero.sl-hero:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 0;
+  gap: 18px;
+  padding: 35px 0 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: center;
+}
+
+html.studio-legacy-layout .sl-hero .hero-brand-block {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+/* The new icon badge replaces these decorative brand duplicates. */
+html.studio-legacy-layout .sl-hero .lab-logo,
+html.studio-legacy-layout .sl-hero .product-name {
+  display: none;
+}
+
+html.studio-legacy-layout .sl-hero .lab-logo {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+  box-shadow: none;
+}
+
+html.studio-legacy-layout .sl-hero .lab-logo svg {
+  width: 22px;
+  height: 22px;
+}
+
+html.studio-legacy-layout .sl-hero .product-name {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+html.studio-legacy-layout .sl-hero .eyebrow {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .06em;
+}
+
+html.studio-legacy-layout .sl-hero h1 {
+  margin: 8px 0 0;
+  color: var(--text);
+  font-size: 29px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+html.studio-legacy-layout .sl-hero p {
+  max-width: 720px;
+  margin: 10px auto 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+html.studio-legacy-layout .sl-hero .hero-actions {
+  justify-content: center;
+  gap: 8px;
+}
+
+html.studio-legacy-layout .sl-icon {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+html.studio-legacy-layout .sl-panel-icon {
+  width: 29px;
+  height: 29px;
+  flex: 0 0 auto;
+  padding: 6px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--muted);
+  stroke-width: 2;
+}
+
+html.studio-legacy-layout [data-sl-icon]::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  margin-right: 7px;
+  background: currentColor;
+  vertical-align: -.2em;
+  -webkit-mask-image: var(--sl-icon);
+  mask-image: var(--sl-icon);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+html.studio-legacy-layout button.btn[data-sl-icon]:not([hidden]),
+html.studio-legacy-layout button.mini-link[data-sl-icon]:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+html.studio-legacy-layout button[data-sl-icon]::before {
+  flex: 0 0 auto;
+  margin-right: 0;
+}
+
+html.studio-legacy-layout .sl-hero .eyebrow[data-sl-icon] {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 0 7px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+html.studio-legacy-layout .sl-hero .eyebrow[data-sl-icon]::before {
+  margin-right: 0;
+  color: var(--accent);
+}
+
+html.studio-legacy-layout .sl-workspace .detail-empty-icon.sl-empty-icon {
+  font-size: 0;
+}
+
+html.studio-legacy-layout .sl-empty-icon[data-sl-icon]::before {
+  width: 26px;
+  height: 26px;
+  margin: 0;
+}
+
+html.studio-legacy-layout .sl-steps:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 30px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+html.studio-legacy-layout .sl-steps li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 113px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+html.studio-legacy-layout .sl-steps li + li::before {
+  content: "";
+  position: absolute;
+  left: -25px;
+  width: 18px;
+  height: 1px;
+  background: var(--border);
+}
+
+html.studio-legacy-layout .sl-steps b {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--panel-2);
+  font-weight: 700;
+}
+
+html.studio-legacy-layout .sl-steps small {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+html.studio-legacy-layout .sl-steps .is-active,
+html.studio-legacy-layout .sl-steps .active,
+html.studio-legacy-layout .sl-steps [aria-current="step"] {
+  background: var(--panel-3);
+  border-color: var(--border-strong, #6e6425);
+  color: var(--accent);
+}
+
+html.studio-legacy-layout .sl-steps .is-complete,
+html.studio-legacy-layout .sl-steps .complete {
+  color: var(--accent-2);
+}
+
+html.studio-legacy-layout .sl-workspace .panel {
+  margin-top: 0;
+  border-color: var(--border);
+  border-radius: 8px;
+  background: rgba(23, 26, 34, .92);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+}
+
+html.studio-legacy-layout .sl-workspace .panel h2 {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+html.studio-legacy-layout .sl-workspace h3 {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+html.studio-legacy-layout .sl-workspace .panel-subtitle {
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+html.studio-legacy-layout .sl-workspace .flow-heading {
+  gap: 10px;
+}
+
+html.studio-legacy-layout .sl-workspace .flow-step-no {
+  min-width: 29px;
+  min-height: 29px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--panel-2);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+html.studio-legacy-layout .sl-workspace .detail-flow-panel::before {
+  content: none;
+}
+
+html.studio-legacy-layout .sl-workspace .btn {
+  min-height: 34px;
+  padding: 8px 13px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+html.studio-legacy-layout .sl-workspace label {
+  min-width: 0;
+  font-size: 12px;
+}
+
+html.studio-legacy-layout .sl-workspace input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+html.studio-legacy-layout .sl-workspace select,
+html.studio-legacy-layout .sl-workspace textarea {
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+html.studio-legacy-layout .sl-workspace input[type="file"] {
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+}
+
+html.studio-legacy-layout .sl-workspace input[type="file"]::file-selector-button {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* List main images retain their original input, prompt and generation stages. */
+html.studio-legacy-layout .app.sl-workspace.sl-main:not([hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-main > .input-layout {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(280px, .8fr) minmax(0, 1.2fr);
+  align-items: start;
+}
+
+html.studio-legacy-layout .sl-main .batch-range-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-main .sl-main-prompts .prompt-area {
+  min-height: 220px;
+}
+
+html.studio-legacy-layout .sl-main :is(#referenceSourcePanel, #linkSourcePanel) > .panel-head {
+  flex-wrap: wrap;
+}
+
+html.studio-legacy-layout .sl-main #linkSourcePanel .link-prompt-actions {
+  flex-wrap: wrap;
+}
+
+/* Reference detail keeps every stage in its original top-level sequence. */
+html.studio-legacy-layout .app.sl-workspace.sl-reference:not([hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-workbench-grid {
+  grid-template-columns: minmax(230px, 350px) minmax(0, 1fr);
+  min-height: 590px;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-source-column {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-modules-column {
+  grid-column: 2;
+  grid-row: 1;
+  border-right: 0;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-editor-column {
+  grid-column: 2;
+  grid-row: 2;
+  border-top: 1px solid var(--border);
+  border-right: 0;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-source-bar {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-source-meta,
+html.studio-legacy-layout .sl-reference .reference-detail-source-actions {
+  justify-content: flex-start;
+}
+
+html.studio-legacy-layout .sl-reference .reference-detail-fact-card-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Grid placement changes presentation; route-specific display rules remain authoritative. */
+html.studio-legacy-layout .sl-viral > #viralCoreRouteStep {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+html.studio-legacy-layout .sl-viral > .input-layout {
+  grid-column: 1;
+  grid-row: 4;
+}
+
+html.studio-legacy-layout .sl-viral > #detailSubjectStep {
+  grid-column: 1;
+  grid-row: 5;
+}
+
+html.studio-legacy-layout .sl-viral > #styleRefreshPanel {
+  grid-column: 1;
+  grid-row: 6;
+}
+
+html.studio-legacy-layout .sl-viral > #detailPromptStep {
+  grid-column: 2;
+  grid-row: 3 / span 2;
+}
+
+html.studio-legacy-layout .sl-viral > #generationPanel {
+  grid-column: 2;
+  grid-row: 5 / span 2;
+}
+
+html.studio-legacy-layout .sl-viral :is(#viralCoreRouteStep, #referenceSourcePanel, #detailSubjectStep, #styleRefreshPanel) > .panel-head {
+  flex-wrap: wrap;
+}
+
+html.studio-legacy-layout .sl-viral :is(#viralCoreRouteStep, #referenceSourcePanel, #detailSubjectStep, #styleRefreshPanel) > .panel-head > div:first-child {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+html.studio-legacy-layout .sl-viral :is(#viralCoreRouteStep, #referenceSourcePanel, #detailSubjectStep, #styleRefreshPanel) > .panel-head > .pill {
+  flex-shrink: 0;
+  min-width: 64px;
+  max-width: 100%;
+  justify-content: center;
+  white-space: normal;
+}
+
+html.studio-legacy-layout .sl-viral .viral-derivative-blueprint {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 7px;
+}
+
+html.studio-legacy-layout .sl-viral .viral-blueprint-card {
+  padding-block: 12px;
+}
+
+html.studio-legacy-layout .sl-viral .viral-blueprint-operator {
+  min-height: 18px;
+  line-height: 1;
+}
+
+html.studio-legacy-layout .sl-viral .viral-blueprint-operator.arrow {
+  transform: rotate(90deg);
+}
+
+html.studio-legacy-layout .sl-viral .viral-core-route-grid,
+html.studio-legacy-layout .sl-viral .image-grid,
+html.studio-legacy-layout .sl-viral .product-angle-grid,
+html.studio-legacy-layout .sl-viral .model-angle-grid,
+html.studio-legacy-layout .sl-viral .style-refresh-smart-bar,
+html.studio-legacy-layout .sl-viral .style-refresh-source-modes,
+html.studio-legacy-layout .sl-viral .style-refresh-custom-grid,
+html.studio-legacy-layout .sl-viral .style-refresh-options,
+html.studio-legacy-layout .sl-viral .style-refresh-copy-config,
+html.studio-legacy-layout .sl-viral .detail-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-viral .viral-core-route-card {
+  min-height: 0;
+  padding: 14px;
+  gap: 6px;
+  border-radius: 9px;
+}
+
+html.studio-legacy-layout .sl-viral .viral-core-route-card strong {
+  font-size: 16px;
+}
+
+html.studio-legacy-layout .sl-viral .viral-core-route-card small {
+  font-size: 12px;
+}
+
+html.studio-legacy-layout .sl-viral .style-refresh-style-grid,
+html.studio-legacy-layout .sl-viral .style-refresh-strength-grid,
+html.studio-legacy-layout .sl-viral .style-refresh-plan-preview,
+html.studio-legacy-layout .sl-viral .detail-input-grid,
+html.studio-legacy-layout .sl-viral .detail-param-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-viral .generation-frame {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-viral #generationPanel .generation-controls .control-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-viral #generationPanel .generation-controls .control-grid > label {
+  grid-column: auto;
+}
+
+html.studio-legacy-layout .sl-viral #generationPanel .result-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-viral .detail-config {
+  border-right: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+html.studio-legacy-layout .sl-viral .detail-empty {
+  min-height: 160px;
+}
+
+html.studio-legacy-layout .sl-workspace .empty-result,
+html.studio-legacy-layout .sl-workspace .sku-empty {
+  min-height: 350px;
+  padding: 24px 16px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+html.studio-legacy-layout .sl-workspace .detail-empty strong,
+html.studio-legacy-layout .sl-workspace .sku-empty strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+html.studio-legacy-layout .sl-workspace .detail-empty-icon {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 22px;
+}
+
+/* SKU keeps its four original sections and all controls within the same workflow. */
+html.studio-legacy-layout .app.sl-workspace.sl-sku:not([hidden]) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-sku #skuPanel {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+html.studio-legacy-layout .sl-sku .sku-workflow-bar {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 0 0 18px;
+  margin-bottom: 18px;
+  background: transparent;
+}
+
+html.studio-legacy-layout .sl-sku .sku-progress {
+  display: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: min(650px, 100%);
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow {
+  grid-template-columns: minmax(290px, 350px) minmax(0, 1fr);
+  gap: 14px 18px;
+  align-items: start;
+  background: transparent;
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow > .sku-step {
+  grid-column: 1;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(23, 26, 34, .92);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow > .sku-step:nth-child(1) {
+  grid-row: 1;
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow > .sku-step:nth-child(2) {
+  grid-row: 2;
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow > .sku-step:nth-child(3) {
+  grid-row: 3;
+}
+
+html.studio-legacy-layout .sl-sku .sku-flow > .sku-result-step {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  min-height: 590px;
+}
+
+html.studio-legacy-layout .sl-sku .sku-step-head {
+  gap: 10px;
+}
+
+html.studio-legacy-layout .sl-sku .sku-step-head > span {
+  width: 29px;
+  min-width: 29px;
+  height: 29px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--panel-2);
+  font-weight: 700;
+}
+
+html.studio-legacy-layout .sl-sku .sku-step-head strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+html.studio-legacy-layout .sl-sku .sku-material-grid,
+html.studio-legacy-layout .sl-sku .sku-config-grid,
+html.studio-legacy-layout .sl-sku .sku-runbar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-sku .sku-core-params {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-sku .sku-custom-size {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+html.studio-legacy-layout .sl-sku .sku-custom-size-title,
+html.studio-legacy-layout .sl-sku .sku-custom-size-help,
+html.studio-legacy-layout .sl-sku .sku-custom-size-error {
+  grid-column: 1 / -1;
+}
+
+html.studio-legacy-layout .sl-sku .sku-upload-card {
+  min-width: 0;
+  padding: 12px;
+  border-color: var(--border);
+  border-radius: 9px;
+  background: var(--panel-2);
+}
+
+html.studio-legacy-layout .sl-sku .sku-upload-head strong {
+  font-size: 14px;
+}
+
+html.studio-legacy-layout .sl-sku .sku-drop {
+  border-color: var(--border-strong, #6e6425);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+html.studio-legacy-layout .sl-sku .sku-drop:hover {
+  border-color: var(--accent);
+  background: var(--panel-3);
+}
+
+html.studio-legacy-layout .sl-sku .sku-task-toolbar {
+  flex-wrap: wrap;
+}
+
+html.studio-legacy-layout .sl-sku .sku-task-toolbar-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+html.studio-legacy-layout .sl-sku .sku-actions .btn {
+  min-width: 0;
+  width: 100%;
+}
+
+html.studio-legacy-layout .sl-sku .sku-result-head {
+  flex-wrap: wrap;
+}
+
+html.studio-legacy-layout .sl-sku .sku-result-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+html.studio-legacy-layout .sl-layout-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+@media (max-width: 900px) {
+  html.studio-legacy-layout .sl-main > .input-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html.studio-legacy-layout .app.sl-workspace:not([hidden]) {
+    padding-inline: 18px;
+  }
+
+  html.studio-legacy-layout .sl-steps:not([hidden]) {
+    gap: 12px;
+  }
+
+  html.studio-legacy-layout .sl-steps li {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 10px;
+  }
+
+  html.studio-legacy-layout .sl-steps li + li::before {
+    content: none;
+  }
+
+  html.studio-legacy-layout .sl-hero h1 {
+    font-size: 25px;
+  }
+}
+
+@media (max-width: 760px) {
+  html.studio-legacy-layout .sl-reference .reference-detail-workbench-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html.studio-legacy-layout .sl-reference .reference-detail-column {
+    grid-column: 1;
+    grid-row: auto;
+    border-right: 0;
+  }
+
+  html.studio-legacy-layout .sl-reference .reference-detail-fact-card-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 650px) {
+  html.studio-legacy-layout .sl-main .batch-range-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html.studio-legacy-layout .app.sl-workspace:not([hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 0 12px 24px;
+  }
+
+  html.studio-legacy-layout .sl-workspace.sl-viral > #viralCoreRouteStep,
+  html.studio-legacy-layout .sl-workspace.sl-viral > .input-layout,
+  html.studio-legacy-layout .sl-workspace.sl-viral > #detailSubjectStep,
+  html.studio-legacy-layout .sl-workspace.sl-viral > #styleRefreshPanel,
+  html.studio-legacy-layout .sl-workspace.sl-viral > #detailPromptStep,
+  html.studio-legacy-layout .sl-workspace.sl-viral > #generationPanel,
+  html.studio-legacy-layout .sl-sku .sku-flow > .sku-step,
+  html.studio-legacy-layout .sl-sku .sku-flow > .sku-result-step {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  html.studio-legacy-layout .sl-sku .sku-flow {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  html.studio-legacy-layout .app .hero.sl-hero:not([hidden]) {
+    gap: 14px;
+    padding-top: 22px;
+  }
+
+  html.studio-legacy-layout .sl-steps:not([hidden]) {
+    gap: 5px;
+  }
+
+  html.studio-legacy-layout .sl-steps li {
+    padding: 7px 5px;
+    gap: 5px;
+    font-size: 9px;
+  }
+
+  html.studio-legacy-layout .sl-steps b {
+    width: 21px;
+    height: 21px;
+    border-radius: 7px;
+  }
+
+  html.studio-legacy-layout .sl-steps small {
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+
+  html.studio-legacy-layout .sl-workspace .panel,
+  html.studio-legacy-layout .sl-sku .sku-flow > .sku-step {
+    padding: 15px;
+  }
+
+  html.studio-legacy-layout .sl-workspace .detail-panel,
+  html.studio-legacy-layout .sl-workspace .generation-panel,
+  html.studio-legacy-layout .sl-reference #referenceDetailWorkbench,
+  html.studio-legacy-layout .sl-sku #skuPanel {
+    padding: 0;
+  }
+
+  html.studio-legacy-layout .sl-workspace .panel-head,
+  html.studio-legacy-layout .sl-workspace .sku-step-head {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  html.studio-legacy-layout .sl-viral .detail-input-grid,
+  html.studio-legacy-layout .sl-viral .detail-text-grid,
+  html.studio-legacy-layout .sl-viral .detail-param-grid,
+  html.studio-legacy-layout .sl-viral #generationPanel .generation-controls .control-grid,
+  html.studio-legacy-layout .sl-sku .sku-result-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  html.studio-legacy-layout .sl-workspace .empty-result,
+  html.studio-legacy-layout .sl-workspace .sku-empty {
+    min-height: 270px;
+  }
+
+  html.studio-legacy-layout .sl-sku .sku-flow > .sku-result-step {
+    min-height: 350px;
+  }
+}

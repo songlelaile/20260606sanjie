@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   assignDmpBusinessReportsShop: vi.fn(),
+  deleteDmpBusinessReport: vi.fn(),
   getDmpBusinessReport: vi.fn(),
-  getDmpReportAccess: vi.fn(),
-  getDmpReportAccessFromToken: vi.fn(),
-  listDmpBusinessReports: vi.fn(),
+  listDmpBusinessReportArchivePair: vi.fn(),
+  listDmpBusinessReportSummaries: vi.fn(),
+  resolveDmpReportRequestContext: vi.fn(),
   saveDmpBusinessReport: vi.fn(),
   validCategoryId: vi.fn(),
   validItemId: vi.fn(),
@@ -16,440 +17,346 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/dmp-report-store", () => ({
   DMP_REPORT_ARCHIVE_MAX_BODY_BYTES: 2 * 1024 * 1024 + 64 * 1024,
   assignDmpBusinessReportsShop: mocks.assignDmpBusinessReportsShop,
-  deleteDmpBusinessReport: vi.fn(),
+  deleteDmpBusinessReport: mocks.deleteDmpBusinessReport,
   getDmpBusinessReport: mocks.getDmpBusinessReport,
-  getDmpReportAccess: mocks.getDmpReportAccess,
-  getDmpReportAccessFromToken: mocks.getDmpReportAccessFromToken,
-  listDmpBusinessReports: mocks.listDmpBusinessReports,
+  listDmpBusinessReportArchivePair: mocks.listDmpBusinessReportArchivePair,
+  listDmpBusinessReportSummaries: mocks.listDmpBusinessReportSummaries,
+  resolveDmpReportRequestContext: mocks.resolveDmpReportRequestContext,
   saveDmpBusinessReport: mocks.saveDmpBusinessReport,
   validCategoryId: mocks.validCategoryId,
   validItemId: mocks.validItemId,
   validateDmpCanonicalReport: mocks.validateDmpCanonicalReport
 }));
 
-import { GET, PATCH, POST } from "./route";
+import { DELETE, GET, OPTIONS, PATCH, POST } from "./route";
 
 const ACCESS = { userId: "user-a", tenantId: "tenant-a" };
-const REPORT = {
+const SHOP = { id: "shop-a", name: "西西礼" };
+const CONTEXT = { ok: true as const, access: ACCESS, shop: SHOP };
+const CANONICAL = {
+  schema_version: "3.0" as const,
+  title: "达摩盘商品成长竞品对标报告",
+  item_id: "593063365092",
+  period: "近30天",
+  tables: [{
+    name: "商品与成功品",
+    columns: ["角色", "商品ID"],
+    rows: [
+      { cells: ["主体", "593063365092"] },
+      { cells: ["目标对手", "623803508105"] }
+    ]
+  }]
+};
+const STORED = {
   id: "report-a",
+  reportType: "growth" as const,
+  shopId: SHOP.id,
+  shopName: SHOP.name,
   subjectItemId: "593063365092",
   competitorItemId: "623803508105",
   period: "近30天",
-  quality: "complete",
-  createdAt: "2026-08-15T00:00:00.000Z",
-  report: { schema_version: "3.0", title: "报告", item_id: "593063365092", period: "近30天", tables: [] }
+  quality: "complete" as const,
+  createdAt: "2026-08-30T00:00:00.000Z",
+  report: CANONICAL
 };
 
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
-
-describe("GET /api/dmp-reports online-only policy", () => {
-  beforeEach(() => {
-    Object.values(mocks).forEach((mock) => mock.mockReset());
-    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
-    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
-    vi.stubEnv("PUBLIC_APP_ORIGIN", "");
-    mocks.getDmpBusinessReport.mockResolvedValue(REPORT);
-  });
-
-  it("blocks Excel downloads while reports are online-only", async () => {
-    const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?id=report-a&format=xlsx"));
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "当前版本仅支持官网在线查看，暂不提供数据下载" });
-  });
-
-  it("blocks CSV downloads while reports are online-only", async () => {
-    const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?id=report-a&format=csv"));
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: "当前版本仅支持官网在线查看，暂不提供数据下载" });
-  });
-});
-
-describe("POST /api/dmp-reports archive contract", () => {
-  const canonical = {
-    schema_version: "3.0" as const,
-    title: "达摩盘商品成长竞品对标报告",
-    item_id: "593063365092",
-    period: "近30天",
-    tables: [{
-      name: "商品与成功品",
-      columns: ["角色", "商品ID"],
-      rows: [
-        { cells: ["主体", "593063365092"] },
-        { cells: ["目标对手", "623803508105"] }
-      ]
-    }],
-    render_data: {
-      version: "1" as const,
-      products: {
-        subject: { picture_url: "https://img.alicdn.com/subject-main.png" },
-        competitor: { picture_url: "https://img.alicdn.com/competitor-main.png" }
-      }
+function extensionRequest(url: string, init: RequestInit = {}) {
+  return new Request(url, {
+    ...init,
+    headers: {
+      "x-sanjie-session": "extension-token",
+      "x-sanjie-shop": SHOP.id,
+      ...(init.body ? { "content-type": "application/json" } : {}),
+      ...init.headers
     }
-  };
+  });
+}
 
-  beforeEach(() => {
-    Object.values(mocks).forEach((mock) => mock.mockReset());
-    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
-    mocks.getDmpReportAccessFromToken.mockResolvedValue(ACCESS);
-    vi.stubEnv("PUBLIC_APP_ORIGIN", "");
-    mocks.validCategoryId.mockImplementation((value: unknown) => /^\d{1,20}$/.test(String(value ?? "")));
-    mocks.validItemId.mockImplementation((value: unknown) => /^\d{6,20}$/.test(String(value ?? "")));
-    mocks.validateDmpCanonicalReport.mockReturnValue({ report: canonical });
-    mocks.saveDmpBusinessReport.mockImplementation(async (input: {
-      subjectItemId: string;
-      competitorItemId: string;
-      report: typeof canonical;
-      quality: "complete" | "partial";
-    }) => ({
-      id: "report_archive_123",
-      reportType: "growth",
-      subjectItemId: input.subjectItemId,
-      competitorItemId: input.competitorItemId,
-      period: input.report.period,
-      quality: input.quality,
-      createdAt: "2026-08-22T00:00:00.000Z",
-      shopId: "shop-auto",
-      shopName: "西西礼",
-      report: input.report
-    }));
+function archiveBody(extra: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    report: CANONICAL,
+    sourceVersion: "2.3.58",
+    expectedShop: { officialShopId: SHOP.id, sourceShopId: "123456789012", shopName: SHOP.name },
+    sourceShop: { shopId: SHOP.id, sourceShopId: "123456789012", shopName: SHOP.name },
+    ...extra
+  });
+}
+
+beforeEach(() => {
+  Object.values(mocks).forEach((mock) => mock.mockReset());
+  mocks.resolveDmpReportRequestContext.mockResolvedValue(CONTEXT);
+  mocks.validCategoryId.mockImplementation((value: unknown) => /^\d{1,20}$/.test(String(value ?? "")));
+  mocks.validItemId.mockImplementation((value: unknown) => /^\d{6,20}$/.test(String(value ?? "")));
+  mocks.validateDmpCanonicalReport.mockReturnValue({ report: CANONICAL });
+  mocks.saveDmpBusinessReport.mockResolvedValue(STORED);
+});
+
+describe("DMP report request context", () => {
+  it("allows the explicit shop header in CORS preflight", () => {
+    expect(OPTIONS().headers.get("access-control-allow-headers")).toContain("x-sanjie-shop");
   });
 
-  it("archives with the canonical subject/competitor identity and returns the official report URL", async () => {
-    const response = await POST(new Request("https://untrusted-inbound.example/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        report: canonical,
-        subjectItemId: "999999999999",
-        competitorItemId: "888888888888",
-        shopId: "browser-active-shop",
-        sourceVersion: "2.1.6"
-      })
-    }));
-
-    expect(response.status).toBe(201);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      access: ACCESS,
-      subjectItemId: "593063365092",
-      competitorItemId: "623803508105",
-      sourceVersion: "2.1.6",
-      report: expect.objectContaining({
-        render_data: {
-          version: "1",
-          products: {
-            subject: { picture_url: "https://img.alicdn.com/subject-main.png" },
-            competitor: { picture_url: "https://img.alicdn.com/competitor-main.png" }
-          }
-        }
-      })
-    }));
-    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("shopId");
-    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("sourceShopId");
-    expect(mocks.saveDmpBusinessReport.mock.calls[0]?.[0]).not.toHaveProperty("sourceShop");
-    await expect(response.json()).resolves.toMatchObject({
-      data: {
-        archived: true,
-        report: {
-          id: "report_archive_123",
-          subjectItemId: "593063365092",
-          competitorItemId: "623803508105",
-          shopId: "shop-auto",
-          shopName: "西西礼",
-          report: {
-            render_data: {
-              products: {
-                subject: { picture_url: "https://img.alicdn.com/subject-main.png" },
-                competitor: { picture_url: "https://img.alicdn.com/competitor-main.png" }
-              }
-            }
-          }
-        },
-        reportUrl: "https://shaozhuangai.com/tools/dmp-report?reportId=report_archive_123&view=report"
+  it("lets the authenticated server resolve the extension default shop without borrowing a browser cookie", async () => {
+    const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?scope=archive-shop", {
+      headers: {
+        "x-sanjie-session": "extension-token",
+        "x-sanjie-shop": "shop-old",
+        cookie: "sanjie_active_shop=shop-cookie"
       }
+    }));
+    expect(mocks.resolveDmpReportRequestContext).toHaveBeenCalledWith({
+      extensionToken: "extension-token",
+      allowDefaultShop: true,
+      shopId: ""
     });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ data: { shop: SHOP } });
   });
 
-  it("passes an external source ID and shop-name hint without treating either as an internal relation", async () => {
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({
-        report: canonical,
-        sourceVersion: "2.2.0",
-        sourceShop: { sourceShopId: "123456789012", shopName: "西西礼" }
-      })
-    }));
-
-    expect(response.status).toBe(201);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      access: ACCESS,
-      sourceShop: { sourceShopId: "123456789012", shopName: "西西礼" }
-    }));
-  });
-
-  it("accepts a name-only source hint and rejects malformed external IDs", async () => {
-    const nameOnly = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: canonical, sourceShop: { shopName: "西西礼" } })
-    }));
-    expect(nameOnly.status).toBe(201);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      sourceShop: { shopName: "西西礼" }
-    }));
-
-    mocks.saveDmpBusinessReport.mockClear();
-    const malformed = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: canonical, sourceShop: { sourceShopId: "not-numeric" } })
-    }));
-    expect(malformed.status).toBe(400);
-    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
-  });
-
-  it("returns the scoped storage error for an explicit foreign internal shop ID", async () => {
-    const foreignError = Object.assign(new Error("店铺不存在或不属于当前账号"), {
-      code: "DMP_REPORT_SOURCE_SHOP_INVALID",
-      status: 404
+  it("never lets a non-GET archive-shop query bypass the frozen shop header", async () => {
+    mocks.resolveDmpReportRequestContext.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      code: "SHOP_REQUIRED",
+      error: "请先选择店铺"
     });
-    mocks.saveDmpBusinessReport.mockRejectedValueOnce(foreignError);
-    const foreign = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: canonical, sourceShop: { shopId: "foreign-shop" } })
-    }));
-    expect(foreign.status).toBe(404);
-    await expect(foreign.json()).resolves.toEqual({ error: "店铺不存在或不属于当前账号" });
-  });
-
-  it("archives a category-market report with category ID as the internal subject and no competitor", async () => {
-    const market = {
-      schema_version: "3.0" as const,
-      report_type: "market" as const,
-      title: "达摩盘类目大盘报告｜少壮AI自动化",
-      item_id: "16",
-      period: "2026-03-01 至 2026-07-31",
-      market_scope: {
-        category_id: "16",
-        category_name: "女装",
-        category_path: ["服饰", "女装"]
-      },
-      tables: [{
-        name: "滚动7天市场数据",
-        columns: ["请求截止日", "成交金额"],
-        rows: [{ cells: ["2026-03-31", "3000万~4000万"] }]
-      }]
-    };
-    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: market });
-    mocks.saveDmpBusinessReport.mockImplementationOnce(async (input: {
-      subjectItemId: string;
-      competitorItemId: string;
-      report: typeof market;
-      quality: "complete" | "partial";
-    }) => ({
-      id: "market-report-1",
-      reportType: "market",
-      subjectItemId: input.subjectItemId,
-      competitorItemId: input.competitorItemId,
-      period: input.report.period,
-      quality: input.quality,
-      createdAt: "2026-08-22T00:00:00.000Z",
-      report: input.report
-    }));
-
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: market, subjectItemId: "16", competitorItemId: "" })
-    }));
-
-    expect(response.status).toBe(201);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      subjectItemId: "16",
-      competitorItemId: "",
-      report: expect.objectContaining({ report_type: "market", market_scope: market.market_scope })
-    }));
-    await expect(response.json()).resolves.toMatchObject({
-      data: { report: { reportType: "market", subjectItemId: "16", competitorItemId: "" } }
-    });
-  });
-
-  it("returns the same official report identity when an archive POST is retried", async () => {
-    const request = () => POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: canonical, sourceVersion: "2.1.6" })
-    }));
-
-    const [first, retry] = await Promise.all([request(), request()]);
-    expect(first.status).toBe(201);
-    expect(retry.status).toBe(201);
-    const [firstBody, retryBody] = await Promise.all([first.json(), retry.json()]);
-    expect(retryBody.data.report.id).toBe(firstBody.data.report.id);
-    expect(retryBody.data.reportUrl).toBe(firstBody.data.reportUrl);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledTimes(2);
-  });
-
-  it("archives malformed channel-spend columns as partial instead of rejecting the report", async () => {
-    const malformed = structuredClone(canonical);
-    malformed.tables.push({
-      name: "渠道花费",
-      columns: ["渠道", "主体30日消耗"],
-      rows: [{ cells: ["人群推广", "3921.86", "多出的业务值"] }]
-    });
-    const normalized = structuredClone(malformed);
-    normalized.tables.at(-1)!.columns.push("列3");
-    mocks.validateDmpCanonicalReport.mockReturnValueOnce({
-      report: normalized,
-      issues: ["业务表「渠道花费」列结构无效，已自动对齐"]
-    });
-
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({
-        report: malformed,
-        subjectItemId: "593063365092",
-        competitorItemId: "623803508105",
-        quality: "complete",
-        sourceVersion: "2.1.8"
-      })
-    }));
-
-    expect(response.status).toBe(201);
-    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
-      quality: "partial",
-      report: expect.objectContaining({
-        tables: expect.arrayContaining([
-          expect.objectContaining({
-            name: "渠道花费",
-            columns: ["渠道", "主体30日消耗", "列3"]
-          })
-        ])
-      })
-    }));
-    await expect(response.json()).resolves.toMatchObject({ data: { archived: true } });
-  });
-
-  it("keeps the archive body-size boundary before parsing oversized JSON", async () => {
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
+    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports?scope=archive-shop", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
-        "Content-Length": String(2 * 1024 * 1024 + 64 * 1024 + 1),
+        "content-type": "application/json",
         "x-sanjie-session": "extension-token"
       },
-      body: "{}"
+      body: archiveBody()
     }));
-
-    expect(response.status).toBe(413);
+    expect(mocks.resolveDmpReportRequestContext).toHaveBeenCalledWith({
+      extensionToken: "extension-token",
+      shopId: ""
+    });
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ code: "SHOP_REQUIRED" });
     expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
   });
 
-  it("rejects archives whose subject and competitor identity are the same", async () => {
-    const sameIdentity = structuredClone(canonical);
-    sameIdentity.tables[0].rows[1].cells[1] = "593063365092";
-    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: sameIdentity });
-
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: sameIdentity })
-    }));
-
+  it("never lets the archive-shop resolver double as a report detail request", async () => {
+    const response = await GET(new Request(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-shop&id=report-a",
+      { headers: { "x-sanjie-session": "extension-token" } }
+    ));
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "主体商品与对标商品 ID 不能相同" });
-    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ code: "INVALID_ARCHIVE_SHOP_SCOPE" });
+    expect(mocks.resolveDmpReportRequestContext).not.toHaveBeenCalled();
+    expect(mocks.getDmpBusinessReport).not.toHaveBeenCalled();
   });
 
-  it("rejects a competition archive with more than three competitor identities", async () => {
-    const overLimit = {
-      ...structuredClone(canonical),
-      report_type: "competition" as const,
-      competitor_ids: ["623803508105", "563697874317", "589538478", "342744019"]
-    };
-    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: overLimit });
-
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({ report: overLimit })
+  it("does not expose the default archive-shop resolver to a browser-only request", async () => {
+    const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?scope=archive-shop", {
+      headers: { cookie: "sanjie_active_shop=shop-a" }
     }));
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "本店与竞店 ID 无效" });
-    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+    expect(response.status).toBe(401);
+    expect(mocks.resolveDmpReportRequestContext).not.toHaveBeenCalled();
   });
 
-  it("returns a client error without saving when the report contains authentication material", async () => {
-    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ error: "报告包含敏感鉴权字段，禁止归档" });
-    const response = await POST(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-sanjie-session": "extension-token" },
-      body: JSON.stringify({
-        report: { ...canonical, tables: [{ name: "渠道花费", columns: ["cookie"], rows: [] }] },
-        subjectItemId: "593063365092",
-        competitorItemId: "623803508105"
-      })
+  it("passes the browser's explicit activity cookie to the strict resolver", async () => {
+    mocks.listDmpBusinessReportSummaries.mockResolvedValue({
+      summaries: [], page: 1, pageSize: 24, total: 0, totalPages: 0, hasNext: false
+    });
+    await GET(new Request("https://shaozhuangai.com/api/dmp-reports", {
+      headers: { cookie: "foo=bar; sanjie_active_shop=shop-cookie" }
     }));
+    expect(mocks.resolveDmpReportRequestContext).toHaveBeenCalledWith({
+      browserHeaderShopId: "",
+      browserCookieShopId: "shop-cookie"
+    });
+  });
 
-    expect(response.status).toBe(400);
-    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+  it("fails closed when a browser page header conflicts with the current activity cookie", async () => {
+    mocks.resolveDmpReportRequestContext.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      code: "SHOP_MISMATCH",
+      error: "页面店铺与当前官网活动店铺不一致，请刷新后重试"
+    });
+    const response = await GET(new Request("https://shaozhuangai.com/api/dmp-reports?id=report-a", {
+      headers: { "x-sanjie-shop": "shop-old", cookie: "sanjie_active_shop=shop-new" }
+    }));
+    expect(mocks.resolveDmpReportRequestContext).toHaveBeenCalledWith({
+      browserHeaderShopId: "shop-old",
+      browserCookieShopId: "shop-new"
+    });
+    expect(response.status).toBe(409);
+    expect(mocks.getDmpBusinessReport).not.toHaveBeenCalled();
   });
 });
 
-describe("PATCH /api/dmp-reports shop assignment", () => {
-  beforeEach(() => {
-    Object.values(mocks).forEach((mock) => mock.mockReset());
-    mocks.getDmpReportAccess.mockResolvedValue(ACCESS);
+describe("GET /api/dmp-reports", () => {
+  it("returns a shop-scoped paginated summary list without report bodies", async () => {
+    const summary = {
+      id: "summary-a", reportType: "growth", shopId: SHOP.id, shopName: SHOP.name,
+      subjectItemId: "593063365092", competitorItemId: "623803508105", period: "近30天",
+      quality: "partial", createdAt: "2026-08-30T00:00:00.000Z", title: "商品报告",
+      subjectThumbnail: { url: "", title: "主体" }, competitorThumbnail: { url: "", title: "竞品" }
+    };
+    mocks.listDmpBusinessReportSummaries.mockResolvedValue({
+      summaries: [summary], page: 2, pageSize: 50, total: 51, totalPages: 2, hasNext: false
+    });
+
+    const response = await GET(extensionRequest("https://shaozhuangai.com/api/dmp-reports?page=2&pageSize=99"));
+    expect(response.status).toBe(200);
+    expect(mocks.listDmpBusinessReportSummaries).toHaveBeenCalledWith(ACCESS, {
+      shopId: SHOP.id, page: 2, pageSize: 99
+    });
+    const body = await response.json();
+    expect(body.data.pagination).toEqual({ page: 2, pageSize: 50, total: 51, totalPages: 2, hasNext: false });
+    expect(body.data.reports).toEqual([summary]);
+    expect(body.data.reports[0]).not.toHaveProperty("report");
   });
 
-  it("assigns a complete report group to a tenant shop without accepting client-side shop names", async () => {
-    mocks.assignDmpBusinessReportsShop.mockResolvedValue({
-      ok: true,
-      reportIds: ["report-a", "report-b"],
-      shop: { id: "shop-a", name: "西西礼" }
-    });
-    const response = await PATCH(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reportIds: ["report-a", "report-b"], shopId: "shop-a", shopName: "伪造名称" })
-    }));
-
+  it("loads one report body only by id and current shop", async () => {
+    mocks.getDmpBusinessReport.mockResolvedValue(STORED);
+    const response = await GET(extensionRequest("https://shaozhuangai.com/api/dmp-reports?id=report-a"));
     expect(response.status).toBe(200);
-    expect(mocks.assignDmpBusinessReportsShop).toHaveBeenCalledWith({
-      access: ACCESS,
-      reportIds: ["report-a", "report-b"],
-      shopId: "shop-a"
+    expect(mocks.getDmpBusinessReport).toHaveBeenCalledWith(ACCESS, "report-a", SHOP.id);
+  });
+
+  it("keeps online-only download blocking after the scoped detail lookup", async () => {
+    mocks.getDmpBusinessReport.mockResolvedValue(STORED);
+    const response = await GET(extensionRequest("https://shaozhuangai.com/api/dmp-reports?id=report-a&format=xlsx"));
+    expect(response.status).toBe(403);
+  });
+
+  it("returns only the requested shop and product pair for plugin archive merging", async () => {
+    mocks.listDmpBusinessReportArchivePair.mockResolvedValue([STORED]);
+    const response = await GET(extensionRequest(
+      "https://shaozhuangai.com/api/dmp-reports?scope=archive-pair&reportType=growth&subjectItemId=593063365092&competitorItemId=623803508105&quality=complete"
+    ));
+    expect(response.status).toBe(200);
+    expect(mocks.listDmpBusinessReportArchivePair).toHaveBeenCalledWith(ACCESS, {
+      shopId: SHOP.id, reportType: "growth", subjectItemId: "593063365092",
+      competitorItemId: "623803508105", quality: "complete"
     });
-    await expect(response.json()).resolves.toEqual({
-      data: {
-        assignment: {
-          ok: true,
-          reportIds: ["report-a", "report-b"],
-          shop: { id: "shop-a", name: "西西礼" }
-        }
+  });
+});
+
+describe("POST /api/dmp-reports", () => {
+  it("requires header, expected shop, source shop and saved shop to be identical", async () => {
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST", body: archiveBody()
+    }));
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      access: ACCESS, shopId: SHOP.id, sourceShop: expect.objectContaining({ shopId: SHOP.id }),
+      subjectItemId: "593063365092", competitorItemId: "623803508105"
+    }));
+  });
+
+  it("rejects a mismatched expected or source shop before saving", async () => {
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST", body: archiveBody({ expectedShop: { officialShopId: "shop-b" } })
+    }));
+    expect(response.status).toBe(409);
+    expect(mocks.saveDmpBusinessReport).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ code: "DMP_REPORT_SHOP_MISMATCH" });
+  });
+
+  it("archives normalized incomplete input as partial without adding a quality gate", async () => {
+    mocks.validateDmpCanonicalReport.mockReturnValueOnce({ report: CANONICAL, issues: ["待补数据"] });
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST", body: archiveBody({ quality: "complete" })
+    }));
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({ quality: "partial" }));
+  });
+
+  it("returns confirmed atomic replacement retention", async () => {
+    mocks.saveDmpBusinessReport.mockResolvedValueOnce({
+      ...STORED,
+      retention: {
+        mode: "replace-latest-pair", confirmed: true, replacedReportId: "report-a",
+        absorbedReportIds: ["report-a", "report-old"]
       }
     });
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      body: archiveBody({
+        archiveMode: "replace-latest-pair", replaceReportId: "report-a",
+        absorbedReportIds: ["report-a", "report-old", "report-old"]
+      })
+    }));
+    expect(response.status).toBe(201);
+    expect(mocks.saveDmpBusinessReport).toHaveBeenCalledWith(expect.objectContaining({
+      replaceReportId: "report-a", absorbedReportIds: ["report-a", "report-old"]
+    }));
   });
 
-  it("returns the scoped store error without changing its status", async () => {
-    mocks.assignDmpBusinessReportsShop.mockResolvedValue({
-      ok: false,
-      error: "店铺不存在或不属于当前账号",
-      status: 404
-    });
-    const response = await PATCH(new Request("https://shaozhuangai.com/api/dmp-reports", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reportIds: ["report-a"], shopId: "foreign-shop" })
+  it.each([
+    ["DMP_REPORT_REPLACE_CONFLICT", "原报告范围冲突"],
+    ["DMP_REPORT_HISTORY_STALE", "历史报告已变化"]
+  ])("returns a coded 409 and never masks %s", async (code, message) => {
+    mocks.saveDmpBusinessReport.mockRejectedValueOnce(Object.assign(new Error(message), { code, status: 409 }));
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      body: archiveBody({ archiveMode: "replace-latest-pair", replaceReportId: "report-a", absorbedReportIds: ["report-a"] })
     }));
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: "店铺不存在或不属于当前账号" });
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: message, code });
+  });
+
+  it("keeps the archive body-size limit", async () => {
+    const response = await POST(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "POST",
+      headers: { "content-length": String(2 * 1024 * 1024 + 64 * 1024 + 1) },
+      body: "{}"
+    }));
+    expect(response.status).toBe(413);
+  });
+});
+
+describe("PATCH and DELETE /api/dmp-reports", () => {
+  it("moves an entire identity group from the current source shop", async () => {
+    mocks.assignDmpBusinessReportsShop.mockResolvedValue({
+      ok: true, reportIds: ["report-a", "report-old"], shop: { id: "shop-b", name: "店铺 B" }
+    });
+    const response = await PATCH(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "PATCH",
+      body: JSON.stringify({
+        sourceShopId: SHOP.id, targetShopId: "shop-b", reportType: "growth",
+        subjectItemId: "593063365092", competitorItemId: "623803508105"
+      })
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.assignDmpBusinessReportsShop).toHaveBeenCalledWith({
+      access: ACCESS, sourceShopId: SHOP.id, targetShopId: "shop-b", reportType: "growth",
+      subjectItemId: "593063365092", competitorItemId: "623803508105"
+    });
+  });
+
+  it("preserves the existing unclassified target while keeping source-shop scoping", async () => {
+    mocks.assignDmpBusinessReportsShop.mockResolvedValue({ ok: true, reportIds: ["report-a"], shop: null });
+    const response = await PATCH(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "PATCH",
+      body: JSON.stringify({ sourceShopId: SHOP.id, targetShopId: "", reportIds: ["report-a"] })
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.assignDmpBusinessReportsShop).toHaveBeenCalledWith(expect.objectContaining({
+      sourceShopId: SHOP.id, targetShopId: "", reportIds: ["report-a"]
+    }));
+  });
+
+  it("rejects a foreign source shop before assignment", async () => {
+    const response = await PATCH(extensionRequest("https://shaozhuangai.com/api/dmp-reports", {
+      method: "PATCH",
+      body: JSON.stringify({ sourceShopId: "shop-foreign", targetShopId: "shop-b", reportIds: ["report-a"] })
+    }));
+    expect(response.status).toBe(409);
+    expect(mocks.assignDmpBusinessReportsShop).not.toHaveBeenCalled();
+  });
+
+  it("deletes only from the current shop", async () => {
+    mocks.deleteDmpBusinessReport.mockResolvedValue(true);
+    const response = await DELETE(extensionRequest("https://shaozhuangai.com/api/dmp-reports?id=report-a", {
+      method: "DELETE"
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.deleteDmpBusinessReport).toHaveBeenCalledWith(ACCESS, "report-a", SHOP.id);
   });
 });

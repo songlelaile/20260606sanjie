@@ -40,8 +40,8 @@ var DETAIL_STYLE_REFRESH_DEFAULT_COUNT = STYLE_REFRESH_CONTRACT.config.defaultOu
 var DETAIL_STYLE_REFRESH_MIN_COUNT = STYLE_REFRESH_CONTRACT.config.minOutputCount;
 var DETAIL_STYLE_REFRESH_MAX_COUNT = STYLE_REFRESH_CONTRACT.config.maxOutputCount;
 var DETAIL_GUIDE_HISTORY_LIMIT = 20;
-var REFERENCE_DETAIL_EMPTY_MESSAGE = '请从插件弹窗粘贴商品 URL 或提取当前商品详情';
-var REFERENCE_DETAIL_V2_MIGRATION_MESSAGE = '旧版上传参考图兜底已迁移至 V2；请从插件弹窗粘贴商品 URL 或提取当前商品详情';
+var REFERENCE_DETAIL_EMPTY_MESSAGE = '请按详情阅读顺序上传或粘贴 1–6 张参考详情截图，再分析结构框架';
+var REFERENCE_DETAIL_V2_MIGRATION_MESSAGE = '旧版学习记录需要重新分析，请重新上传参考详情截图；原图仍保留';
 var promptLabTestSend = null;
 var sourceFingerprintCache = [];
 var PRESETS = {
@@ -120,7 +120,8 @@ var PRESETS = {
 };
 var HOSTED_TEXT_MODEL_MIGRATIONS = {
   'chatgpt5.6': 'chatGPT5.5',
-  'gpt-5.5': 'chatGPT5.5'
+  'gpt-5.5': 'chatGPT5.5',
+  'gpt-5.6-sol': 'chatGPT5.5'
 };
 var HOSTED_IMAGE_MODEL_MIGRATIONS = {
   'gpt-image-2': 'image2'
@@ -360,15 +361,109 @@ var state = {
   archiveTrashBatches: [],
   archiveTrashMode: false,
   archiveLoading: false,
+  archiveReadError: '',
   archiveFailureCount: 0,
   archiveRefreshToken: 0,
   archiveRefreshTimer: 0,
+  archiveRefreshInFlight: null,
+  archiveChangeVersion: 0,
   archivePendingDeleteIds: [],
   archiveObjectUrls: [],
   archiveAssetUrls: {},
   archiveWriteQueue: Promise.resolve(),
   awaitingUnifiedConfigRefresh: false
 };
+
+var archiveHistoryState = { returnFocus: null, overflow: null, appInert: null, childReturnFocus: null, filteredBatches: [], renderedBatches: 0, view: 'project', selected: Object.create(null), trashSelected: Object.create(null), dateGroups: Object.create(null) };
+
+function archiveHistoryUpperModal() {
+  var ids = ['sgPreview', 'ctPreviewModal', 'ctMaterialModal', 'generatedImagePreviewModal',
+    'configModal', 'productSubjectModal', 'guideActionModal', 'contextActionModal', 'imageActionModal', 'archiveDeleteModal'];
+  for (var index = 0; index < ids.length; index++) {
+    var modal = $(ids[index]);
+    if (modal && !modal.hidden) return modal;
+  }
+  return null;
+}
+
+function archiveHistoryFocusable(modal) {
+  return Array.prototype.slice.call(modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex]')).filter(function (element) {
+    return !element.disabled && !element.hidden && element.tabIndex !== -1 && element.getClientRects().length;
+  });
+}
+
+function focusArchiveHistoryControl(previous) {
+  var target = previous && previous.isConnected !== false && previous.focus ? previous : $('archiveHistoryCloseBtn');
+  if (target && target.focus) target.focus({ preventScroll: true });
+}
+
+function openArchiveHistory(trigger) {
+  var modal = $('archiveHistoryModal');
+  if (!modal) return Promise.resolve({ ok: false, error: '生成记录入口未完整加载，请重新打开工作台。' });
+  if (modal.hidden) {
+    archiveHistoryState.returnFocus = trigger && trigger.focus ? trigger : document.activeElement;
+    archiveHistoryState.overflow = {
+      value: document.body.style.getPropertyValue('overflow'),
+      priority: document.body.style.getPropertyPriority('overflow')
+    };
+    var app = document.querySelector('.app');
+    archiveHistoryState.appInert = app ? { node: app, value: app.inert } : null;
+    if (app) app.inert = true;
+    document.body.style.setProperty('overflow', 'hidden');
+    modal.hidden = false;
+    if ($('archivePanel')) $('archivePanel').scrollTop = 0;
+  }
+  focusArchiveHistoryControl($('archiveHistoryCloseBtn'));
+  return refreshArchiveHistory({ silent: false });
+}
+
+function closeArchiveHistory() {
+  var modal = $('archiveHistoryModal');
+  if (!modal || modal.hidden) return;
+  modal.hidden = true;
+  if (archiveHistoryState.overflow) {
+    var overflow = archiveHistoryState.overflow;
+    if (overflow.value) document.body.style.setProperty('overflow', overflow.value, overflow.priority);
+    else document.body.style.removeProperty('overflow');
+  }
+  if (archiveHistoryState.appInert) archiveHistoryState.appInert.node.inert = archiveHistoryState.appInert.value;
+  var previous = archiveHistoryState.returnFocus;
+  archiveHistoryState.returnFocus = null;
+  archiveHistoryState.overflow = null;
+  archiveHistoryState.appInert = null;
+  archiveHistoryState.childReturnFocus = null;
+  if (!previous || previous.isConnected === false) previous = document.querySelector('[data-action="history"]') || $('openArchiveBtn');
+  if (previous && previous.focus) previous.focus({ preventScroll: true });
+}
+
+function handleArchiveHistoryKeydown(ev) {
+  var history = $('archiveHistoryModal');
+  if (!ev || !history || history.hidden || ev.defaultPrevented) return;
+  var upper = archiveHistoryUpperModal();
+  if (ev.key === 'Escape') {
+    if (upper) {
+      if (upper.id === 'generatedImagePreviewModal') closeGeneratedImagePreview();
+      else if (upper.id === 'archiveDeleteModal') closeArchiveDeleteModal();
+      else if (upper.id === 'guideActionModal') closeGuideRegenerateModal();
+      else if (upper.id === 'configModal') closeConfigModal();
+      else if (upper.id === 'productSubjectModal') closeProductSubjectModal();
+      else if (upper.id === 'contextActionModal') closeContextActionModal();
+      else if (upper.id === 'imageActionModal') closeImageActionModal();
+      else return; // Standalone creative/studio previews own their close action.
+    } else closeArchiveHistory();
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  } else if (ev.key === 'Tab') {
+    var modal = upper || history;
+    var controls = archiveHistoryFocusable(modal);
+    var first = controls[0], last = controls[controls.length - 1];
+    if (!first) { ev.preventDefault(); modal.focus({ preventScroll: true }); }
+    else if (!modal.contains(document.activeElement)) { ev.preventDefault(); focusArchiveHistoryControl(ev.shiftKey ? last : first); }
+    else if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); focusArchiveHistoryControl(last); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); focusArchiveHistoryControl(first); }
+    ev.stopImmediatePropagation();
+  }
+}
 
 function archiveAvailable() {
   return !!(IMAGE_ARCHIVE && typeof IMAGE_ARCHIVE.saveResult === 'function' && typeof IMAGE_ARCHIVE.list === 'function');
@@ -379,15 +474,34 @@ function setArchiveAccountKey(value, options) {
   var next = archiveAvailable() && IMAGE_ARCHIVE.normalizeAccountKey
     ? IMAGE_ARCHIVE.normalizeAccountKey(value)
     : (String(value || '').trim().slice(0, 140) || 'local');
+  var discoverSkuOwnerReceipts = function () {
+    if (next === 'local' || currentLabMode() !== 'sku' || !globalThis.chrome || !globalThis.chrome.runtime ||
+        globalThis.chrome.runtime.id !== 'shaozhuang-web-studio') return;
+    try { renderSkuPaidWorkspaceControls();Promise.resolve(restoreSkuDurableReceipts()).catch(function () {}); } catch (_) {}
+  };
   if (next === state.archiveAccountKey) {
-    if (options.refresh) return refreshArchiveHistory({ silent: options.silent !== false });
+    promptTaskRender();
+    if (options.refresh) {
+      discoverSkuOwnerReceipts();
+      return refreshArchiveHistory({ silent: options.silent !== false });
+    }
     return Promise.resolve({ ok: true, unchanged: true });
   }
+  Object.keys(promptTaskFlights).forEach(function (id) { promptTaskEnd(id); });
   state.archiveAccountKey = next;
+  promptTaskRender();
+  state.archiveRefreshToken++;
+  state.archiveChangeVersion++;
   state.archiveBatches = [];
   state.archiveTrashBatches = [];
+  state.archiveLoading = false;
+  state.archiveReadError = '';
+  archiveHistoryState.selected = Object.create(null);
+  archiveHistoryState.trashSelected = Object.create(null);
   releaseArchiveObjectUrls();
   renderArchiveHistory();
+  discoverSkuOwnerReceipts();
+  if (options.deferArchive) return Promise.resolve({ ok: true, deferred: true });
   return refreshArchiveHistory({ silent: options.silent !== false });
 }
 
@@ -395,28 +509,29 @@ function archiveSurfaceForItem(item) {
   item = item || {};
   if (item.archiveSurfaceMode) return item.archiveSurfaceMode;
   if (item.labMode === 'sku') return 'sku';
-  if (item.creativeRoute === 'style-refresh' || item.creativeRoute === 'case') return 'viral';
+  if (item.creativeRoute === 'style-refresh' || item.creativeRoute === 'case' || item.creativeRoute === 'scene-extension') return 'viral';
   if (item.labMode === 'detail') return 'detail';
   return 'main';
 }
 
 function archiveRouteKey(batch) {
   batch = batch || {};
-  if (batch.surfaceMode === 'viral') return batch.creativeRoute === 'style-refresh' ? 'style-refresh' : 'case';
+  if (['clothing', 'buyer', 'refinement'].indexOf(batch.creativeRoute) >= 0) return batch.creativeRoute;
+  if (batch.surfaceMode === 'viral') return normalizeViralCoreRoute(batch.creativeRoute);
   return batch.surfaceMode || 'main';
 }
 
 function archiveRouteLabel(batch) {
   var key = archiveRouteKey(batch);
   return {
-    main: '主图', detail: '详情页', sku: '批量 SKU', case: '案例裂变', 'style-refresh': '风格焕新'
+    main: '主图', detail: '详情页', sku: '批量 SKU', case: '案例裂变', 'style-refresh': '风格焕新', 'scene-extension': '场景延展', clothing: 'DIY成图', buyer: '买家秀', refinement: '产品精修'
   }[key] || '生图';
 }
 
 function archiveBatchTitleForItem(item) {
   item = item || {};
   var surface = archiveSurfaceForItem(item);
-  if (surface === 'viral') return (item.creativeRoute === 'style-refresh' ? '风格焕新' : '案例裂变') + (item.linkId ? (' · ' + item.linkId) : '');
+  if (surface === 'viral') return archiveRouteLabel({ surfaceMode: surface, creativeRoute: item.creativeRoute }) + (item.linkId ? (' · ' + item.linkId) : '');
   if (surface === 'sku') return '批量 SKU' + (item.skuCode ? (' · ' + item.skuCode) : '');
   if (surface === 'detail') return '详情页' + (item.linkId ? (' · ' + item.linkId) : ' · 参考图');
   return '主图' + (item.linkId ? (' · ' + item.linkId) : ' · 参考图');
@@ -493,8 +608,7 @@ function archiveBusinessMetaForItem(item, options) {
   item = item || {};
   options = options || {};
   var surface = options.surfaceMode || archiveSurfaceForItem(item);
-  var routeLabel = surface === 'viral' && item.creativeRoute === 'style-refresh'
-    ? '风格焕新' : (surface === 'viral' ? '案例裂变' : archiveRouteLabel({ surfaceMode: surface, creativeRoute: item.creativeRoute || '' }));
+  var routeLabel = archiveRouteLabel({ surfaceMode: surface, creativeRoute: item.creativeRoute || '' });
   var record = item.promptRecord || {};
   var data = record.data || {};
   var config = data['风格焕新配置'] || {};
@@ -550,7 +664,7 @@ function archiveBusinessMetaForItem(item, options) {
     copyModeName: copyModeName,
     businessRoleKey: roleKey,
     businessRoleName: roleName,
-    businessSummary: summaryParts.filter(Boolean).join(' · ') || '本机生成成果',
+    businessSummary: item.creativeRoute === 'scene-extension' && item.businessSummary ? item.businessSummary : (summaryParts.filter(Boolean).join(' · ') || '本机生成成果'),
     businessTags: archiveEvidenceTags(item),
     generationKind: item.parentResultId ? 'guide' : 'original'
   };
@@ -562,7 +676,14 @@ function archiveImageIndex(item) {
     (item.sourceIndex != null ? Number(item.sourceIndex) + 1 : 1);
 }
 
-function archiveSafeConfigSnapshot() {
+function archiveSafeConfigSnapshot(item) {
+  var captured = item && item.generationConfig;
+  if (captured && typeof captured === 'object' && !Array.isArray(captured)) {
+    return {
+      provider: typeof captured.provider === 'string' ? captured.provider : '',
+      imageModel: typeof captured.imageModel === 'string' ? captured.imageModel : ''
+    };
+  }
   try {
     var cfg = cfgFromForm();
     return { provider: cfg.provider || '', imageModel: cfg.imageModel || '' };
@@ -572,6 +693,7 @@ function archiveSafeConfigSnapshot() {
 }
 
 function scheduleArchiveRefresh() {
+  state.archiveChangeVersion++;
   clearTimeout(state.archiveRefreshTimer);
   state.archiveRefreshTimer = setTimeout(function () { refreshArchiveHistory({ silent: true }); }, 220);
 }
@@ -583,7 +705,7 @@ function queueArchiveResult(item, options) {
   if (provisional && typeof IMAGE_ARCHIVE.saveProvisionalResult !== 'function') {
     return Promise.resolve({ ok: false, code: 'ARCHIVE_PROVISIONAL_UNAVAILABLE', error: '当前环境不支持临时归档提交。' });
   }
-  var config = archiveSafeConfigSnapshot();
+  var config = archiveSafeConfigSnapshot(item);
   var surface = options.surfaceMode || archiveSurfaceForItem(item);
   var business = archiveBusinessMetaForItem(item, Object.assign({}, options, { surfaceMode: surface }));
   var technicalSourceBatchId = item.batchId || item.orchestrationBatchId || item.jobId || item.resultId || ('local_' + Date.now());
@@ -701,10 +823,102 @@ function archiveObjectUrl(asset) {
   return url;
 }
 
-function formatArchiveDate(value) {
-  var date = new Date(Number(value) || Date.now());
+function archiveRecordedDate(value) {
+  var timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+  var date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function archiveLocalDateKey(value) {
+  var date = archiveRecordedDate(value);
+  if (!date) return '';
   function pad(num) { return num < 10 ? ('0' + num) : String(num); }
-  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+}
+
+function formatArchiveDate(value) {
+  var date = archiveRecordedDate(value);
+  if (!date) return '时间未记录';
+  function pad(num) { return num < 10 ? ('0' + num) : String(num); }
+  return archiveLocalDateKey(value) + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+function archiveHistoryFilters() {
+  function value(id) { return $(id) && $(id).value || ''; }
+  return { query: value('archiveSearchInput').trim(), route: value('archiveRouteFilter') || 'all', start: value('archiveDateStart'), end: value('archiveDateEnd') };
+}
+
+function archiveCurrentSelection() {
+  return state.archiveTrashMode ? archiveHistoryState.trashSelected : archiveHistoryState.selected;
+}
+
+function archiveSourceBatches() {
+  return (state.archiveTrashMode ? state.archiveTrashBatches : state.archiveBatches) || [];
+}
+
+function archiveSelectedAssets() {
+  var selection = archiveCurrentSelection();
+  return archiveSourceBatches().reduce(function (all, batch) {
+    return all.concat((batch.assets || []).filter(function (asset) { return !!selection[asset.archiveAssetId]; }));
+  }, []);
+}
+
+function updateArchiveSelectionSummary() {
+  var selection = archiveCurrentSelection();
+  var selected = archiveSelectedAssets();
+  var visible = Object.create(null);
+  if ($('archiveBatchList')) Array.prototype.slice.call($('archiveBatchList').querySelectorAll('.archive-asset-select') || []).forEach(function (input) {
+    if (input.checked) visible[input.dataset.archiveAssetId] = true;
+  });
+  var hidden = selected.filter(function (asset) { return !visible[asset.archiveAssetId]; }).length;
+  if ($('archiveSelectionCount')) $('archiveSelectionCount').textContent = '已选 ' + selected.length + ' 张' + (hidden ? '，其中 ' + hidden + ' 张不在当前视图' : '');
+  if ($('archiveSelectionSummary')) $('archiveSelectionSummary').hidden = !selected.length;
+  if ($('archiveSelectionDownloadBtn')) { $('archiveSelectionDownloadBtn').hidden = state.archiveTrashMode; $('archiveSelectionDownloadBtn').disabled = !selected.length; }
+  if ($('archiveSelectionTrashBtn')) { $('archiveSelectionTrashBtn').hidden = state.archiveTrashMode; $('archiveSelectionTrashBtn').disabled = !selected.length; }
+  if ($('archiveSelectionRestoreBtn')) { $('archiveSelectionRestoreBtn').hidden = !state.archiveTrashMode; $('archiveSelectionRestoreBtn').disabled = !selected.length; }
+  if ($('archiveBatchList')) Array.prototype.slice.call($('archiveBatchList').querySelectorAll('.archive-batch-card') || []).forEach(function (card) {
+    var ids = card._archiveAssetIds || [];
+    var count = ids.filter(function (id) { return selection[id]; }).length;
+    var input = card.querySelector('.archive-batch-select');
+    if (input) { input.checked = count > 0 && count === ids.length; input.indeterminate = count > 0 && count < ids.length; }
+    Array.prototype.slice.call(card.querySelectorAll('.archive-selection-action') || []).forEach(function (button) {
+      if (button.dataset.selectionAction) {
+        button.disabled = !count;
+        button.textContent = button.dataset.selectionAction + ' ' + count + ' 张';
+      }
+    });
+  });
+}
+
+function clearArchiveSelection() {
+  var selection = archiveCurrentSelection();
+  Object.keys(selection).forEach(function (id) { delete selection[id]; });
+  if ($('archiveBatchList')) Array.prototype.slice.call($('archiveBatchList').querySelectorAll('.archive-asset-select') || []).forEach(function (input) {
+    input.checked = false;
+    var card = input.closest && input.closest('.archive-result-card');
+    if (card) card.classList.remove('is-selected');
+  });
+  updateArchiveSelectionSummary();
+}
+
+function clearArchiveFilters() {
+  ['archiveSearchInput', 'archiveDateStart', 'archiveDateEnd'].forEach(function (id) { if ($(id)) $(id).value = ''; });
+  if ($('archiveRouteFilter')) $('archiveRouteFilter').value = 'all';
+  renderArchiveHistory();
+}
+
+function downloadArchiveSelection() {
+  var selected = archiveCurrentSelection(), items = [];
+  archiveSourceBatches().forEach(function (batch) {
+    var ids = (batch.assets || []).filter(function (asset) { return !!selected[asset.archiveAssetId]; }).map(function (asset) {
+      // Hidden selections may not yet have a thumbnail/object URL in this view.
+      if (!state.archiveAssetUrls[asset.archiveAssetId]) archiveObjectUrl(asset);
+      return asset.archiveAssetId;
+    });
+    if (ids.length) items = items.concat(archiveDownloadItems(batch, ids));
+  });
+  return dispatchArchiveDownloads(items);
 }
 
 function formatArchiveBytes(bytes) {
@@ -856,16 +1070,20 @@ function dispatchArchiveDownloads(items) {
 
 function selectedArchiveAssetIds(batchCard) {
   if (!batchCard || !batchCard.querySelectorAll) return [];
+  if (batchCard._archiveSelectedIds) return (batchCard._archiveAssetIds || Object.keys(batchCard._archiveSelectedIds)).filter(function (id) { return batchCard._archiveSelectedIds[id]; });
   return Array.prototype.slice.call(batchCard.querySelectorAll('.archive-asset-select:checked') || []).map(function (input) {
     return input.dataset && input.dataset.archiveAssetId || '';
   }).filter(Boolean);
 }
 
-function archiveBatchMatches(batch, query, route) {
+function archiveBatchMatches(batch, query, route, start, end) {
   if (route && route !== 'all' && archiveRouteKey(batch) !== route) return false;
+  var day = archiveLocalDateKey(batch.createdAt);
+  if (start && end && start > end) return false;
+  if ((start || end) && (!day || start && day < start || end && day > end)) return false;
   if (!query) return true;
-  var haystack = [batch.businessBatchTitle, batch.batchTitle, batch.businessType, batch.productName, batch.styleName, batch.strengthName, batch.copyModeName, batch.linkId, batch.sourceBatchId, archiveRouteLabel(batch)].concat((batch.assets || []).map(function (asset) {
-    return [asset.linkId, asset.skuId, asset.skuCode, asset.businessRoleName, asset.variantName, asset.businessSummary, (asset.businessTags || []).join(' ')].join(' ');
+  var haystack = [batch.archiveBatchId, batch.archiveProjectId, batch.businessBatchTitle, batch.batchTitle, batch.businessType, batch.productName, batch.styleName, batch.strengthName, batch.copyModeName, batch.linkId, batch.sourceBatchId, archiveRouteLabel(batch)].concat((batch.assets || []).map(function (asset) {
+    return [asset.linkId, asset.skuId, asset.skuCode, asset.skuTitle, asset.taskId, asset.prompt, asset.businessRoleName, asset.variantName, asset.businessSummary, (asset.businessTags || []).join(' ')].join(' ');
   })).join(' ').toLowerCase();
   return haystack.indexOf(query.toLowerCase()) >= 0;
 }
@@ -874,7 +1092,7 @@ function archiveItemCompatibleWithCurrentSurface(asset) {
   var current = currentSurfaceMode();
   if (current !== (asset.surfaceMode || 'main')) return false;
   if (current !== 'viral') return true;
-  return archiveRouteKey(asset) === (isStyleRefreshRoute() ? 'style-refresh' : 'case');
+  return archiveRouteKey(asset) === normalizeViralCoreRoute(state.viralCoreRoute);
 }
 
 function openArchiveDeleteModal(assetIds) {
@@ -884,6 +1102,7 @@ function openArchiveDeleteModal(assetIds) {
     return;
   }
   state.archivePendingDeleteIds = assetIds.slice();
+  archiveHistoryState.childReturnFocus = document.activeElement;
   if ($('archiveDeleteCount')) $('archiveDeleteCount').textContent = String(assetIds.length);
   if ($('archiveDeleteModal')) $('archiveDeleteModal').hidden = false;
   if ($('archiveDeleteCancelBtn')) $('archiveDeleteCancelBtn').focus();
@@ -892,6 +1111,8 @@ function openArchiveDeleteModal(assetIds) {
 function closeArchiveDeleteModal() {
   state.archivePendingDeleteIds = [];
   if ($('archiveDeleteModal')) $('archiveDeleteModal').hidden = true;
+  if ($('archiveHistoryModal') && !$('archiveHistoryModal').hidden) focusArchiveHistoryControl(archiveHistoryState.childReturnFocus);
+  archiveHistoryState.childReturnFocus = null;
 }
 
 function confirmArchiveMoveToTrash() {
@@ -901,7 +1122,7 @@ function confirmArchiveMoveToTrash() {
   IMAGE_ARCHIVE.moveToTrash(state.archiveAccountKey, ids).then(function () {
     closeArchiveDeleteModal();
     setPill('archiveState', '已移至回收站：保留 7 天，超期自动删除', 'ok');
-    return refreshArchiveHistory({ silent: true });
+    return refreshArchiveHistory({ silent: true, changed: true });
   }).catch(function (error) {
     setPill('archiveState', '移入回收站失败：' + ((error && error.message) || error), 'warn');
   }).finally(function () {
@@ -913,7 +1134,7 @@ function restoreArchiveAssets(assetIds) {
   if (!archiveAvailable() || !assetIds.length) return Promise.resolve();
   return IMAGE_ARCHIVE.restore(state.archiveAccountKey, assetIds).then(function () {
     setPill('archiveState', '已恢复 ' + assetIds.length + ' 张本机档案图片', 'ok');
-    return refreshArchiveHistory({ silent: true });
+    return refreshArchiveHistory({ silent: true, changed: true });
   }).catch(function (error) {
     setPill('archiveState', '恢复失败：' + ((error && error.message) || error), 'warn');
   });
@@ -924,39 +1145,61 @@ function permanentlyDeleteArchiveAssets(assetIds) {
   if (!window.confirm('永久删除选中的 ' + assetIds.length + ' 张本机档案图片？删除后无法恢复，已下载到普通文件夹的副本不受影响。')) return Promise.resolve();
   return IMAGE_ARCHIVE.permanentlyRemove(state.archiveAccountKey, assetIds).then(function () {
     setPill('archiveState', '已从本机永久删除 ' + assetIds.length + ' 张档案图片', 'ok');
-    return refreshArchiveHistory({ silent: true });
+    return refreshArchiveHistory({ silent: true, changed: true });
   }).catch(function (error) {
     setPill('archiveState', '永久删除失败：' + ((error && error.message) || error), 'warn');
   });
 }
 
-function renderArchiveAssetCard(batch, asset, trashMode) {
+function renderArchiveAssetCard(batch, asset, trashMode, selection) {
   var card = document.createElement('article');
   card.className = 'result-card archive-result-card' + (trashMode ? ' is-trashed' : '');
   var preview = document.createElement('div');
   preview.className = 'archive-result-preview';
   var url = archiveObjectUrl(asset);
+  var previewButton = document.createElement('button');
+  previewButton.type = 'button';
+  previewButton.className = 'archive-preview-open';
   var img = document.createElement('img');
+  img.loading = 'lazy';
+  img.decoding = 'async';
   img.src = url;
   var businessName = asset.businessDisplayName || ((asset.businessRoleName || asset.variantName || asset.skuCode || '生成图') + ' · V' + (Number(asset.versionIndex) || 1));
   img.alt = businessName;
   var resultItem = archiveAssetAsResult(asset, url);
-  img.addEventListener('click', function () {
-    openGeneratedImagePreview(resultItem, businessName);
-  });
+  previewButton.setAttribute('aria-label', '预览原图：' + businessName);
+  previewButton.disabled = !url;
+  previewButton.addEventListener('click', function () { openGeneratedImagePreview(resultItem, businessName); });
+  var fallback = document.createElement('span');
+  fallback.className = 'archive-thumbnail-fallback';
+  fallback.textContent = '缩略图暂不可用 · 原记录仍在';
+  fallback.hidden = true;
+  img.addEventListener('error', function () { img.hidden = true; fallback.hidden = false; });
+  if (!url) { img.hidden = true; fallback.hidden = false; }
+  previewButton.appendChild(img);
+  previewButton.appendChild(fallback);
   var selectWrap = document.createElement('label');
   selectWrap.className = 'archive-asset-select-wrap';
   var select = document.createElement('input');
   select.type = 'checkbox';
   select.className = 'archive-asset-select';
   select.dataset.archiveAssetId = asset.archiveAssetId;
+  select.checked = !!(selection && selection[asset.archiveAssetId]);
+  card.classList.toggle('is-selected', !!select.checked);
   select.setAttribute('aria-label', '选择档案图片：' + businessName);
-  select.addEventListener('change', function () { card.classList.toggle('is-selected', !!select.checked); });
+  select.addEventListener('change', function () {
+    if (selection) {
+      if (select.checked) selection[asset.archiveAssetId] = true;
+      else delete selection[asset.archiveAssetId];
+    }
+    card.classList.toggle('is-selected', !!select.checked);
+    updateArchiveSelectionSummary();
+  });
   selectWrap.appendChild(select);
   var index = document.createElement('span');
   index.className = 'archive-result-index';
   index.textContent = padDownloadSeq(asset.imageIndex || 1);
-  preview.appendChild(img);
+  preview.appendChild(previewButton);
   preview.appendChild(selectWrap);
   preview.appendChild(index);
   var body = document.createElement('div');
@@ -980,7 +1223,9 @@ function renderArchiveAssetCard(batch, asset, trashMode) {
   if (trashMode) {
     var remaining = document.createElement('div');
     remaining.className = 'archive-expiry';
-    remaining.textContent = '剩余 ' + Math.max(1, Math.ceil((Number(asset.purgeAt) - Date.now()) / (24 * 60 * 60 * 1000))) + ' 天自动删除';
+    remaining.textContent = archiveRecordedDate(asset.purgeAt)
+      ? ('剩余 ' + Math.max(1, Math.ceil((Number(asset.purgeAt) - Date.now()) / (24 * 60 * 60 * 1000))) + ' 天自动删除')
+      : '删除期限未记录';
     body.appendChild(remaining);
   } else {
     var actions = document.createElement('div');
@@ -988,21 +1233,37 @@ function renderArchiveAssetCard(batch, asset, trashMode) {
     var download = document.createElement('button');
     download.className = 'btn ghost';
     download.type = 'button';
-    download.textContent = '下载';
+    download.textContent = '下载原图';
+    download.setAttribute('aria-label', '下载原图：' + businessName);
+    download.disabled = !url;
     download.addEventListener('click', function () { dispatchArchiveDownloads(archiveDownloadItems(batch, [asset.archiveAssetId])); });
     var guide = document.createElement('button');
     guide.className = 'btn ghost';
     guide.type = 'button';
     guide.textContent = '引导重生';
     var skuGuideUnavailable = asset.surfaceMode === 'sku' && !selfContainedSkuVisualBundle(resultItem);
-    guide.disabled = !archiveItemCompatibleWithCurrentSurface(asset) || skuGuideUnavailable;
-    guide.title = skuGuideUnavailable
+    guide.disabled = asset.creativeRoute === 'scene-extension' || !archiveItemCompatibleWithCurrentSurface(asset) || skuGuideUnavailable;
+    guide.title = asset.creativeRoute === 'scene-extension' ? '请返回场景延展，重新确认产品原图与计划' : skuGuideUnavailable
       ? '本机档案未保存完整 SKU 版式锁，不能从档案发起引导重生；请在当前 SKU 结果区操作'
       : (guide.disabled ? '切换到这张图片所属的工作台后再引导重生' : '基于这张本机档案图片引导重生');
     guide.addEventListener('click', function () { openGuideRegenerateModal(resultItem); });
     actions.appendChild(download);
-    actions.appendChild(guide);
+    if (asset.creativeRoute !== 'scene-extension') actions.appendChild(guide);
     body.appendChild(actions);
+  }
+  var detailEntries = [['任务号', asset.taskId], ['模型', asset.imageModel], ['创建时间', formatArchiveDate(asset.createdAt)], ['提示词', asset.prompt], ['反向提示词', asset.negativePrompt]].filter(function (entry) { return !!entry[1]; });
+  if (detailEntries.length) {
+    var details = document.createElement('details');
+    details.className = 'archive-record-details';
+    var summary = document.createElement('summary');
+    summary.textContent = '查看记录详情';
+    details.appendChild(summary);
+    detailEntries.forEach(function (entry) {
+      var line = document.createElement('p');
+      line.textContent = entry[0] + '：' + entry[1];
+      details.appendChild(line);
+    });
+    body.appendChild(details);
   }
   card.appendChild(preview);
   card.appendChild(body);
@@ -1013,18 +1274,27 @@ function renderArchiveBatch(batch, trashMode) {
   var card = document.createElement('section');
   card.className = 'archive-batch-card' + (trashMode ? ' archive-trash-batch' : '');
   card.dataset.archiveBatchId = batch.archiveBatchId;
+  card.dataset.archiveProjectId = batch.archiveProjectId || batch.archiveBatchId || '';
+  card._archiveSelectedIds = archiveCurrentSelection();
+  card._archiveAssetIds = (batch.assets || []).map(function (asset) { return asset.archiveAssetId; });
   var head = document.createElement('div');
   head.className = 'archive-batch-head';
   var selectAll = document.createElement('input');
   selectAll.type = 'checkbox';
   selectAll.className = 'archive-batch-select';
-  selectAll.setAttribute('aria-label', '选择批次全部档案图片');
+  selectAll.setAttribute('aria-label', '选择项目全部 ' + (batch.assets || []).length + ' 张档案图片');
   selectAll.addEventListener('change', function () {
+    (batch.assets || []).forEach(function (asset) {
+      if (selectAll.checked) card._archiveSelectedIds[asset.archiveAssetId] = true;
+      else delete card._archiveSelectedIds[asset.archiveAssetId];
+    });
+    selectAll.indeterminate = false;
     Array.prototype.slice.call(card.querySelectorAll('.archive-asset-select') || []).forEach(function (input) {
       input.checked = selectAll.checked;
       var resultCard = input.closest && input.closest('.archive-result-card');
       if (resultCard) resultCard.classList.toggle('is-selected', !!input.checked);
     });
+    updateArchiveSelectionSummary();
   });
   var copy = document.createElement('div');
   copy.className = 'archive-batch-copy';
@@ -1039,12 +1309,14 @@ function renderArchiveBatch(batch, trashMode) {
   titleLine.appendChild(chip);
   var meta = document.createElement('div');
   meta.className = 'archive-batch-meta';
+  var assets = batch.assets || [];
   var businessMeta = [
-    (batch.screenCount || batch.assetCount) + ' 个画面',
-    batch.assetCount > (batch.screenCount || batch.assetCount) ? (batch.assetCount + ' 个版本') : '',
+    '已留存 ' + assets.length + ' 张',
+    Number(batch.screenCount) > 0 ? (batch.screenCount + ' 个画面') : '',
     batch.strengthName || '',
     batch.copyModeName || '',
-    formatArchiveBytes(batch.totalBytes),
+    batch.imageModel || '',
+    Number(batch.totalBytes) > 0 ? formatArchiveBytes(batch.totalBytes) : '',
     batch.ratio || '',
     batch.resolution || '',
     formatArchiveDate(batch.createdAt)
@@ -1060,18 +1332,22 @@ function renderArchiveBatch(batch, trashMode) {
   }
   if (trashMode) {
     var restore = document.createElement('button');
-    restore.className = 'btn ghost archive-restore';
+    restore.className = 'btn ghost archive-restore archive-selection-action';
+    restore.dataset.selectionAction = '恢复勾选';
     restore.type = 'button';
     restore.textContent = '恢复勾选';
+    restore.dataset.creditLocal = 'true';
     restore.addEventListener('click', function () {
       var ids = selectedOrAll(false);
       if (!ids.length) { setPill('archiveState', '请先勾选要恢复的图片', 'warn'); return; }
       restoreArchiveAssets(ids);
     });
     var permanent = document.createElement('button');
-    permanent.className = 'btn ghost archive-permanent-delete';
+    permanent.className = 'btn ghost archive-permanent-delete archive-selection-action';
+    permanent.dataset.selectionAction = '永久删除勾选';
     permanent.type = 'button';
     permanent.textContent = '永久删除勾选';
+    permanent.dataset.creditLocal = 'true';
     permanent.addEventListener('click', function () {
       var ids = selectedOrAll(false);
       if (!ids.length) { setPill('archiveState', '请先勾选要永久删除的图片', 'warn'); return; }
@@ -1083,21 +1359,30 @@ function renderArchiveBatch(batch, trashMode) {
     var downloadAll = document.createElement('button');
     downloadAll.className = 'btn ghost';
     downloadAll.type = 'button';
-    downloadAll.textContent = '下载全部';
-    downloadAll.addEventListener('click', function () { dispatchArchiveDownloads(archiveDownloadItems(batch)); });
+    downloadAll.textContent = '下载本项目 ' + (batch.assets || []).length + ' 张';
+    downloadAll.dataset.creditLocal = 'true';
+    downloadAll.addEventListener('click', function () {
+      (batch.assets || []).forEach(function (asset) { if (!state.archiveAssetUrls[asset.archiveAssetId]) archiveObjectUrl(asset); });
+      dispatchArchiveDownloads(archiveDownloadItems(batch));
+    });
     var downloadSelected = document.createElement('button');
-    downloadSelected.className = 'btn ghost';
+    downloadSelected.className = 'btn ghost archive-selection-action';
+    downloadSelected.dataset.selectionAction = '下载勾选';
     downloadSelected.type = 'button';
     downloadSelected.textContent = '下载勾选';
+    downloadSelected.dataset.creditLocal = 'true';
     downloadSelected.addEventListener('click', function () {
       var ids = selectedOrAll(false);
       if (!ids.length) { setPill('archiveState', '请先勾选要下载的图片', 'warn'); return; }
+      (batch.assets || []).forEach(function (asset) { if (ids.indexOf(asset.archiveAssetId) >= 0 && !state.archiveAssetUrls[asset.archiveAssetId]) archiveObjectUrl(asset); });
       dispatchArchiveDownloads(archiveDownloadItems(batch, ids));
     });
     var trash = document.createElement('button');
-    trash.className = 'btn ghost archive-move-trash';
+    trash.className = 'btn ghost archive-move-trash archive-selection-action';
+    trash.dataset.selectionAction = '勾选移至回收站';
     trash.type = 'button';
     trash.textContent = '勾选移至回收站';
+    trash.dataset.creditLocal = 'true';
     trash.addEventListener('click', function () { openArchiveDeleteModal(selectedOrAll(false)); });
     actions.appendChild(downloadAll);
     actions.appendChild(downloadSelected);
@@ -1108,10 +1393,75 @@ function renderArchiveBatch(batch, trashMode) {
   head.appendChild(actions);
   var grid = document.createElement('div');
   grid.className = 'archive-result-grid';
-  (batch.assets || []).forEach(function (asset) { grid.appendChild(renderArchiveAssetCard(batch, asset, trashMode)); });
   card.appendChild(head);
   card.appendChild(grid);
+  var renderedAssets = 0;
+  var more = assets.length > 24 ? document.createElement('button') : null;
+  if (more) {
+    more.className = 'btn ghost';
+    more.type = 'button';
+    more.dataset.creditLocal = 'true';
+    more.addEventListener('click', appendAssets);
+    card.appendChild(more);
+  }
+  function appendAssets() {
+    var end = Math.min(renderedAssets + 24, assets.length);
+    while (renderedAssets < end) {
+      var asset = assets[renderedAssets++];
+      var assetCard = renderArchiveAssetCard(batch, asset, trashMode, card._archiveSelectedIds);
+      var select = assetCard.querySelector('.archive-asset-select');
+      select.addEventListener('change', function () {
+        var count = selectedArchiveAssetIds(card).length;
+        selectAll.checked = count === assets.length && count > 0;
+        selectAll.indeterminate = count > 0 && count < assets.length;
+      });
+      grid.appendChild(assetCard);
+    }
+    if (more) {
+      more.disabled = renderedAssets >= assets.length;
+      more.textContent = renderedAssets >= assets.length ? ('已显示全部 ' + assets.length + ' 张') : ('已显示 ' + renderedAssets + '/' + assets.length + ' 张 · 加载更多');
+    }
+    updateArchiveSelectionSummary();
+  }
+  appendAssets();
   return card;
+}
+
+function loadMoreArchiveBatches() {
+  var list = $('archiveBatchList');
+  if (!list) return;
+  var batches = archiveHistoryState.filteredBatches || [];
+  var end = Math.min(archiveHistoryState.renderedBatches + 6, batches.length);
+  while (archiveHistoryState.renderedBatches < end) {
+    var batch = batches[archiveHistoryState.renderedBatches++];
+    var target = list;
+    if (archiveHistoryState.view === 'date') {
+      var key = archiveLocalDateKey(batch.createdAt) || 'unknown';
+      target = archiveHistoryState.dateGroups[key];
+      if (!target) {
+        var group = document.createElement('section');
+        group.className = 'archive-date-group';
+        group.dataset.archiveDate = key;
+        var heading = document.createElement('h3');
+        heading.className = 'archive-date-heading';
+        heading.textContent = key === 'unknown' ? '时间未记录' : key;
+        group.appendChild(heading);
+        target = document.createElement('div');
+        target.className = 'archive-date-projects';
+        group.appendChild(target);
+        archiveHistoryState.dateGroups[key] = target;
+        list.appendChild(group);
+      }
+    }
+    target.appendChild(renderArchiveBatch(batch, state.archiveTrashMode));
+  }
+  if ($('archivePagination')) $('archivePagination').hidden = batches.length <= 6;
+  if ($('archivePageStatus')) $('archivePageStatus').textContent = '已显示 ' + archiveHistoryState.renderedBatches + '/' + batches.length + ' 个项目／批次';
+  if ($('archiveLoadMoreBtn')) {
+    $('archiveLoadMoreBtn').disabled = archiveHistoryState.renderedBatches >= batches.length;
+    $('archiveLoadMoreBtn').textContent = archiveHistoryState.renderedBatches >= batches.length ? '全部项目已显示' : '加载更多记录';
+  }
+  updateArchiveSelectionSummary();
 }
 
 function renderArchiveHistory() {
@@ -1120,61 +1470,128 @@ function renderArchiveHistory() {
   if (!list || !empty) return;
   releaseArchiveObjectUrls();
   list.innerHTML = '';
-  var query = (($('archiveSearchInput') && $('archiveSearchInput').value) || '').trim();
-  var route = ($('archiveRouteFilter') && $('archiveRouteFilter').value) || 'all';
-  var source = state.archiveTrashMode ? state.archiveTrashBatches : state.archiveBatches;
-  var batches = (source || []).filter(function (batch) { return archiveBatchMatches(batch, query, route); });
-  batches.forEach(function (batch) { list.appendChild(renderArchiveBatch(batch, state.archiveTrashMode)); });
+  archiveHistoryState.filteredBatches = [];
+  archiveHistoryState.renderedBatches = 0;
+  archiveHistoryState.dateGroups = Object.create(null);
+  if ($('archivePagination')) $('archivePagination').hidden = true;
+  var filters = archiveHistoryFilters();
+  var source = archiveSourceBatches();
+  var batches = source.filter(function (batch) { return archiveBatchMatches(batch, filters.query, filters.route, filters.start, filters.end); });
+  if (archiveHistoryState.view === 'date') batches.sort(function (a, b) {
+    var left = archiveLocalDateKey(a.createdAt), right = archiveLocalDateKey(b.createdAt);
+    return right.localeCompare(left) || (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0);
+  });
+  archiveHistoryState.filteredBatches = batches;
+  list.setAttribute('aria-busy', state.archiveLoading ? 'true' : 'false');
+  list.dataset.archiveView = archiveHistoryState.view;
+  if ($('archiveProjectViewBtn')) $('archiveProjectViewBtn').setAttribute('aria-pressed', archiveHistoryState.view === 'project' ? 'true' : 'false');
+  if ($('archiveDateViewBtn')) $('archiveDateViewBtn').setAttribute('aria-pressed', archiveHistoryState.view === 'date' ? 'true' : 'false');
+  if ($('archiveTimezoneNote')) {
+    var timezone = '';
+    try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+    $('archiveTimezoneNote').textContent = '按项目创建日期分组与筛选，时间使用本机时区' + (timezone ? '（' + timezone + '）' : '') + '；缺失日期归入“时间未记录”。';
+  }
+  if ($('archiveReadError')) {
+    $('archiveReadError').hidden = !state.archiveReadError;
+    if ($('archiveReadErrorText')) $('archiveReadErrorText').textContent = '读取失败：' + state.archiveReadError + '。请重试，当前显示的记录可能不是最新结果。';
+  }
+  var hasFilters = !!(filters.query || filters.route !== 'all' || filters.start || filters.end);
+  if ($('archiveClearFiltersBtn')) $('archiveClearFiltersBtn').hidden = !hasFilters;
+  if ($('archiveEmptyClearBtn')) $('archiveEmptyClearBtn').hidden = !hasFilters || state.archiveLoading || !!state.archiveReadError;
+  if ($('archiveEmptyCreateBtn')) $('archiveEmptyCreateBtn').hidden = !!source.length || state.archiveTrashMode || state.archiveLoading || !!state.archiveReadError;
+  loadMoreArchiveBatches();
   empty.hidden = !!batches.length;
   var emptyStrong = empty.querySelector && empty.querySelector('strong');
   var emptySpan = empty.querySelector && empty.querySelector('span');
-  if (emptyStrong) emptyStrong.textContent = state.archiveTrashMode ? '回收站目前为空' : '这台电脑上还没有可展示的生图档案';
-  if (emptySpan) emptySpan.textContent = state.archiveTrashMode
-    ? '移至回收站的档案会保留 7 天，超期自动从本机永久删除。'
-    : '完成生图后会自动出现在这里；本机档案被删除或清理后会同步消失。';
+  var filterMiss = !batches.length && source.length;
+  if (emptyStrong) emptyStrong.textContent = state.archiveLoading ? '正在读取生成记录…' : state.archiveReadError ? '生成记录读取失败' : filterMiss
+    ? (state.archiveTrashMode ? '没有匹配的回收站记录' : '没有匹配的生成记录')
+    : (state.archiveTrashMode ? '回收站目前为空' : '这台电脑上还没有生成记录');
+  if (emptySpan) emptySpan.textContent = state.archiveLoading ? '正在读取本浏览器中当前账号的记录，请稍候。' : state.archiveReadError ? '请使用上方重试入口重新读取。本次读取无法确认记录状态。' : filterMiss
+    ? (filters.start && filters.end && filters.start > filters.end ? '开始日期不能晚于结束日期，请调整日期范围。' : '请调整搜索关键词、模块或日期，或清除筛选。')
+    : (state.archiveTrashMode
+      ? '移至回收站的档案会保留 7 天，超期自动从本机永久删除。'
+      : '完成生图并保存后会出现在这里；进行中与待确认任务请查看工作区任务状态。');
 }
 
 function refreshArchiveHistory(options) {
   options = options || {};
   if (!archiveAvailable()) {
-    if ($('archiveState')) setPill('archiveState', '当前环境不支持本机成果档案', 'warn');
+    state.archiveReadError = '当前环境不支持生成记录，请使用支持本机档案的浏览器重新打开';
+    renderArchiveHistory();
+    if ($('archiveState')) setPill('archiveState', '当前环境不支持生成记录', 'warn');
     return Promise.resolve({ ok: false, unavailable: true });
   }
+  if (options.changed) {
+    state.archiveChangeVersion++;
+    options = Object.assign({}, options, { changed: false });
+  }
+  var history = $('archiveHistoryModal');
+  var maintenance = !!(history && history.hidden);
+  var accountKey = state.archiveAccountKey;
+  var inFlight = state.archiveRefreshInFlight;
+  if (inFlight && inFlight.accountKey === accountKey) {
+    if (inFlight.version !== state.archiveChangeVersion || inFlight.maintenance && !maintenance) {
+      return inFlight.promise.then(function () { return refreshArchiveHistory(options); });
+    }
+    if (!options.silent && $('archiveState')) setPill('archiveState', '正在读取当前账号的生成记录...', '');
+    return inFlight.promise;
+  }
   var token = ++state.archiveRefreshToken;
+  var flight = { accountKey: accountKey, version: state.archiveChangeVersion, maintenance: maintenance, promise: null };
+  state.archiveRefreshInFlight = flight;
   state.archiveLoading = true;
-  if (!options.silent && $('archiveState')) setPill('archiveState', '正在读取这台电脑的本机档案...', '');
-  return IMAGE_ARCHIVE.purgeExpired(state.archiveAccountKey).then(function () {
-    return Promise.all([
-      IMAGE_ARCHIVE.list(state.archiveAccountKey, { trash: false, skipPurge: true }),
-      IMAGE_ARCHIVE.list(state.archiveAccountKey, { trash: true, skipPurge: true })
-    ]);
-  }).then(function (parts) {
-    if (token !== state.archiveRefreshToken) return { ok: false, stale: true };
+  state.archiveReadError = '';
+  if (!maintenance) renderArchiveHistory();
+  if (!options.silent && $('archiveState')) setPill('archiveState', '正在读取当前账号的生成记录...', '');
+  var read = typeof IMAGE_ARCHIVE.listSnapshot === 'function'
+    ? IMAGE_ARCHIVE.listSnapshot(accountKey, { maintenanceOnly: maintenance }).then(function (snapshot) {
+      return maintenance ? null : [snapshot.activeBatches || [], snapshot.trashBatches || []];
+    })
+    : IMAGE_ARCHIVE.purgeExpired(accountKey).then(function () {
+      // Older archive adapters retain their complete maintenance behavior.
+      return Promise.all([
+        IMAGE_ARCHIVE.list(accountKey, { trash: false, skipPurge: true }),
+        IMAGE_ARCHIVE.list(accountKey, { trash: true, skipPurge: true })
+      ]).then(function (parts) { return maintenance ? null : parts; });
+    });
+  flight.promise = read.then(function (parts) {
+    if (token !== state.archiveRefreshToken || accountKey !== state.archiveAccountKey) return { ok: false, stale: true };
+    state.archiveLoading = false;
+    if (!parts) return { ok: true, deferred: true };
     state.archiveBatches = parts[0] || [];
     state.archiveTrashBatches = parts[1] || [];
-    state.archiveLoading = false;
+    [[state.archiveBatches, archiveHistoryState.selected], [state.archiveTrashBatches, archiveHistoryState.trashSelected]].forEach(function (pair) {
+      var retained = Object.create(null);
+      pair[0].forEach(function (batch) { (batch.assets || []).forEach(function (asset) { retained[asset.archiveAssetId] = true; }); });
+      Object.keys(pair[1]).forEach(function (id) { if (!retained[id]) delete pair[1][id]; });
+    });
     var activeCount = state.archiveBatches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0);
     var trashCount = state.archiveTrashBatches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0);
     var bytes = state.archiveBatches.concat(state.archiveTrashBatches).reduce(function (sum, batch) { return sum + (Number(batch.totalBytes) || 0); }, 0);
-    if ($('openArchiveBtn')) $('openArchiveBtn').textContent = '本机历史 · ' + activeCount;
+    if ($('openArchiveBtn')) $('openArchiveBtn').textContent = '生成记录 · ' + activeCount;
     if ($('archiveTrashToggleBtn')) {
       $('archiveTrashToggleBtn').textContent = '回收站 · ' + trashCount;
       $('archiveTrashToggleBtn').setAttribute('aria-pressed', state.archiveTrashMode ? 'true' : 'false');
     }
     if ($('archiveState')) setPill('archiveState', state.archiveTrashMode
       ? ('回收站 ' + trashCount + ' 张 · 7天内可恢复')
-      : ('本机档案 ' + activeCount + ' 张 · ' + formatArchiveBytes(bytes) + (state.archiveFailureCount ? (' · ' + state.archiveFailureCount + ' 张留档失败') : '')), state.archiveFailureCount ? 'warn' : 'ok');
-    renderArchiveHistory();
+      : ('生成记录 ' + activeCount + ' 张 · ' + formatArchiveBytes(bytes) + (state.archiveFailureCount ? (' · ' + state.archiveFailureCount + ' 张留档失败') : '')), state.archiveFailureCount ? 'warn' : 'ok');
+    var history = $('archiveHistoryModal');
+    if (!history || !history.hidden) renderArchiveHistory();
+    if (history && !history.hidden && !archiveHistoryUpperModal() && !history.contains(document.activeElement)) focusArchiveHistoryControl(null);
     return { ok: true, activeCount: activeCount, trashCount: trashCount, bytes: bytes };
   }).catch(function (error) {
-    if (token !== state.archiveRefreshToken) return { ok: false, stale: true };
+    if (token !== state.archiveRefreshToken || accountKey !== state.archiveAccountKey) return { ok: false, stale: true };
     state.archiveLoading = false;
-    state.archiveBatches = [];
-    state.archiveTrashBatches = [];
+    state.archiveReadError = (error && error.message) || String(error);
     renderArchiveHistory();
-    if ($('archiveState')) setPill('archiveState', '本机档案读取失败：' + ((error && error.message) || error), 'warn');
+    if ($('archiveState')) setPill('archiveState', '生成记录读取失败：' + ((error && error.message) || error), 'warn');
     return { ok: false, error: (error && error.message) || String(error) };
+  }).finally(function () {
+    if (state.archiveRefreshInFlight === flight) state.archiveRefreshInFlight = null;
   });
+  return flight.promise;
 }
 
 function currentLabMode() {
@@ -1193,6 +1610,11 @@ function setupLabMode(mode, detailMode) {
   var isDetail = mode === 'detail';
   var isSku = mode === 'sku';
   var isViral = mode === 'viral';
+  var entryParams = new URLSearchParams(location.search);
+  var listEntryLabel = entryParams.get('studio') !== '1'
+    ? (isDetail && detailMode === 'reference' ? '清单成详'
+      : !isDetail && !isSku && !isViral && entryParams.get('mode') === 'main' && entryParams.get('source') === 'web' && entryParams.get('layout') === '1' ? '清单成图' : '')
+    : '';
   if (document.body) {
     document.body.classList.toggle('detail-lab-mode', isDetail);
     document.body.classList.toggle('sku-lab-mode', isSku);
@@ -1200,16 +1622,18 @@ function setupLabMode(mode, detailMode) {
     document.body.classList.toggle('main-lab-mode', !isDetail && !isSku && !isViral);
   }
   syncReferenceDetailStoryRouteClass();
-  document.title = '少壮图片实验室 · ' + (isSku ? '批量 SKU' : (isViral ? '爆款裂变' : (isDetail ? '详情页生成' : '主图生成')));
+  document.title = '少壮图片实验室 · ' + (listEntryLabel || (isSku ? '批量 SKU' : (isViral ? '爆款裂变' : (isDetail ? '详情页生成' : '主图生成'))));
   if ($('labHeroEyebrow')) $('labHeroEyebrow').textContent = isSku ? 'BATCH SKU LAB' : (isViral ? 'VIRAL VISUAL LAB' : (isDetail ? 'DETAIL PROMPT LAB' : 'IMAGE PROMPT LAB'));
-  if ($('labHeroTitle')) $('labHeroTitle').textContent = isSku ? '批量 SKU 共创工作台' : (isViral ? '爆款裂变工作台' : (isDetail ? '详情页生成实验室' : '主图生成实验室'));
+  if ($('labHeroTitle')) $('labHeroTitle').textContent = listEntryLabel || (isSku ? '批量 SKU 共创工作台' : (isViral ? '爆款裂变工作台' : (isDetail ? '详情页生成实验室' : '主图生成实验室')));
   if ($('labHeroSubtitle')) {
-    $('labHeroSubtitle').textContent = isSku
+    $('labHeroSubtitle').textContent = listEntryLabel === '清单成图'
+      ? '导入链接清单，按编号生成主图提示词，结合产品主体生图；支持参考图提词、批量下载与分享卡。'
+      : isSku
       ? '按顺序添加素材、检查任务、设置参数并生成，每个 SKU 全程独立绑定。'
       : (isViral
         ? '图1提炼约30%系列视觉基因，图2同一款式贯穿全组，逐张生成画面差异化、风格一致的高端裂变图。'
         : (isDetail
-        ? '参考成详只消费正式商品详情快照；链接路线继续按 L 编号定位。上传产品主体图后，按各自门禁提词并生成详情。'
+        ? '上传几张参考详情截图，学习内容顺序、排版与视觉表达；编辑结构后，结合自家商品素材生成详情。链接路线继续按 L 编号定位。'
         : '参考图提词、链接清单主图方向、参考图/主体图生图和批量下载。'));
   }
   if ($('loadSampleBtn')) {
@@ -1225,7 +1649,7 @@ function setupLabMode(mode, detailMode) {
     state.detailReferenceMode = isViral ? 'viral' : 'story';
     setDetailMode(detailMode || 'reference');
     setPill('detailState', isViral ? '爆款裂变工作台' : '详情工作台', '');
-    setPill('contextState', isViral ? '请上传图1爆款参考' : '参考成详不读取通用参考图', '');
+    setPill('contextState', isViral ? '请上传图1爆款参考' : '请上传参考详情截图', '');
     setPill('linkState', isViral ? '本功能不读取链接 JSON' : '可粘贴详情链接 JSON', '');
     if (isViral) setViralCoreRoute('case', { silent: true });
   }
@@ -1250,8 +1674,9 @@ function applySkuQueryParams(params) {
 
 function applyViralQueryParams(params) {
   if (!params) return;
-  var route = params.get('creativeRoute') === 'style-refresh' ? 'style-refresh' : 'case';
+  var route = pinnedViralWorkflowRoute() || normalizeViralCoreRoute(params.get('creativeRoute'));
   setViralCoreRoute(route, { silent: true });
+  if (route === 'scene-extension') return;
   var bounds = detailScreenBounds('reference', state.detailReferenceMode);
   var variantCount = clampInt(params.get('viralCount'), bounds.min, bounds.max, bounds.fallback);
   if ($('detailScreenCount')) {
@@ -1273,6 +1698,24 @@ function applyViralQueryParams(params) {
   syncDetailModeControls();
   captureViralRouteSettings(route);
   if (route === 'style-refresh') renderStyleRefreshWorkStatus();
+}
+
+// Only new dedicated website entries pin a route. Existing hub and plugin URLs
+// keep their original transitions and archive taxonomy.
+function pinnedViralWorkflowRoute() {
+  if (typeof location === 'undefined') return '';
+  var params = new URLSearchParams(location.search);
+  if (params.get('mode') !== 'viral' || params.get('source') !== 'web' || params.get('layout') !== '1' || params.get('workflow') !== '1' || params.get('studio') === '1') return '';
+  var route = params.get('creativeRoute');
+  return ['case', 'style-refresh', 'scene-extension'].indexOf(route) >= 0 ? route : '';
+}
+
+function normalizeViralCoreRoute(route) {
+  return route === 'style-refresh' || route === 'scene-extension' ? route : 'case';
+}
+
+function isSceneExtensionRoute() {
+  return currentSurfaceMode() === 'viral' && state.viralCoreRoute === 'scene-extension';
 }
 
 function isStyleRefreshRoute(payload) {
@@ -1455,6 +1898,7 @@ function renderStyleRefreshRecommendations() {
     var button = document.createElement('button');
     button.type = 'button';
     button.textContent = '方案' + item.rank + ' · ' + item.name + ' · ' + item.reason;
+    button.dataset.creditLocal = 'true';
     button.addEventListener('click', function () {
       setStyleRefreshSource('library', { silent: true });
       setStyleRefreshFilter('all');
@@ -1645,49 +2089,73 @@ function recommendStyleRefresh() {
 
 function setViralCoreRoute(route, options) {
   options = options || {};
-  var next = route === 'style-refresh' ? 'style-refresh' : 'case';
+  var pinned = pinnedViralWorkflowRoute();
+  var next = pinned || normalizeViralCoreRoute(route);
+  var sceneExtension = next === 'scene-extension';
+  var routeName = archiveRouteLabel({ surfaceMode: 'viral', creativeRoute: next });
   var changed = state.viralCoreRoute !== next;
   if (changed && currentSurfaceMode() === 'viral') captureViralRouteSettings(state.viralCoreRoute);
   state.viralCoreRoute = next;
   state.detailMode = 'reference';
-  state.detailReferenceMode = next === 'style-refresh' ? 'style-refresh' : 'viral';
+  state.detailReferenceMode = next === 'case' ? 'viral' : next;
   if (document.body) {
+    document.body.classList.toggle('viral-dedicated-workspace', !!pinned);
+    if (pinned) document.body.setAttribute('data-viral-workflow', pinned);
+    else if (typeof document.body.removeAttribute === 'function') document.body.removeAttribute('data-viral-workflow');
     document.body.classList.toggle('style-refresh-route', next === 'style-refresh');
     document.body.classList.toggle('viral-case-route', next === 'case');
+    document.body.classList.toggle('scene-extension-route', sceneExtension);
   }
   if (currentSurfaceMode() === 'viral') {
-    document.title = '少壮图片实验室 · 爆款裂变 · ' + (next === 'style-refresh' ? '风格焕新' : '案例裂变');
-    setText('labHeroEyebrow', next === 'style-refresh' ? 'STYLE REFRESH LAB' : 'CASE DERIVATIVE LAB');
-    setText('labHeroTitle', next === 'style-refresh' ? '风格焕新工作台' : '案例裂变工作台');
-    setText('labHeroSubtitle', next === 'style-refresh'
+    document.title = '少壮图片实验室 · ' + (pinned ? routeName : '爆款裂变 · ' + routeName);
+    setText('labHeroEyebrow', sceneExtension ? 'SCENE EXTENSION LAB' : (next === 'style-refresh' ? 'STYLE REFRESH LAB' : 'CASE DERIVATIVE LAB'));
+    setText('labHeroTitle', routeName + '工作台');
+    setText('labHeroSubtitle', sceneExtension
+      ? '从产品细节到完整场景，支持材料、家具、日用品、珠宝饰品、美妆与服装；微观、近观、远观、超远观可生成多个角度，同组保持产品一致与风格统一。'
+      : (next === 'style-refresh'
       ? '无需案例图：V1 手动选经典风格，V2 智能推荐，V3 自由共创作为用户备选；三种方案都锁定商品主体并尊重文案选择。'
-      : '图1提炼约30%系列视觉基因，图2同一款式贯穿全组，逐张生成画面差异化、风格一致的系列图。');
+      : '图1提炼约30%系列视觉基因，图2同一款式贯穿全组，逐张生成画面差异化、风格一致的系列图。'));
   }
-  [['viralCaseModeBtn', next === 'case'], ['viralStyleModeBtn', next === 'style-refresh']].forEach(function (entry) {
+  if (pinned) setText('labHeroSubtitle', {
+    case: '上传参考图和目标商品，让同一商品生成多张构图不同、风格一致的图片。',
+    'style-refresh': '上传商品图，选择风格和文案策略，确认方案后生成一组焕新图片。',
+    'scene-extension': '上传产品正面图，选择镜头与场景；同组保持产品一致，并从细节延展到完整场景。'
+  }[pinned]);
+  [['viralCaseModeBtn', next === 'case'], ['viralStyleModeBtn', next === 'style-refresh'], ['viralSceneModeBtn', sceneExtension]].forEach(function (entry) {
     var button = $(entry[0]);
     if (!button) return;
     button.classList.toggle('active', entry[1]);
     button.setAttribute('aria-selected', entry[1] ? 'true' : 'false');
   });
   if (changed) {
-    state.activePromptRecord = next === 'style-refresh' ? state.styleRefresh.promptRecord : state.referencePrompts.detail;
+    state.activePromptRecord = sceneExtension ? null : (next === 'style-refresh' ? state.styleRefresh.promptRecord : state.referencePrompts.detail);
     if ($('detailPrompt')) $('detailPrompt').value = state.activePromptRecord ? state.activePromptRecord.prompt : '';
     if ($('detailJson')) $('detailJson').textContent = state.activePromptRecord ? JSON.stringify(state.activePromptRecord.data, null, 2) : '';
     state.detailStitchSelectionOrder = [];
     state.resultClearSelectionKeys = [];
   }
   restoreViralRouteSettings(next);
-  setPill('viralCoreRouteState', next === 'style-refresh' ? '风格焕新' : '案例裂变', 'ok');
+  setPill('viralCoreRouteState', routeName, 'ok');
+  if (sceneExtension) {
+    state.activePromptRecord = null;
+    if ($('detailPrompt')) $('detailPrompt').value = '';
+    if ($('detailJson')) $('detailJson').textContent = '';
+  }
   if (!state.activePromptRecord) setPill('detailState', next === 'style-refresh' ? '待确认风格焕新计划' : '待生成案例裂变提示词', '');
-  renderStyleRefreshControls();
-  syncDetailModeControls();
-  syncGenerationModeLabels(true);
-  renderResults();
-  if (!options.silent) setPill('detailState', next === 'style-refresh' ? '已切换风格焕新：请先上传商品主体' : '已切换案例裂变：请上传图1与图2', '');
+  if (!sceneExtension) {
+    renderStyleRefreshControls();
+    syncDetailModeControls();
+    syncGenerationModeLabels(true);
+    renderResults();
+  }
+  if (!options.silent && !sceneExtension) setPill('detailState', next === 'style-refresh' ? '已切换风格焕新：请先上传商品主体' : '已切换案例裂变：请上传图1与图2', '');
+  if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+    document.dispatchEvent(new CustomEvent('scene-extension-route-change', { detail: { route: next } }));
+  }
 }
 
 function viralRouteSettingsKey(route) {
-  return route === 'style-refresh' ? 'style-refresh' : 'case';
+  return normalizeViralCoreRoute(route);
 }
 
 function defaultViralRouteSettings(route) {
@@ -1701,6 +2169,7 @@ function defaultViralRouteSettings(route) {
 
 function captureViralRouteSettings(route) {
   var key = viralRouteSettingsKey(route);
+  if (key === 'scene-extension') return null;
   var fallback = defaultViralRouteSettings(key);
   var previous = state.viralRouteSettings && state.viralRouteSettings[key] || fallback;
   var referenceMode = key === 'style-refresh' ? 'style-refresh' : 'viral';
@@ -1719,6 +2188,7 @@ function captureViralRouteSettings(route) {
 
 function restoreViralRouteSettings(route) {
   var key = viralRouteSettingsKey(route);
+  if (key === 'scene-extension') return null;
   var fallback = defaultViralRouteSettings(key);
   var saved = state.viralRouteSettings && state.viralRouteSettings[key] || fallback;
   var referenceMode = key === 'style-refresh' ? 'style-refresh' : 'viral';
@@ -1768,42 +2238,1098 @@ function promptLabRuntimeFailure(type, message) {
   };
 }
 
-function send(type, payload) {
-  function finish(resp) {
-    resp = resp || { ok: false, error: '无响应' };
-    applyModelFallbackFromResponse(resp);
-    return resp;
+// Legacy entrypoints have no controller receipt journal. Persist a pending receipt
+// before dispatch so a new job id, retry or page reload cannot duplicate an unknown POST.
+var LEGACY_IMAGE_RECEIPT_PREFIX = 'sz.legacy-image-receipt.v1:';
+function legacyImageDefinitelyNotSubmitted(response) {
+  return !!(response && response.ok === false && response.definitiveFailure === true &&
+    response.providerSubmitted === false && response.stateUncertain !== true);
+}
+function legacyImageUnknownResponse(response) {
+  var code = String(response && response.code || 'IMAGE_RECEIPT_UNCONFIRMED');
+  var active = /^(?:IMAGE_REQUEST_ACTIVE|IMAGE_JOB_ALREADY_ACTIVE|PROMPT_JOB_ACTIVE|job_already_active)$/.test(code);
+  var auth = /AUTH|ACCOUNT_CHANGED|ACCOUNT_UNAVAILABLE|unauthorized/i.test(code);
+  var timedOut = /TIMEOUT|timeout/.test(code) || !!(response && response.timedOut);
+  return Object.assign({}, response || {}, { ok: false, stateUncertain: true, definitiveFailure: false,
+    retryable: false, code: code,
+    error: active ? '原图片任务仍在进行中，请查看进度；其他独立任务可继续。'
+      : auth ? '账号状态已变化，请恢复原账号后查看任务或重新跑；原回执和积分记录继续保留。'
+      : (timedOut ? '图片任务超时失败。' : '本次图片任务未完成。') +
+        '可选择重新跑（新任务）；新请求单独计费，原请求积分独立核对，其他任务可继续。' });
+}
+function legacyImageReceiptIdentity(request) {
+  var payload = request && request.payload || {}, config = request && request.config || {};
+  // Provider inputs and stable output slots only. Job/batch/attempt ids and secrets
+  // never become identity; otherwise a retry could manufacture a new receipt key.
+  var identity = { config: [config.provider || '', config.imageAdapter || '', config.imageEndpoint || '', config.imageModel || ''] };
+  ['prompt', 'negativePrompt', 'productImage', 'productImages', 'modelImages', 'referenceImage', 'referenceImages',
+    'visualTemplateImages', 'editBaseImage', 'editMaskImage', 'requiredMaskImage', 'allowedMaskImage',
+    'guideAnnotationImage', 'strictLocalEdit', 'sourceResultId', 'labMode', 'detailMode', 'size', 'ratio',
+    'resolution', 'count', 'quality', 'speed', 'linkId', 'skuId', 'mainImageIndex', 'detailScreenIndex'].forEach(function (key) {
+    if (payload[key] !== undefined) identity[key] = payload[key];
+  });
+  if (payload.referenceDetailBatch) identity.referenceDetailSlot = [payload.referenceDetailBatch.inputFingerprint,
+    payload.referenceDetailBatch.screenIndex];
+  return JSON.stringify(identity);
+}
+function legacyImageReceiptKey(account, request) {
+  if (!globalThis.crypto || !globalThis.crypto.subtle || typeof TextEncoder !== 'function') return Promise.reject(new Error('当前浏览器无法保存生图回执保护，请使用新版 Chrome。'));
+  return globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(legacyImageReceiptIdentity(request))).then(function (bytes) {
+    var digest = Array.from(new Uint8Array(bytes)).map(function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+    return LEGACY_IMAGE_RECEIPT_PREFIX + encodeURIComponent(account) + ':' + digest;
+  });
+}
+function skuWebsiteDurableRequest(request) {
+  return !!(request && request.payload && request.payload.labMode === 'sku' && request.payload.detailMode === 'sku' &&
+    globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id === 'shaozhuang-web-studio');
+}
+function skuDurableResponse(response, entry, key) {
+  return Object.assign({}, response, {
+    jobId: entry.identity.jobId, recoveredDelivery: true, skuProviderGeometry: entry.plan.geometry,
+    _skuFrozenDelivery: { contract: entry.snapshot.contract, outputResolution: entry.snapshot.output.resolution,
+      archiveBatchId: entry.identity.batchId, archiveBatchTitle: entry.snapshot.metadata.archiveBatchTitle || '' },
+    _skuDurableSnapshot: entry.snapshot, _skuReceiptIdentity: entry.identity,
+    _skuReceipt: { key: key, jobId: entry.identity.jobId, owner: entry.owner, receiptId: entry.identity.receiptId }
+  });
+}
+function skuSaveReturnedDelivery(owner, key, pending, request, response, durableEntry) {
+  if (durableEntry && (!response.receipt || Object.keys(response.receipt).length !== 9 || Object.keys(response.receipt).some(function (field) { return !Object.prototype.hasOwnProperty.call(durableEntry.identity,field); }) || Object.keys(durableEntry.identity).some(function (field) { return response.receipt[field] !== durableEntry.identity[field]; }))) {
+    return Promise.resolve(Object.assign(legacyImageUnknownResponse({jobId:pending.jobId,error:'原 SKU 返回回执身份不匹配，请保留原任务。'}),
+      {_skuRecovery:{owner:owner,key:key,receiptId:durableEntry.identity.receiptId,jobId:pending.jobId}}));
   }
-  if (promptLabTestSend) {
-    try { return Promise.resolve(promptLabTestSend(type, payload || {})).then(finish); }
-    catch (e) { return Promise.resolve({ ok: false, error: (e && e.message) || e }); }
+  var delivery = { version: 1, state: 'delivered', jobId: pending.jobId, createdAt: pending.createdAt,
+    taskId: String(response.taskId || ''), images: response.images.slice(),
+    skuProviderGeometry: durableEntry ? durableEntry.plan.geometry : response.skuProviderGeometry,
+    skuFrozenDelivery: { contract: durableEntry ? durableEntry.snapshot.contract : request.payload.skuVisualLock,
+      outputResolution: durableEntry ? durableEntry.snapshot.output.resolution : request.payload.outputResolution,
+      archiveBatchId: durableEntry ? durableEntry.identity.batchId : request._skuArchiveBatchId || '',
+      archiveBatchTitle: durableEntry ? durableEntry.snapshot.metadata.archiveBatchTitle || '' : request._skuArchiveBatchTitle || '' } };
+  var keep = globalThis.SZ_SKU_DELIVERY_STORE ? globalThis.SZ_SKU_DELIVERY_STORE.save(owner,key,delivery)
+    : Promise.reject(new Error('SKU 返回图片存储尚未加载。'));
+  var result = durableEntry ? skuDurableResponse(response,durableEntry,key) : Object.assign({},response,{_skuReceipt:{key:key,jobId:pending.jobId,owner:owner}});
+  var evidence = durableEntry && globalThis.SZ_SKU_DURABLE_RECEIPT.recordReceiptEvidence
+    ? globalThis.SZ_SKU_DURABLE_RECEIPT.recordReceiptEvidence(owner,key,response).catch(function (error) { result.receiptEvidenceStorageError = error.message || String(error); })
+    : Promise.resolve();
+  return evidence.then(function () { return keep; }).then(function () {
+    var marker = {version:1,state:'delivered',storage:'indexeddb',jobId:pending.jobId,taskId:delivery.taskId,createdAt:pending.createdAt};
+    if (durableEntry) marker.receiptId = durableEntry.identity.receiptId;
+    localStorage.setItem(key,JSON.stringify(marker));return result;
+  }).catch(function (error) { return Object.assign({},result,{deliveryStorageError:error.message || String(error)}); });
+}
+function skuGetOriginalReceipt(owner, key, marker, request) {
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!api || !marker || !marker.receiptId) return Promise.resolve(legacyImageUnknownResponse({jobId:marker && marker.jobId || ''}));
+  return creativeWebAccountKey().then(function (current) {
+    if (current !== owner || current !== String(state.archiveAccountKey || 'local')) throw new Error('原任务账号已变化。');
+    return api.read(owner,key);
+  }).then(function (entry) {
+    if (!entry || entry.identity.receiptId !== marker.receiptId || entry.identity.jobId !== marker.jobId) throw new Error('原 SKU 回执身份不匹配，请保留原任务。');
+    if (state.stopRequested || request._skuBatchToken !== state.skuBatchToken) throw new Error('原任务恢复已停止。');
+    return sendRuntime('GET_IMAGE_RECEIPT',{receiptIdentity:entry.identity}).then(function (response) {
+      return creativeWebAccountKey().then(function (current) {
+        if (current !== owner || current !== String(state.archiveAccountKey || 'local') || state.stopRequested || request._skuBatchToken !== state.skuBatchToken) throw new Error('原任务恢复已停止。');
+        if (response && response.ok && Array.isArray(response.images) && response.images.length) {
+          return skuSaveReturnedDelivery(owner,key,marker,request,response,entry);
+        }
+        return Object.assign(legacyImageUnknownResponse(Object.assign({},response,{jobId:entry.identity.jobId})),
+          {_skuRecovery:{owner:owner,key:key,receiptId:entry.identity.receiptId,jobId:entry.identity.jobId}});
+      });
+    });
+  }).catch(function (error) { return Object.assign(legacyImageUnknownResponse({jobId:marker.jobId,error:error.message || String(error)}),
+    {_skuRecovery:{owner:owner,key:key,receiptId:marker.receiptId,jobId:marker.jobId}}); });
+}
+function skuResolvePaidWorkspaceRequest(owner, request) {
+  return legacyImageReceiptKey(owner,request).then(function (baseKey) {
+    var clean = Object.assign({},request,{_skuPaidWorkspace:null,_skuPaidParentKey:null});
+    var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+    if (!skuWebsiteDurableRequest(request) || !api || !api.resolvePaidWorkspace) return {key:baseKey,request:clean};
+    return api.resolvePaidWorkspace(owner,baseKey,request._skuDurablePreparation).then(function (resolved) {
+      if (!resolved) { if (request._skuPaidExpectedWorkspace) throw new Error('新付费任务与原授权不匹配，本次未提交。');return {key:baseKey,request:clean}; }
+      if (request._skuPaidExpectedWorkspace && request._skuPaidExpectedWorkspace !== resolved.workspaceKey) throw new Error('新付费任务授权身份已变化，本次未提交。');
+      clean._skuPaidWorkspace = resolved.workspaceKey;clean._skuPaidParentKey = resolved.parentLegacyKey;
+      return {key:resolved.key,request:clean};
+    });
+  });
+}
+function skuSendAuthorizedImage(request, owner, runtimeOptions) {
+  if (!request._skuPaidWorkspace) return sendRuntime('GENERATE_IMAGE',request,runtimeOptions);
+  return globalThis.SZ_SKU_DURABLE_RECEIPT.verifyPaidWorkspaceDispatch(owner,request._skuPaidWorkspace,request._skuPaidParentKey).then(function () {
+    return creativeWebAccountKey();
+  }).then(function (current) {
+    if (current !== owner || owner !== String(state.archiveAccountKey || 'local') || state.stopRequested ||
+        request._skuBatchToken !== state.skuBatchToken || state.cancelledJobs[String(request.jobId || '')]) throw new Error('新付费 SKU 任务账号或操作已变化，本次未提交。');
+    return globalThis.SZ_SKU_DURABLE_RECEIPT.verifyPaidWorkspaceDispatch(owner,request._skuPaidWorkspace,request._skuPaidParentKey);
+  }).then(function () { return sendRuntime('GENERATE_IMAGE',request,runtimeOptions); });
+}
+function skuPaidTaskDescriptor(task, settings) {
+  var item = task.item || {}, owner = String(state.archiveAccountKey || 'local');
+  var baseSource = skuReplicaBaseImage(task,settings), subjectSource = item.sourceInputUrl || item.url;
+  if (!baseSource || !subjectSource) return Promise.reject(new Error('另建付费批次前请补齐对象底图和主体原件。'));
+  return Promise.all([skuVisualSourceDataUrl(baseSource),skuVisualSourceDataUrl(item.url)]).then(function (images) {
+    return skuValidateLocalizedInputGeometry(images[0],images[1],settings).then(function (geometry) {
+      var frozen = Object.assign({},geometry.settings || settings,{replicaBaseImage:images[0],replacementSubjectImage:images[1],
+        templateImage:images[0],layoutAnchorUrl:images[0],layoutAnchorSkuId:task.skuId,visualPhase:'subject-replace'});
+      frozen.visualLock = createSkuVisualLockContract(frozen,frozen.visualLock && frozen.visualLock.batchLockId);
+      var prompt = skuPromptFor(Object.assign({},item,{url:images[1]}),task.index,task.attr,frozen);
+      var payload = {prompt:prompt,negativePrompt:skuSubjectReplaceNegativePrompt(),editBaseImage:images[0],referenceImage:'',referenceImages:[],
+        productImage:images[1],productImages:[images[1]],modelImages:[],visualTemplateImages:[],promptSource:'sku',labMode:'sku',detailMode:'sku',
+        assetRightsConfirmed:true,skuVisualLock:frozen.visualLock,skuVisualLockSignature:frozen.visualLock.contractFingerprint,
+        skuVisualPhase:'subject-replace',inputRoleOrder:['IMMUTABLE_SKU_BASE','REPLACEMENT_SUBJECT'],
+        size:frozen.modelSize || frozen.size,ratio:frozen.modelRatio || frozen.ratio,resolution:frozen.modelResolution || frozen.resolution,
+        outputSize:frozen.outputSize || frozen.size,outputRatio:frozen.outputRatio || frozen.ratio,outputResolution:frozen.outputResolution || frozen.resolution,
+        clarity:'commercial',count:1,watermark:'false'};
+      return legacyImageReceiptKey(owner,{config:frozen.config,payload:payload}).then(function (key) {
+        var raw = localStorage.getItem(key), marker;
+        try { marker = JSON.parse(raw || 'null'); } catch (_) {}
+        if (!raw || !marker || marker.version !== 1 || !marker.jobId || ['pending','uncertain'].indexOf(marker.state) < 0)
+          throw new Error('未匹配旧回执：所选任务没有对应的待核对原请求；请使用正常生成，不能另建任务绕开其他身份。');
+        var cfg = frozen.config || {};
+        var title = skuBusinessTitle({skuTitle:task.attr,attributeText:task.attr,skuCode:task.skuCode});
+        if (!title) throw new Error('请先填写业务 SKU 标题。');
+        var model = {provider:String(cfg.provider || ''),imageModel:String(cfg.imageModel || ''),imageAdapter:String(cfg.imageAdapter || ''),imageEndpoint:String(cfg.imageEndpoint || '')};
+        var meta = {skuId:task.skuId,skuCode:task.skuCode,title:title,attribute:task.attr || '',index:task.index};
+        var output = {size:payload.outputSize,ratio:payload.outputRatio,resolution:payload.outputResolution,width:frozen.outputWidth,height:frozen.outputHeight};
+        var snapshot = {baseImage:baseSource,subjectImage:subjectSource,providerImages:{base:images[0],subject:images[1]},contract:frozen.visualLock,
+          geometry:{version:'SKU_PROVIDER_GEOMETRY_V1',contractFingerprint:frozen.visualLock.contractFingerprint,adapter:model.imageAdapter,
+            requestedSize:payload.size,effectiveSize:skuExpectedEffectiveProviderSize(frozen,model.imageAdapter)},
+          output:output,prompt:prompt,negativePrompt:payload.negativePrompt,model:model,metadata:meta};
+        return {parent:{key:key,raw:raw,jobId:String(marker.jobId)},task:{parentLegacyKey:key,baseImage:baseSource,subjectImage:subjectSource,snapshot:snapshot,
+          metadata:{skuId:task.skuId,skuCode:task.skuCode,title:title,attribute:task.attr || '',index:task.index},
+          output:{size:payload.outputSize,ratio:payload.outputRatio,resolution:payload.outputResolution,width:frozen.outputWidth,height:frozen.outputHeight},
+          model:{provider:String(cfg.provider || ''),imageModel:String(cfg.imageModel || ''),imageAdapter:String(cfg.imageAdapter || ''),imageEndpoint:String(cfg.imageEndpoint || '')}}};
+      });
+    });
+  });
+}
+function skuPaidSemanticScope(value) {
+  var copy = cloneGuideValue(value);delete copy.metadata;
+  if (copy.contract) delete copy.contract.batchLockId;
+  function stable(item) {
+    if (Array.isArray(item)) return item.map(stable);
+    if (item && typeof item === 'object') { var out = {};Object.keys(item).sort().forEach(function (key) { out[key] = stable(item[key]); });return out; }
+    return item;
   }
-  return new Promise(function (resolve) {
-    var settled = false;
-    var request = Object.assign({ type: type }, payload || {});
-    function finishOnce(response) {
-      if (settled) return;
-      settled = true;
-      resolve(response);
+  return JSON.stringify(stable(copy));
+}
+function skuCheckPaidTaskForGeneration(task,settings) {
+  var owner = String(state.archiveAccountKey || 'local'), item = task.item, api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!api || !item._skuDurableReceiptKey) return Promise.reject(new Error('新付费任务授权缺失。'));
+  return api.read(owner,item._skuDurableReceiptKey).then(function (entry) {
+    if (owner !== String(state.archiveAccountKey || 'local')) throw new Error('登录账号已变化。');
+    if (entry && (entry.state === 'dispatched' || entry.state === 'acknowledged')) return true;
+    return skuPaidTaskDescriptor(task,settings).then(function (description) {
+      if (skuPaidSemanticScope(description.task.snapshot) !== skuPaidSemanticScope(item._skuPaidSnapshot))
+        throw new Error('当前素材、区域、输出或模型参数已变化；新付费任务未提交，请恢复授权时设置。');
+      return true;
+    });
+  });
+}
+function authorizeNewPaidSkuBatch(event) {
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT, owner = String(state.archiveAccountKey || 'local'), intent;
+  if (!api || !api.beginPaidWorkspaceIntent || state.skuActive || state._skuPaidAuthorizing || legacyImageUploadBusy() ||
+      owner === 'local' || !globalThis.chrome || !globalThis.chrome.runtime || globalThis.chrome.runtime.id !== 'shaozhuang-web-studio') return Promise.resolve({ok:false});
+  try { intent = api.beginPaidWorkspaceIntent(event,owner); }
+  catch (error) { setPill('skuState',error.message || String(error),'warn');return Promise.resolve({ok:false}); }
+  if (!window.confirm(api.paidNotice+'\n原任务标记、原件和回执全部保留；同一新批次待核对时不会重复提交。')) return Promise.resolve({ok:false,cancelled:true});
+  state._skuPaidAuthorizing = true;renderSkuPaidWorkspaceControls();
+  var selected = skuTaskBlueprints().filter(function (task) { return state.skuSelections[task.skuId] !== false; }).map(function (task) { return Object.assign({},task,{item:Object.assign({},task.item)}); });
+  return creativeWebAccountKey().then(function (current) {
+    if (current !== owner || owner !== String(state.archiveAccountKey || 'local')) throw new Error('登录账号已变化。');
+    return api.readActivePaidWorkspace(owner);
+  }).then(function (existing) {
+    if (existing) return existing;
+    if (!selected.length || selected.length > state.skuMax || !$('skuBaseRightsConfirmed') || !$('skuBaseRightsConfirmed').checked ||
+        !globalThis.SZ_SKU_REGION || !globalThis.SZ_SKU_REGION.get()) throw new Error('请先选择任务并确认素材使用授权和商品区域。');
+    var settings = skuGenerationSettings();
+    return Promise.all(selected.map(function (task) { return skuPaidTaskDescriptor(task,settings); })).then(function (descriptions) {
+      return creativeWebAccountKey().then(function (current) {
+        if (current !== owner || owner !== String(state.archiveAccountKey || 'local')) throw new Error('登录账号已变化。');
+        return api.authorizePaidWorkspace({owner:owner,intent:intent,tasks:descriptions.map(function (item) { return item.task; }),
+          parents:descriptions.map(function (item) { return item.parent; })});
+      });
+    });
+  }).then(function (auth) {
+    if (owner === String(state.archiveAccountKey || 'local')) {
+      state._skuPaidWorkspace = auth;state._skuPaidWorkspaceOwner = owner;
+      setPill('skuState','独立付费批次已保留：'+auth.tasks.length+' 项；旧任务仍待核对，点击生成可能另外扣费。','warn');
     }
-    function dispatch(attempt) {
-      try {
-        chrome.runtime.sendMessage(request, function (resp) {
-          var err = chrome.runtime.lastError;
-          if (!err) {
-            finishOnce(finish(resp));
-            return;
-          }
-          var message = String(err.message || err || '插件后台没有响应。');
-          finishOnce(promptLabRuntimeFailure(type, message));
+    return {ok:true,workspaceKey:auth.workspaceKey,createdAuthorizationOnly:true};
+  }).catch(function (error) {
+    if (owner === String(state.archiveAccountKey || 'local')) setPill('skuState',error.message || String(error),'warn');
+    return {ok:false,error:error.message || String(error)};
+  }).finally(function () { state._skuPaidAuthorizing = false;renderSkuPaidWorkspaceControls(); });
+}
+function renderSkuPaidWorkspaceControls() {
+  var button = $('skuNewPaidBatchBtn'), info = $('skuPaidBatchInfo'), exportButton = $('skuExportPaidReceiptBtn');
+  if (!button) return;
+  var website = !!(globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id === 'shaozhuang-web-studio');
+  button.hidden = !website;button.onclick = authorizeNewPaidSkuBatch;
+  button.disabled = state.skuActive || state._skuPaidAuthorizing || legacyImageUploadBusy();
+  if (exportButton) { exportButton.hidden = !website;exportButton.onclick = exportSkuPaidWorkspaceMetadata; }
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT, owner = String(state.archiveAccountKey || 'local');
+  var token = state._skuPaidRenderToken = (state._skuPaidRenderToken || 0)+1;
+  if (!website || !api || !api.readActivePaidWorkspace || owner === 'local') { if (exportButton) exportButton.disabled = true;return; }
+  api.readActivePaidWorkspace(owner).then(function (auth) {
+    if (token !== state._skuPaidRenderToken || owner !== String(state.archiveAccountKey || 'local')) return;
+    state._skuPaidWorkspace = auth;state._skuPaidWorkspaceOwner = owner;
+    if (auth) restoreSkuPaidWorkspaceProducts(auth);
+    if (exportButton) exportButton.disabled = !auth;
+    if (info) info.textContent = auth ? ('已保留独立付费批次 '+auth.workspaceKey+' · '+auth.tasks.length+' 项。旧请求仍保留：'+
+      auth.parents.map(function (parent) { return parent.jobId; }).join('、')+'。新批次待核对时重复点击仍沿用同一身份。')
+      : '旧请求未确认时，可明确另建付费批次；旧标记与原件保留，新批次可能另外扣费。';
+  }).catch(function (error) {
+    if (token === state._skuPaidRenderToken && owner === String(state.archiveAccountKey || 'local')) {
+      if (exportButton) exportButton.disabled = true;if (info) info.textContent = '付费批次授权读取失败，不能另行提交：'+(error.message || String(error));
+    }
+  });
+}
+function restoreSkuPaidWorkspaceProducts(auth) {
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!auth || !api || auth.owner !== String(state.archiveAccountKey || 'local') || state.skuActive || state._skuPaidProductsRestoring) return Promise.resolve(false);
+  state._skuPaidProductsRestoring = true;
+  return Promise.all(auth.tasks.map(function (task) {
+    var childKey = task.parentLegacyKey+':workspace:'+auth.workspaceKey;
+    return api.read(auth.owner,childKey).then(function (entry) {
+      if (auth.owner !== String(state.archiveAccountKey || 'local') || state.skuActive) return false;
+      var existing = state.skuProducts.filter(function (item) {
+        return item.skuId === task.taskId || item._skuPaidWorkspace === auth.workspaceKey && item._skuPaidTaskId === task.taskId ||
+          item._skuDurableReceiptKey === childKey || item._skuDurableMetadata && item._skuDurableMetadata.skuId === task.taskId;
+      })[0];
+      if (existing) {
+        var existingChanged = existing.skuId !== task.taskId || existing._skuPaidWorkspace !== auth.workspaceKey ||
+          existing._skuPaidTaskId !== task.taskId || existing._skuDurableReceiptKey !== childKey;
+        existing._skuPaidSnapshot = task.snapshot;existing._skuPaidWorkspace = auth.workspaceKey;existing._skuPaidTaskId = task.taskId;existing._skuDurableReceiptKey = childKey;
+        if (existing.skuId !== task.taskId) {
+          var oldId = existing.skuId;existing.skuId = task.taskId;
+          if (state.skuTaskStatus[oldId]) { state.skuTaskStatus[task.taskId] = state.skuTaskStatus[oldId];delete state.skuTaskStatus[oldId]; }
+          if (Object.prototype.hasOwnProperty.call(state.skuSelections,oldId)) { state.skuSelections[task.taskId] = state.skuSelections[oldId];delete state.skuSelections[oldId]; }
+        }
+        return existingChanged;
+      }
+      // Add the independent task; keep the old task's state and accepted result.
+      state.skuProducts.forEach(function (item) {
+        if (!item._skuPaidWorkspace && item.url === task.sourceImages.subject) state.skuSelections[item.skuId] = false;
+      });
+      var item = {skuId:task.taskId,skuCode:task.metadata.skuCode || '',url:task.sourceImages.subject,name:task.metadata.title || '',
+        source:'sku-paid-workspace',_skuPaidWorkspace:auth.workspaceKey,_skuPaidTaskId:task.taskId,_skuDurableReceiptKey:childKey,
+        _skuDurableBaseImage:task.sourceImages.base,_skuDurableMetadata:task.metadata,_skuPaidSnapshot:task.snapshot};
+      state.skuProducts.push(item);ensureSkuProductIdentity(item);
+      var pending = entry && entry.state === 'dispatched', complete = entry && entry.state === 'acknowledged';
+      state.skuSelections[item.skuId] = !pending && !complete;
+      state.skuTaskStatus[item.skuId] = pending ? {state:'uncertain',stateUncertain:true,jobId:entry.identity.jobId,
+        error:'此新付费任务仍待核对；仅查询原九字段回执，不重复提交。',
+        _skuRecovery:{owner:auth.owner,key:childKey,receiptId:entry.identity.receiptId,jobId:entry.identity.jobId}}
+        : complete ? {state:'success',jobId:entry.identity.jobId,error:'已确认并本机留档；本批凭证可导出。'} : {state:'ready',error:''};
+      return true;
+    });
+  })).then(function (values) {
+    if (auth.owner !== String(state.archiveAccountKey || 'local')) return false;
+    if (values.some(Boolean)) { renderSkuProducts();renderSkuTasks();updateSkuCounts(); }return values.some(Boolean);
+  }).catch(function (error) {
+    if (auth.owner === String(state.archiveAccountKey || 'local')) setPill('skuState','新付费任务恢复失败，原回执仍保留：'+(error.message || String(error)),'warn');return false;
+  }).finally(function () { state._skuPaidProductsRestoring = false; });
+}
+function exportSkuPaidWorkspaceMetadata() {
+  var owner = String(state.archiveAccountKey || 'local'), api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!api || !api.exportPaidWorkspaceMetadata || owner === 'local') return Promise.resolve({ok:false});
+  return creativeWebAccountKey().then(function (current) {
+    if (current !== owner || owner !== String(state.archiveAccountKey || 'local')) throw new Error('登录账号已变化。');
+    return api.exportPaidWorkspaceMetadata(owner);
+  }).then(function (metadata) {
+    if (owner !== String(state.archiveAccountKey || 'local')) throw new Error('登录账号已变化。');
+    var json = JSON.stringify(metadata,null,2), preview = $('skuPaidMetadataPreview');
+    if (preview) { preview.hidden = false;preview.textContent = json; }
+    var url = URL.createObjectURL(new Blob([json+'\n'],{type:'application/json'})), link = document.createElement('a');
+    link.href = url;link.download = 'sku-paid-receipt-'+metadata.workspaceKey+'.json';link.click();
+    setTimeout(function () { URL.revokeObjectURL(url); },1000);
+    return {ok:true};
+  }).catch(function (error) { setPill('skuState','回执凭证未导出：'+(error.message || String(error)),'warn');return {ok:false}; });
+}
+
+function skuPrepareDurableRequest(owner, key, request) {
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!api || !request._skuDurablePreparation) throw Object.assign(new Error('SKU 原任务回执模块尚未加载，本次未提交生成。'),{code:'SKU_RECEIPT_UNSUPPORTED'});
+  return sendRuntime('GET_SKU_RECEIPT_CAPABILITY',{}).then(function (capability) {
+    if (!capability || !capability.ok || capability.supported !== true) throw Object.assign(new Error('当前工作台尚不支持 SKU 原任务回执，本次未提交生成。'),{code:'SKU_RECEIPT_UNSUPPORTED'});
+    return creativeWebAccountKey();
+  }).then(function (current) {
+    if (current !== owner || current !== String(state.archiveAccountKey || 'local') || state.stopRequested || request._skuBatchToken !== state.skuBatchToken) throw Object.assign(new Error('SKU 原任务账号或操作已变化，本次未提交生成。'),{code:'SKU_RECEIPT_ACCOUNT_CHANGED'});
+    var paid = request._skuPaidWorkspace ? {paidWorkspaceKey:request._skuPaidWorkspace,parentLegacyKey:request._skuPaidParentKey} : {};
+    return api.prepare(Object.assign({},request._skuDurablePreparation,{owner:owner,legacyKey:key},paid));
+  });
+}
+function legacySavedDeliveryResponse(owner, key, delivery) {
+  legacyImageForgetRestart(owner,key);
+  return { ok: true, images: delivery.images.slice(), taskId: delivery.taskId || '', jobId: delivery.jobId,
+    recoveredDelivery: true, _legacyReceipt: { owner: owner, key: key, jobId: delivery.jobId } };
+}
+function legacySaveReturnedDelivery(owner, key, pending, response) {
+  var store = globalThis.SZ_SKU_DELIVERY_STORE;
+  if (!store) return Promise.reject(new Error('返回图片存储尚未加载；原回执已保留。'));
+  var marker;
+  try { marker = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+  if (!marker || marker.jobId !== pending.jobId) return Promise.resolve({ ok: false, code: 'IMAGE_RECEIPT_CHANGED' });
+  var delivery = { version: 1, state: 'delivered', jobId: pending.jobId, createdAt: pending.createdAt,
+    taskId: String(response.taskId || ''), images: response.images.slice() };
+  return store.save(owner, key, delivery).then(function () {
+    var current = JSON.parse(localStorage.getItem(key) || 'null');
+    if (!current || current.jobId !== pending.jobId) return { ok: false, code: 'IMAGE_RECEIPT_CHANGED' };
+    localStorage.setItem(key, JSON.stringify({ version: 1, state: 'delivered', storage: 'indexeddb',
+      jobId: pending.jobId, createdAt: pending.createdAt, taskId: delivery.taskId }));
+    return Object.assign(legacySavedDeliveryResponse(owner, key, delivery), { recoveredDelivery: false, delivered: true });
+  });
+}
+function legacyLateImageReceipt(owner, key, pending, response, request, durableEntry) {
+  return navigator.locks.request(key, { mode: 'exclusive' }, function () {
+    var current;
+    try { current = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+    if (!current || current.jobId !== pending.jobId || pending.receiptId && current.receiptId !== pending.receiptId) return { ok: false };
+    if (response && response.ok && Array.isArray(response.images) && response.images.length) {
+      if (request.payload.labMode === 'sku' && request.payload.detailMode === 'sku') {
+        return skuSaveReturnedDelivery(owner, key, pending, request, response, durableEntry).then(function (saved) {
+          return { ok: !!saved.ok && !saved.deliveryStorageError, delivered: !!saved.ok && !saved.deliveryStorageError };
         });
-      } catch (e) {
-        var message = String(e && e.message || e || '插件后台没有响应。');
-        finishOnce(promptLabRuntimeFailure(type, message));
+      }
+      return legacySaveReturnedDelivery(owner, key, pending, response);
+    }
+    // Only positive pre-dispatch evidence can release a receipt after local timeout.
+    if (legacyImageDefinitelyNotSubmitted(response)) {
+      var release = durableEntry ? globalThis.SZ_SKU_DURABLE_RECEIPT.releaseNotSubmitted(owner, key, durableEntry.identity.receiptId, response) : Promise.resolve({ ok: true });
+      return release.then(function (result) {
+        if (!result || !result.ok) return { ok: false };
+        var latest = JSON.parse(localStorage.getItem(key) || 'null');
+        if (latest && latest.jobId === pending.jobId && (!pending.receiptId || latest.receiptId === pending.receiptId)) localStorage.removeItem(key);
+        return { ok: true, delivered: false };
+      });
+    }
+    return { ok: false };
+  });
+}
+
+// BEGIN_LEGACY_IMAGE_EXPLICIT_RESTART
+// Frozen requests stay in this page's memory; local storage contains identities only.
+var legacyImageRestartRequests = Object.create(null);
+var legacyImageRestartFlights = Object.create(null);
+var legacyImageRestartAuthorizations = Object.create(null);
+function legacyImageForgetRestart(owner, key) {
+  // Delivery is already durable. Release large input/config copies, never receipt or pixel storage.
+  if (legacyImageRestartRequests[key] && legacyImageRestartRequests[key].owner === owner) delete legacyImageRestartRequests[key];
+  if (legacyImageRestartAuthorizations[key] && legacyImageRestartAuthorizations[key].owner === owner) delete legacyImageRestartAuthorizations[key];
+}
+function legacyImageRestartWebsite() {
+  return !!(globalThis.chrome && globalThis.chrome.runtime && globalThis.chrome.runtime.id === 'shaozhuang-web-studio');
+}
+function legacyImageRestartEligible(request) {
+  var payload = request && request.payload || {};
+  return !!request && !request.receiptIdentity && !payload.receiptIdentity && !payload.skuDurablePlan &&
+    payload.labMode !== 'sku' && payload.detailMode !== 'sku' && !payload.referenceDetailBatch &&
+    !payload.studioGenesisVersion && !payload.creativeContractVersion && !payload.sceneExtensionContractVersion &&
+    !request._skuPaidWorkspace && !request._skuDurablePreparation;
+}
+function legacyImageRestartContext() {
+  return JSON.stringify({
+    product: typeof currentProductFingerprint === 'function' ? currentProductFingerprint() : '',
+    reference: typeof currentReferenceFingerprint === 'function' ? currentReferenceFingerprint() : '',
+    config: typeof cfgFromForm === 'function' ? cfgFromForm() : null,
+    mode: typeof currentLabMode === 'function' ? currentLabMode() : '', detailMode: state.detailMode || '',
+    inputs: ['linkJson','cnPrompt','detailPrompt','negativePrompt'].map(function (id) { var el = $(id);return el ? el.value || '' : ''; }),
+    settings: typeof captureGenerationSettings === 'function' && typeof currentLabMode === 'function'
+      ? captureGenerationSettings(currentLabMode() === 'detail' ? 'detail' : 'main', state.detailMode) : null
+  });
+}
+function legacyImageRememberRestart(owner, key, request) {
+  if (!legacyImageRestartEligible(request)) return;
+  // Never change a running attempt's original input snapshot as another caller arrives.
+  if (legacyImageRestartRequests[key] && legacyImageRestartRequests[key].request.jobId === request.jobId) return;
+  var copy = JSON.parse(JSON.stringify(request));delete copy._legacyRestart;
+  legacyImageRestartRequests[key] = { owner: owner, key: key, request: copy,
+    context: legacyImageRestartContext() };
+}
+function legacyImageRestartResolve(owner, baseKey, request) {
+  var retry = request && request._legacyRestart;
+  if (!retry) return { key: baseKey, request: request };
+  var authorization = legacyImageRestartAuthorizations[retry.key];
+  if (!authorization || authorization.owner !== owner || authorization.key !== retry.key ||
+      authorization.baseKey !== baseKey || authorization.jobId !== request.jobId || (legacyImageRestartWebsite() ? request.payload._legacyRestartOwner !== owner : request.payload._legacyRestartOwner !== undefined) || authorization.context !== legacyImageRestartContext() ||
+      authorization.identity !== legacyImageReceiptIdentity(request)) throw new Error('重新运行身份已变化，本次没有提交。');
+  return { key: authorization.key, request: request };
+}
+function legacyImageCanRestart(key) {
+  var entry = legacyImageRestartRequests[key];
+  if (!entry || entry.owner !== promptTaskOwner() || entry.context !== legacyImageRestartContext() ||
+      !legacyImageRestartEligible(entry.request)) return false;
+  var marker;
+  try { marker = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { return false; }
+  if (!marker || marker.version !== 1 || !marker.jobId || ['pending','uncertain'].indexOf(marker.state) < 0) return false;
+  return !promptTaskJournal(entry.owner).some(function (task) { return task.jobId === marker.jobId && task.status === 'running'; });
+}
+function legacyImageRestartShowSaved(entry) {
+  if (!entry || entry.owner !== promptTaskOwner() || !globalThis.SZ_SKU_DELIVERY_STORE) return Promise.resolve({ok:false});
+  return globalThis.SZ_SKU_DELIVERY_STORE.read(entry.owner,entry.key).then(function (delivery) {
+    if (entry.owner !== promptTaskOwner() || !delivery || !delivery.images || !delivery.images.length) return {ok:false};
+    var marker = JSON.parse(localStorage.getItem(entry.key) || 'null');
+    if (!marker || marker.jobId !== delivery.jobId) return {ok:false};
+    promptTaskAdoptLegacyReceipt(entry.owner,entry.key,marker,entry.request,true);
+    var task = promptTaskJournal(entry.owner).find(function (item) { return item.jobId === marker.jobId && item.receiptKey === entry.key; });
+    if (task) promptTaskRecover(task.id);
+    return legacySavedDeliveryResponse(entry.owner,entry.key,delivery);
+  });
+}
+function legacyImageRestart(key) {
+  if (legacyImageRestartFlights[key]) return legacyImageRestartFlights[key];
+  var entry = legacyImageRestartRequests[key], marker;
+  try { marker = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+  if (marker && marker.state === 'delivered') {
+    var ownerNow = promptTaskOwner();
+    var known = promptTaskJournal(ownerNow).some(function (task) { return task.receiptKey === key && task.jobId === marker.jobId; });
+    if (entry && entry.owner === ownerNow || known) return legacyImageRestartShowSaved(entry && entry.owner === ownerNow ? entry : {owner:ownerNow,key:key,request:{payload:{}}});
+  }
+  if (!legacyImageCanRestart(key)) return Promise.resolve({ ok: false, code: 'IMAGE_RESTART_UNAVAILABLE',
+    error: '请保持原账号、素材和设置；运行中的任务无需重新提交。' });
+  var owner = entry.owner, context = entry.context, attempted = false;
+  function sameContext() {
+    if (owner !== promptTaskOwner() || context !== legacyImageRestartContext()) throw new Error('账号、素材或设置已变化，本次没有提交；请按当前输入重新生成。');
+  }
+  var operation = Promise.resolve().then(function () {
+    return typeof creativeWebAccountKey === 'function' ? creativeWebAccountKey() : owner;
+  }).then(function (current) {
+    sameContext();if (current !== owner) throw new Error('登录账号已变化，本次没有提交。');
+    return navigator.locks.request(key + ':explicit-restart', { mode: 'exclusive' }, function () {
+      return navigator.locks.request(key, { mode: 'exclusive' }, function () {
+        sameContext();
+        var parent = JSON.parse(localStorage.getItem(key) || 'null');
+        if (parent && parent.state === 'delivered') return { recovered: true };
+        if (!parent || parent.version !== 1 || !parent.jobId || ['pending','uncertain'].indexOf(parent.state) < 0)
+          throw new Error('原任务已返回或身份变化，请先查看原结果。');
+        var pointerKey = 'sz.legacy-image-restart.v1:' + encodeURIComponent(owner) + ':' + key;
+        var pointerRaw = localStorage.getItem(pointerKey), pointer = pointerRaw ? JSON.parse(pointerRaw) : null;
+        if (pointer && (pointer.version !== 1 || pointer.owner !== owner || pointer.parentKey !== key || pointer.parentJobId !== parent.jobId ||
+            !/^job_[A-Za-z0-9_.:-]+$/.test(pointer.jobId || '') || pointer.key !== key.split(':attempt:')[0] + ':attempt:' + pointer.jobId))
+          throw new Error('重新运行记录身份不匹配，本次没有提交。');
+        if (!pointer) {
+          var jobId = newJobId();
+          pointer = { version: 1, owner: owner, parentKey: key, parentJobId: parent.jobId,
+            key: key.split(':attempt:')[0] + ':attempt:' + jobId, jobId: jobId, createdAt: Date.now() };
+          var encoded = JSON.stringify(pointer);localStorage.setItem(pointerKey, encoded);
+          if (localStorage.getItem(pointerKey) !== encoded) throw new Error('重新运行记录保存失败，本次没有提交。');
+        }
+        return { pointer: pointer };
+      }).then(function (selected) {
+        if (selected.recovered) return legacyImageRestartShowSaved(entry);
+        var pointer = selected.pointer, request = JSON.parse(JSON.stringify(entry.request));
+        request.jobId = pointer.jobId;request.payload = Object.assign({}, request.payload, { _jobId: pointer.jobId });
+        delete request.payload._legacyRestartOwner;
+        if (legacyImageRestartWebsite()) request.payload._legacyRestartOwner = owner;
+        delete request.payload.requestId;delete request.requestId;
+        request._legacyRestart = { key: pointer.key };
+        return legacyImageReceiptKey(owner, request).then(function (baseKey) {
+          sameContext();
+          // A completed original takes precedence over a new paid dispatch, including a late receipt.
+          var latest = JSON.parse(localStorage.getItem(key) || 'null');
+          if (latest && latest.state === 'delivered') return legacyImageRestartShowSaved(entry);
+          legacyImageRestartAuthorizations[pointer.key] = { owner: owner, key: pointer.key, baseKey: baseKey,
+            jobId: pointer.jobId, parentKey: key, context: context, identity: legacyImageReceiptIdentity(request) };
+          if (state.stopRequested && !Object.keys(state.activeJobIds || {}).length && !state.activeJobId) state.stopRequested = false;
+          attempted = true;
+          return sendLegacyImage(request).then(function (response) {
+            if (response && response.ok && response.images && response.images.length) {
+              var task = promptTaskJournal(owner).find(function (item) { return item.jobId === pointer.jobId && item.receiptKey === pointer.key; });
+              if (task) { task.receiptState = 'received';promptTaskPersist(owner);promptTaskRender();
+                if (owner === promptTaskOwner()) promptTaskRecover(task.id); }
+            }
+            return response;
+          });
+        });
+      });
+    });
+  }).catch(function (error) { return { ok: false, code: 'IMAGE_RESTART_FAILED', error: error.message || String(error),
+    definitiveFailure: !attempted, stateUncertain: attempted }; });
+  legacyImageRestartFlights[key] = operation;
+  operation.then(function () { if (legacyImageRestartFlights[key] === operation) delete legacyImageRestartFlights[key];promptTaskRender(); });
+  return operation;
+}
+// END_LEGACY_IMAGE_EXPLICIT_RESTART
+
+function sendLegacyImage(request) {
+  var owner = String(state.archiveAccountKey || 'local'), dispatched = false;
+  var skuDelivery = request && request.payload && request.payload.labMode === 'sku' && request.payload.detailMode === 'sku';
+  return skuResolvePaidWorkspaceRequest(owner,request).then(function (resolved) {
+    var selected = legacyImageRestartResolve(owner,resolved.key,resolved.request);
+    var key = selected.key;request = selected.request;
+    legacyImageRememberRestart(owner,key,request);
+    if (typeof navigator === 'undefined' || !navigator.locks || !navigator.locks.request) throw new Error('当前浏览器不支持生图任务保护，请使用新版 Chrome。');
+    return navigator.locks.request(key, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+      if (!lock) return legacyImageUnknownResponse({ code: 'IMAGE_REQUEST_ACTIVE', error: '同一图片任务正在处理中。' });
+      var storage = globalThis.localStorage;
+      if (!storage) throw new Error('无法保存本机生图回执，本次没有提交。');
+      if (String(state.archiveAccountKey || 'local') !== owner) throw new Error('账号已切换，本次没有提交。');
+      if (state.stopRequested || state.cancelledJobs[String(request.jobId || '')] ||
+          skuDelivery && request._skuBatchToken != null && request._skuBatchToken !== state.skuBatchToken) {
+        return { ok: false, code: 'IMAGE_CANCELLED_BEFORE_SUBMISSION', error: '已终止，本次未提交生图。', providerSubmitted: false, definitiveFailure: true, stateUncertain: false };
+      }
+      var previous = storage.getItem(key);
+      if (previous !== null) {
+        var receipt;
+        try { receipt = JSON.parse(previous); } catch (_) {}
+        if (skuDelivery && receipt && receipt.version === 1 && receipt.jobId) {
+          var storedDelivery = receipt.state === 'delivered' && Array.isArray(receipt.images) && receipt.images.length
+            ? Promise.resolve(receipt)
+            : (globalThis.SZ_SKU_DELIVERY_STORE ? globalThis.SZ_SKU_DELIVERY_STORE.read(owner, key) : Promise.resolve(null));
+          return storedDelivery.then(function (delivered) {
+            if (owner !== String(state.archiveAccountKey || 'local') || state.stopRequested || request._skuBatchToken !== state.skuBatchToken) {
+              return legacyImageUnknownResponse({ jobId: receipt.jobId, taskId: receipt.taskId || '', error: '原任务恢复已停止。' });
+            }
+            if (delivered && delivered.jobId === receipt.jobId && Array.isArray(delivered.images) && delivered.images.length) {
+              var restoredDelivery = { ok: true, images: delivered.images, taskId: delivered.taskId || '', skuProviderGeometry: delivered.skuProviderGeometry,
+                recoveredDelivery: true, _skuFrozenDelivery: delivered.skuFrozenDelivery,
+                _skuReceipt: { key: key, jobId: delivered.jobId, owner: owner } };
+              if (skuWebsiteDurableRequest(request) && receipt.receiptId && globalThis.SZ_SKU_DURABLE_RECEIPT) {
+                return globalThis.SZ_SKU_DURABLE_RECEIPT.read(owner,key).then(function (entry) {
+                  if (!entry || entry.identity.receiptId !== receipt.receiptId || entry.identity.jobId !== receipt.jobId) throw new Error('原 SKU 交付回执身份不匹配。');
+                  return skuDurableResponse(restoredDelivery,entry,key);
+                });
+              }
+              return restoredDelivery;
+            }
+            if (skuWebsiteDurableRequest(request) && receipt.receiptId) return skuGetOriginalReceipt(owner,key,receipt,request);
+            return legacyImageUnknownResponse({ jobId: receipt.jobId, taskId: receipt.taskId || '' });
+          }).catch(function (error) {
+            return legacyImageUnknownResponse({ jobId: receipt.jobId, taskId: receipt.taskId || '', error: error.message || String(error) });
+          });
+        }
+        if (!skuDelivery && receipt && receipt.jobId && globalThis.SZ_SKU_DELIVERY_STORE) {
+          return globalThis.SZ_SKU_DELIVERY_STORE.read(owner, key).then(function (delivery) {
+            if (owner !== promptTaskOwner()) return legacyImageUnknownResponse({ jobId: receipt.jobId });
+            if (delivery && delivery.jobId === receipt.jobId && delivery.images && delivery.images.length) return legacySavedDeliveryResponse(owner, key, delivery);
+            return legacyImageUnknownResponse({ jobId: receipt.jobId, taskId: receipt.taskId || '' });
+          }).catch(function () { return legacyImageUnknownResponse({ jobId: receipt.jobId, error: '原任务图片暂未恢复，回执继续保留。' }); });
+        }
+        return legacyImageUnknownResponse({ code: 'IMAGE_RECEIPT_UNCONFIRMED', jobId: receipt && receipt.jobId || '', taskId: receipt && receipt.taskId || '' });
+      }
+      var durable = skuWebsiteDurableRequest(request) ? skuPrepareDurableRequest(owner,key,request) : Promise.resolve(null);
+      return durable.then(function (durableEntry) {
+      if (durableEntry && (durableEntry.state === 'dispatched' || request._skuPaidWorkspace && durableEntry.state === 'acknowledged')) {
+        var oldMarker = {version:1,state:'uncertain',jobId:durableEntry.identity.jobId,receiptId:durableEntry.identity.receiptId,createdAt:durableEntry.createdAt};
+        storage.setItem(key,JSON.stringify(oldMarker));return skuGetOriginalReceipt(owner,key,oldMarker,request);
+      }
+      if (durableEntry) {
+        var frozen = durableEntry.snapshot;
+        request = Object.assign({},request,{jobId:durableEntry.identity.jobId,receiptIdentity:durableEntry.identity,
+          payload:Object.assign({},request.payload,{_jobId:durableEntry.identity.jobId,batchId:durableEntry.identity.batchId,
+            skuDurablePlan:durableEntry.plan,skuSourceImages:{base:frozen.baseImage,subject:frozen.subjectImage},
+            editBaseImage:frozen.providerImages.base,productImage:frozen.providerImages.subject,productImages:[frozen.providerImages.subject],
+            prompt:frozen.prompt,negativePrompt:frozen.negativePrompt,skuVisualLock:frozen.contract,skuVisualLockSignature:frozen.contract.contractFingerprint,
+            outputSize:frozen.output.size,outputRatio:frozen.output.ratio,outputResolution:frozen.output.resolution,size:frozen.geometry.requestedSize})});
+      }
+      if (String(state.archiveAccountKey || 'local') !== owner || state.stopRequested || skuDelivery && request._skuBatchToken !== state.skuBatchToken) throw new Error('SKU 操作已停止，本次未提交生成。');
+      var pending = { version: 1, state: 'pending', jobId: String(request.jobId || ''), createdAt: Date.now() };
+      if (durableEntry) pending.receiptId = durableEntry.identity.receiptId;
+      storage.setItem(key, JSON.stringify(pending));
+      // A failed/quota-limited write must never be followed by provider dispatch.
+      if (storage.getItem(key) !== JSON.stringify(pending)) throw new Error('生图回执保护写入失败，本次没有提交。');
+      var claim = durableEntry ? globalThis.SZ_SKU_DURABLE_RECEIPT.markDispatched(owner,key,durableEntry.identity.receiptId) : Promise.resolve({ok:true,dispatched:true});
+      return claim.then(function (claimed) {
+      if (!claimed || !claimed.ok || !claimed.dispatched) return durableEntry ? skuGetOriginalReceipt(owner,key,pending,request) : legacyImageUnknownResponse({jobId:pending.jobId});
+      dispatched = true;
+      return (durableEntry ? creativeWebAccountKey() : Promise.resolve(owner)).then(function (current) {
+      if (current !== owner || owner !== String(state.archiveAccountKey || 'local') || state.stopRequested ||
+          state.cancelledJobs[pending.jobId] || skuDelivery && request._skuBatchToken !== state.skuBatchToken) {
+        return Object.assign(legacyImageUnknownResponse({jobId:pending.jobId,error:'原任务账号或操作已变化，请保留原回执。'}),
+          durableEntry ? {_skuRecovery:{owner:owner,key:key,receiptId:pending.receiptId,jobId:pending.jobId}} : {});
+      }
+      if (request._legacyRestart) {
+        var restartAuthorization = legacyImageRestartAuthorizations[request._legacyRestart.key];
+        legacyImageRestartResolve(owner,restartAuthorization && restartAuthorization.baseKey,request);
+        var originalMarker = JSON.parse(storage.getItem(restartAuthorization.parentKey) || 'null');
+        if (originalMarker && originalMarker.state === 'delivered') {
+          // Still before runtime/provider dispatch: prefer the original that just arrived.
+          var unsentMarker = JSON.parse(storage.getItem(key) || 'null');
+          if (unsentMarker && unsentMarker.jobId === pending.jobId) storage.removeItem(key);
+          return legacyImageRestartShowSaved(legacyImageRestartRequests[restartAuthorization.parentKey]);
+        }
+      }
+      return skuSendAuthorizedImage(request,owner,{ receiptKey:key, onLate: function (response) { return legacyLateImageReceipt(owner,key,pending,response,request,durableEntry); } }).then(function (response) {
+        if (skuDelivery && response && response.ok && Array.isArray(response.images) && response.images.length) {
+          // Keep the delivered candidate until local validation accepts it. A
+          // reload resumes processing this delivery instead of paying again.
+          return skuSaveReturnedDelivery(owner,key,pending,request,response,durableEntry);
+        }
+        if (!skuDelivery && response && response.ok && Array.isArray(response.images) && response.images.length) {
+          return legacySaveReturnedDelivery(owner,key,pending,response).then(function (saved) {
+            return saved && saved.ok ? Object.assign({},response,saved) : legacyImageUnknownResponse({jobId:pending.jobId,error:'原图片已返回，任务回执发生变化，请保留原任务。'});
+          }).catch(function (error) {
+            // Still deliver the received pixels to the current UI; never release the original marker.
+            return Object.assign({},response,{jobId:pending.jobId,deliveryStorageError:error.message || String(error)});
+          });
+        }
+        if (response && response.ok && Array.isArray(response.images) && response.images.length || legacyImageDefinitelyNotSubmitted(response)) {
+          var released = durableEntry && legacyImageDefinitelyNotSubmitted(response)
+            ? globalThis.SZ_SKU_DURABLE_RECEIPT.releaseNotSubmitted(owner,key,durableEntry.identity.receiptId,response) : Promise.resolve({ok:true});
+          return released.then(function (result) {
+            if (durableEntry && (!result || !result.ok)) return Object.assign(legacyImageUnknownResponse(Object.assign({},response,{jobId:pending.jobId})),
+              {_skuRecovery:{owner:owner,key:key,receiptId:pending.receiptId,jobId:pending.jobId}});
+            if (result && result.ok) {
+              try {
+                var currentMarker = JSON.parse(storage.getItem(key) || 'null');
+                if (!durableEntry || currentMarker && currentMarker.jobId === pending.jobId && currentMarker.receiptId === pending.receiptId) storage.removeItem(key);
+              } catch (_) { /* Keep blocked if acknowledgment fails. */ }
+            }
+            return response;
+          });
+        }
+        var unknown = legacyImageUnknownResponse(response);
+        pending.state = 'uncertain';
+        pending.code = String(unknown.code || '');
+        pending.taskId = String(response && response.taskId || '');
+        try { storage.setItem(key, JSON.stringify(pending)); } catch (_) { /* The pre-dispatch pending record still protects retries. */ }
+        return durableEntry ? Object.assign({},unknown,{jobId:pending.jobId,_skuRecovery:{owner:owner,key:key,receiptId:pending.receiptId,jobId:pending.jobId}}) : unknown;
+      }, function (error) {
+        return legacyImageUnknownResponse({ error: error && error.message || String(error) });
+      });
+      });
+      });
+      });
+    });
+  }).catch(function (error) {
+    if (dispatched) return legacyImageUnknownResponse({ error: error && error.message || String(error) });
+    return { ok: false, definitiveFailure: true, providerSubmitted: false, stateUncertain: false,
+      code: skuWebsiteDurableRequest(request) && error && error.code || 'IMAGE_RECEIPT_STORAGE_UNAVAILABLE', error: error && error.message || String(error) };
+  });
+}
+function acknowledgeSkuDelivery(response) {
+  var receipt = response && response._skuReceipt;
+  if (!receipt || response.receiptEvidenceStorageError || receipt.owner !== String(state.archiveAccountKey || 'local')) return Promise.resolve(false);
+  return navigator.locks.request(receipt.key, { mode: 'exclusive' }, function () {
+    if (receipt.owner !== String(state.archiveAccountKey || 'local')) return false;
+    var saved = JSON.parse(localStorage.getItem(receipt.key) || 'null');
+    if (!saved || saved.jobId !== receipt.jobId || receipt.receiptId && saved.receiptId !== receipt.receiptId) return false;
+    var durableAck = receipt.receiptId
+      ? globalThis.SZ_SKU_DURABLE_RECEIPT ? globalThis.SZ_SKU_DURABLE_RECEIPT.ack(receipt.owner,receipt.key,receipt.receiptId) : Promise.resolve({ok:false})
+      : Promise.resolve({ok:true});
+    return durableAck.then(function (acknowledged) {
+    if (!acknowledged || !acknowledged.ok) return false;
+    var store = globalThis.SZ_SKU_DELIVERY_STORE;
+    var backup = null;
+    var remove = store ? store.read(receipt.owner, receipt.key).then(function (delivery) {
+      backup = delivery;
+      return store.remove(receipt.owner, receipt.key, receipt.jobId);
+    }) : Promise.resolve({ ok: true, removed: false, reason: 'missing' });
+    return remove.then(function (result) {
+      if (!result.ok || !result.removed && result.reason !== 'missing') return false;
+      // Once deletion starts, finish both CAS operations for this captured
+      // owner. An account switch cannot leave a pointer to deleted bytes.
+      try {
+        var current = JSON.parse(localStorage.getItem(receipt.key) || 'null');
+        if (!current || current.jobId !== receipt.jobId || receipt.receiptId && current.receiptId !== receipt.receiptId) return false;
+        localStorage.removeItem(receipt.key);
+        if (localStorage.getItem(receipt.key) !== null) throw new Error('回执确认未能保存');
+      }
+      catch (_) {
+        // Compensate the second storage failing after the first committed.
+        return backup && store ? store.save(receipt.owner, receipt.key, backup).then(function () { return false; }, function () { return false; }) : false;
+      }
+      return true;
+    });
+    });
+  }).catch(function () { return false; });
+}
+function send(type, payload) {
+  if (type === 'GENERATE_IMAGE' && (pendingProviderProfile || configWalletSwitchPending || payload && payload.config && payload.config._configLoading)) {
+    return Promise.resolve({ ok: false, code: 'CONFIG_LOADING', error: 'API 配置仍在载入，本次未提交生图。', providerSubmitted: false, definitiveFailure: true, stateUncertain: false });
+  }
+  var image = payload && payload.payload || {};
+  if (type === 'GENERATE_IMAGE' && !image.studioGenesisVersion && !image.creativeContractVersion && !image.sceneExtensionContractVersion && !image.mirrorContractVersion && !image.linkImageContractVersion) {
+    return sendLegacyImage(payload || {});
+  }
+  return sendRuntime(type, payload);
+}
+// PROMPT_TASK_LIFECYCLE_V1: local waiting and provider settlement are separate.
+var promptTaskRecords = Object.create(null);
+var promptTaskFlights = Object.create(null);
+var promptTaskRenderTimer = null;
+var PROMPT_TASK_TYPES = {
+  ANALYZE_IMAGE: ['参考图分析', 605000], BUILD_LINK_PROMPT: ['主图提词', 605000],
+  BUILD_DETAIL_PROMPT: ['详情提词', 965000], ANALYZE_STYLE_REFRESH_PRODUCT: ['商品分析', 305000],
+  ANALYZE_STYLE_REFRESH_QA: ['图片检查', 1205000], ANALYZE_SUBJECT_ASSET: ['主体分析', 305000],
+  GENERATE_IMAGE: ['图片生成', 965000]
+};
+function promptTaskOwner() { return String(state.archiveAccountKey || 'local'); }
+function promptTaskStorageKey(owner) {
+  var query = new URLSearchParams(location.search), scope = [query.get('mode') || 'main', query.get('detailMode') || '', query.get('creativeRoute') || ''].join(':');
+  return 'sz.prompt-task-journal.v1:' + encodeURIComponent(owner) + ':' + encodeURIComponent(scope);
+}
+function promptTaskSafeRecord(task) {
+  return { id: task.id, jobId: task.jobId, type: task.type, label: task.label, targetLabel: task.targetLabel || '', receiptKey: task.receiptKey || '', status: task.status,
+    startedAt: task.startedAt, endedAt: task.endedAt || 0, receiptState: task.receiptState || '', code: task.code || '' };
+}
+function promptTaskJournal(owner) {
+  if (promptTaskRecords[owner]) return promptTaskRecords[owner];
+  var records = [];
+  try {
+    var saved = JSON.parse(localStorage.getItem(promptTaskStorageKey(owner)) || '[]');
+    if (Array.isArray(saved)) saved.slice(-1040).forEach(function (task) {
+      if (!task || !PROMPT_TASK_TYPES[task.type] || typeof task.id !== 'string' || typeof task.jobId !== 'string' ||
+          !Number.isFinite(task.startedAt) || task.id.length > 180 || task.jobId.length > 180) return;
+      var restored = promptTaskSafeRecord(task);
+      restored.label = PROMPT_TASK_TYPES[task.type][0];
+      restored.targetLabel = String(task.targetLabel || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 80);
+      restored.receiptKey = typeof task.receiptKey === 'string' && task.receiptKey.indexOf(LEGACY_IMAGE_RECEIPT_PREFIX + encodeURIComponent(owner) + ':') === 0 ? task.receiptKey.slice(0, 512) : '';
+      if (restored.status === 'running') { restored.status = 'interrupted'; restored.endedAt = Date.now(); }
+      if (['success','failed','ended','timed_out','uncertain','interrupted','recovered'].indexOf(restored.status) < 0) return;
+      restored.receiptState = ['pending','received','storage_failed'].indexOf(restored.receiptState) >= 0 ? restored.receiptState : '';
+      restored.code = /^[A-Za-z0-9_.:-]{0,100}$/.test(restored.code) ? restored.code : '';
+      records.push(restored);
+    });
+  } catch (_) { /* The image receipt journal remains authoritative. */ }
+  promptTaskRecords[owner] = records;
+  return records;
+}
+function promptTaskUnresolved(task) {
+  return task.receiptState === 'pending' || task.receiptState === 'storage_failed' ||
+    ['running','success','recovered'].indexOf(task.status) < 0;
+}
+function promptTaskPersist(owner) {
+  var records = promptTaskJournal(owner);
+  // Keep a full 100-image failure batch actionable without unbounded history.
+  var unresolved = records.filter(function (task) { return task.status !== 'running' && promptTaskUnresolved(task); }).slice(-500);
+  var completed = records.filter(function (task) { return task.status !== 'running' && !promptTaskUnresolved(task); }).slice(-40);
+  promptTaskRecords[owner] = records.filter(function (task) {
+    return task.status === 'running' || unresolved.indexOf(task) >= 0 || completed.indexOf(task) >= 0;
+  });
+  try { localStorage.setItem(promptTaskStorageKey(owner), JSON.stringify(promptTaskRecords[owner].map(promptTaskSafeRecord))); } catch (_) {}
+}
+
+function promptTaskReceiptCount(owner) {
+  var count = 0, prefix = LEGACY_IMAGE_RECEIPT_PREFIX + encodeURIComponent(owner) + ':';
+  var ownKeys = Object.create(null); promptTaskJournal(owner).forEach(function (task) { if (task.receiptKey) ownKeys[task.receiptKey] = true; });
+  try {
+    for (var index = 0; index < localStorage.length; index++) {
+      var key = localStorage.key(index);
+      if (key && key.indexOf(prefix) === 0 && ownKeys[key]) count++;
+    }
+  } catch (_) {}
+  return count;
+}
+function promptTaskBusy() {
+  return !!(Object.keys(state.activeJobIds || {}).length || state.activeJobId ||
+    typeof linkWorkflowBusyDepth !== 'undefined' && linkWorkflowBusyDepth > 0 ||
+    typeof referenceAnalysisInFlight !== 'undefined' && referenceAnalysisInFlight ||
+    typeof imageUploadReads !== 'undefined' && imageUploadReads > 0 ||
+    globalThis.SZ_IMAGE_UPLOAD && globalThis.SZ_IMAGE_UPLOAD.isImporting && globalThis.SZ_IMAGE_UPLOAD.isImporting() ||
+    state.skuActive || state._skuPaidAuthorizing || state.skuPersistInFlight || state.subjectOrchestrationRun || state.subjectSwitchingEvidence ||
+    state.referenceDetail && (state.referenceDetail.activeJobId || state.referenceDetail.buildPhase === 'building' || state.referenceDetail.confirmationPromise) ||
+    typeof referenceDetailBatchUiBusy === 'function' && referenceDetailBatchUiBusy());
+}
+function promptTaskState() {
+  var owner = promptTaskOwner(), records = promptTaskJournal(owner), now = Date.now();
+  var tasks = records.map(function (task) { return Object.assign(promptTaskSafeRecord(task), { elapsedMs: Math.max(0, (task.endedAt || now) - task.startedAt) }); });
+  var activeCount = tasks.filter(function (task) { return task.status === 'running'; }).length;
+  var pendingReceiptCount = promptTaskReceiptCount(owner);
+  var busy = activeCount > 0 || promptTaskBusy();
+  var localSummary = state.referenceDetail && (state.referenceDetail.activeJobId || state.referenceDetail.buildPhase === 'building') ? '正在分析详情结构'
+    : state.referenceDetail && state.referenceDetail.confirmationPromise ? '正在保存并确认详情结构'
+    : state.skuPersistInFlight || state._skuPaidAuthorizing ? '正在保存 SKU 任务' : '正在整理任务或素材';
+  return { ready: owner !== 'local', accountKey: owner, activeCount: activeCount, pendingReceiptCount: pendingReceiptCount,
+    busy: busy, tasks: tasks, summary: activeCount ? activeCount + ' 个任务进行中' : busy ? localSummary : pendingReceiptCount ? pendingReceiptCount + ' 个原任务回执已保留' : '当前没有进行中的任务' };
+}
+function promptTaskEscape(value) { return String(value || '').replace(/[&<>"']/g, function (char) { return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]; }); }
+function promptTaskOpenDetails() {
+  promptTaskRender();
+  var panel = $('promptTaskPanel'), dialog = $('promptTaskDialog'), entry = $('promptTaskOpen');
+  if (!panel || panel.hidden || !dialog || dialog.open) return;
+  dialog.showModal();
+  if (entry) entry.setAttribute('aria-expanded', 'true');
+}
+function promptTaskCloseDetails() {
+  var dialog = $('promptTaskDialog'), entry = $('promptTaskOpen');
+  if (dialog && dialog.open) dialog.close();
+  if (entry) entry.setAttribute('aria-expanded', 'false');
+}
+// Presentation derives from the original journal; it never changes settlement or retry eligibility.
+function promptTaskDisplayState(task) {
+  if (task.status === 'running') return 'running';
+  if (task.receiptState === 'storage_failed') return 'storage_failed';
+  if (task.receiptState === 'pending' || task.status === 'uncertain') return 'uncertain';
+  return task.status;
+}
+function promptTaskElapsed(task) {
+  var seconds = Math.floor(task.elapsedMs / 1000);
+  return Math.floor(seconds / 60) + '分' + seconds % 60 + '秒';
+}
+function promptTaskRender() {
+  var panel = $('promptTaskPanel');
+  if (!panel || typeof panel.querySelector !== 'function') return;
+  var snapshot = promptTaskState(), tasks = snapshot.tasks;
+  if (panel.__taskOwner !== snapshot.accountKey) { promptTaskCloseDetails(); var recovery = $('promptTaskRecovery'); if (recovery) { recovery.hidden = true; recovery.textContent = ''; } panel.__taskOwner = snapshot.accountKey; }
+  panel.hidden = !tasks.length && !snapshot.pendingReceiptCount && !snapshot.busy;
+  var summary = $('promptTaskSummary'), list = $('promptTaskList'), note = $('promptTaskNote'), detailSummary = $('promptTaskDetailSummary');
+  var current = $('promptTaskCurrent'), currentElapsed = $('promptTaskCurrentElapsed');
+  var running = tasks.filter(function (task) { return promptTaskDisplayState(task) === 'running'; });
+  var completed = tasks.filter(function (task) { return ['success','recovered'].indexOf(promptTaskDisplayState(task)) >= 0; }).reverse();
+  var attention = tasks.filter(function (task) { return ['running','success','recovered'].indexOf(promptTaskDisplayState(task)) < 0; }).reverse();
+  var failedCount = attention.filter(function (task) { return ['failed','timed_out','interrupted'].indexOf(promptTaskDisplayState(task)) >= 0; }).length;
+  var endedCount = attention.filter(function (task) { return promptTaskDisplayState(task) === 'ended'; }).length;
+  var uncertainCount = attention.filter(function (task) { return ['uncertain','storage_failed'].indexOf(promptTaskDisplayState(task)) >= 0; }).length;
+  var counts = [];
+  if (snapshot.activeCount) counts.push('进行中 ' + snapshot.activeCount);
+  else if (snapshot.busy) counts.push('处理中');
+  if (failedCount) counts.push('失败 ' + failedCount);
+  if (uncertainCount) counts.push('待确认 ' + uncertainCount);
+  if (endedCount) counts.push('已结束 ' + endedCount);
+  if (completed.length) counts.push('最近完成 ' + completed.length);
+  if (!counts.length && snapshot.pendingReceiptCount) counts.push('回执已保留 ' + snapshot.pendingReceiptCount);
+  var compactSummary = counts.join(' · ') || '暂无任务';
+  panel.setAttribute('data-state', snapshot.busy ? 'running' : attention.length || snapshot.pendingReceiptCount ? 'attention' : 'complete');
+  if (summary && summary.textContent !== compactSummary) summary.textContent = compactSummary;
+  if (detailSummary) detailSummary.textContent = compactSummary;
+  var currentText = running.length ? running[0].label + (running[0].targetLabel ? ' · ' + running[0].targetLabel : '') + (running.length > 1 ? ' 等 ' + running.length + ' 项' : '') : snapshot.busy ? snapshot.summary : '';
+  if (current) { current.hidden = !currentText; if (current.textContent !== currentText) current.textContent = currentText; }
+  if (currentElapsed) { currentElapsed.hidden = !running.length; currentElapsed.textContent = running.length ? '已等待 ' + promptTaskElapsed(running[0]) : ''; }
+  if (note) note.textContent = '这里展示当前工作区保留的任务记录。结束等待后，素材和已有结果保留，其他任务可继续。' +
+    (uncertainCount || snapshot.pendingReceiptCount || snapshot.historicalReceiptCount ? '待确认任务的原回执继续保留，请先核对原结果；重新跑按新任务计费。' : '');
+  var labels = {running:'进行中',success:'已完成',failed:'失败，可重新跑',ended:'已结束等待',timed_out:'等待超时，可重新跑',uncertain:'结果待确认',storage_failed:'原回执待保存',interrupted:'连接中断，可重新跑',recovered:'原图已返回'};
+  function rowMarkup(task) {
+    var displayState = promptTaskDisplayState(task);
+    var imageRetry = task.type === 'GENERATE_IMAGE' && task.status !== 'running' && task.receiptState !== 'received' && task.receiptKey &&
+      typeof legacyImageCanRestart === 'function' && legacyImageCanRestart(task.receiptKey);
+    var promptRetryHint = task.type !== 'GENERATE_IMAGE' && ['failed','timed_out','uncertain','interrupted','ended'].indexOf(task.status) >= 0;
+    return '<li class="prompt-task-row" data-task-id="' + promptTaskEscape(task.id) + '" tabindex="-1"><div><strong>' + promptTaskEscape(task.label + (task.targetLabel ? ' · ' + task.targetLabel : '')) + '</strong><span class="prompt-task-state" data-status="' + promptTaskEscape(displayState) + '">' + promptTaskEscape(labels[displayState] || '已结束') + '</span><time data-task-elapsed="' + promptTaskEscape(task.id) + '"></time>' +
+      (task.receiptState === 'received' ? '<small>原图片已保留，可查看原图，无需重新生成。</small>' :
+        displayState === 'storage_failed' ? '<small>原回执保留，请先核对生成记录，避免重复生成。</small>' :
+        displayState === 'uncertain' ? '<small>本页等待已结束，原回执保留，请先核对原结果。</small>' :
+        task.status === 'running' ? '<small>可继续其他独立任务；结束等待后原回执保留。</small>' :
+        promptRetryHint ? '<small>点击原分析按钮或“只重试失败编号”重新跑</small>' :
+        '') +
+      (imageRetry ? '<small>重新跑按新任务计费，原任务记录保留。</small>' : '') +
+      '<details class="prompt-task-technical" data-task-detail="' + promptTaskEscape(task.id) + '"><summary>请求详情</summary><dl><dt>请求编号</dt><dd><code>' + promptTaskEscape(task.jobId) + '</code></dd>' + (task.code ? '<dt>错误码</dt><dd><code>' + promptTaskEscape(task.code) + '</code></dd>' : '') + '</dl></details></div>' +
+      (task.status === 'running' ? '<button type="button" class="btn ghost" data-task-end="' + promptTaskEscape(task.id) + '" aria-label="结束等待 ' + promptTaskEscape(task.label + ' ' + task.targetLabel) + '">结束等待</button>' :
+        task.receiptState === 'received' && task.receiptKey ? '<button type="button" class="btn ghost" data-task-recover="' + promptTaskEscape(task.id) + '">查看原图</button>' :
+        imageRetry ? '<button type="button" class="btn ghost" data-task-restart="' + promptTaskEscape(task.id) + '">重新跑（新任务）</button>' : '') + '</li>';
+  }
+  function groupMarkup(name, label, rows, extra) {
+    if (!rows.length && !extra) return '';
+    var heading = '<span>' + label + '</span><b>' + (rows.length || '处理中') + '</b>';
+    return name === 'completed' ? '<li><details class="prompt-task-completed" data-task-group="completed"><summary>' + heading + '</summary><ul class="prompt-task-group-list">' + rows.map(rowMarkup).join('') + '</ul></details></li>' :
+      '<li class="prompt-task-group" data-task-group="' + name + '"><h3>' + heading + '</h3><ul class="prompt-task-group-list">' + (extra || '') + rows.map(rowMarkup).join('') + '</ul></li>';
+  }
+  var markup = groupMarkup('running', '进行中', running, snapshot.busy && !running.length ? '<li class="prompt-task-local">' + promptTaskEscape(snapshot.summary) + '</li>' : '') +
+    groupMarkup('attention', '需处理', attention) + groupMarkup('completed', '最近完成', completed);
+  if (!markup && snapshot.pendingReceiptCount) markup = '<li class="prompt-task-local">原任务回执已保留，请从原任务核对结果。</li>';
+  // Elapsed-time ticks must not replace a button the user is about to press.
+  if (list) {
+    if (list.__taskMarkup !== markup) {
+      var focused = typeof document !== 'undefined' && document.activeElement;
+      var focusedRow = focused && list.contains && list.contains(focused) && focused.closest('[data-task-id]');
+      var focusedId = focusedRow && focusedRow.getAttribute('data-task-id');
+      var focusedDisclosure = focused && focused.closest && focused.closest('details');
+      var focusedSummary = focused && focused.tagName === 'SUMMARY';
+      var expanded = Object.create(null);
+      Array.prototype.forEach.call(list.querySelectorAll('details[open]'), function (details) {
+        expanded[details.getAttribute('data-task-detail') || 'group:' + details.getAttribute('data-task-group')] = true;
+      });
+      list.innerHTML = markup; list.__taskMarkup = markup;
+      Array.prototype.forEach.call(list.querySelectorAll('details'), function (details) {
+        details.open = !!expanded[details.getAttribute('data-task-detail') || 'group:' + details.getAttribute('data-task-group')];
+      });
+      if (focusedId) Array.prototype.some.call(list.querySelectorAll('[data-task-id]'), function (row) {
+        if (row.getAttribute('data-task-id') !== focusedId) return false;
+        var completedGroup = row.closest('[data-task-group="completed"]');
+        var focusTarget = completedGroup && !completedGroup.open ? completedGroup.querySelector('summary') :
+          focusedSummary ? row.querySelector('summary') || row : row.querySelector('button') || row;
+        focusTarget.focus({ preventScroll: true }); return true;
+      });
+      else if (focusedSummary && focusedDisclosure && focusedDisclosure.getAttribute('data-task-group') === 'completed') {
+        var completedSummary = list.querySelector('[data-task-group="completed"] > summary');
+        if (completedSummary) completedSummary.focus({ preventScroll: true });
       }
     }
-    dispatch(0);
+    if (typeof list.querySelectorAll === 'function') Array.prototype.forEach.call(list.querySelectorAll('[data-task-elapsed]'), function (time) {
+      var task = tasks.find(function (item) { return item.id === time.getAttribute('data-task-elapsed'); });
+      if (!task) return;
+      time.textContent = (task.status === 'running' ? '已等待 ' : '用时 ') + promptTaskElapsed(task);
+    });
+  }
+  if (!panel.__taskLifecycleBound) {
+    panel.__taskLifecycleBound = true;
+    var entry = $('promptTaskOpen'), close = $('promptTaskClose'), dialog = $('promptTaskDialog');
+    if (entry) entry.addEventListener('click', promptTaskOpenDetails);
+    if (close) close.addEventListener('click', promptTaskCloseDetails);
+    if (dialog) {
+      dialog.addEventListener('close', function () {
+        if (entry) { entry.setAttribute('aria-expanded', 'false'); if (!panel.hidden) entry.focus({ preventScroll: true }); }
+      });
+      dialog.addEventListener('click', function (event) {
+        if (event.target !== dialog) return;
+        var rect = dialog.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) promptTaskCloseDetails();
+      });
+    }
+    panel.addEventListener('click', function (event) {
+      var button = event.target && event.target.closest && event.target.closest('[data-task-end]');
+      if (button) promptTaskEnd(button.getAttribute('data-task-end'));
+      var recovery = event.target && event.target.closest && event.target.closest('[data-task-recover]');
+      if (recovery) promptTaskRecover(recovery.getAttribute('data-task-recover'));
+      var restart = event.target && event.target.closest && event.target.closest('[data-task-restart]');
+      if (restart) promptTaskRestartImage(restart.getAttribute('data-task-restart'));
+    });
+  }
+  if (promptTaskRenderTimer) clearTimeout(promptTaskRenderTimer);
+  promptTaskRenderTimer = snapshot.activeCount ? setTimeout(function () { promptTaskRenderTimer = null; promptTaskRender(); }, 1000) : null;
+}
+function promptTaskEnd(id) {
+  var flight = promptTaskFlights[id];
+  if (!flight || flight.owner !== promptTaskOwner()) return { ok: false, code: 'TASK_NOT_ACTIVE' };
+  flight.end(false);
+  return { ok: true, ended: true, jobId: flight.task.jobId };
+}
+function promptTaskRestartImage(id) {
+  var owner = promptTaskOwner(), task = promptTaskJournal(owner).find(function (item) { return item.id === id; });
+  if (!task || task.type !== 'GENERATE_IMAGE' || task.status === 'running' || !task.receiptKey ||
+      typeof legacyImageCanRestart !== 'function' || !legacyImageCanRestart(task.receiptKey) || typeof legacyImageRestart !== 'function') {
+    return Promise.resolve({ ok: false, code: 'TASK_RESTART_UNAVAILABLE' });
+  }
+  return Promise.resolve(legacyImageRestart(task.receiptKey)).then(function (result) {
+    if (owner === promptTaskOwner()) {
+      promptTaskRender();
+      if (!result || !result.ok) { var note = $('promptTaskNote'); if (note) note.textContent = result && result.error || '重新跑未成功，请检查当前任务状态后重试。'; }
+    }
+    return result;
+  }, function () {
+    if (owner === promptTaskOwner()) promptTaskRender();
+    return { ok: false, code: 'TASK_RESTART_FAILED' };
   });
+}
+function promptTaskRecover(id) {
+  var owner = promptTaskOwner(), task = promptTaskJournal(owner).find(function (item) { return item.id === id; });
+  var host = $('promptTaskRecovery');
+  if (!task || !task.receiptKey || !globalThis.SZ_SKU_DELIVERY_STORE || !host) return Promise.resolve({ ok: false });
+  return globalThis.SZ_SKU_DELIVERY_STORE.read(owner, task.receiptKey).then(function (delivery) {
+    if (owner !== promptTaskOwner() || !delivery || delivery.jobId !== task.jobId) return { ok: false };
+    host.textContent = '';
+    var title = document.createElement('p'); title.textContent = task.label + ' · ' + (task.targetLabel || '原任务') + '：已返回原图（原回执继续保留）'; host.appendChild(title);
+    delivery.images.forEach(function (url, index) {
+      if (!/^(?:https?:\/\/|data:image\/(?:png|jpeg|webp);base64,)/i.test(url)) return;
+      var link = document.createElement('a'); link.href = url; link.target = '_blank'; link.rel = 'noopener'; link.download = 'original-' + (index + 1) + '.png';
+      var preview = document.createElement('img'); preview.src = url; preview.alt = '原任务图片 ' + (index + 1); preview.loading = 'lazy';
+      link.appendChild(preview); host.appendChild(link);
+    });
+    host.hidden = false;
+    return { ok: true, recovered: true };
+  }).catch(function () { if (owner === promptTaskOwner()) { host.hidden = false; host.textContent = '原图暂未读取成功，回执继续保留，请稍后重试。'; } return { ok: false }; });
+}
+function promptTaskLateResult(task, owner, response, options) {
+  if (!options || typeof options.onLate !== 'function') return;
+  Promise.resolve().then(function () { return options.onLate(response); }).then(function (saved) {
+    if (!saved || !saved.ok) return;
+    task.receiptState = saved.delivered ? 'received' : '';
+    if (saved.delivered) task.status = 'recovered';
+    promptTaskPersist(owner); promptTaskRender();
+  }).catch(function () { task.receiptState = 'storage_failed'; promptTaskPersist(owner); promptTaskRender(); });
+}
+function promptTaskCancel(jobId) {
+  // Cancellation acknowledgement is not evidence that a paid request was not submitted.
+  try { chrome.runtime.sendMessage({ type: 'CANCEL_GENERATION', jobId: jobId }, function () { try { void chrome.runtime.lastError; } catch (_) {} }); } catch (_) {}
+}
+function promptTaskPromptFailure(response) {
+  if (!response || response.ok) return response;
+  var code = String(response.code || response.errorCode || '').toLowerCase();
+  var errorMeta = response.errorMeta && typeof response.errorMeta === 'object' ? response.errorMeta : {};
+  if (/^(?:task_account_changed|account_changed|input_changed|link_identity_mismatch|auth_failed|session_expired|unauthenticated|unauthorized|forbidden|invalid_api_key|missing_api_key|config_missing|config_not_found|model_not_found|http_401|http_403)$/.test(code) ||
+      Number(response.status || errorMeta.status) === 401 || Number(response.status || errorMeta.status) === 403 ||
+      /API\s*Key|密钥失效|知识库.*(?:连接|读取|证书|变化|冲突)|链接清单.*变化|素材.*变化|批次.*失效/i.test(String(response.error || ''))) return response;
+  var timeout = response.timedOut || /^(?:timeout|task_wait_timeout|prompt_job_timeout|http_504)$/.test(code);
+  var transport = /^(?:task_transport_failed|network_error|request_failed|request_uncertain)$/.test(code);
+  var ended = /^(?:cancelled|task_wait_ended)$/.test(code);
+  if (!timeout && !transport && !ended && !response.stateUncertain) return response;
+  // UI failure frees waiting; an unknown settlement must not become a no-charge claim.
+  return Object.assign({}, response, {
+    code: response.code || (timeout ? 'TASK_WAIT_TIMEOUT' : 'REQUEST_UNCERTAIN'),
+    timedOut: !!timeout, retryable: true,
+    error: (timeout ? '任务超时失败。' : ended ? '已结束当前任务。' : transport ? '任务连接失败。' : '本次任务未返回可用结果，已按失败结束。') +
+      '当前输入已保留，可点击原分析按钮或“只重试失败编号”重新跑；其他任务可继续。'
+  });
+}
+function promptTaskRun(type, payload, options, dispatch) {
+  var owner = promptTaskOwner(), spec = PROMPT_TASK_TYPES[type], data = Object.assign({}, payload && payload.payload || {});
+  var jobId = String(payload && payload.jobId || data._jobId || data.requestId || newJobId());
+  var request = Object.assign({}, payload || {}, { jobId: jobId, payload: Object.assign({}, data, { _jobId: jobId }) });
+  var identityData = Object.assign({}, data); delete identityData._jobId; delete identityData.requestId;
+  var identity = JSON.stringify([type, request.config || {}, identityData]);
+  var existing = Object.keys(promptTaskFlights).map(function (key) { return promptTaskFlights[key]; }).find(function (flight) {
+    return flight.owner === owner && flight.identity === identity;
+  });
+  if (existing) return existing.promise;
+  // A deliberate rerun is a fresh attempt, even when a caller reuses its old ID.
+  if (type !== 'GENERATE_IMAGE' && promptTaskJournal(owner).some(function (task) { return task.jobId === jobId; })) {
+    var previousJobId = jobId;
+    jobId = newJobId(); request.jobId = jobId; request.payload._jobId = jobId;
+    if (request.payload.requestId === previousJobId) request.payload.requestId = jobId;
+  }
+  var targetLabel = String(data.linkId || data.link && data.link['链接编号'] || data.skuId || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 60);
+  if (data.detailScreenIndex || data.mainImageIndex) targetLabel += ' 第' + (Number(data.detailScreenIndex || data.mainImageIndex) || 1) + '张';
+  var task = { id: newJobId(), jobId: jobId, type: type, label: spec[0], targetLabel: targetLabel, receiptKey: options && options.receiptKey || '', status: 'running', startedAt: Date.now(), endedAt: 0, receiptState: '' };
+  var flight = { owner: owner, task: task, identity: identity, promise: null, end: null };
+  promptTaskJournal(owner).push(task); promptTaskFlights[task.id] = flight;
+  flight.promise = new Promise(function (resolve) {
+    var settled = false, timer;
+    function finish(response) {
+      if (settled) { promptTaskLateResult(task, owner, response, options); return; }
+      settled = true; clearTimeout(timer); delete promptTaskFlights[task.id];
+      var result = response || { ok: false, code: 'TASK_RESPONSE_MISSING', error: '任务未返回结果，已结束等待。' };
+      if (owner !== promptTaskOwner()) { promptTaskLateResult(task, owner, response, options); result = { ok: false, code: 'TASK_ACCOUNT_CHANGED', ended: true, error: '账号已变化，原任务结果已保留在原账号。', stateUncertain: type === 'GENERATE_IMAGE' }; }
+      if (type !== 'GENERATE_IMAGE' && result.code !== 'TASK_ACCOUNT_CHANGED') result = promptTaskPromptFailure(result);
+      task.endedAt = Date.now(); task.code = /^[A-Za-z0-9_.:-]{0,100}$/.test(String(result.code || '')) ? String(result.code || '') : '';
+      task.status = result.ok ? 'success' : result.timedOut ? 'timed_out' : result.code === 'cancelled' || result.code === 'TASK_WAIT_ENDED' || result.code === 'TASK_ACCOUNT_CHANGED' ? 'ended' : type === 'GENERATE_IMAGE' && result.stateUncertain ? 'uncertain' : 'failed';
+      task.receiptState = type === 'GENERATE_IMAGE' && result.stateUncertain ? 'pending' : '';
+      promptTaskPersist(owner); promptTaskRender(); resolve(result);
+    }
+    flight.end = function (timedOut) {
+      if (settled) return;
+      var imageTask = type === 'GENERATE_IMAGE';
+      finish({ ok: false, code: timedOut ? 'TASK_WAIT_TIMEOUT' : 'TASK_WAIT_ENDED', jobId: jobId, ended: true, timedOut: !!timedOut,
+        stateUncertain: true, definitiveFailure: false, global: false,
+        error: (timedOut ? '当前请求等待超时。' : '已结束当前请求等待。') +
+          (imageTask ? '原图片回执继续保留，其他独立图片可继续。' : '已有素材和提示词已保留，可继续其他任务。') });
+      promptTaskCancel(jobId);
+    };
+    timer = setTimeout(function () { flight.end(true); }, spec[1]);
+    try { Promise.resolve(dispatch(request)).then(finish, function () {
+      finish({ ok: false, code: 'TASK_TRANSPORT_FAILED', error: '任务连接中断，已结束等待；已有内容已保留。', stateUncertain: true, definitiveFailure: false });
+    }); } catch (_) { finish({ ok: false, code: 'TASK_TRANSPORT_FAILED', error: '任务连接中断，已结束等待；已有内容已保留。', stateUncertain: true, definitiveFailure: false }); }
+  });
+  promptTaskPersist(owner); promptTaskRender();
+  return flight.promise;
+}
+// END_PROMPT_TASK_LIFECYCLE_V1
+
+function sendRuntime(type, payload, options) {
+  var accountAtDispatch = promptTaskOwner();
+  function finish(resp) {
+    resp = resp || { ok: false, error: '无响应' };
+    if (accountAtDispatch === promptTaskOwner()) applyModelFallbackFromResponse(resp);
+    return resp;
+  }
+  function dispatch(requestPayload) {
+    if (promptLabTestSend) {
+      try { return Promise.resolve(promptLabTestSend(type, requestPayload || {})); }
+      catch (error) { return Promise.reject(error); }
+    }
+    return new Promise(function (resolve) {
+      var request = Object.assign({ type: type }, requestPayload || {});
+      try {
+        chrome.runtime.sendMessage(request, function (resp) {
+          var error = chrome.runtime.lastError;
+          resolve(error ? promptLabRuntimeFailure(type, String(error.message || error)) : resp);
+        });
+      } catch (error) { resolve(promptLabRuntimeFailure(type, String(error && error.message || error))); }
+    });
+  }
+  // Dedicated controllers already own their request lifecycles and late-result journals.
+  var image = payload && payload.payload || {};
+  var tracked = PROMPT_TASK_TYPES[type] && !image.studioGenesisVersion && !image.creativeContractVersion &&
+    !image.sceneExtensionContractVersion && !image.linkImageContractVersion && !image.referenceDetailBatch;
+  if (tracked) return promptTaskRun(type, payload, options, dispatch).then(finish);
+  return dispatch(payload).then(finish);
 }
 
 function openBusinessKnowledge() {
@@ -1824,25 +3350,19 @@ function refreshBusinessKnowledgeStatus() {
     button.classList.remove('warn');
     return Promise.resolve({ ok: true, preview: true });
   }
-  return Promise.all([send('GET_BUSINESS_KNOWLEDGE'), send('GET_OBSIDIAN_CONNECTION')]).then(function (parts) {
-    var resp = parts[0], obsidian = parts[1];
+  return send('GET_BUSINESS_KNOWLEDGE').then(function (resp) {
     var summary = resp && resp.ok && resp.summary;
     var localReady = !!(summary && summary.ready);
-    var obsidianReady = !!(obsidian && obsidian.ok && obsidian.connected);
-    button.classList.toggle('ready', localReady || obsidianReady);
-    button.classList.toggle('warn', !!((resp && !resp.ok) || (obsidian && !obsidian.ok)));
-    button.textContent = obsidianReady
-      ? 'Obsidian · 已连接'
-      : (localReady ? ('知识库 · ' + summary.sourceCount + '份') : '知识库 · 未连接');
+    button.classList.toggle('ready', localReady);
+    button.classList.toggle('warn', !!(resp && !resp.ok));
+    button.textContent = localReady ? ('知识库 · ' + summary.sourceCount + '份') : '知识库 · 未导入';
     if ($('skuKnowledgeState')) {
-      $('skuKnowledgeState').textContent = obsidianReady
-        ? ('Obsidian 业务知识库已连接' + (obsidian.config && obsidian.config.lastNoteCount ? ('：' + obsidian.config.lastNoteCount + ' 篇可读笔记') : '') + '。SKU 仅引用品牌、文案、视觉与合规边界，不会臆造款式属性。')
-        : (localReady
+      $('skuKnowledgeState').textContent = localReady
           ? ('业务知识库已关联：' + summary.sourceCount + ' 份资料、' + summary.fieldCount + ' 项规则。SKU 仅引用品牌、文案、视觉与合规边界，不会臆造款式属性。')
-          : '业务知识库尚未连接：当前 SKU 只按不可变对象底图、替换主体、业务标题和主体替换合同生成。');
-      $('skuKnowledgeState').classList.toggle('ready', localReady || obsidianReady);
+          : '业务知识库尚未导入：当前 SKU 只按不可变对象底图、替换主体、业务标题和主体替换合同生成。';
+      $('skuKnowledgeState').classList.toggle('ready', localReady);
     }
-    return { local: resp, obsidian: obsidian };
+    return { local: resp };
   });
 }
 
@@ -2045,6 +3565,7 @@ function markStyleRefreshRunStale(message) {
 }
 
 function syncGenerationModeLabels(isDetail) {
+  if (isSceneExtensionRoute()) return;
   var viral = currentSurfaceMode() === 'viral';
   var styleRefresh = viral && isStyleRefreshRoute();
   setText('generationTitle', viral ? (styleRefresh ? '风格焕新结果' : '案例裂变结果') : (isDetail ? '详情生图结果' : '生图参数'));
@@ -2123,7 +3644,7 @@ function updateConfigSummary(cfg) {
   if (title) title.textContent = providerName;
   if (sub) {
     sub.textContent = [
-      maskKey(cfg.apiKey),
+      creativeUsesPlatformWallet(cfg, 'image') ? '使用本站积分 · 无需填写 API Key' : maskKey(cfg.apiKey),
       cfg.imageAdapter === 'none' ? '仅文本提词' : '生图：' + (cfg.imageModel || '未设定'),
       '文本：' + (cfg.textModel || cfg.visionModel || '未设定')
     ].join(' · ');
@@ -2147,7 +3668,7 @@ function updateConfigSummary(cfg) {
 function cfgFromForm() {
   var provider = $('provider').value || DEFAULT_CFG.provider;
   var preset = presetForProvider(provider);
-  return normalizeCfg({
+  var cfg = normalizeCfg({
     provider: provider,
     imageAdapter: $('imageAdapter').value || preset.imageAdapter,
     apiKey: $('apiKey').value.trim(),
@@ -2157,6 +3678,8 @@ function cfgFromForm() {
     imageEndpoint: $('imageEndpoint').value.trim() || preset.imageEndpoint || DEFAULT_CFG.imageEndpoint,
     imageModel: $('imageModel').value.trim() || preset.imageModel || DEFAULT_CFG.imageModel
   });
+  if (pendingProviderProfile || configWalletSwitchPending) { cfg.apiKey = ''; cfg._configLoading = true; }
+  return cfg;
 }
 
 function isShaozhuangHostedEndpoint(provider, url, fallbackUrl) {
@@ -2173,6 +3696,26 @@ function isShaozhuangHostedConfig(cfg) {
 function isShaozhuangHostedImageConfig(cfg) {
   return !!(cfg && isShaozhuangHostedEndpoint(cfg.provider, cfg.imageEndpoint, DEFAULT_CFG.imageEndpoint));
 }
+
+function creativeUsesPlatformWallet(cfg, kind) {
+  if (cfg && cfg._configLoading) return false;
+  return !!((window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY) && typeof (window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY).usesPlatformWallet === 'function' &&
+    (window.SZ_WEB_ACCOUNT || window.SZ_WEB_SUPPLY).usesPlatformWallet(cfg, kind));
+}
+
+function creativeHasApiCredential(cfg, kind) {
+  if (cfg && cfg._configLoading) return false;
+  return !!(cfg && String(cfg.apiKey || "").trim()) || creativeUsesPlatformWallet(cfg, kind);
+}
+
+function creativeSupplyChannel(kind, cfg) {
+  if (!cfg) {
+    try { cfg = typeof cfgFromForm === 'function' ? cfgFromForm() : null; } catch (error) { cfg = null; }
+  }
+  if (creativeUsesPlatformWallet(cfg, kind)) return 'platform_wallet';
+  return 'external_key';
+}
+if (typeof window !== 'undefined') window.SZCreativeCreditChannel = creativeSupplyChannel;
 
 function normalizeHostedTextModel(cfg, model) {
   var value = String(model || '').trim();
@@ -2223,7 +3766,21 @@ function normalizeCfg(cfg) {
   return cfg;
 }
 
+var configApplySeq = 0;
+var configReadEpoch = 0;
+var pendingProviderSelection = 0;
+var pendingProviderProfile = 0;
+var configFormDirty = false;
+function configReadIsCurrent(seq, accountKey, epoch) {
+  return seq === configApplySeq && String(state.archiveAccountKey) === String(accountKey) && (epoch === undefined || epoch === configReadEpoch);
+}
+function configReplyMatchesAccount(reply, accountKey) {
+  return !accountKey || accountKey === 'local' || !!reply && String(reply.accountKey || '') === String(accountKey);
+}
+
 function applyCfg(cfg) {
+  ++configApplySeq;
+  configFormDirty = false;
   cfg = normalizeCfg(cfg);
   $('provider').value = cfg.provider || 'dashscope';
   $('imageAdapter').value = cfg.imageAdapter || 'dashscope-wan';
@@ -2233,7 +3790,9 @@ function applyCfg(cfg) {
   $('textModel').value = cfg.textModel || DEFAULT_CFG.textModel;
   $('imageEndpoint').value = cfg.imageEndpoint || DEFAULT_CFG.imageEndpoint;
   $('imageModel').value = cfg.imageModel || DEFAULT_CFG.imageModel;
-  setPill('configState', cfg.apiKey ? '已配置' : '未配置', cfg.apiKey ? 'ok' : 'warn');
+  var apiReady = creativeHasApiCredential(cfg, 'chat') && (cfg.imageAdapter === 'none' || creativeHasApiCredential(cfg, 'image'));
+  var platformWallet = creativeUsesPlatformWallet(cfg, 'image');
+  setPill('configState', platformWallet ? '使用本站积分' : apiReady ? '已配置' : '未配置', apiReady ? 'ok' : 'warn');
   updateConfigSummary(cfg);
   return cfg;
 }
@@ -2246,12 +3805,27 @@ function applyProviderPreset(provider) {
   return applyCfg(presetForProvider(provider));
 }
 
-var providerLoadSeq = 0;
+var configWalletSwitchPending = false;
 function loadProviderProfile(provider) {
-  var seq = ++providerLoadSeq;
+  if (configWalletSwitchPending) return;
+  // Clear the previous provider's key and endpoint together before any read.
+  pendingProviderSelection = 0;
+  applyProviderPreset(provider);
+  var seq = ++configApplySeq, accountKey = state.archiveAccountKey, epoch = configReadEpoch;
+  pendingProviderProfile = seq;
   setPill('configState', '正在载入已保存配置...', '');
-  send('GET_CONFIG_PROFILE', { provider: provider }).then(function (r) {
-    if (seq !== providerLoadSeq) return;
+  var timer, expired = false;
+  return Promise.race([send('GET_CONFIG_PROFILE', { provider: provider }), new Promise(function (resolve) {
+    timer = setTimeout(function () { expired = true; resolve({ ok: false, code: 'CONFIG_PROFILE_TIMEOUT' }); }, 15000);
+  })]).then(function (r) {
+    if (expired) {
+      if (pendingProviderProfile === seq) setPill('configState', 'API 配置载入超时，请重新选择。', 'warn');
+      return { ok: false, code: 'CONFIG_PROFILE_TIMEOUT' };
+    }
+    if (!configReadIsCurrent(seq, accountKey, epoch) || creativeWebIsBusy()) return;
+    if (r && r.ok && !configReplyMatchesAccount(r, accountKey)) {
+      setPill('configState', '登录账号已变化，请重新打开工作台。', 'warn'); return;
+    }
     if (r && r.accountKey) setArchiveAccountKey(r.accountKey, { refresh: true });
     if (r && r.ok && r.config) {
       applyCfg(r.config);
@@ -2266,23 +3840,102 @@ function loadProviderProfile(provider) {
     applyProviderPreset(provider);
     send('SET_ACTIVE_PROVIDER', { provider: provider });
     setPill('configState', '新服务商预设，保存后生效', '');
+  }).catch(function () {
+    if (configReadIsCurrent(seq, accountKey, epoch)) setPill('configState', 'API 配置载入失败，请重新选择。', 'warn');
+  }).finally(function () {
+    clearTimeout(timer);
+    if (pendingProviderProfile === seq) {
+      pendingProviderProfile = 0;
+      updateConfigSummary(cfgFromForm());
+    }
   });
 }
 
 function saveCfg() {
+  if (configWalletSwitchPending) return;
+  if (pendingProviderProfile) {
+    setPill('configState', 'API 配置仍在载入，请等待完成后再保存。', 'warn');
+    return { ok: false, code: 'CONFIG_LOADING' };
+  }
   var cfg = cfgFromForm();
+  if (creativeUsesPlatformWallet(cfg, 'chat') && creativeUsesPlatformWallet(cfg, 'image') &&
+      !String(cfg.apiKey || '').trim()) {
+    return usePlatformWallet(cfg);
+  }
   // 保存前立即把官方托管别名回显到表单，避免界面仍显示直连 OpenAI 模型名。
   applyCfg(cfg);
+  var seq = configApplySeq, accountKey = state.archiveAccountKey;
+  configFormDirty = true;
   send('SAVE_CONFIG', { config: cfg }).then(function (r) {
+    if (!configReadIsCurrent(seq, accountKey)) return;
+    if (r && r.ok && !configReplyMatchesAccount(r, accountKey)) {
+      setPill('configState', '登录账号已变化，请重新打开工作台。', 'warn'); return;
+    }
     if (r && r.accountKey) setArchiveAccountKey(r.accountKey, { refresh: true });
     setPill('configState', r && r.ok ? '已保存到账号配置' : '保存失败', r && r.ok ? 'ok' : 'warn');
-    if (r && r.ok) setTimeout(closeConfigModal, 180);
+    if (r && r.ok) {
+      configFormDirty = false;
+      setTimeout(closeConfigModal, 180);
+      var savedConfigParams = new URLSearchParams(location.search);
+      if (['creative', 'mirror', 'link-image'].indexOf(savedConfigParams.get('mode')) >= 0 || savedConfigParams.get('studio') === '1') window.dispatchEvent(new CustomEvent('sz-bound-api-changed'));
+    }
+  });
+}
+
+function usePlatformWallet(config) {
+  if (configWalletSwitchPending) return;
+  if (creativeWebIsBusy()) {
+    setPill('configState', '请等待当前任务结束后切换积分。', 'warn');
+    return;
+  }
+  var accountKey = state.archiveAccountKey;
+  if (!accountKey || accountKey === 'local' || !creativeUsesPlatformWallet(DEFAULT_CFG, 'chat') || !creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
+    setPill('configState', '请先登录网站账号，再使用本站积分。', 'warn');
+    return;
+  }
+  // The explicit wallet choice supersedes pending profile/selector/refresh reads.
+  // Their replies must not restore a provider or key after this write settles.
+  var switchSeq = ++configApplySeq;
+  ++configReadEpoch;
+  pendingProviderProfile = 0;
+  pendingProviderSelection = 0;
+  configWalletSwitchPending = true;
+  creativeWebSetApiBusy('configWalletSwitch', true);
+  var switched = false;
+  var controls = [];
+  var modal = $('configModal');
+  if (modal) Array.prototype.forEach.call(modal.querySelectorAll('input, select, button'), function (control) {
+    controls.push({ node: control, disabled: control.disabled });
+    control.disabled = true;
+  });
+  setPill('configState', '正在切换为本站积分…', '');
+  var walletConfig = config && config.provider ? normalizeCfg(config) : normalizeCfg(DEFAULT_CFG);
+  return send('USE_PLATFORM_WALLET', { accountKey: accountKey, config: walletConfig }).then(function (response) {
+    if (!response || !response.ok || !response.config || String(response.accountKey) !== String(accountKey) || !configReadIsCurrent(switchSeq, accountKey)) {
+      throw new Error(response && response.error || '积分切换失败，请重试。');
+    }
+    applyCfg(response.config);
+    setPill('configState', '使用本站积分', 'ok');
+    referenceDetailBatchNotifySettingsChanged();
+    closeConfigModal();
+    switched = true;
+    return response;
+  }).catch(function (error) {
+    setPill('configState', error.message || '积分切换失败，请重试。', 'warn');
+    return { ok: false, error: error.message };
+  }).finally(function () {
+    configWalletSwitchPending = false;
+    creativeWebSetApiBusy('configWalletSwitch', false);
+    controls.forEach(function (control) { control.node.disabled = control.disabled; });
+    if (switched) window.dispatchEvent(new CustomEvent('sz-bound-api-changed'));
   });
 }
 
 function openConfigModal() {
+  if (creativeWebIsBusy()) return { ok: false, code: 'CONFIG_BUSY', error: '请等待当前任务结束后配置 API。' };
   var modal = $('configModal');
   if (modal) modal.hidden = false;
+  if ($('configWalletRow')) $('configWalletRow').hidden = !creativeUsesPlatformWallet(DEFAULT_CFG, 'chat') || !creativeUsesPlatformWallet(DEFAULT_CFG, 'image');
   updateConfigSummary(cfgFromForm());
   if ($('provider')) $('provider').focus();
 }
@@ -2370,8 +4023,43 @@ function imageToOptimizedDataUrl(src, maxSide, quality, maxChars) {
   });
 }
 
-function fileToOptimizedDataUrl(file, maxChars) {
-  return fileToDataUrl(file).then(function (url) { return imageToOptimizedDataUrl(url, 1280, 0.86, maxChars); });
+var imageUploadReads = 0;
+var imageUploadControls = [];
+function legacyImageUploadBusy() { return imageUploadReads > 0 || !!(window.SZ_IMAGE_UPLOAD && window.SZ_IMAGE_UPLOAD.isImporting()); }
+function syncLegacyImageUploadControls() {
+  if (imageUploadReads > 0 && !imageUploadControls.length) {
+    ['generateBtn','batchBtn','skuClearBtn','skuTemplateClearBtn','clearRefBtn','clearProductFrontBtn','clearProductSideBtn','clearProductBackBtn','clearModelFrontBtn','clearModelSideBtn','clearModelBackBtn','refFile','skuProductFiles','skuTemplateFile','productFrontFile','productSideFile','productBackFile','modelFrontFile','modelSideFile','modelBackFile'].forEach(function (id) {
+      var control = $(id); if (control) { imageUploadControls.push({ control: control, disabled: control.disabled }); control.disabled = true; }
+    });
+  } else if (!imageUploadReads && imageUploadControls.length) {
+    imageUploadControls.forEach(function (entry) { entry.control.disabled = entry.disabled; }); imageUploadControls = [];
+  }
+  syncReferenceAnalysisControl();
+  if (currentLabMode() === 'sku') updateSkuCounts();
+}
+function fileToOptimizedDataUrl(file, maxChars, maxSide) {
+  imageUploadReads++; syncLegacyImageUploadControls();
+  return Promise.resolve().then(function () {
+    if (window.SZ_IMAGE_UPLOAD) window.SZ_IMAGE_UPLOAD.validateFile(file);
+    return fileToDataUrl(file);
+  }).then(function (url) {
+    if (!window.SZ_IMAGE_UPLOAD) return imageToOptimizedDataUrl(url, maxSide || 1280, 0.86, maxChars);
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () { resolve(url); };
+      image.onerror = function () { reject(new Error('图片无法解码，请重新导出后上传。')); };
+      image.src = url;
+    }).then(function () { return imageToOptimizedDataUrl(url, maxSide || 1280, 0.86, maxChars); }).then(function (optimized) {
+      return window.SZ_IMAGE_UPLOAD.retainOriginal(file, optimized).then(function () { return optimized; });
+    });
+  }).catch(function (error) {
+    setPill(currentLabMode() === 'sku' ? 'skuState' : 'contextState', error.message || String(error), 'warn');
+    throw error;
+  }).finally(function () { imageUploadReads--; syncLegacyImageUploadControls(); });
+}
+
+function reportImageUploadError(error) {
+  setPill(currentLabMode() === 'sku' ? 'skuState' : 'contextState', error.message || String(error), 'warn');
 }
 
 function renderPreview(id, src, label) {
@@ -2399,6 +4087,14 @@ function parseReferenceUrls(input) {
 }
 
 function referenceImageList() {
+  if (referenceDetailRouteActive()) {
+    var source = state.referenceDetail.source;
+    return source && source.schema === 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1'
+      ? source.orderedBlocks.map(function (block) {
+        var asset = source.assets.find(function (entry) { return block.assetIds.indexOf(entry.assetId) >= 0; });
+        return asset && asset.url;
+      }).filter(Boolean) : [];
+  }
   var out = [];
   (state.refImages || []).concat(state.refImage || '').concat(parseReferenceUrls($('refUrl') ? $('refUrl').value : '')).forEach(function (image) {
     image = normalizeImageUrl(image);
@@ -2435,7 +4131,7 @@ function renderReferencePreviews() {
     box.className = 'preview reference-preview-grid empty';
     box.textContent = limit === 1
       ? '上传图1，只学习视觉表达，不沿用其中的商品或品牌'
-      : '上传 1-6 张主图或竞品参考图，用于当前通用参考图任务';
+      : (referenceDetailRouteActive() ? '按详情阅读顺序上传或粘贴 1–6 张截图' : '上传 1-6 张主图或竞品参考图，用于当前通用参考图任务');
     return;
   }
   box.className = 'preview reference-preview-grid';
@@ -2444,7 +4140,7 @@ function renderReferencePreviews() {
     item.className = 'reference-preview-item';
     var img = document.createElement('img');
     img.src = src;
-    img.alt = '通用参考图第 ' + (idx + 1) + ' 张';
+    img.alt = (referenceDetailRouteActive() ? '参考详情截图第 ' : '通用参考图第 ') + (idx + 1) + ' 张';
     var order = document.createElement('span');
     order.className = 'reference-preview-order';
     order.textContent = limit === 1 ? '图1' : ('图' + (idx + 1));
@@ -2462,6 +4158,22 @@ function renderReferencePreviews() {
     item.appendChild(img);
     item.appendChild(order);
     item.appendChild(remove);
+    if (referenceDetailRouteActive()) {
+      var controls = document.createElement('div');
+      controls.className = 'reference-screenshot-order-controls';
+      [-1, 1].forEach(function (direction) {
+        var button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn ghost';
+        button.textContent = direction < 0 ? '前移' : '后移';
+        button.setAttribute('aria-label', '第 ' + (idx + 1) + ' 张截图' + button.textContent);
+        button.disabled = idx + direction < 0 || idx + direction >= images.length || !referenceDetailConfirmationMutationAllowed() || referenceDetailBatchUiBusy();
+        button.addEventListener('click', function () { moveReferenceDetailScreenshot(idx, direction); });
+        controls.appendChild(button);
+      });
+      remove.disabled = !referenceDetailConfirmationMutationAllowed() || referenceDetailBatchUiBusy();
+      item.appendChild(controls);
+    }
     box.appendChild(item);
   });
 }
@@ -2470,10 +4182,22 @@ function setRefImages(images, urlText) {
   var next = [];
   (images || []).forEach(function (image) {
     image = normalizeImageUrl(image);
-    if (image && next.indexOf(image) < 0 && next.length < 6) next.push(image);
+    if (image && (referenceDetailRouteActive() || next.indexOf(image) < 0) && next.length < 6) next.push(image);
   });
   var previousKey = (state.refImages || []).join('|');
   var changed = previousKey !== next.join('|');
+  if (referenceDetailRouteActive()) {
+    if (rejectReferenceDetailImageInput('contextState')) return { ok: false, blocked: true };
+    if (next.length) {
+      if (changed || !referenceDetailStrictSource() || state.referenceDetail.source.schema !== 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1') {
+        importReferenceDetailScreenshots(next);
+      }
+    } else if (state.referenceDetail.source) {
+      referenceDetailResetWithSource(null, '', null);
+      renderReferenceDetailWorkbench();
+    }
+    urlText = '';
+  }
   state.refImages = next;
   state.refImage = next[0] || '';
   if (changed) {
@@ -2486,8 +4210,39 @@ function setRefImages(images, urlText) {
   if (urlText != null) $('refUrl').value = urlText;
   renderReferencePreviews();
   var limit = referenceImageLimit();
-  setPill('contextState', next.length ? (limit === 1 ? '图1爆款参考已就绪' : ('已载入通用参考图 ' + next.length + ' / 6')) : '等待图片', next.length ? 'ok' : '');
+  setPill('contextState', next.length ? (limit === 1 ? '图1爆款参考已就绪' : ('已载入' + (referenceDetailRouteActive() ? '详情截图 ' : '通用参考图 ') + next.length + ' / 6')) : '等待图片', next.length ? 'ok' : '');
   syncDetailWorkflowUi();
+  return { ok: true, images: next };
+}
+
+function moveReferenceDetailScreenshot(index, direction) {
+  if (!referenceDetailRouteActive() || rejectReferenceDetailImageInput('contextState')) return { ok: false, blocked: true };
+  var images = referenceImageList();
+  var nextIndex = index + direction;
+  if (!Number.isInteger(index) || (direction !== -1 && direction !== 1) || nextIndex < 0 || nextIndex >= images.length) return { ok: false, code: 'INVALID_SCREENSHOT_ORDER' };
+  var image = images.splice(index, 1)[0];
+  images.splice(nextIndex, 0, image);
+  return setRefImages(images, '');
+}
+
+function importReferenceDetailScreenshotUrls(urls) {
+  if (rejectReferenceDetailImageInput('contextState')) return Promise.resolve({ ok: false, blocked: true });
+  var detail = state.referenceDetail;
+  var digest = detail.sourceDigest;
+  var confirmationSequence = detail.confirmationSequence;
+  var previousImages = referenceImageList();
+  var incoming = (urls || []).slice(0, Math.max(0, 6 - previousImages.length));
+  if (!incoming.length) return Promise.resolve({ ok: false, error: '参考详情截图最多 6 张，请先移除已有截图' });
+  return Promise.all(incoming.map(function (url) {
+    if (/^data:image\//i.test(url)) return Promise.resolve(url);
+    return send('FETCH_IMAGE', { url: url }).then(function (response) {
+      if (!response || !response.ok || !response.dataUrl) throw new Error(referenceDetailErrorMessage(response, '截图链接读取失败，请下载后上传'));
+      return response.dataUrl;
+    });
+  })).then(function (images) {
+    if (!referenceDetailRouteActive() || digest !== detail.sourceDigest || confirmationSequence !== detail.confirmationSequence) throw new Error('读取截图期间路线、来源或确认状态已变化，本次导入已忽略');
+    return setRefImages(previousImages.concat(images), '');
+  });
 }
 
 function setRefImage(src, urlText) {
@@ -2643,7 +4398,7 @@ function currentReferenceDetailFormalFingerprint() {
   var revision = Number(editor.revision || (referenceDetail.blueprint && referenceDetail.blueprint.revision) || 0);
   var sourceKey = referenceDetail.sourceDigest || (referenceDetail.source && referenceDetail.source.snapshotId) || '';
   var approvedRevision = Number(referenceDetail.currentBlueprintUiRevision || (referenceDetail.currentBlueprint && referenceDetail.currentBlueprint.revision) || 0);
-  return ['REFERENCE_DETAIL_SOURCE_V1', sourceKey, revision, approvedRevision].join('|');
+  return [referenceDetail.source && referenceDetail.source.schema || '', sourceKey, revision, approvedRevision].join('|');
 }
 
 function linkSemanticFingerprint(link) {
@@ -2750,7 +4505,6 @@ var GLOBAL_PROMPT_ERROR_CODES = {
   unauthorized: true,
   forbidden: true,
   certificate_error: true,
-  network_error: true,
   search_failed: true,
   note_read_failed: true,
   too_many_files: true,
@@ -2758,7 +4512,6 @@ var GLOBAL_PROMPT_ERROR_CODES = {
   knowledge_required_failed: true,
   knowledge_changed: true,
   knowledge_conflict: true,
-  request_failed: true,
   config_missing: true,
   config_not_found: true,
   account_changed: true,
@@ -2769,8 +4522,16 @@ var GLOBAL_PROMPT_ERROR_CODES = {
   product_images_unavailable: true,
   link_identity_mismatch: true,
   input_changed: true,
-  stopped: true
+  stopped: true,
+  task_account_changed: true,
+  auth_failed: true,
+  session_expired: true,
+  unauthenticated: true
 };
+
+function promptErrorIsRetryableFailure(code) {
+  return /^(?:task_wait_ended|task_wait_timeout|prompt_job_timeout|cancelled|task_transport_failed|network_error|request_failed|request_uncertain|timeout|rate_limited|upstream_unavailable|server_error|request_budget_exhausted|http_429|http_502|http_503|http_504)$/.test(code);
+}
 
 function normalizedPromptError(error, fallback) {
   var response = error && error.response && typeof error.response === 'object' ? error.response : (error && typeof error === 'object' ? error : {});
@@ -2788,6 +4549,7 @@ function normalizedPromptError(error, fallback) {
       if (httpMatch) code = 'http_' + httpMatch[1];
     }
   }
+  if (!code && response.stateUncertain) code = 'request_uncertain';
   var gatewayStatusMatch = message.match(/HTTP\s*(502|503|504)\b/i);
   var gatewayStatus = Number(response.status || errorMeta.status || (gatewayStatusMatch && gatewayStatusMatch[1])) || 0;
   if (code === 'upstream_unavailable' || gatewayStatus === 502 || gatewayStatus === 503 || gatewayStatus === 504) {
@@ -2807,18 +4569,25 @@ function normalizedPromptError(error, fallback) {
       (retryCount ? ('系统已自动重试 ' + retryCount + ' 次仍未恢复；') : '') +
       '请稍后点击“只重试失败编号”。当前链接数据、主体图和已成功提示词均已保留。';
   }
-  var global = !!(error && error.global) || errorMeta.scope === 'global' || errorMeta.fatal === true ||
-    !!GLOBAL_PROMPT_ERROR_CODES[code] || /^(http_401|http_403)$/.test(code);
-  if (!global && /API\s*Key|密钥失效|模型[^，。]*不存在|知识库.*(?:连接|读取|证书|变化|冲突)|链接清单.*变化|素材.*变化|批次.*失效|所有主体图.*不可用/i.test(message)) global = true;
+  var guard = !!GLOBAL_PROMPT_ERROR_CODES[code] || !!GLOBAL_PROMPT_ERROR_CODES[String(errorMeta.code || '').toLowerCase()] || /^(http_401|http_403)$/.test(code) ||
+    Number(response.status || errorMeta.status) === 401 || Number(response.status || errorMeta.status) === 403 ||
+    /API\s*Key|密钥失效|模型[^，。]*不存在|知识库.*(?:连接|读取|证书|变化|冲突)|链接清单.*变化|素材.*变化|批次.*失效|所有主体图.*不可用/i.test(message);
+  var retryableFailure = !guard && (promptErrorIsRetryableFailure(code) || response.stateUncertain === true);
+  // Transport/timeout failure belongs to this item. Keep auth/input guards batch-wide.
+  var global = guard || !retryableFailure && (!!(error && error.global) || errorMeta.scope === 'global' || errorMeta.fatal === true);
+  if (retryableFailure && (response.stateUncertain || /^(?:task_wait_ended|task_wait_timeout|prompt_job_timeout|cancelled|task_transport_failed|network_error|request_failed|request_uncertain|timeout)$/.test(code))) {
+    message = (/timeout/.test(code) ? '任务超时失败。' : /^(?:cancelled|task_wait_ended)$/.test(code) ? '已结束当前任务。' : '本次任务失败，未收到可用结果。') +
+      '当前输入和已成功提示词已保留，可点击原分析按钮或“只重试失败编号”重新跑；其他任务可继续。';
+  }
   return {
     code: code || 'prompt_failed',
     message: message || '提示词生成失败',
     scope: global ? 'global' : 'link',
     stage: String(errorMeta.stage || ''),
     category: String(errorMeta.category || ''),
-    action: String(errorMeta.action || ''),
-    actionLabel: String(errorMeta.actionLabel || ''),
-    retryable: errorMeta.retryable === true,
+    action: retryableFailure ? 'retry_link' : String(errorMeta.action || ''),
+    actionLabel: retryableFailure ? '只重试失败编号' : String(errorMeta.actionLabel || ''),
+    retryable: retryableFailure || errorMeta.retryable === true,
     response: response
   };
 }
@@ -2853,7 +4622,7 @@ function promptErrorAction(entry) {
   if (action === 'open_api_settings' || /^(missing_api_key|unauthorized|forbidden|invalid_api_key|model_not_found|vision_model_required|config_missing|config_not_found|account_changed|http_401|http_403)$/.test(code)) {
     return { label: label || '检查统一 API', run: openUnifiedApiSettings };
   }
-  if (/^(check_knowledge|reconnect_knowledge)$/.test(action) || /knowledge|obsidian|missing_key/.test(code)) {
+  if (/^(check_knowledge|reconnect_knowledge)$/.test(action) || /knowledge/.test(code)) {
     return { label: label || '检查知识库', run: openBusinessKnowledge };
   }
   // 结构化动作优先于错误文案猜测。网关错误摘要会说明“主体图已保留”，
@@ -2936,6 +4705,7 @@ function renderPromptErrors() {
       button.className = 'btn ghost';
       button.textContent = action.label;
       if (entry.action === 'retry_link') button.disabled = retryBusy || retryBlockedByGlobal || !retryContextReady;
+      if (entry.action === 'retry_link') button.dataset.creditPromptRetry = 'true';
       button.addEventListener('click', action.run);
       item.appendChild(button);
     }
@@ -3932,6 +5702,10 @@ function syncReferenceDetailStageDomOrder(active) {
   if (!productAssets || !batchTargets || !parent || parent !== batchTargets.parentNode) return false;
   if (typeof parent.insertBefore !== 'function') return false;
   parent.insertBefore(productAssets, batchTargets);
+  // Dedicated style pages keep material -> style -> output order even when
+  // late configuration or field updates rerun the legacy stage synchronizer.
+  var styleChoices = pinnedViralWorkflowRoute() === 'style-refresh' && $('styleRefreshPanel');
+  if (styleChoices && styleChoices.parentNode === parent) parent.insertBefore(styleChoices, batchTargets);
   if (outputSettings && outputSettings.parentNode === parent) parent.insertBefore(outputSettings, batchTargets);
   var oneConfirm = $('referenceDetailOneConfirm');
   var confirmHome = $('referenceDetailConfirmationHome');
@@ -3951,7 +5725,9 @@ function syncReferenceDetailStoryRouteClass() {
   setText('detailSubjectStepNo', active ? '03' : '02');
   setText('detailPromptStepNo', active ? '04' : '03');
   setText('generationStepNo', active ? '05' : '04');
-  setText('detailPromptStepTitle', active ? '批量输出设置' : '按当前路线生成详情提示词');
+  var workflowRoute = pinnedViralWorkflowRoute();
+  setText('detailPromptStepTitle', active ? '批量输出设置' : (workflowRoute === 'case' ? '创作设置与裂变提示词' : (workflowRoute === 'style-refresh' ? '输出规格与焕新方案' : '按当前路线生成详情提示词')));
+  if (workflowRoute) setText('copyDetailPromptBtn', '复制创作提示词');
   if (document.body) {
     document.body.classList.toggle('reference-detail-story-route', active);
     if (!active) {
@@ -3964,14 +5740,15 @@ function syncReferenceDetailStoryRouteClass() {
 
 function rejectReferenceDetailImageInput(pillId) {
   if (!referenceDetailRouteActive()) return false;
-  setPill(pillId || 'contextState', '参考成详不接收单图；请使用商品 URL 或当前页提取入口', 'warn');
-  setPill('detailSourceState', '待导入正式来源', 'warn');
-  renderReferenceDetailWorkbench();
-  return true;
+  if (!referenceDetailConfirmationMutationAllowed() || referenceDetailBatchUiBusy()) {
+    setPill(pillId || 'contextState', '当前正在锁定结构或生成详情，请等待完成后再修改截图', 'warn');
+    return true;
+  }
+  return false;
 }
 
 function referenceDetailStrictSource() {
-  return !!(state.referenceDetail.source && state.referenceDetail.source.schema === 'REFERENCE_DETAIL_SOURCE_V1');
+  return !!(state.referenceDetail.source && ['REFERENCE_DETAIL_SOURCE_V1', 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1'].indexOf(state.referenceDetail.source.schema) >= 0);
 }
 
 // V2 tombstone only: these legacy markers are detected solely so their reference-detail
@@ -4023,7 +5800,7 @@ function migrateLegacyReferenceDetailUploadState() {
   resetReferenceDetailBatchForSourceMigration();
   detail.legacyUploadMigrated = true;
   detail.migrationNotice = REFERENCE_DETAIL_V2_MIGRATION_MESSAGE;
-  setPill('detailSourceState', '旧版状态已迁移 · 待导入正式来源', 'warn');
+  setPill('detailSourceState', '请重新上传参考详情截图', 'warn');
   return { ok: true, migrated: true, message: REFERENCE_DETAIL_V2_MIGRATION_MESSAGE };
 }
 
@@ -4058,7 +5835,7 @@ function referenceDetailNow() {
 
 function referenceDetailErrorMessage(error, fallback) {
   var message = error && (error.message || error.error) || error;
-  message = String(message || fallback || '参考成详操作失败').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  message = String(message || fallback || '清单成详操作失败').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
   if ((error && error.transport === true) || promptLabRuntimeChannelClosed(message)) {
     return '插件后台连接刚刚中断，请刷新当前工作台后重试；当前结构与素材未丢失。';
   }
@@ -5006,7 +6783,7 @@ function importReferenceDetailSource(input, options) {
   referenceDetailThrowIfConfirmationMutationBlocked('替换来源');
   migrateLegacyReferenceDetailUploadState();
   if (!REFERENCE_DETAIL_CONTRACT || !REFERENCE_DETAIL_BLUEPRINT) {
-    throw new Error('参考成详合同或蓝图模块未加载，请重新打开工作台。');
+    throw new Error('清单成详合同或蓝图模块未加载，请重新打开工作台。');
   }
   if (typeof REFERENCE_DETAIL_CONTRACT.projectDetailImageSource !== 'function') {
     throw Object.assign(new Error('详情区间识别模块未加载，请重新打开工作台。'), { code: 'DETAIL_RANGE_CLASSIFIER_UNAVAILABLE' });
@@ -5023,7 +6800,7 @@ function importReferenceDetailSource(input, options) {
     createdAt: snapshot.source.capturedAt,
     updatedAt: snapshot.source.capturedAt
   });
-  referenceDetailResetWithSource(snapshot, options.sourceKind || 'product_snapshot', editor);
+  referenceDetailResetWithSource(snapshot, snapshot.schema === 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1' ? 'screenshots' : (options.sourceKind || 'product_snapshot'), editor);
   state.referenceDetail.sourceFilterReport = referenceDetailClone(projection.report);
   try {
     editor = referenceDetailMaterializeScreens(editor, referenceDetailRequestedScreenCount(), {
@@ -5051,6 +6828,25 @@ function importReferenceDetailSource(input, options) {
   renderReferenceDetailWorkbench();
   syncDetailWorkflowUi();
   return { ok: true, snapshot: snapshot, editor: state.referenceDetail.editor, filterReport: state.referenceDetail.sourceFilterReport };
+}
+
+function importReferenceDetailScreenshots(images, options) {
+  options = options || {};
+  referenceDetailThrowIfConfirmationMutationBlocked('替换参考截图');
+  if (!REFERENCE_DETAIL_CONTRACT || typeof REFERENCE_DETAIL_CONTRACT.createScreenshotSource !== 'function') {
+    throw new Error('参考截图学习模块未加载，请重新打开工作台');
+  }
+  var snapshot = REFERENCE_DETAIL_CONTRACT.createScreenshotSource(images, { capturedAt: options.capturedAt || referenceDetailNow() });
+  var result = importReferenceDetailSource(snapshot, { sourceKind: 'screenshots' });
+  state.refImages = result.snapshot.orderedBlocks.map(function (block) {
+    return result.snapshot.assets.find(function (asset) { return block.assetIds.indexOf(asset.assetId) >= 0; }).url;
+  });
+  state.refImage = state.refImages[0] || '';
+  if ($('refUrl')) $('refUrl').value = '';
+  renderReferencePreviews();
+  syncDetailWorkflowUi();
+  setPill('detailSourceState', '参考详情截图已就绪 · ' + images.length + ' 张，按当前顺序学习', 'ok');
+  return result;
 }
 
 function loadReferenceDetailHandoff(params) {
@@ -5622,7 +7418,7 @@ function referenceDetailCurrentGate() {
   var detail = state.referenceDetail;
   migrateLegacyReferenceDetailUploadState();
   if (!referenceDetailStrictSource()) return { ok: false, errors: [{ code: 'FORMAL_SOURCE_REQUIRED', message: REFERENCE_DETAIL_EMPTY_MESSAGE }], warnings: [] };
-  if (!detail.editor) return { ok: false, errors: [{ code: 'BLUEPRINT_REQUIRED', message: '正式来源已导入，请先拆解蓝图。' }], warnings: [] };
+  if (!detail.editor) return { ok: false, errors: [{ code: 'BLUEPRINT_REQUIRED', message: '参考详情已导入，请先分析结构。' }], warnings: [] };
   if (!REFERENCE_DETAIL_BLUEPRINT || typeof REFERENCE_DETAIL_BLUEPRINT.validateGenerationGate !== 'function') {
     return { ok: false, errors: [{ code: 'BLUEPRINT_MODULE_UNAVAILABLE', message: '蓝图门禁模块未加载。' }], warnings: [] };
   }
@@ -5633,7 +7429,7 @@ function referenceDetailCurrentGate() {
 function referenceDetailTrustReadiness() {
   var errors = [];
   var detail = state.referenceDetail;
-  if (!referenceDetailStrictSource()) errors.push({ code: 'FORMAL_SOURCE_REQUIRED', message: '只有商品链接快照可以锁定视觉结构。' });
+  if (!referenceDetailStrictSource()) errors.push({ code: 'FORMAL_SOURCE_REQUIRED', message: '请先上传参考详情截图并分析结构。' });
   if (!detail.productAssetRightsConfirmed) errors.push({ code: 'ASSET_RIGHTS_ATTESTATION_REQUIRED', message: '请确认产品主体与可选模特素材为自有或已获授权。' });
   if (!referenceDetailSubjectAssetIntents().length) errors.push({ code: 'SUBJECT_ASSET_REQUIRED', message: '请上传至少 1 张产品主体图。' });
   return { ok: errors.length === 0, errors: errors, current: referenceDetailTrustIsCurrent() };
@@ -6056,7 +7852,7 @@ function referenceDetailFactCardCoverageIssues(formalBlueprint, trust) {
 
 function referenceDetailPrepareApproval() {
   var detail = state.referenceDetail;
-  if (!referenceDetailStrictSource() || !detail.editor) throw Object.assign(new Error('只有商品链接快照生成的结构框架可以锁定。'), { code: 'FORMAL_SOURCE_REQUIRED' });
+  if (!referenceDetailStrictSource() || !detail.editor) throw Object.assign(new Error('请先完成参考详情截图的结构框架。'), { code: 'FORMAL_SOURCE_REQUIRED' });
   if (detail.dirty) throw Object.assign(new Error('请先保存当前模块编辑 revision。'), { code: 'UNSAVED_WORKING_REVISION' });
   if (!referenceDetailTrustIsCurrent()) throw Object.assign(new Error('请先校验当前主体与可选模特素材。'), { code: 'TRUST_REGISTRY_REQUIRED' });
   var current = detail.currentBlueprint || detail.blueprint;
@@ -6166,7 +7962,7 @@ function referenceDetailDeepFreeze(value, seen) {
 function referenceDetailExecutionBundle(options) {
   options = options || {};
   var detail = state.referenceDetail;
-  if (!referenceDetailStrictSource() || !detail.currentBlueprint) throw Object.assign(new Error('缺少正式来源快照或 currentBlueprint。'), { code: 'EXECUTION_BUNDLE_SOURCE_REQUIRED' });
+  if (!referenceDetailStrictSource() || !detail.currentBlueprint) throw Object.assign(new Error('缺少参考详情或结构框架。'), { code: 'EXECUTION_BUNDLE_SOURCE_REQUIRED' });
   if (!detail.editor || detail.dirty || detail.currentBlueprintUiRevision !== detail.editor.revision) {
     throw Object.assign(new Error('当前结构 revision 尚未保存并锁定。'), { code: 'FORMAL_BLUEPRINT_STALE' });
   }
@@ -6268,7 +8064,7 @@ function referenceDetailBatchArchiveAccountMatchesCurrent() {
 }
 
 function referenceDetailBatchArchiveAccountError() {
-  return Object.assign(new Error('当前账号已变化，旧参考成详批次已停止；请切回原账号恢复，或重新建立批次。'), {
+  return Object.assign(new Error('当前账号已变化，旧清单成详批次已停止；请切回原账号恢复，或重新建立批次。'), {
     code: 'BATCH_ARCHIVE_ACCOUNT_MISMATCH'
   });
 }
@@ -7027,10 +8823,10 @@ function referenceDetailBatchResponseMatches(request, response) {
 
 function referenceDetailBatchResponseError(response, fallbackCode, fallbackMessage, stage) {
   return {
-    code: referenceDetailBatchText(response && response.code || fallbackCode, 80),
+    code: stage === 'image' && legacyImageDefinitelyNotSubmitted(response) ? 'IMAGE_NOT_SUBMITTED' : referenceDetailBatchText(response && response.code || fallbackCode, 80),
     stage: stage,
     message: referenceDetailBatchText(response && response.error || fallbackMessage, 900),
-    retryable: !(response && response.retryable === false)
+    retryable: stage === 'image' ? legacyImageDefinitelyNotSubmitted(response) : !(response && response.retryable === false)
   };
 }
 
@@ -7461,7 +9257,7 @@ function referenceDetailBatchArchiveAccepted(taskId, request, url, resultRef) {
     archiveSurfaceMode: 'detail',
     archiveProjectId: projectId,
     archiveProjectKey: projectId,
-    businessBatchTitle: '参考成详批量 · ' + (row.productName || row.internalId || task.taskKey),
+    businessBatchTitle: '清单成详批量 · ' + (row.productName || row.internalId || task.taskKey),
     productName: row.productName || row.internalId || task.taskKey,
     businessRoleName: screenDirection,
     businessRoleKey: taskId + '|' + (request.screenIndex + 1),
@@ -7698,6 +9494,11 @@ function referenceDetailBatchResolveUncertainSave(error, archived, taskId, reque
 }
 
 function referenceDetailBatchBeginScreen(taskId, screenIndex) {
+  var restoredTask = referenceDetailBatchRuntimeTarget(taskId);
+  var restoredScreen = restoredTask && restoredTask.screens[screenIndex];
+  if (restoredTask && restoredTask.phase === 'interrupted' && restoredScreen && Number(restoredScreen.attempt) > 0) {
+    return Promise.reject(Object.assign(new Error('该分屏在上次退出时仍等待回执，请先核对原任务，不能直接恢复为新生图。'), { code: 'IMAGE_RECEIPT_UNCONFIRMED' }));
+  }
   return referenceDetailBatchInvalidateForSettings().then(function (current) {
     if (!current.ok) throw Object.assign(new Error(current.error || '批次生成配置已变化。'), { code: current.code || 'BATCH_SETTINGS_STALE' });
     return referenceDetailBatchCommitTransition(function (runtime) {
@@ -8059,6 +9860,8 @@ function referenceDetailBatchRetryFlow(taskId) {
     var preparedTaskIds = [];
     candidates.forEach(function (task) {
       chain = chain.then(function () {
+        var unconfirmed = task.screens.some(function (screen) { return screen.status === 'failed' && (!screen.error || screen.error.code !== 'IMAGE_NOT_SUBMITTED' || screen.error.retryable !== true); });
+        if (unconfirmed) throw Object.assign(new Error('该任务有尚未核对的生图或归档回执，不能重新提交。请先核对服务商任务与原图片档案。'), { code: 'IMAGE_RECEIPT_UNCONFIRMED' });
         var unavailableResultIds = [];
         var unavailableIndexes = [];
         if (referenceDetailBatchHasUnavailableResults(task)) {
@@ -8567,7 +10370,7 @@ function referenceDetailApplyConfirmationInteractionLock() {
   var panel = $('referenceDetailWorkbench');
   if (panel) panel.setAttribute('aria-busy', locked ? 'true' : 'false');
   [
-    'referenceDetailSourceFile', 'referenceFactCardImportLegacyBtn', 'referenceFactCardAddBtn',
+    'refFile', 'refUrl', 'clearRefBtn', 'referenceDetailSourceFile', 'referenceFactCardImportLegacyBtn', 'referenceFactCardAddBtn',
     'referenceProductFactsConfirmed', 'referenceProductAssetRightsConfirmed',
     'detailProductName', 'detailProductFeatures', 'detailSellingPoints', 'detailScreenCount',
     'productFrontFile', 'productFrontUrl', 'clearProductFrontBtn',
@@ -8624,15 +10427,16 @@ function renderReferenceDetailWorkbench() {
   }
   if (!active || !panel) return;
   var source = detail.source;
-  var kindText = strictSource ? '商品链接快照' : '未导入正式来源';
+  var screenshotSource = strictSource && source.schema === 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1';
+  var kindText = strictSource ? (screenshotSource ? '参考详情截图' : '商品详情快照') : '待上传参考截图';
   var phaseLabels = { empty: '待分析', ready: '来源已就绪', building: '结构分析中', complete: '结构分析完成', partial: '部分 AI + 兜底', fallback: '确定性兜底', cancelled: '已取消', error: '分析失败' };
   referenceDetailSetText($('referenceDetailSourceKind'), kindText);
   referenceDetailSetText($('referenceDetailBuildState'), phaseLabels[detail.buildPhase] || detail.buildPhase || '待拆解');
   referenceDetailSetText($('referenceDetailRevisionState'), 'revision ' + (detail.editor && detail.editor.revision || 0) + (detail.dirty ? ' · 未保存编辑' : ''));
   if ($('referenceDetailSourceSummary')) {
     $('referenceDetailSourceSummary').textContent = strictSource
-      ? ((source.source.platform || '商品') + ' #' + (source.source.itemId || '') + ' · ' + source.orderedBlocks.length + ' 个原始块 · 快照只读')
-      : '正式来源只读；导入后将按 orderedBlocks 原始顺序进入结构分析。';
+      ? (screenshotSource ? (source.orderedBlocks.length + ' 张截图 · 按当前顺序学习结构、排版与视觉表达') : ((source.source.platform || '商品') + ' #' + (source.source.itemId || '') + ' · ' + source.orderedBlocks.length + ' 个详情屏'))
+      : '上传几张参考详情截图，按详情阅读顺序学习；参考商品、品牌和参数不会作为自家商品素材。';
   }
   renderReferenceDetailSource();
   renderReferenceDetailModules();
@@ -8919,14 +10723,14 @@ function buildReferenceDetailBlueprint(options) {
   var detail = state.referenceDetail;
   migrateLegacyReferenceDetailUploadState();
   if (!referenceDetailRouteActive() || !referenceDetailStrictSource()) {
-    setPill('detailState', '请使用商品 URL 或当前页提取入口', 'warn');
+    setPill('detailState', REFERENCE_DETAIL_EMPTY_MESSAGE, 'warn');
     renderReferenceDetailWorkbench();
     return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: REFERENCE_DETAIL_EMPTY_MESSAGE });
   }
   var saved = referenceDetailFlushPendingRevision();
   if (saved && saved.ok === false) return Promise.resolve(saved);
   if (!REFERENCE_DETAIL_BLUEPRINT || !REFERENCE_DETAIL_CONTRACT) {
-    setPill('detailState', '参考成详合同未加载，请重新打开工作台', 'warn');
+    setPill('detailState', '清单成详合同未加载，请重新打开工作台', 'warn');
     return Promise.resolve({ ok: false, error: 'contract_unavailable' });
   }
   var source = detail.source;
@@ -9070,7 +10874,7 @@ function detailScreenBounds(mode, referenceMode) {
     return { min: DETAIL_STYLE_REFRESH_MIN_COUNT, max: DETAIL_STYLE_REFRESH_MAX_COUNT, fallback: DETAIL_STYLE_REFRESH_DEFAULT_COUNT, label: '风格焕新：默认4张，可自定义1-20张' };
   }
   return referenceMode === 'story'
-    ? { min: 5, max: 16, fallback: DETAIL_DEFAULT_SCREEN_COUNT, label: '参考成详蓝图：默认10屏，可选5–16屏' }
+    ? { min: 5, max: 16, fallback: DETAIL_DEFAULT_SCREEN_COUNT, label: '清单成详蓝图：默认10屏，可选5–16屏' }
     : { min: DETAIL_VIRAL_MIN_VARIANT_COUNT, max: DETAIL_VIRAL_MAX_VARIANT_COUNT, fallback: DETAIL_VIRAL_DEFAULT_VARIANT_COUNT, label: '爆款裂变：默认5张，可自定义1-20张' };
 }
 
@@ -9099,18 +10903,18 @@ function syncReferenceDetailModeUi() {
     storyButton.setAttribute('aria-pressed', viral ? 'false' : 'true');
   }
   if ($('viralDerivativeBlueprint')) $('viralDerivativeBlueprint').hidden = !viral;
-  setText('referenceSourceTitleText', viral ? '图1 · 爆款参考图' : '来源：正式商品详情快照');
+  setText('referenceSourceTitleText', viral ? '图1 · 爆款参考图' : '参考详情截图');
   setText('referenceSourceSubtitle', viral
     ? '只借鉴风格、文案层级、画面内容和互动形式，不复制商品、包装、品牌、Logo 或模特身份。'
-    : '只消费正式 REFERENCE_DETAIL_SOURCE_V1 快照；orderedBlocks、来源原文与授权素材保持只读。');
-  setText('referenceBoxTitleLabel', viral ? '图1 · 爆款参考图' : '通用参考图（参考成详不读取）');
+    : '按详情阅读顺序上传 1–6 张截图，支持多选、粘贴和截图图片链接；可前移、后移或删除后再分析。');
+  setText('referenceBoxTitleLabel', viral ? '图1 · 爆款参考图' : '参考详情截图（按顺序学习）');
   setText('productSubjectBoxTitleLabel', viral ? '图2 · 目标产品（必填且唯一）' : '产品主体图（必填）');
   setText('referenceLearningNote', viral
     ? '只提取：风格气质 → 文案内容与字体层级 → 画面展示内容 → 构图/光影/景深 → 模特与产品互动形式。图1商品、包装、品牌和 Logo 必须彻底排除。'
-    : '正式快照按原始块顺序拆解；来源素材固定 reference_only，来源原文不进入 editableCopy。');
+    : '学习详情的内容顺序、字体层级、配色与构图；生成时使用自家商品与文案，截图中的商品、品牌和参数只作参考。');
   if ($('refUrl')) $('refUrl').placeholder = viral
     ? '也可粘贴图片 URL；聚焦后 Cmd+V 可贴图1'
-    : REFERENCE_DETAIL_EMPTY_MESSAGE;
+    : '可粘贴截图图片链接（空格分隔）；聚焦后 Cmd+V 粘贴截图';
   setText('detailSubjectTitle', viral ? '图2 · 目标产品与可选模特' : '产品主体与可选模特');
   setText('detailSubjectSubtitle', viral
     ? '图2产品是整组画面中唯一允许出现的商品；至少上传 1 张，所有裂变图严格保持同一款式、结构、比例、颜色、材质、包装和细节。'
@@ -9119,14 +10923,19 @@ function syncReferenceDetailModeUi() {
     ? '爆款裂变路线只读取图1视觉表达，并以图2锁定唯一商品；链接路线严格按 L 编号逐条读取定位与文案。'
     : (referenceDetailRouteActive()
       ? '设置同一结构批量生成所需的屏数、比例与清晰度；各商品的主体、可选模特和卖点角度在批量表中独立填写。'
-      : '参考成详消费不可变来源快照与可编辑结构框架；链接路线仍严格按 L 编号逐条读取，两条路线都必须绑定产品主体图。'));
+      : '清单成详消费不可变来源快照与可编辑结构框架；链接路线仍严格按 L 编号逐条读取，两条路线都必须绑定产品主体图。'));
   setText('detailCountLabel', viral ? '裂变张数' : '屏数');
   setText('detailScreenRule', viral ? '默认5张，可自定义1-20张' : '参考详情结构可选 5–16 屏');
   renderReferencePreviews();
 }
 
 function setReferenceDetailMode(mode) {
-  if (!referenceDetailConfirmationMutationAllowed()) return referenceDetailConfirmationBlocked('切换参考成详模式');
+  var pinned = pinnedViralWorkflowRoute();
+  if (pinned) {
+    if (state.viralCoreRoute !== pinned || state.detailReferenceMode !== (pinned === 'case' ? 'viral' : pinned)) setViralCoreRoute(pinned, { silent: true });
+    return;
+  }
+  if (!referenceDetailConfirmationMutationAllowed()) return referenceDetailConfirmationBlocked('切换清单成详模式');
   var next = mode === 'story' ? 'story' : 'viral';
   var changed = state.detailReferenceMode !== next;
   state.detailReferenceMode = next;
@@ -9151,6 +10960,7 @@ function setReferenceDetailMode(mode) {
 }
 
 function syncDetailModeControls() {
+  if (isSceneExtensionRoute()) return;
   var mode = state.detailMode || 'reference';
   var bounds = detailScreenBounds(mode, state.detailReferenceMode);
   var el = $('detailScreenCount');
@@ -9173,7 +10983,7 @@ function syncDetailModeControls() {
       : (mode === 'reference' && isViralReferenceDetail()
       ? ['图2款式全组一致', '每张画面差异化', '整组视觉风格一致', '默认5张，可自定义1-20张']
       : (mode === 'reference'
-        ? ['只消费正式来源快照', '产品主体图至少1张', '模特图可选', '结构默认10屏，可改5–16屏']
+        ? ['上传截图学习结构', '产品主体图至少1张', '模特图可选', '结构默认10屏，可改5–16屏']
         : ['链接路线不读取参考图', '产品主体图至少1张', '模特图可选', 'L 编号逐条提词并绑定生图']));
     $('detailModeHint').innerHTML = items.map(function (item) { return '<span>' + item + '</span>'; }).join('');
   }
@@ -9187,6 +10997,7 @@ function syncDetailModeDefaultsAfterRestore() {
 }
 
 function syncDetailGenerationCount(force) {
+  if (isSceneExtensionRoute()) return;
   var countEl = $('imageCount');
   var screenEl = $('detailScreenCount');
   if (!countEl || !screenEl || currentLabMode() !== 'detail') return;
@@ -9212,6 +11023,7 @@ function detailLinkRowsForWorkflowState() {
 }
 
 function syncDetailWorkflowUi() {
+  if (isSceneExtensionRoute()) return;
   syncReferenceDetailStoryRouteClass();
   if (currentLabMode() !== 'detail') return;
   migrateLegacyReferenceDetailUploadState();
@@ -9236,8 +11048,8 @@ function syncDetailWorkflowUi() {
   if (mode === 'reference') {
     if (styleRefresh) sourceText = '已选 ' + STYLE_REFRESH_CONTRACT.styleById(state.styleRefresh.styleId).name + ' · 无需案例图';
     else if (isViralReferenceDetail()) sourceText = refReady ? '图1爆款参考已就绪' : '请上传图1爆款参考';
-    else if (blueprintSourceReady) sourceText = '正式商品详情快照已就绪：' + state.referenceDetail.source.orderedBlocks.length + ' 个来源块';
-    else sourceText = state.referenceDetail.migrationNotice ? '旧版状态已迁移 · 待导入正式来源' : '待导入正式来源';
+    else if (blueprintSourceReady) sourceText = (state.referenceDetail.source.schema === 'REFERENCE_DETAIL_SCREENSHOT_SOURCE_V1' ? '参考详情截图已就绪：' : '商品详情快照已就绪：') + state.referenceDetail.source.orderedBlocks.length + ' 个详情屏';
+    else sourceText = state.referenceDetail.migrationNotice ? '请重新上传参考详情截图' : '待上传参考详情截图';
   } else if (linkRows.length) {
     var firstId = canonicalLinkId(linkRows[0] && (linkRows[0]['链接编号'] || linkRows[0].linkId || linkRows[0].link_id), 0);
     var lastId = canonicalLinkId(linkRows[linkRows.length - 1] && (linkRows[linkRows.length - 1]['链接编号'] || linkRows[linkRows.length - 1].linkId || linkRows[linkRows.length - 1].link_id), linkRows.length - 1);
@@ -9257,9 +11069,9 @@ function syncDetailWorkflowUi() {
   var refPanel = $('referenceSourcePanel');
   var linkPanel = $('linkSourcePanel');
   if (refPanel) {
-    refPanel.hidden = story;
-    refPanel.setAttribute('aria-hidden', story ? 'true' : 'false');
-    refPanel.classList.toggle('route-inactive', mode !== 'reference' || styleRefresh || story);
+    refPanel.hidden = mode !== 'reference' || styleRefresh;
+    refPanel.setAttribute('aria-hidden', refPanel.hidden ? 'true' : 'false');
+    refPanel.classList.toggle('route-inactive', mode !== 'reference' || styleRefresh);
   }
   if (linkPanel) linkPanel.classList.toggle('route-inactive', mode !== 'link');
 
@@ -9304,7 +11116,7 @@ function syncDetailWorkflowUi() {
       : (mode === 'reference' && isViralReferenceDetail()
       ? '当前路线：图1爆款参考 + 图2同款产品；约30%系列视觉基因 + 约70%重新设计。款式全组一致、图片逐张差异化、风格全组一致，默认5张，可自定义1-20张。'
       : (mode === 'reference'
-        ? '当前路线：不可变商品详情快照 → 可编辑结构框架 → 一次锁定 → 主体/可选模特 → 5–16 屏原创生成；来源素材和原文只作 reference_only 分析。'
+        ? '当前路线：上传参考详情截图 → 分析与编辑结构 → 自家商品/可选模特 → 锁定结构 → 5–16 屏原创生成。'
       : '当前路线：各 L 编号自己的链接定位提示词 + 必填产品主体图；模特图可选，参考图不参与。'
       ))
   );
@@ -9314,7 +11126,7 @@ function syncDetailWorkflowUi() {
 function setDetailMode(mode) {
   if (!referenceDetailConfirmationMutationAllowed()) return referenceDetailConfirmationBlocked('切换详情路线');
   var previousMode = state.detailMode || 'reference';
-  state.detailMode = mode === 'link' ? 'link' : 'reference';
+  state.detailMode = pinnedViralWorkflowRoute() ? 'reference' : (mode === 'link' ? 'link' : 'reference');
   syncReferenceDetailStoryRouteClass();
   if ($('detailRefModeBtn')) $('detailRefModeBtn').classList.toggle('active', state.detailMode === 'reference');
   if ($('detailLinkModeBtn')) $('detailLinkModeBtn').classList.toggle('active', state.detailMode === 'link');
@@ -9970,7 +11782,6 @@ function generateDetailPrompt(mode, linkOverride, options) {
   }
   var inputSnapshot = capturePromptInputSnapshot(mode === 'reference' ? 'reference' : 'link', 'detail', mode === 'link' ? payload.link : null, payload);
   return send('BUILD_DETAIL_PROMPT', { config: cfgFromForm(), payload: payload }).then(function (resp) {
-    if (!options.silent) setDetailBusy(false);
     if (requestPromptToken !== state.batchPromptToken) return { ok: false, stale: true, error: '提词输入或路线已更新，本次旧响应已丢弃' };
     if (options.batchToken != null && options.batchToken !== state.batchPromptToken) return { ok: false, stale: true, error: '已被新的提词批次取代' };
     if (!promptInputSnapshotIsCurrent(inputSnapshot, mode === 'link' ? payload.link : null)) return stalePromptResponse('detail');
@@ -10026,12 +11837,46 @@ function generateDetailPrompt(mode, linkOverride, options) {
     syncDetailGenerationCount();
     if (!options.silent) window.setTimeout(function () { scrollToPanel('generationPanel'); }, 80);
     return { ok: true, data: data, promptRecord: fallbackRecord, warning: (resp && resp.error) || '模型接口失败，已使用本地结构兜底' };
-  });
+  }).finally(function () { if (!options.silent) setDetailBusy(false); });
+}
+
+var referenceAnalysisInFlight = null;
+
+function syncReferenceAnalysisControl() {
+  var button = $('analyzeBtn');
+  if (button) button.disabled = !!referenceAnalysisInFlight || linkWorkflowBusyDepth > 0 || imageUploadReads > 0;
+}
+
+function referenceAnalysisImportPending() {
+  var response = { ok: false, code: 'IMAGE_IMPORT_PENDING', error: '请等待图片导入完成，再反推提示词。' };
+  setPill('runState', response.error, 'warn');
+  return response;
+}
+
+function referenceAnalysisRequestIsCurrent(request) {
+  return request.accountKey === String(state.archiveAccountKey || 'local') &&
+    promptInputSnapshotIsCurrent(request.inputSnapshot, null);
+}
+
+function referenceAnalysisStaleResponse(request) {
+  if (request.accountKey === String(state.archiveAccountKey || 'local')) return stalePromptResponse('main');
+  var response = { ok: false, stale: true, error: '提词期间账号已切换，本次旧响应未写入当前账号，请重新生成提示词。' };
+  setPill('runState', response.error, 'warn');
+  return response;
 }
 
 function analyzeCurrentImage() {
   if (rejectReferenceDetailImageInput('contextState')) {
     return Promise.resolve({ ok: false, code: 'REFERENCE_DETAIL_FORMAL_SOURCE_REQUIRED', error: REFERENCE_DETAIL_EMPTY_MESSAGE });
+  }
+  if (legacyImageUploadBusy()) return Promise.resolve(referenceAnalysisImportPending());
+  var cfg = cfgFromForm();
+  if (referenceAnalysisInFlight) {
+    if (referenceAnalysisRequestIsCurrent(referenceAnalysisInFlight) &&
+        referenceAnalysisInFlight.configKey === JSON.stringify(cfg)) return referenceAnalysisInFlight.promise;
+    var busy = { ok: false, code: 'REFERENCE_ANALYSIS_BUSY', error: '上一轮反推仍在处理中，请等待完成后再分析当前素材。' };
+    setPill('runState', busy.error, 'warn');
+    return Promise.resolve(busy);
   }
   var images = referenceImageList();
   var image = images[0] || '';
@@ -10041,21 +11886,28 @@ function analyzeCurrentImage() {
     showProductSubjectRequired(currentLabMode(), '请先上传至少 1 张商品主体图，再用参考图反推提示词；主体图用于锁定商品结构与比例。');
     return Promise.resolve({ ok: false, error: '缺少商品主体图' });
   }
-  var cfg = cfgFromForm();
   var linkHint = '';
+  var requestId = 'reference_prompt_' + Date.now() + '_' + Math.random().toString(16).slice(2);
   setPill('runState', '正在分析 ' + images.length + ' 张通用参考图...', '');
-  $('analyzeBtn').disabled = true;
   var inputSnapshot = capturePromptInputSnapshot('reference', 'main', null);
-  return send('ANALYZE_IMAGE', { config: cfg, payload: {
+  var request = { inputSnapshot: inputSnapshot, accountKey: String(state.archiveAccountKey || 'local'), configKey: JSON.stringify(cfg), promise: null };
+  var evidence = productImageEvidence();
+  referenceAnalysisInFlight = request;
+  syncReferenceAnalysisControl();
+  request.promise = Promise.resolve().then(function () {
+    if (legacyImageUploadBusy()) return referenceAnalysisImportPending();
+    if (!referenceAnalysisRequestIsCurrent(request)) return referenceAnalysisStaleResponse(request);
+    return send('ANALYZE_IMAGE', { config: cfg, payload: {
+    requestId: requestId,
+    promptSource: 'reference',
     image: image,
     images: images,
     referenceImages: images,
     linkHint: linkHint,
     productImages: productImages,
-    productImageEvidence: productImageEvidence()
-  } }).then(function (resp) {
-    $('analyzeBtn').disabled = false;
-    if (!promptInputSnapshotIsCurrent(inputSnapshot, null)) return stalePromptResponse('main');
+    productImageEvidence: evidence
+  } }); }).then(function (resp) {
+    if (!referenceAnalysisRequestIsCurrent(request)) return referenceAnalysisStaleResponse(request);
     if (resp && resp.ok && !promptValueFromData(resp.data || {}, 'main').trim()) resp = { ok: false, error: '模型返回缺少中文提示词' };
     if (resp && resp.ok) {
       state.referenceAnalysis = {
@@ -10066,7 +11918,7 @@ function analyzeCurrentImage() {
         generatedAt: Date.now()
       };
       var record = rememberPromptRecord(makePromptRecord('reference', 'main', null, resp.data || {}, 0,
-        promptKnowledgeMetadata(resp, '')));
+        Object.assign({ requestId: requestId }, promptKnowledgeMetadata(resp, ''))));
       displayPromptRecord(record);
       resp.promptRecord = record;
       setPill('runState', '提词完成', 'ok');
@@ -10074,7 +11926,16 @@ function analyzeCurrentImage() {
       setPill('runState', (resp && resp.error) || '提词失败', 'warn');
     }
     return resp;
+  }).catch(function (error) {
+    if (!referenceAnalysisRequestIsCurrent(request)) return referenceAnalysisStaleResponse(request);
+    var resp = { ok: false, code: error && error.code || 'request_failed', error: error && error.message || String(error) };
+    setPill('runState', resp.error || '提词失败', 'warn');
+    return resp;
+  }).finally(function () {
+    if (referenceAnalysisInFlight === request) referenceAnalysisInFlight = null;
+    syncReferenceAnalysisControl();
   });
+  return request.promise;
 }
 
 function linkRowLabel(link, idx) {
@@ -10295,6 +12156,7 @@ function buildLocalMainPromptData(link, fallbackNote) {
 }
 
 function promptCanUseLocalFallback(resp) {
+  if (resp && (resp.stateUncertain || resp.timedOut || /^(?:cancelled|timeout|network_error|TASK_TRANSPORT_FAILED|TASK_WAIT_ENDED|TASK_WAIT_TIMEOUT|TASK_ACCOUNT_CHANGED|PROMPT_JOB_TIMEOUT)$/i.test(String(resp.code || '')))) return false;
   var normalized = normalizedPromptError(resp || {});
   return /^(?:timeout|rate_limited|upstream_unavailable|server_error|network_error|request_failed|request_budget_exhausted|model_not_found)$/.test(String(normalized.code || ''));
 }
@@ -10344,7 +12206,6 @@ function buildPromptForLink(link, label, options) {
     productImages: productImageList(),
     productImageEvidence: productImageEvidence()
   } }).then(function (resp) {
-    if (!options.silent) setBatchLinksBusy(false);
     if (requestPromptToken !== state.batchPromptToken) return { ok: false, stale: true, error: '链接清单已更新，本次旧提词响应已丢弃' };
     if (options.batchToken != null && options.batchToken !== state.batchPromptToken) return { ok: false, stale: true, error: '已被新的提词批次取代' };
     if (!promptInputSnapshotIsCurrent(inputSnapshot, link)) return stalePromptResponse('main');
@@ -10391,7 +12252,7 @@ function buildPromptForLink(link, label, options) {
       };
     }
     return resp;
-  });
+  }).finally(function () { if (!options.silent) setBatchLinksBusy(false); });
 }
 
 function buildLinkPrompt() {
@@ -10474,8 +12335,8 @@ function generateReferenceDetailBlueprintPrompt() {
   var detail = state.referenceDetail;
   migrateLegacyReferenceDetailUploadState();
   if (!referenceDetailRouteActive() || !referenceDetailStrictSource() || !detail.editor) {
-    setPill('detailSourceState', detail.migrationNotice ? '旧版状态已迁移 · 待导入正式来源' : '待导入正式来源', 'warn');
-    setPill('detailState', '请使用商品 URL 或当前页提取入口', 'warn');
+    setPill('detailSourceState', detail.migrationNotice ? '请重新上传参考详情截图' : '待上传参考详情截图', 'warn');
+    setPill('detailState', REFERENCE_DETAIL_EMPTY_MESSAGE, 'warn');
     renderReferenceDetailWorkbench();
     return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: REFERENCE_DETAIL_EMPTY_MESSAGE });
   }
@@ -10555,8 +12416,8 @@ function generateReferenceDetailBlueprintPrompt() {
     referenceMode: 'story',
     generationRoute: 'reference-detail-formal',
     referenceDetailAuthorization: 'REFERENCE_DETAIL_APPROVED_GENERATION_V1',
-    referenceDetailSourceSchema: 'REFERENCE_DETAIL_SOURCE_V1',
-    referenceDetailExecutionSchema: 'REFERENCE_DETAIL_EXECUTION_BUNDLE_V1',
+    referenceDetailSourceSchema: detail.source.schema,
+    referenceDetailExecutionSchema: executionBundle.schema,
     referenceDetailExecutionBundleId: executionBundle.bundleId,
     ruleFingerprint: currentDetailRuleFingerprint('reference', {}),
     referenceDetailBlueprintId: detail.editor.blueprintId,
@@ -10873,12 +12734,14 @@ function guideEvidenceRank(level) {
   return GUIDE_EVIDENCE_LEVELS.indexOf(String(level || '').toUpperCase());
 }
 
-function guideAdapterCapability(adapter) {
-  adapter = String(adapter || '').trim();
-  if (adapter === 'openai-images') return 'mask-guided';
-  if (adapter === 'generic-json') return 'client-composited-mask';
-  if (adapter === 'gemini-image' || adapter === 'nano-banana' || adapter === 'volcengine-image' || adapter === 'doubao-image' || adapter === 'dashscope-wan') return 'annotation-reference';
-  return 'unsupported';
+function guideModelProfile(config) {
+  var resolver = typeof globalThis !== 'undefined' && globalThis.SZ_GUIDE_MODEL_PROFILE;
+  if (!resolver) return { capability: 'unsupported', model: String(config && config.imageModel || ''), label: '模型适配模块未加载，请重新打开工作台' };
+  return resolver.resolve(config || {});
+}
+
+function guideAdapterCapability(adapter, model) {
+  return guideModelProfile(typeof adapter === 'object' ? adapter : { imageAdapter: adapter, imageModel: model }).capability;
 }
 
 function createStructuredGuideContract(input) {
@@ -10938,7 +12801,8 @@ function createStructuredGuideContract(input) {
     forbid: normalizeGuideStringList(input.forbid),
     scope: input.scope === 'current' || !input.scope ? 'current' : input.scope,
     adapter: String(input.adapter || ''),
-    adapterCapability: guideAdapterCapability(input.adapter),
+    adapterCapability: guideAdapterCapability(input.config || { imageAdapter: input.adapter, imageModel: input.imageModel }),
+    modelProfile: input.config || input.imageModel ? guideModelProfile(input.config || { imageAdapter: input.adapter, imageModel: input.imageModel }) : null,
     productEvidenceCount: Math.max(0, Number(input.productEvidenceCount) || 0),
     annotation: {
       mustStrokeCount: Math.max(0, Number(annotation.mustStrokeCount) || 0),
@@ -11018,6 +12882,9 @@ function publicGuideContract(contract) {
     forbid: normalizeGuideStringList(contract.forbid),
     scope: contract.scope || 'current',
     adapterCapability: contract.adapterCapability || '',
+    modelProfile: contract.modelProfile ? cloneGuideValue(contract.modelProfile) : null,
+    requestedSize: String(contract.requestedSize || ''),
+    providerSize: String(contract.providerSize || ''),
     annotation: Object.assign({}, contract.annotation || {}),
     allowWholeRegenerate: !!contract.allowWholeRegenerate,
     conceptConfirmed: !!contract.conceptConfirmed,
@@ -11078,6 +12945,27 @@ function structuredGuidePromptLayer(contract) {
       : '',
     'Do not silently expand a local repair into a whole-image redesign. If the requested path cannot preserve the locks, fail instead of improvising.'
   ].filter(Boolean).join('\n');
+}
+
+function modelAdaptiveGuidePrompt(contract) {
+  contract = publicGuideContract(contract);
+  var profile = contract.modelProfile || {};
+  var profiles = globalThis.SZ_GUIDE_MODEL_PROFILE;
+  if (profile.family === 'gpt-image-2.5-sunburst' && profiles && typeof profiles.sunburstPrompt === 'function') return profiles.sunburstPrompt(contract);
+  var textSurgery = ['delete-visible-text', 'replace-visible-text'].indexOf(contract.operation) >= 0;
+  var layers = [
+    profile.promptStyle === 'edit-first' ? 'CURRENT IMAGE EDIT — CHANGE / PRESERVE / EVIDENCE:' : 'CURRENT IMAGE STRUCTURED EDIT:',
+    'Edit input image 1, the current selected result. Return exactly one edited image on the same canvas and with the same framing.',
+    'Apply only the requested change; preserve all other content. This instruction is an edit of the supplied image, not a request to create a new advertisement.',
+    structuredGuidePromptLayer(contract),
+    textSurgery ? 'The current image is the only visual source for this text edit. Preserve the original product, model, background and all unselected copy.'
+      : 'Input images after the current base provide current-SKU product evidence or explicitly supplied person references only. Keep each role separate; never treat an evidence photo as a replacement canvas.',
+    'Do not render editing instructions, region marks, internal IDs or repair-path labels as visible text.'
+  ];
+  if (profile.promptStyle === 'edit-first') {
+    layers.splice(1, 0, 'CHANGE: ' + (contract.guide || contract.issueLabel) + '\nPRESERVE: ' + contract.preserve.join('；'));
+  }
+  return layers.filter(Boolean).join('\n');
 }
 
 function guidePriorityLayer(guide, hasProductImage, guideContract) {
@@ -11221,6 +13109,7 @@ function mainImageSequenceLayer(index, total, planSource, labMode) {
 }
 
 function detailGenerationPrompt(variant, base, guide, productImages, promptRecord, modelImages, referenceImages, guideContract) {
+  if (guideContract) return modelAdaptiveGuidePrompt(guideContract);
   modelImages = modelImages || [];
   referenceImages = Array.isArray(referenceImages) ? referenceImages : (referenceImages ? [referenceImages] : []);
   var isLinkPrompt = promptRecord && promptRecord.source === 'link';
@@ -11318,7 +13207,7 @@ function syncGenerationParamSummary() {
       ? '风格焕新逐张生成 ' + count + ' 张独立图片；商品主体100%锁定，文案按用户选择并跟随风格与强度；比例 ' + generationRatio() + '，清晰度 ' + generationResolution() + '，生成后自动检查商品、风格和文字。'
       : '案例裂变逐张生成 ' + count + ' 张独立单屏；图2同一SKU款式一致，画面差异化，整组风格一致；比例 ' + generationRatio() + '，清晰度 ' + generationResolution() + '。')
     : (referenceDetailRouteActive()
-      ? '正式参考成详通过已锁定结构批量生成：' + count + ' 屏 = ' + count + ' 张独立图片；比例 ' + generationRatio() + '，清晰度 ' + generationResolution() + '；进度与失败原因在上方批量目标区显示。'
+      ? '正式清单成详通过已锁定结构批量生成：' + count + ' 屏 = ' + count + ' 张独立图片；比例 ' + generationRatio() + '，清晰度 ' + generationResolution() + '；进度与失败原因在上方批量目标区显示。'
       : '详情生图沿用上方参数：' + count + ' 屏 = ' + count + ' 张独立图片；比例 ' + generationRatio() + '，清晰度 ' + generationResolution() + '；生成后可手动勾选拼接成长详情预览。');
 }
 
@@ -11421,6 +13310,7 @@ function generationPrompt(variant, promptRecord, generationOptions) {
   generationOptions = generationOptions || {};
   var base = promptRecord && promptRecord.prompt ? promptRecord.prompt : activeGenerationBasePrompt();
   var guideContract = generationOptions.guideContract || null;
+  if (guideContract) return modelAdaptiveGuidePrompt(guideContract);
   var guide = guideContract ? String(guideContract.guide || '').trim() : ((variant === 'guide' && $('guidePrompt')) ? $('guidePrompt').value.trim() : '');
   var source = promptRecord && promptRecord.source;
   var link = promptRecord ? (promptRecord.link || {}) : (state.lastLink || {});
@@ -11495,12 +13385,13 @@ function guideResultOriginBatchId(item) {
 
 function detailPreviewResults(options) {
   options = options || {};
-  if (currentLabMode() !== 'detail') return [];
+  if (currentLabMode() !== 'detail' || isSceneExtensionRoute()) return [];
   var styleRefreshRoute = currentSurfaceMode() === 'viral' && isStyleRefreshRoute();
   var activeStyleBatchId = styleRefreshRoute && state.styleRefresh.run ? state.styleRefresh.run.batchId : '';
   return state.results.filter(function (item) {
     if (!(item && item.labMode === 'detail' && (item.url || (options.includeCleared && item.resultCleared)))) return false;
     if (currentSurfaceMode() !== 'viral') {
+      if (item.creativeRoute === 'scene-extension') return false;
       var itemDetailMode = item.detailMode || 'reference';
       return itemDetailMode === (state.detailMode === 'link' ? 'link' : 'reference');
     }
@@ -11709,7 +13600,10 @@ function closeGeneratedImagePreview() {
   if (document.body) document.body.classList.remove('generated-image-preview-open');
   var previous = state.imagePreviewPreviousFocus;
   state.imagePreviewPreviousFocus = null;
-  try { if (previous && previous.focus) previous.focus(); } catch (e) {}
+  try {
+    if ($('archiveHistoryModal') && !$('archiveHistoryModal').hidden) focusArchiveHistoryControl(previous);
+    else if (previous && previous.focus) previous.focus();
+  } catch (e) {}
 }
 
 function makeGeneratedImagePreviewable(img, item, fallbackCaption) {
@@ -12026,6 +13920,7 @@ function addResultClearSelectionControl(card, item) {
 }
 
 function clearSelectedResults() {
+  if (isSceneExtensionRoute()) return { ok: false, code: 'SCENE_EXTENSION_SEPARATE_RESULTS' };
   var selected = {};
   (state.resultClearSelectionKeys || []).forEach(function (key) { selected[key] = true; });
   var currentRoute = isStyleRefreshRoute() ? 'style-refresh' : 'case';
@@ -12157,16 +14052,19 @@ function createDetailResultSlot(index, total, item) {
     copyImg.className = 'btn ghost';
     copyImg.type = 'button';
     copyImg.textContent = '复制图片';
+    copyImg.dataset.creditLocal = 'true';
     copyImg.addEventListener('click', function () { openImageActionModal(item); });
     var guideBtn = document.createElement('button');
     guideBtn.className = 'btn ghost';
     guideBtn.type = 'button';
     guideBtn.textContent = '引导重生';
+    guideBtn.dataset.creditLocal = 'true';
     guideBtn.addEventListener('click', function () { openGuideRegenerateModal(item); });
     var dl = document.createElement('button');
     dl.className = 'btn ghost';
     dl.type = 'button';
     dl.textContent = '下载';
+    dl.dataset.creditLocal = 'true';
     var styleRefreshDownloadBlocked = item.creativeRoute === 'style-refresh' &&
       (!item.styleRefreshQa || ['waiting', 'pending', 'failed'].indexOf(item.styleRefreshQa.status) >= 0);
     if (styleRefreshDownloadBlocked) {
@@ -12443,8 +14341,11 @@ function skuSubjectVerificationContractValid(subject) {
   var region = subject.authorizedRegion;
   var verification = subject.identityVerification;
   if (!region || !verification || !Number.isFinite(region.x) || !Number.isFinite(region.y) ||
-      !Number.isFinite(region.w) || !Number.isFinite(region.h) || region.x < .12 || region.y < .18 ||
-      region.w < .2 || region.h < .2 || region.x + region.w > .88 || region.y + region.h > .90) return false;
+      !Number.isFinite(region.w) || !Number.isFinite(region.h) || region.w < .2 || region.h < .2) return false;
+  var confirmed = region.confirmed === true && region.x >= .01 && region.y >= .01 &&
+    region.x + region.w <= .99 && region.y + region.h <= .99 && region.w * region.h <= .70;
+  var central = region.x >= .12 && region.y >= .18 && region.x + region.w <= .88 && region.y + region.h <= .90;
+  if (!confirmed && !central) return false;
   return verification.required === true &&
     verification.version === 'SKU_SUBJECT_IDENTITY_V2' &&
     verification.foregroundExtraction === 'client-fail-closed-v1' &&
@@ -12834,8 +14735,12 @@ function dispatchSkuJpegDownloads(items) {
     if (index >= items.length) return Promise.resolve();
     return skuJpegDataUrl(items[index].url, items[index]).then(function (url) {
       if (url.length > 60 * 1024 * 1024) throw new Error('单张 JPG 超过浏览器消息安全上限，请降低分辨率后重试');
+      var downloadItem = Object.assign({}, items[index], { url: url, format: 'jpeg' });
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id === 'shaozhuang-web-studio') {
+        downloadItem.filename = String(downloadItem.filename || '').split(/[\\/]/).pop();
+      }
       return send('DOWNLOAD_ALL', {
-        items: [Object.assign({}, items[index], { url: url, format: 'jpeg' })]
+        items: [downloadItem]
       });
     }).then(function (response) {
       results[index] = response && response.ok
@@ -13087,6 +14992,7 @@ function appendDetailGuideHistory(grid, items) {
 }
 
 function renderResults() {
+  if (isSceneExtensionRoute()) return;
   var grid = $('resultGrid');
   grid.innerHTML = '';
   var isDetail = currentLabMode() === 'detail';
@@ -13109,7 +15015,7 @@ function renderResults() {
         heading.textContent = group.linkId
           ? (group.linkId + (batchOrdinal > 1 ? (' · 批次 ' + batchOrdinal) : '') + ' · 独立详情图结果')
           : (group.formalBatch
-            ? ((group.productName || group.taskId || '自家商品目标') + ' · 正式参考成详结果')
+            ? ((group.productName || group.taskId || '自家商品目标') + ' · 正式清单成详结果')
             : (isStyleRefreshRoute() ? '风格焕新 · 独立图片结果' : '参考图 / 单条详情结果'));
         grid.appendChild(heading);
         var groupTotal = detailResultGroupSlotTotal(group, resultGroups);
@@ -13254,6 +15160,12 @@ function applyContextImage(ctx, autoAnalyze) {
   ctx = ctx || {};
   if (!ctx.imageUrl) return Promise.resolve({ ok: false, error: '缺少右键图片' });
   var params = new URLSearchParams(location.search);
+  var pinned = pinnedViralWorkflowRoute();
+  if (pinned && pinned !== 'case') {
+    var message = pinned === 'scene-extension' ? '请在场景延展素材区上传产品正面与补充角度。' : '请在风格焕新素材区上传商品主体图。';
+    setPill('contextState', message, 'warn');
+    return Promise.resolve({ ok: false, code: 'DEDICATED_VIRAL_PRODUCT_UPLOAD_REQUIRED', error: message });
+  }
   var route = ctx.importRoute || params.get('importRoute') || currentSurfaceMode();
   setPill(route === 'sku' ? 'skuState' : 'contextState', '参考图导入中...', '');
   if (route === 'sku' || currentSurfaceMode() === 'sku') {
@@ -13268,17 +15180,19 @@ function applyContextImage(ctx, autoAnalyze) {
   if (route === 'viral' || currentSurfaceMode() === 'viral') setReferenceDetailMode('viral');
   else if (route === 'detail' || referenceDetailRouteActive()) {
     if (currentSurfaceMode() === 'detail') setReferenceDetailMode('story');
-    setPill('contextState', '参考成详不接收单图；请使用商品 URL 或当前页提取入口', 'warn');
-    setPill('detailSourceState', '待导入正式来源', 'warn');
-    renderReferenceDetailWorkbench();
-    return Promise.resolve({ ok: false, code: 'REFERENCE_DETAIL_FORMAL_SOURCE_REQUIRED', error: REFERENCE_DETAIL_EMPTY_MESSAGE });
+    return importReferenceDetailScreenshotUrls([ctx.imageUrl]).then(function (result) {
+      return Object.assign({}, result, { route: 'detail' });
+    }).catch(function (error) {
+      reportImageUploadError(error);
+      return { ok: false, code: error.code || 'SCREENSHOT_IMPORT_FAILED', error: referenceDetailErrorMessage(error) };
+    });
   }
   if ($('refUrl')) $('refUrl').value = ctx.imageUrl;
   setRefImage(ctx.imageUrl, ctx.imageUrl);
   setPill('contextState', route === 'viral'
     ? '已从图片实验室导入图1裂变参考'
     : '已从图片实验室导入主图参考', 'ok');
-  if (autoAnalyze && currentSurfaceMode() === 'main' && ($('apiKey') && $('apiKey').value.trim())) {
+  if (autoAnalyze && currentSurfaceMode() === 'main' && creativeHasApiCredential(cfgFromForm(), 'chat')) {
     return Promise.resolve().then(analyzeCurrentImage).then(function (analysis) {
       // 图片已经成功落入目标槽；可选的自动反推失败不能把 handoff 判成失败，
       // 否则同一上下文会残留并污染下一次导入。
@@ -13318,7 +15232,7 @@ function applyAndConsumeContextImage(ctx, autoAnalyze) {
         });
       }
       var applied = Object.assign({}, resp, { contextConsumed: true, contextConsumeError: '' });
-      if (!(autoAnalyze && currentSurfaceMode() === 'main' && ($('apiKey') && $('apiKey').value.trim()))) return applied;
+      if (!(autoAnalyze && currentSurfaceMode() === 'main' && creativeHasApiCredential(cfgFromForm(), 'chat'))) return applied;
       return Promise.resolve().then(analyzeCurrentImage).then(function (analysis) {
         applied.analysisOk = !!(analysis && analysis.ok);
         applied.analysisError = analysis && !analysis.ok ? (analysis.error || '自动分析未完成') : '';
@@ -13652,15 +15566,15 @@ function guideDraftForItem(item) {
     },
     labMode: labMode,
     detailMode: detailMode,
-    config: cloneGuideValue(cfg),
+    config: Object.freeze(cloneGuideValue(cfg)),
     generationSettings: Object.freeze(settings),
     productImages: productImages,
     productImageEvidence: labMode === 'sku'
       ? productImages.map(function (image, idx) { return { image: image, angle: 'sku', label: '当前 SKU 主体图 ' + (idx + 1) }; })
       : ((Array.isArray(item.productImageEvidence) && item.productImageEvidence.length) ? cloneGuideValue(item.productImageEvidence) : productImageEvidence()),
-    modelImages: labMode === 'detail'
-      ? ((Array.isArray(item.modelImages) && item.modelImages.length) ? item.modelImages.slice() : modelImageList())
-      : [],
+    modelImages: item.creativeGuideOrigin
+      ? (Array.isArray(item.modelImages) ? item.modelImages.slice() : [])
+      : (labMode === 'detail' ? ((Array.isArray(item.modelImages) && item.modelImages.length) ? item.modelImages.slice() : modelImageList()) : []),
     promptRecord: labMode === 'sku' ? null : guidePromptRecordFromItem(item),
     selectedIssues: [],
     evidenceLevel: productImages.length >= 2 ? 'E2' : (productImages.length ? 'E1' : 'E0'),
@@ -13963,6 +15877,7 @@ function collectGuideContract(extra) {
     preserve: selectedGuidePreserveLocks(),
     scope: ($('guideScopeSelect') && $('guideScopeSelect').value) || 'current',
     adapter: draft.config && draft.config.imageAdapter,
+    config: draft.config,
     strictOutsideMask: !($('guideLockOutsideMask')) || $('guideLockOutsideMask').checked,
     allowWholeRegenerate: extra.allowWholeRegenerate != null ? extra.allowWholeRegenerate : draft.allowWholeRegenerate,
     conceptConfirmed: extra.conceptConfirmed != null ? extra.conceptConfirmed : draft.conceptConfirmed,
@@ -13988,7 +15903,8 @@ function renderGuidePlanSummary(forcedError) {
       : (contract.operation === 'replace-visible-text'
         ? ('仅替换：“' + contract.textTarget + '” → “' + contract.replacementText + '”；其他文字及标注区外像素从原图恢复' + (contract.warnings.length ? '；提醒：' + contract.warnings.join('；') : ''))
         : ('当前图片单图执行；红色必须修改 ' + contract.annotation.mustStrokeCount + ' 处，黄色允许联动 ' + contract.annotation.linkedStrokeCount + ' 处；锁定：' + (contract.preserve.join('、') || '无') + (contract.warnings.length ? '；提醒：' + contract.warnings.join('；') : ''))));
-  if (span) span.textContent = summary;
+  var profile = contract.modelProfile;
+  if (span) span.textContent = (profile ? ('本次模型：' + (profile.model || '未配置') + '；' + profile.label + '；方案：' + profile.strategyLabel + '。\n') : '') + summary;
 }
 
 function guideTextSurgerySelected() {
@@ -14068,8 +15984,13 @@ function resetGuideUi(draft, initialPrompt) {
 
 function openGuideRegenerateModal(item, options) {
   item = item || {};
+  if (item.creativeRoute === 'scene-extension') {
+    setPill('archiveState', '请返回场景延展，重新确认产品原图与场景计划。', 'warn');
+    return { ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION' };
+  }
   options = options || {};
   if (!item.url) { setPill('generateState', '缺少引导图片', 'warn'); return; }
+  archiveHistoryState.childReturnFocus = document.activeElement;
   state.guideDraft = guideDraftForItem(item);
   state.guideItem = state.guideDraft.item;
   resetGuideUi(state.guideDraft, options.prompt || '');
@@ -14086,6 +16007,8 @@ function closeGuideRegenerateModal() {
   resetGuideAnnotation();
   var modal = $('guideActionModal');
   if (modal) modal.hidden = true;
+  if ($('archiveHistoryModal') && !$('archiveHistoryModal').hidden) focusArchiveHistoryControl(archiveHistoryState.childReturnFocus);
+  archiveHistoryState.childReturnFocus = null;
 }
 
 function bindGuideRegenerationUi() {
@@ -14210,7 +16133,7 @@ function bindGuideRegenerationUi() {
 
 function runSkuGuideRegenerate(item, draft, contract, artifacts) {
   draft = draft || guideDraftForItem(item);
-  contract = contract || createStructuredGuideContract({ mode: 'general', issue: 'general', guide: ($('guidePrompt') && $('guidePrompt').value.trim()) || '', adapter: draft.config && draft.config.imageAdapter, allowWholeRegenerate: true });
+  contract = contract || createStructuredGuideContract({ mode: 'general', issue: 'general', guide: ($('guidePrompt') && $('guidePrompt').value.trim()) || '', adapter: draft.config && draft.config.imageAdapter, config: draft.config, allowWholeRegenerate: true });
   artifacts = artifacts || {};
   var guide = contract.guide || '';
   var product = draft.productImages && draft.productImages[0] || '';
@@ -14248,15 +16171,8 @@ function runSkuGuideRegenerate(item, draft, contract, artifacts) {
   var jobId = newJobId();
   state.activeJobId = jobId;
   state.skuActiveJobIds[jobId] = item.skuId || 'guide';
-  var negative = skuSubjectReplaceNegativePrompt();
+  var negative = '';
   var frozenSkuTitle = skuBusinessTitle(item);
-  var guideTask = {
-    item: { url: product, skuCode: item.skuCode || '', name: item.productName || frozenSkuTitle },
-    skuId: item.skuId || '',
-    skuCode: item.skuCode || '',
-    attr: frozenSkuTitle,
-    index: item.sourceIndex || 0
-  };
   // 当前完整结果是本次不可变对象底图；只允许在原商品区域改善主体融合。
   var guideBase = artifacts.editBaseImage || item.url;
   var guideOutputRatio = visualBundle.ratio;
@@ -14289,7 +16205,7 @@ function runSkuGuideRegenerate(item, draft, contract, artifacts) {
   guideSettings.visualLock = createSkuVisualLockContract(guideSettings, visualBundle.contract && visualBundle.contract.batchLockId);
   guideSettings.visualLockSignature = guideSettings.visualLock.contractFingerprint;
   var prompt = [
-    skuPromptFor(guideTask.item, guideTask.index, guideTask.attr, guideSettings),
+    modelAdaptiveGuidePrompt(contract),
     '这是主体替换结果的局部修复：仅可改善新主体在原位置的边缘、接触、光影、反射和投影融合。',
     guide ? '用户补充要求只能在商品主体替换区域内执行：' + guide : '',
     '对象底图中主体以外的背景、文字、Logo、标签、道具、人物、排版和所有其他细节保持不变。'
@@ -14419,7 +16335,7 @@ function runSkuGuideRegenerate(item, draft, contract, artifacts) {
           guideOutsidePixelsRestored: !!(guideContractUsesLocalMask(contract) && contract.strictOutsideMask)
         };
         stampSkuResultVisualIdentity(generatedItem);
-        state.skuResults.push(generatedItem);
+        if (!state.skuResults.some(function (result) { return result.resultId === generatedItem.resultId; })) state.skuResults.push(generatedItem);
         queueArchiveResult(generatedItem, { surfaceMode: 'sku', batchTitle: '主体替换引导重生 · ' + frozenSkuTitle });
       });
       renderSkuWorkspace();
@@ -14443,6 +16359,7 @@ function runSkuGuideRegenerate(item, draft, contract, artifacts) {
 }
 
 function runGuideRegenerate() {
+  if (state.guideDraft && state.guideDraft.item && state.guideDraft.item.creativeRoute === 'scene-extension') return Promise.resolve({ ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION', error: '请在场景延展工作台确认产品与场景计划后生成。' });
   var draft = state.guideDraft;
   var item = draft && draft.item || state.guideItem || {};
   if (!item.url || !draft) { setPill('generateState', '缺少引导图片或执行快照，请重新打开引导重生', 'warn'); return Promise.resolve({ ok: false, error: '缺少执行快照' }); }
@@ -14565,6 +16482,7 @@ function unregisterGenerationJob(jobId) {
 
 function stopGeneration() {
   state.stopRequested = true;
+  Object.keys(promptTaskFlights).forEach(function (id) { promptTaskEnd(id); });
   state.batchPromptToken++;
   state.batchGenerationToken++;
   var ids = Object.keys(state.activeJobIds);
@@ -14624,7 +16542,7 @@ function generationReferenceRouteIdentity(labMode, detailMode, record, options) 
     throw Object.assign(new Error('参考详情生成缺少可识别的正式路线身份。'), { code: 'REFERENCE_ROUTE_IDENTITY_REQUIRED' });
   }
   if (record.referenceDetailFormal !== true) {
-    throw Object.assign(new Error('正式参考成详生成缺少已锁定结构记录。'), { code: 'REFERENCE_DETAIL_GENERATION_AUTH_REQUIRED' });
+    throw Object.assign(new Error('正式清单成详生成缺少已锁定结构记录。'), { code: 'REFERENCE_DETAIL_GENERATION_AUTH_REQUIRED' });
   }
   var bundle = referenceDetailExecutionBundle();
   var approved = bundle && bundle.currentBlueprint;
@@ -14637,15 +16555,15 @@ function generationReferenceRouteIdentity(labMode, detailMode, record, options) 
     record.referenceDetailSourceSnapshotId === source.snapshotId &&
     record.referenceDetailApprovalVerificationId === approval.verificationId);
   if (!identityMatches) {
-    throw Object.assign(new Error('正式参考成详授权身份与当前 approved execution bundle 不一致。'), { code: 'REFERENCE_DETAIL_GENERATION_AUTH_STALE' });
+    throw Object.assign(new Error('正式清单成详授权身份与当前 approved execution bundle 不一致。'), { code: 'REFERENCE_DETAIL_GENERATION_AUTH_STALE' });
   }
   return {
     referenceMode: 'story',
     generationRoute: 'reference-detail-formal',
     referenceDetailFormal: true,
     referenceDetailAuthorization: 'REFERENCE_DETAIL_APPROVED_GENERATION_V1',
-    referenceDetailSourceSchema: 'REFERENCE_DETAIL_SOURCE_V1',
-    referenceDetailExecutionSchema: 'REFERENCE_DETAIL_EXECUTION_BUNDLE_V1',
+    referenceDetailSourceSchema: source.schema,
+    referenceDetailExecutionSchema: bundle.schema,
     referenceDetailExecutionBundleId: bundle.bundleId,
     referenceDetailBlueprintId: approved.blueprintId,
     referenceDetailBlueprintRevision: Number(record.referenceDetailBlueprintRevision || 0),
@@ -14657,6 +16575,10 @@ function generationReferenceRouteIdentity(labMode, detailMode, record, options) 
 }
 
 function generateOne(variant, variantName, countOverride, options) {
+  var generationOwner = promptTaskOwner();
+  var generationCreativeRoute = currentSurfaceMode() === 'viral' ? normalizeViralCoreRoute(state.viralCoreRoute) : '';
+  if (options && options.parentItem && options.parentItem.creativeRoute === 'scene-extension') return Promise.resolve({ ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION', error: '请在场景延展工作台确认产品与场景计划后生成。' });
+  if (isSceneExtensionRoute()) return Promise.resolve({ ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION', error: '请在场景延展工作台确认产品与场景计划后生成。' });
   options = options || {};
   if (state.stopRequested) return Promise.resolve({ ok: false, error: '已终止' });
   var labMode = options.labMode || currentLabMode();
@@ -14679,7 +16601,7 @@ function generateOne(variant, variantName, countOverride, options) {
   });
   var basePrompt = generationPrompt(variant, options.promptRecord, promptOptions);
   if (!basePrompt.trim()) return Promise.resolve({ ok: false, error: '缺少提示词' });
-  var prompt = [generationParamPromptLayer(requestedCount, settings), basePrompt].filter(Boolean).join('\n\n');
+  var prompt = options.guideContract ? basePrompt : [generationParamPromptLayer(requestedCount, settings), basePrompt].filter(Boolean).join('\n\n');
   var record = options.promptRecord || null;
   var referenceRouteIdentity;
   try {
@@ -14695,7 +16617,8 @@ function generateOne(variant, variantName, countOverride, options) {
   registerGenerationJob(jobId);
   var productImage = productImages[0] || '';
   var negative = options.negativePrompt != null ? options.negativePrompt : (($('negativePrompt') && $('negativePrompt').value.trim()) || '');
-  if (productImage) negative = [negative, replacementNegativePrompt()].filter(Boolean).join(', ');
+  if (options.guideContract) negative = '';
+  else if (productImage) negative = [negative, replacementNegativePrompt()].filter(Boolean).join(', ');
   var formalReferenceDetail = referenceRouteIdentity.referenceDetailFormal === true;
   var mainPlans = labMode !== 'detail' && record && record.data && Array.isArray(record.data['主图规划'])
     ? record.data['主图规划'] : [];
@@ -14715,7 +16638,7 @@ function generateOne(variant, variantName, countOverride, options) {
     sourceResultId: options.sourceResultId || '',
     productImage: productImage,
     productImages: productImages,
-    modelImages: labMode === 'detail' ? allModelImages : [],
+    modelImages: labMode === 'detail' || (options.parentItem && options.parentItem.creativeGuideOrigin) ? allModelImages : [],
     labMode: labMode,
     detailMode: detailMode,
     size: settings.size,
@@ -14762,12 +16685,13 @@ function generateOne(variant, variantName, countOverride, options) {
   var chunkIndex = 0;
   var collected = [];
   var emptyChunkRetries = 0;
+  var chunkArchives = [];
   function appendImages(resp, effectivePrompt, screenIndex, promptPlan, expectedCount) {
-    if (options.generationToken != null && options.generationToken !== state.batchGenerationToken) return 0;
+    if (generationOwner !== promptTaskOwner() || state.stopRequested || options.generationToken != null && options.generationToken !== state.batchGenerationToken) return 0;
     var images = resp && resp.ok && Array.isArray(resp.images) ? resp.images.filter(Boolean) : [];
     images.slice(0, expectedCount).forEach(function (url, localIndex) {
       var seq = labMode === 'detail' ? screenIndex : (options.mainTargetImageIndex ? mainTargetIndex : (collected.length + 1));
-      var generatedRoute = currentSurfaceMode() === 'viral' ? (isStyleRefreshRoute() ? 'style-refresh' : 'case') : '';
+      var generatedRoute = generationCreativeRoute;
       if (labMode === 'detail') {
         state.results = state.results.filter(function (existing) {
           return !(existing && existing.resultCleared && existing.labMode === 'detail' &&
@@ -14791,7 +16715,7 @@ function generateOne(variant, variantName, countOverride, options) {
         labMode: labMode,
         detailMode: detailMode,
         creativeRoute: generatedRoute,
-        styleRefreshQa: currentSurfaceMode() === 'viral' && isStyleRefreshRoute() ? { status: 'waiting' } : undefined,
+        styleRefreshQa: generatedRoute === 'style-refresh' ? { status: 'waiting' } : undefined,
         detailScreenIndex: labMode === 'detail' ? screenIndex : undefined,
         detailScreenTotal: labMode === 'detail' ? detailTargetTotal : undefined,
         detailScreenDirection: frozenScreenDirection || undefined,
@@ -14865,7 +16789,8 @@ function generateOne(variant, variantName, countOverride, options) {
       };
       generatedItem = Object.assign(generatedItem, referenceRouteIdentity);
       state.results.push(generatedItem);
-      queueArchiveResult(generatedItem, { surfaceMode: generatedRoute ? 'viral' : labMode });
+      generatedItem.generationConfig = { provider: generationConfig.provider, imageModel: generationConfig.imageModel };
+      chunkArchives.push(queueArchiveResult(generatedItem, { surfaceMode: generatedRoute ? 'viral' : labMode, accountKey: generationOwner }));
     });
     if (images.length) renderResults();
     return images.length;
@@ -14874,10 +16799,11 @@ function generateOne(variant, variantName, countOverride, options) {
     unregisterGenerationJob(jobId);
     return resp;
   }
-  function partialFailure(error, screenIndex) {
-    return finish({ ok: false, partial: collected.length > 0, failedScreen: screenIndex || undefined, error: actionableGenerationError(error || '生图失败'), images: collected.slice() });
+  function partialFailure(error, screenIndex, response) {
+    return finish(Object.assign({}, response || {}, { ok: false, partial: collected.length > 0, failedScreen: screenIndex || undefined, error: actionableGenerationError(error || '生图失败'), images: collected.slice() }));
   }
   function nextChunk() {
+    if (generationCreativeRoute && normalizeViralCoreRoute(state.viralCoreRoute) !== generationCreativeRoute) return finish({ ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，后续生成已停止。', images: collected.slice() });
     if (state.stopRequested || state.cancelledJobs[jobId] || (options.generationToken != null && options.generationToken !== state.batchGenerationToken)) {
       delete state.cancelledJobs[jobId];
       return finish({ ok: false, error: '已终止', images: collected.slice() });
@@ -14904,7 +16830,7 @@ function generateOne(variant, variantName, countOverride, options) {
         detailScreenPlan: promptPlan
       });
     }
-    var requestPrompt = [prompt,
+    var requestPrompt = options.guideContract ? prompt : [prompt,
       labMode === 'detail'
         ? detailScreenSequenceLayer(screenIndex, detailTargetTotal, detailSequenceRecord, labMode)
         : mainImageSequenceLayer(mainImageIndex, mainTargetTotal, record, labMode),
@@ -14913,7 +16839,8 @@ function generateOne(variant, variantName, countOverride, options) {
     var payload = Object.assign({}, payloadBase, {
       count: chunkCount,
       prompt: requestPrompt,
-      modelImages: labMode === 'detail' && detailPlanUsesModel(promptPlan) ? allModelImages : [],
+      modelImages: options.parentItem && options.parentItem.creativeGuideOrigin
+        ? allModelImages : (labMode === 'detail' && detailPlanUsesModel(promptPlan) ? allModelImages : []),
       detailScreenIndex: screenIndex || undefined,
       detailScreenTotal: labMode === 'detail' ? detailTargetTotal : undefined,
       detailScreenPlan: labMode === 'detail' ? promptPlan : undefined,
@@ -14922,13 +16849,15 @@ function generateOne(variant, variantName, countOverride, options) {
       mainImagePlan: mainImageIndex ? promptPlan : undefined
     });
     return send('GENERATE_IMAGE', { jobId: jobId, config: generationConfig, payload: payload }).then(function (resp) {
-      if (state.stopRequested || state.cancelledJobs[jobId] || (options.generationToken != null && options.generationToken !== state.batchGenerationToken)) {
+      if (generationOwner !== promptTaskOwner() || state.stopRequested || state.cancelledJobs[jobId] || (options.generationToken != null && options.generationToken !== state.batchGenerationToken)) {
         delete state.cancelledJobs[jobId];
         return finish({ ok: false, error: '已终止', images: collected.slice() });
       }
-      if (!resp || !resp.ok) return partialFailure((resp && resp.error) || '生图失败', screenIndex);
+      if (!resp || !resp.ok) return partialFailure((resp && resp.error) || '生图失败', screenIndex, resp);
       return postProcessGuideImageUrls(resp.images, options.guideContract, options.editBaseImage, options.editMaskImage).then(function (processedImages) {
+        if (generationOwner !== promptTaskOwner() || state.stopRequested || state.cancelledJobs[jobId] || options.generationToken != null && options.generationToken !== state.batchGenerationToken) return finish({ok:false,ended:true,error:'已结束等待，原图片已保留。',images:collected.slice()});
         var processedResp = Object.assign({}, resp, { images: processedImages });
+        chunkArchives = [];
         var acceptedCount = appendImages(processedResp, requestPrompt, screenIndex, promptPlan, chunkCount);
         if (acceptedCount < chunkCount) {
           var missingCount = chunkCount - acceptedCount;
@@ -14944,7 +16873,13 @@ function generateOne(variant, variantName, countOverride, options) {
         } else {
           emptyChunkRetries = 0;
         }
-        return nextChunk();
+        var archives = chunkArchives.slice();
+        return Promise.all(archives).then(function (saved) {
+          if (resp._legacyReceipt && acceptedCount === chunkCount && saved.length === acceptedCount && saved.every(function (item) { return item && item.ok; })) {
+            return acknowledgeSkuDelivery({ _skuReceipt: resp._legacyReceipt });
+          }
+          return false;
+        }).then(function () { return nextChunk(); });
       });
     }).catch(function (err) {
       return partialFailure(actionableGenerationError((err && err.message) || '生图失败'), screenIndex);
@@ -14954,6 +16889,7 @@ function generateOne(variant, variantName, countOverride, options) {
 }
 
 function ensureReferencePromptForGeneration() {
+  if (isSceneExtensionRoute()) return Promise.resolve({ ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION', error: '请在场景延展工作台确认产品与场景计划后生成。' });
   var mode = currentLabMode() === 'detail' ? 'detail' : 'main';
   if (!productImageList().length) {
     showProductSubjectRequired(mode);
@@ -15094,12 +17030,28 @@ function finalizeStyleRefreshRun(run, qaResult) {
 }
 
 function generateStyleRefreshImages(record) {
+  function routeChanged() {
+    return currentSurfaceMode() !== 'viral' || normalizeViralCoreRoute(state.viralCoreRoute) !== 'style-refresh';
+  }
+  if (routeChanged()) return Promise.resolve({ ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，风格焕新后续生成已停止。' });
   var total = Math.max(1, generationImageCount());
   var run = state.styleRefresh.run;
   if (!styleRefreshRunIsCompatible(run, record, total) || (run && run.phase === 'complete')) {
     run = createStyleRefreshRun(record, total);
     state.styleRefresh.run = run;
     state.detailStitchSelectionOrder = [];
+  }
+  function finishChangedRoute() {
+    (run.slots || []).forEach(function (slot) {
+      if (!styleRefreshResultForScreen(run, slot.index) && (slot.status === 'generating' || slot.status === 'waiting')) slot.status = 'stopped';
+    });
+    run.phase = 'stopped';
+    run.message = '创作方式已切换；已生成结果保留，后续图片与自动检查已停止。返回风格焕新可续跑缺失图片。';
+    run.pill = '已停止后续生成';
+    run.kind = 'warn';
+    var counts = styleRefreshRunCounts(run);
+    return { ok: false, code: 'VIRAL_ROUTE_CHANGED', partial: counts.completed > 0, completed: counts.completed, failed: counts.missing, error: run.message,
+      images: state.results.filter(function (item) { return item && item.batchId === run.batchId && item.url; }).map(function (item) { return item.url; }) };
   }
   var missingScreens = [];
   for (var index = 1; index <= total; index++) {
@@ -15113,6 +17065,7 @@ function generateStyleRefreshImages(record) {
     run.phase = 'qa';
     renderStyleRefreshWorkStatus();
     return runStyleRefreshQaForBatch(run.batchId, record).then(function (qaResult) {
+      if (routeChanged()) return finishChangedRoute();
       return finalizeStyleRefreshRun(run, qaResult);
     });
   }
@@ -15132,7 +17085,7 @@ function generateStyleRefreshImages(record) {
   renderStyleRefreshWorkStatus();
 
   function worker() {
-    if (cursor >= missingScreens.length || state.stopRequested || generationToken !== state.batchGenerationToken) return Promise.resolve();
+    if (routeChanged() || cursor >= missingScreens.length || state.stopRequested || generationToken !== state.batchGenerationToken) return Promise.resolve();
     var screenIndex = missingScreens[cursor++];
     var slot = run.slots[screenIndex - 1];
     slot.status = 'generating';
@@ -15152,6 +17105,10 @@ function generateStyleRefreshImages(record) {
       generationSettings: settings,
       generationToken: generationToken
     }).then(function (resp) {
+      if (routeChanged()) {
+        slot.status = styleRefreshResultForScreen(run, screenIndex) ? 'generated' : 'stopped';
+        return;
+      }
       if (state.stopRequested || generationToken !== state.batchGenerationToken) {
         if (!styleRefreshResultForScreen(run, screenIndex)) slot.status = 'stopped';
         return;
@@ -15167,6 +17124,10 @@ function generateStyleRefreshImages(record) {
       renderStyleRefreshWorkStatus();
       return worker();
     }).catch(function (error) {
+      if (routeChanged()) {
+        slot.status = styleRefreshResultForScreen(run, screenIndex) ? 'generated' : 'stopped';
+        return;
+      }
       slot.status = 'failed';
       slot.error = actionableGenerationError((error && error.message) || error || '本张生图失败');
       renderResults();
@@ -15179,6 +17140,7 @@ function generateStyleRefreshImages(record) {
   var concurrency = Math.min(2, missingScreens.length);
   for (var workerIndex = 0; workerIndex < concurrency; workerIndex++) workers.push(worker());
   return Promise.all(workers).then(function () {
+    if (routeChanged()) return finishChangedRoute();
     setStopAvailable(false);
     if (state.stopRequested || generationToken !== state.batchGenerationToken) {
       (run.slots || []).forEach(function (slot) {
@@ -15195,12 +17157,14 @@ function generateStyleRefreshImages(record) {
     run.phase = 'qa';
     renderStyleRefreshWorkStatus();
     return runStyleRefreshQaForBatch(run.batchId, record).then(function (qaResult) {
+      if (routeChanged()) return finishChangedRoute();
       return finalizeStyleRefreshRun(run, qaResult);
     });
   });
 }
 
 function runStyleRefreshQaForBatch(batchId, promptRecord) {
+  if (currentSurfaceMode() !== 'viral' || normalizeViralCoreRoute(state.viralCoreRoute) !== 'style-refresh') return Promise.resolve({ ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，风格焕新自动检查已停止。' });
   var qaConfig = promptRecord && promptRecord.data && promptRecord.data['风格焕新配置'] || styleRefreshConfig();
   var items = state.results.filter(function (item) {
     return item && item.url && item.batchId === batchId && item.creativeRoute === 'style-refresh';
@@ -15218,6 +17182,7 @@ function runStyleRefreshQaForBatch(batchId, promptRecord) {
       results: items.map(function (item) { return { url: item.url, name: item.variantName || '' }; })
     }
   }).then(function (resp) {
+    if (currentSurfaceMode() !== 'viral' || normalizeViralCoreRoute(state.viralCoreRoute) !== 'style-refresh') return { ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，请返回风格焕新重新检查。' };
     if (!resp || !resp.ok || !Array.isArray(resp.assessments)) {
       items.forEach(function (item) {
         item.styleRefreshQa = { status: 'review', identityScore: 0, styleScore: 0, copyScore: 0, copyViolationCount: 0, copyMode: qaConfig.copyMode, issues: ['自动检查未完成：' + ((resp && resp.error) || '视觉模型无响应')] };
@@ -15241,7 +17206,7 @@ function generateFormalReferenceDetailBatchFromPrimaryAction() {
   var button = $('generateBtn');
   if (button) button.disabled = true;
   setStopAvailable(false);
-  setPill('generateState', '正在登记正式参考成详批次并启动生成...', '');
+  setPill('generateState', '正在登记正式清单成详批次并启动生成...', '');
   var panel = $('referenceDetailBatchPanel');
   if (panel && typeof panel.scrollIntoView === 'function') panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return startReferenceDetailBatch().then(function (result) {
@@ -15249,8 +17214,8 @@ function generateFormalReferenceDetailBatchFromPrimaryAction() {
     renderReferenceDetailBatch();
     var ok = !!(result && result.ok);
     var message = ok
-      ? '参考成详正式批次已完成'
-      : actionableGenerationError(result && result.error || '参考成详正式批次未完成');
+      ? '清单成详正式批次已完成'
+      : actionableGenerationError(result && result.error || '清单成详正式批次未完成');
     if (currentLabMode() === 'detail' && referenceDetailRouteActive()) {
       renderResults();
       setPill('generateState', message, ok ? 'ok' : 'warn');
@@ -15259,7 +17224,7 @@ function generateFormalReferenceDetailBatchFromPrimaryAction() {
   }).catch(function (error) {
     syncDetailWorkflowUi();
     renderReferenceDetailBatch();
-    var message = actionableGenerationError(error && error.message || '参考成详正式批次启动失败');
+    var message = actionableGenerationError(error && error.message || '清单成详正式批次启动失败');
     if (currentLabMode() === 'detail' && referenceDetailRouteActive()) {
       setPill('generateState', message, 'warn');
     }
@@ -15268,20 +17233,24 @@ function generateFormalReferenceDetailBatchFromPrimaryAction() {
 }
 
 function generateCurrent() {
+  if (legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待图片导入完成。' });
+  if (isSceneExtensionRoute()) return Promise.resolve({ ok: false, code: 'SCENE_EXTENSION_SEPARATE_GENERATION', error: '请在场景延展工作台确认产品与场景计划后生成。' });
   // 正式参考成详只能经过后台登记的 REFERENCE_DETAIL_BATCH_V1 通道。
   // 旧的单图入口虽能构造 formal identity，但没有稳定批次 marker，会被后台正确地 fail-close。
   if (currentLabMode() === 'detail' && referenceDetailRouteActive()) {
     return generateFormalReferenceDetailBatchFromPrimaryAction();
   }
+  var requestedRoute = currentSurfaceMode() === 'viral' ? normalizeViralCoreRoute(state.viralCoreRoute) : '';
   $('generateBtn').disabled = true;
   return ensureReferencePromptForGeneration().then(function (ready) {
+    if (requestedRoute && normalizeViralCoreRoute(state.viralCoreRoute) !== requestedRoute) return { ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，请在当前方式中重新确认计划。' };
     if (!ready || !ready.ok || !ready.promptRecord) return ready || { ok: false, error: '参考图提示词未就绪' };
     var record = ready.promptRecord;
     displayPromptRecord(record);
     if (currentLabMode() === 'main') resetMainStitchSelection();
     state.stopRequested = false;
     setStopAvailable(true);
-    var styleRefresh = currentLabMode() === 'detail' && isStyleRefreshRoute();
+    var styleRefresh = requestedRoute === 'style-refresh';
     if (styleRefresh) return generateStyleRefreshImages(record);
     setPill('generateState', '参考图提示词已覆盖，正在生图...', '');
     var batchId = (styleRefresh ? 'style_refresh_' : 'reference_') + Date.now() + '_' + Math.random().toString(16).slice(2);
@@ -15298,10 +17267,11 @@ function generateCurrent() {
       batchId: batchId
     });
   }).then(function (resp) {
+    if (requestedRoute && normalizeViralCoreRoute(state.viralCoreRoute) !== requestedRoute) return resp || { ok: false, code: 'VIRAL_ROUTE_CHANGED', error: '创作方式已切换，原路线任务已停止。' };
     if (currentLabMode() === 'detail' && referenceDetailRouteActive()) syncDetailWorkflowUi();
     else $('generateBtn').disabled = false;
     setStopAvailable(false);
-    var styleRefresh = currentLabMode() === 'detail' && isStyleRefreshRoute();
+    var styleRefresh = requestedRoute === 'style-refresh';
     if (styleRefresh && state.styleRefresh.run) {
       renderStyleRefreshWorkStatus();
       return resp;
@@ -15309,11 +17279,12 @@ function generateCurrent() {
     setPill('generateState', resp && resp.ok ? '参考图生成完成' : actionableGenerationError((resp && resp.error) || '参考图生成失败'), resp && resp.ok ? 'ok' : 'warn');
     return resp;
   }).catch(function (err) {
+    if (requestedRoute && normalizeViralCoreRoute(state.viralCoreRoute) !== requestedRoute) return { ok: false, code: 'VIRAL_ROUTE_CHANGED', error: (err && err.message) || '创作方式已切换，原路线任务已停止。' };
     if (currentLabMode() === 'detail' && referenceDetailRouteActive()) syncDetailWorkflowUi();
     else $('generateBtn').disabled = false;
     setStopAvailable(false);
     var message = actionableGenerationError((err && err.message) || '参考图生成失败');
-    if (isStyleRefreshRoute() && state.styleRefresh.run) {
+    if (requestedRoute === 'style-refresh' && state.styleRefresh.run) {
       state.styleRefresh.run.phase = 'partial';
       state.styleRefresh.run.message = message;
       renderResults();
@@ -15326,6 +17297,7 @@ function generateCurrent() {
 }
 
 function batchGenerate() {
+  if (legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待图片导入完成。' });
   if (!validateGenerationReady()) return;
   var variants = [
     ['main', '主图转化版'],
@@ -15415,6 +17387,7 @@ function setBatchLinksBusy(on) {
   });
   var fileLabel = $('linkTableFile') && $('linkTableFile').closest ? $('linkTableFile').closest('.link-table-file-btn') : null;
   if (fileLabel) fileLabel.classList.toggle('busy', linkWorkflowBusyDepth > 0);
+  syncReferenceAnalysisControl();
   if (!on && currentLabMode() === 'detail') syncDetailWorkflowUi();
 }
 
@@ -15711,7 +17684,7 @@ function generationConcurrencyForConfig(cfg) {
 }
 
 function generationRetryableResponse(resp) {
-  if (!resp || resp.ok || resp.partial) return false;
+  if (!legacyImageDefinitelyNotSubmitted(resp) || resp.partial) return false;
   var text = String(resp.error || '');
   return /请求超时|timed?\s*out|HTTP\s*(429|502|503|504)\b|rate.?limit|模型繁忙|服务繁忙|temporarily unavailable/i.test(text);
 }
@@ -16155,6 +18128,12 @@ function generateImagesForSelectedLinks() {
   if (resume) (resume.failedKeys || []).forEach(function (key) { retryKeySet[key] = true; });
   var tasks = resume ? allTasks.filter(function (task) { return !!retryKeySet[task.key]; }) : allTasks;
   if (!tasks.length) {
+    if (resume && resume.uncertainKeys && resume.uncertainKeys.length) {
+      var waiting = legacyImageUnknownResponse({ error: '有 ' + resume.uncertainKeys.length + ' 张图片未完成，可在任务进度中点击“重新跑（新任务）”；已成功的图片不会重跑。' });
+      promptTaskRender();
+      setPill('generateState', waiting.error, 'warn');
+      return Promise.resolve(waiting);
+    }
     state.linkGenerationResume = null;
     setPill('generateState', '当前范围没有待补图片，已有结果可直接使用', 'ok');
     return Promise.resolve({ ok: true, records: records, added: 0, resumed: true, concurrency: maxConcurrency });
@@ -16241,6 +18220,7 @@ function generateImagesForSelectedLinks() {
         linkId: task.record.linkId,
         imageIndex: task.imageIndex,
         key: task.key,
+        stateUncertain: !(value && legacyImageDefinitelyNotSubmitted(value)),
         error: actionableGenerationError(reason && (reason.message || reason) || '未返回图片').replace(/\s+/g, ' ').trim().slice(0, 220)
       };
     }).filter(Boolean);
@@ -16248,15 +18228,20 @@ function generateImagesForSelectedLinks() {
     var errorSummary = errors.map(function (item) { return item.linkId + ' 第' + item.imageIndex + '张：' + item.error; }).join('；');
     var partial = missing.length > 0;
     if (failures) {
-      state.linkGenerationResume = { fingerprint: runFingerprint, batchId: batchId, failedKeys: errors.map(function (item) { return item.key; }) };
+      state.linkGenerationResume = { fingerprint: runFingerprint, batchId: batchId,
+        failedKeys: errors.filter(function (item) { return !item.stateUncertain; }).map(function (item) { return item.key; }),
+        uncertainKeys: (resume && resume.uncertainKeys || []).concat(errors.filter(function (item) { return item.stateUncertain; }).map(function (item) { return item.key; })) };
     } else {
-      state.linkGenerationResume = null;
+      state.linkGenerationResume = resume && resume.uncertainKeys && resume.uncertainKeys.length
+        ? { fingerprint: runFingerprint, batchId: batchId, failedKeys: [], uncertainKeys: resume.uncertainKeys.slice() } : null;
     }
-    setPill('generateState', '多工位生图完成：' + records.length + ' 条，新增 ' + added + ' 张' +
+    var unconfirmedCount = state.linkGenerationResume && state.linkGenerationResume.uncertainKeys.length || 0;
+    setPill('generateState', (unconfirmedCount ? '多工位生图待核对：' : '多工位生图完成：') + records.length + ' 条，新增 ' + added + ' 张' +
       (partial ? '，跳过缺失/失效提示词 ' + missing.length + ' 条（' + missing.join('、') + '）' : '') +
-      (failures ? '，失败图片 ' + failures + ' 张；再次点击只补这些图片｜' + errorSummary : ''), failures || partial ? 'warn' : 'ok');
+      (failures ? '，未完成 ' + failures + ' 张；可在任务进度中重新跑失败图片（新任务），原结果继续保留｜' + errorSummary : ''), failures || partial || unconfirmedCount ? 'warn' : 'ok');
     return {
-      ok: failures === 0 && added === tasks.length,
+      ok: failures === 0 && !unconfirmedCount && added === tasks.length,
+      stateUncertain: unconfirmedCount > 0,
       partial: partial,
       skippedIds: missing.slice(),
       records: records,
@@ -17589,6 +19574,9 @@ function skuNormalizedAuthorizedRegion(value) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height) ||
       x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1 || y + height > 1 ||
       width < .2 || height < .2) return fallback;
+  if (value.confirmed === true && x >= .01 && y >= .01 && x + width <= .99 && y + height <= .99 && width * height <= .70) {
+    return { x: x, y: y, w: width, h: height, confirmed: true };
+  }
   var left = Math.max(fallback.x, x);
   var top = Math.max(fallback.y, y);
   var right = Math.min(fallback.x + fallback.w, x + width);
@@ -18794,7 +20782,7 @@ function skuTaskStatusFor(skuId) {
 
 function skuStatusLabel(value) {
   return {
-    ready: '待生成', missing_image: '待补图', queued: '排队中', running: '生成中', success: '已完成', failed: '失败', cancelled: '已终止', stale: '需重生'
+    ready: '待生成', missing_image: '待补图', queued: '排队中', running: '生成中', success: '已完成', failed: '失败', processing_failed: '图片待处理', uncertain: '待核对回执', cancelled: '已终止', stale: '需重生'
   }[value] || '待生成';
 }
 
@@ -18810,20 +20798,10 @@ function skuAttributeAt(index) {
 
 function skuTaskBlueprints() {
   var attrs = skuAttributes();
-  if (!state.skuSourceProject && state.skuProducts.length === 1 && attrs.filter(Boolean).length > 1) {
-    var base = ensureSkuProductIdentity(state.skuProducts[0]);
-    return attrs.map(function (attr, index) {
-      attr = String(attr || '').trim();
-      if (!attr) return null;
-      var skuId = base.skuId + '_txt_' + String(index + 1).padStart(2, '0');
-      if (!Object.prototype.hasOwnProperty.call(state.skuSelections, skuId)) state.skuSelections[skuId] = true;
-      if (!state.skuTaskStatus[skuId]) state.skuTaskStatus[skuId] = { state: 'ready', error: '' };
-      return { item: base, index: index, skuId: skuId, skuCode: 'SKU' + String(index + 1).padStart(2, '0'), attr: attr };
-    }).filter(Boolean);
-  }
   return state.skuProducts.map(function (item, index) {
     ensureSkuProductIdentity(item);
-    return { item: item, index: index, skuId: item.skuId, skuCode: item.skuCode, attr: state.skuSourceProject ? (item.attributeText || '') : (attrs[index] || '') };
+    return { item: item, index: index, skuId: item.skuId, skuCode: item.skuCode,
+      attr: item._skuDurableMetadata ? item._skuDurableMetadata.attribute || item._skuDurableMetadata.title || '' : state.skuSourceProject ? (item.attributeText || '') : (attrs[index] || '') };
   });
 }
 
@@ -18867,7 +20845,9 @@ function removeSkuAttributeAt(index) {
 function selectedSkuTasks(onlyFailed) {
   return skuTaskBlueprints().filter(function (task) {
     if (!state.skuSelections[task.skuId]) return false;
-    return !onlyFailed || skuTaskStatusFor(task.skuId).state === 'failed';
+    var status = skuTaskStatusFor(task.skuId);
+    if (status.state === 'uncertain' || status.state === 'processing_failed' || status.state === 'failed' && !legacyImageDefinitelyNotSubmitted(status)) return false;
+    return !onlyFailed || status.state === 'failed' && legacyImageDefinitelyNotSubmitted(status);
   });
 }
 
@@ -18884,11 +20864,14 @@ function refreshImportedSkuReadiness() {
 }
 
 function updateSkuCounts() {
+  var importing = legacyImageUploadBusy();
   state.skuProducts.forEach(ensureSkuProductIdentity);
   refreshImportedSkuReadiness();
   var allTasks = skuTaskBlueprints();
   var selected = selectedSkuTasks(false);
   var failed = allTasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'failed'; }).length;
+  var uncertain = allTasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'uncertain'; }).length;
+  var processingFailed = allTasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'processing_failed'; }).length;
   var missingImages = allTasks.filter(function (task) {
     return state.skuSourceProject ? !task.item.replacementImage : !task.item.url;
   }).length;
@@ -18901,6 +20884,7 @@ function updateSkuCounts() {
     return !skuBusinessTitle({ skuTitle: task.attr, attributeText: task.attr, skuCode: task.skuCode });
   }).length;
   var baseRightsConfirmed = !!($('skuBaseRightsConfirmed') && $('skuBaseRightsConfirmed').checked);
+  var regionReady = !state.skuTemplate || !window.SZ_SKU_REGION || !!window.SZ_SKU_REGION.get();
   var selectionOverflow = selected.length > state.skuMax;
   var outputSpec = skuRenderSizeValidation(skuOutputSizeValidation());
   if ($('skuProductCount')) $('skuProductCount').textContent = state.skuSourceProject ? (state.skuProducts.length + ' 个真实 SKU') : (state.skuProducts.length + ' / ' + state.skuMax);
@@ -18909,14 +20893,14 @@ function updateSkuCounts() {
     : ('最多 ' + state.skuMax + ' 张替换主体，每张只替换对象图里的原主体');
   if ($('skuTemplateCount')) $('skuTemplateCount').textContent = state.skuTemplate ? '已添加' : (state.skuSourceProject ? '按任务读取' : '未添加');
   if ($('skuAttrCount')) $('skuAttrCount').textContent = skuFilledAttributeCount() + ' / ' + allTasks.length;
-  if ($('skuTaskSummary')) $('skuTaskSummary').textContent = allTasks.length + ' 条任务 · ' + selected.length + '/' + state.skuMax + ' 条已选 · ' + missingImages + ' 条待补图 · ' + failed + ' 条失败';
+  if ($('skuTaskSummary')) $('skuTaskSummary').textContent = allTasks.length + ' 条任务 · ' + selected.length + '/' + state.skuMax + ' 条已选 · ' + missingImages + ' 条待补图 · ' + failed + ' 条失败' + (processingFailed ? ' · ' + processingFailed + ' 条图片待处理' : '') + (uncertain ? ' · ' + uncertain + ' 条待核对回执' : '');
   if ($('skuGenerateBtn')) {
     $('skuGenerateBtn').textContent = '生成所选 SKU（' + selected.length + '）';
-    $('skuGenerateBtn').disabled = state.skuActive || !selected.length || selectionOverflow || !!selectedMissing || !!selectedMissingBases || !!selectedMissingTitles || !outputSpec.ok;
+    $('skuGenerateBtn').disabled = state.skuActive || importing || !selected.length || selectionOverflow || !!selectedMissing || !!selectedMissingBases || !!selectedMissingTitles || !outputSpec.ok || !regionReady || !!state.skuPersistError;
   }
   if ($('skuRetryFailedBtn')) {
     $('skuRetryFailedBtn').hidden = !failed;
-    $('skuRetryFailedBtn').disabled = state.skuActive || !failed;
+    $('skuRetryFailedBtn').disabled = state.skuActive || importing || !failed;
   }
   if ($('skuDownloadAllBtn')) {
     var downloadableSkuCount = state.skuResults.filter(function (item) {
@@ -18925,12 +20909,14 @@ function updateSkuCounts() {
     $('skuDownloadAllBtn').hidden = !downloadableSkuCount;
     $('skuDownloadAllBtn').disabled = state.skuActive || !downloadableSkuCount;
   }
-  if ($('skuClearBtn')) $('skuClearBtn').disabled = state.skuActive;
+  if ($('skuClearBtn')) $('skuClearBtn').disabled = state.skuActive || imageUploadReads > 0;
   if ($('skuPreflight')) {
     var text = '';
     if (!outputSpec.ok) text = outputSpec.error;
     else if (!state.skuProducts.length) text = '请先上传至少 1 张产品主体图。';
     else if (!selected.length && state.skuSourceProject && missingImages) text = '当前有 ' + missingImages + ' 条缺少替换主体图。可一次选择多张图片批量上传，图片将按任务顺序绑定，不会新增 SKU。';
+    else if (!selected.length && processingFailed) text = '已有 ' + processingFailed + ' 条返回图片待处理；请在任务行查看图片或重新处理，沿用原图片。';
+    else if (!selected.length && uncertain) text = '有 ' + uncertain + ' 条生图回执待核对；请展开任务行的回执信息，核对原任务与费用记录。其他任务可继续选择生成。';
     else if (!selected.length) text = '当前没有选中任务，请在任务表中选择要生成的 SKU。';
     else if (selectionOverflow) text = '本批已选 ' + selected.length + ' 条，超过单批上限 ' + state.skuMax + '，请减少选择。';
     else if (selectedMissing) text = '本批有 ' + selectedMissing + ' 条缺少主体图，请先补图。';
@@ -18938,6 +20924,7 @@ function updateSkuCounts() {
       ? ('本批有 ' + selectedMissingBases + ' 条来源对象 SKU 底图未能载入。请回商品页重新摘取；只有这些任务确实共用同一版式时，才可在上方添加统一对象底图。')
       : ('本批有 ' + selectedMissingBases + ' 条缺少对象 SKU 底图，请先添加完整对象图。');
     else if (selectedMissingTitles) text = '本批有 ' + selectedMissingTitles + ' 条缺少可直接使用的业务 SKU 标题；请先填写标题，系统不会回退到 SKU 编号或“商品规格”。';
+    else if (!regionReady) text = '请在对象 SKU 底图上框选商品及必要阴影，并点击“确认主体区域”。';
     else if (state.skuPersistError) text = '当前编辑未能保存到本地草稿：' + skuVisibleError(state.skuPersistError, 240) + '。请在刷新前重试本次编辑。';
     else if (!baseRightsConfirmed) text = '请先确认对象 SKU 底图与替换主体为自有或已获本次编辑和商业使用授权。';
     else text = '预检通过：将生成 ' + selected.length + ' 张；并发 ' + ((($('skuConcurrency') && $('skuConcurrency').value) || '2')) + ' 路；' +
@@ -18947,7 +20934,7 @@ function updateSkuCounts() {
         : '若当前预设与对象底图比例不同，生成前会自动无裁切锁定到底图原尺寸；') +
       '所有已选任务均有业务标题，标题只用于结果与下载命名。';
     $('skuPreflight').textContent = text;
-    $('skuPreflight').className = 'sku-preflight ' + (outputSpec.ok && state.skuProducts.length && selected.length && !selectionOverflow && !selectedMissing && !selectedMissingBases && !selectedMissingTitles && baseRightsConfirmed && !state.skuPersistError ? 'ok' : 'warn');
+    $('skuPreflight').className = 'sku-preflight ' + (outputSpec.ok && state.skuProducts.length && selected.length && !selectionOverflow && !selectedMissing && !selectedMissingBases && !selectedMissingTitles && baseRightsConfirmed && regionReady && !state.skuPersistError ? 'ok' : 'warn');
   }
   if (state.skuSourceImportSummary) {
     state.skuSourceImportSummary.selected = selected.length;
@@ -19055,8 +21042,11 @@ function chooseImportedSkuReplacement(item) {
       setPill('skuState', '读取替换图失败：' + ((error && error.message) || error), 'warn');
     });
   });
-  if (document.body) document.body.appendChild(input);
-  input.click();
+  if (window.SZ_IMAGE_UPLOAD) window.SZ_IMAGE_UPLOAD.openPicker(input, {
+    title: '替换主体图', subtitle: String(item.skuCode || 'SKU') + ' · 上传清晰的产品图片', count: item.replacementImage ? 1 : 0,
+    max: 1, hint: '此 SKU 使用 1 张产品图', note: '只更换当前 SKU 的产品主体，原图会保留。'
+  });
+  else { if (document.body) document.body.appendChild(input); input.click(); }
 }
 
 function renderSkuProducts() {
@@ -19167,7 +21157,7 @@ function renderSkuTasks() {
     attrInput.type = 'text';
     attrInput.value = task.attr || '';
     attrInput.placeholder = '填写未来可用的 SKU 标题，例如：喜结良缘长条礼盒套餐B';
-    attrInput.disabled = state.skuActive;
+    attrInput.disabled = state.skuActive || !!item._skuDurableMetadata;
     attrInput.setAttribute('aria-label', 'SKU 标题，仅用于结果和下载命名');
     attrInput.addEventListener('input', function () {
       writeSkuAttributeAt(idx, attrInput.value);
@@ -19190,12 +21180,50 @@ function renderSkuTasks() {
     status.title = statusValue.error || '';
     status.textContent = skuStatusLabel(statusValue.state);
     body.appendChild(attrInput);
-    if (statusValue.state === 'failed' && statusValue.error) {
+    if (['failed', 'uncertain', 'processing_failed'].indexOf(statusValue.state) >= 0 && statusValue.error) {
       var errorDetail = document.createElement('small');
       errorDetail.className = 'sku-task-error';
       errorDetail.textContent = skuVisibleError(statusValue.error, 320);
       errorDetail.title = String(statusValue.error);
       body.appendChild(errorDetail);
+    }
+    if (statusValue.state === 'processing_failed' && statusValue.recovery) {
+      var recovery = statusValue.recovery;
+      var previewReturned = document.createElement('button');
+      previewReturned.type = 'button';
+      previewReturned.className = 'btn ghost';
+      previewReturned.textContent = '查看返回图片';
+      previewReturned.addEventListener('click', function () {
+        if (recovery.owner !== String(state.archiveAccountKey || 'local')) return;
+        openGeneratedImagePreview({ url: recovery.response.images[0] }, '返回候选图 · 尚未通过 SKU 校验');
+      });
+      var processReturned = document.createElement('button');
+      processReturned.type = 'button';
+      processReturned.className = 'btn ghost';
+      processReturned.textContent = '重新处理返回图片';
+      processReturned.disabled = state.skuActive;
+      processReturned.addEventListener('click', function () { retrySkuReturnedImages(task.skuId); });
+      body.appendChild(previewReturned);
+      body.appendChild(processReturned);
+    }
+    if (['uncertain', 'processing_failed'].indexOf(statusValue.state) >= 0) {
+      if (statusValue._skuRecovery && statusValue._skuRecovery.receiptId) {
+        var reconcileOriginal = document.createElement('button');
+        reconcileOriginal.type = 'button';reconcileOriginal.className = 'btn ghost';
+        reconcileOriginal.textContent = '核对原回执';reconcileOriginal.disabled = state.skuActive;
+        reconcileOriginal.addEventListener('click',function () { recoverSkuDurableReceipt(task.skuId); });
+        body.appendChild(reconcileOriginal);
+      }
+      var receiptDetails = document.createElement('details');
+      var receiptTitle = document.createElement('summary');
+      receiptTitle.textContent = '查看回执信息';
+      var receiptText = document.createElement('small');
+      receiptText.className = 'sku-task-error';
+      receiptText.textContent = '请求编号：' + (statusValue.jobId || '未返回') + '；服务商任务：' + (statusValue.taskId || '未返回') +
+        (statusValue.state === 'uncertain' ? '。请用原任务核对服务商记录与费用；回执确认前，该任务保持锁定。' : '。返回图片已保留，重新处理仅执行本地校验与合成。');
+      receiptDetails.appendChild(receiptTitle);
+      receiptDetails.appendChild(receiptText);
+      body.appendChild(receiptDetails);
     }
     row.appendChild(selected);
     row.appendChild(img);
@@ -19274,6 +21302,8 @@ function orderedSkuResults(items) {
 }
 
 function renderSkuWorkspace() {
+  renderSkuPaidWorkspaceControls();
+  if (!globalThis.__SZ_PROMPTLAB_TEST_MODE__) restoreSkuDurableReceipts();
   renderSkuProducts();
   renderSkuTemplate();
   renderSkuTasks();
@@ -19318,7 +21348,7 @@ function skuReplicaBaseImage(task, settings) {
   settings = settings || {};
   var item = task.item || task || {};
   var replacementSubject = String(item.url || '');
-  var explicitBase = String(settings.replicaBaseImage || settings.templateImage || state.skuTemplate || '');
+  var explicitBase = String(settings.replicaBaseImage || settings.templateImage || item._skuDurableBaseImage || state.skuTemplate || '');
   var importedBase = item.source === 'taobao-sku-scan' && item.replacementImage
     ? String(item.sourceImageUrl || '')
     : '';
@@ -19348,6 +21378,10 @@ function skuValidateLocalizedInputGeometry(baseImage, subjectImage, settings) {
     var subjectWidth = images[1].naturalWidth || images[1].width || 0;
     var subjectHeight = images[1].naturalHeight || images[1].height || 0;
     if (!baseWidth || !baseHeight || !subjectWidth || !subjectHeight) throw new Error('对象底图或替换主体无法解码');
+    // Run the same foreground check before spending on a candidate, rather
+    // than discovering an unusable subject only after provider delivery.
+    try { skuReplacementSubjectFeatureBundle(images[1]); }
+    catch (error) { throw skuSubjectIdentityError({ reason: 'replacement_subject_cutout_unreliable' }, error); }
     var resolvedSettings = skuOutputSettingsForBaseImageDimensions(settings, baseWidth, baseHeight);
     var outputWidth = Number(resolvedSettings.outputWidth) || Number(resolvedSettings.visualLock && resolvedSettings.visualLock.canvas && resolvedSettings.visualLock.canvas.width) || 0;
     var outputHeight = Number(resolvedSettings.outputHeight) || Number(resolvedSettings.visualLock && resolvedSettings.visualLock.canvas && resolvedSettings.visualLock.canvas.height) || 0;
@@ -19428,6 +21462,7 @@ function skuGenerationSettings() {
     config: cloneGuideValue(config),
     replicaBaseImage: state.skuTemplate || '',
     templateImage: state.skuTemplate || '',
+    authorizedRegion: window.SZ_SKU_REGION && window.SZ_SKU_REGION.get ? window.SZ_SKU_REGION.get() : null,
     userPrompt: (($('skuPrompt') && $('skuPrompt').value.trim()) || skuDefaultPrompt())
   };
   var existing = matchingSkuVisualLock(settings);
@@ -19469,8 +21504,52 @@ function stopSkuGeneration() {
   renderSkuWorkspace();
 }
 
+function skuRestoreDeliveredSettings(response, settings) {
+  if (!response || !response.recoveredDelivery) return settings;
+  var original = response._skuFrozenDelivery;
+  var contract = original && original.contract;
+  if (!contract || !skuResultVisualContractValid(contract) ||
+      contract.baseImageFingerprint !== sourceFingerprint(settings.replicaBaseImage) ||
+      contract.replacementSubjectFingerprint !== sourceFingerprint(settings.replacementSubjectImage)) {
+    throw new Error('原 SKU 返回图片缺少完整冻结设置，请按原回执核对；本次未重复提交。');
+  }
+  var canvas = contract.canvas;
+  var restored = Object.assign({}, settings, {
+    visualLock: freezeSkuVisualContract(cloneGuideValue(contract)), visualLockSignature: contract.contractFingerprint,
+    size: canvas.width + '*' + canvas.height, outputSize: canvas.width + '*' + canvas.height,
+    outputWidth: canvas.width, outputHeight: canvas.height, ratio: canvas.ratio, outputRatio: canvas.ratio,
+    resolution: original.outputResolution, outputResolution: original.outputResolution,
+    authorizedRegion: contract.subject.authorizedRegion,
+    archiveBatchId: original.archiveBatchId || settings.archiveBatchId,
+    archiveBatchTitle: original.archiveBatchTitle || settings.archiveBatchTitle
+  });
+  skuCompositionSettingsFromResponse(response, restored);
+  return restored;
+}
+
 function generateSkuOne(task, token, settings) {
+  task = Object.assign({}, task || {});
+  task._skuOwner = task._skuOwner || String(state.archiveAccountKey || 'local');
+  if (token !== state.skuBatchToken || state.stopRequested || task._skuOwner !== String(state.archiveAccountKey || 'local')) {
+    return Promise.resolve({ ok: false, stopped: true, code: 'sku_cancelled', error: '已终止，本次未提交生图。', definitiveFailure: true, providerSubmitted: false });
+  }
   var item = task && task.item;
+  if (item && item._skuPaidSnapshot && !task._skuPaidScopeChecked && !task._skuReturnedResponse) {
+    return skuCheckPaidTaskForGeneration(task,settings).then(function () {
+      return generateSkuOne(Object.assign({},task,{_skuPaidScopeChecked:true}),token,settings);
+    }, function (error) {
+      if (task._skuOwner === String(state.archiveAccountKey || 'local')) {
+        state.skuTaskStatus[task.skuId] = {state:'failed',definitiveFailure:true,providerSubmitted:false,error:error.message || String(error)};
+        renderSkuWorkspace();
+      }
+      return {ok:false,definitiveFailure:true,providerSubmitted:false,code:'SKU_PAID_SCOPE_CHANGED',error:error.message || String(error)};
+    });
+  }
+  if (item && item._skuPaidSnapshot) {
+    var paidSnapshot = item._skuPaidSnapshot, currentConfig = settings && settings.config || {};
+    settings = Object.assign({},settings,skuSettingsFromDurableEntry({identity:{batchId:settings.archiveBatchId},snapshot:paidSnapshot}),
+      {config:Object.assign({},currentConfig,paidSnapshot.model),_skuPaidFrozenSnapshot:paidSnapshot});
+  }
   var idx = task && task.index;
   var attr = task && task.attr;
   if (!item || !item.url) {
@@ -19485,14 +21564,14 @@ function generateSkuOne(task, token, settings) {
   });
   if (!frozenSkuTitle) {
     var titleError = '缺少可直接使用的业务 SKU 标题；系统不会使用 SKU 编号或通用占位名代替';
-    state.skuTaskStatus[task.skuId] = { state: 'failed', error: titleError };
+    state.skuTaskStatus[task.skuId] = { state: 'failed', ok: false, definitiveFailure: true, providerSubmitted: false, error: titleError };
     renderSkuWorkspace();
     return Promise.resolve({ ok: false, error: titleError, code: 'sku_business_title_required' });
   }
   var replicaBase = skuReplicaBaseImage(task, settings);
   if (!replicaBase) {
     var replicaError = '缺少对象 SKU 底图：手动任务请添加完整对象图；淘宝导入任务请先把主体图换成自己的商品图';
-    state.skuTaskStatus[task.skuId] = { state: 'failed', error: replicaError };
+    state.skuTaskStatus[task.skuId] = { state: 'failed', ok: false, definitiveFailure: true, providerSubmitted: false, error: replicaError };
     renderSkuWorkspace();
     return Promise.resolve({ ok: false, error: replicaError, code: 'sku_replica_base_required' });
   }
@@ -19503,6 +21582,7 @@ function generateSkuOne(task, token, settings) {
       skuVisualSourceDataUrl(replicaBase),
       skuVisualSourceDataUrl(item.url)
     ]).then(function (localized) {
+      if (token !== state.skuBatchToken || state.stopRequested || task._skuOwner !== String(state.archiveAccountKey || 'local')) throw Object.assign(new Error('已终止'), { code: 'sku_cancelled' });
       if (!localized[0] || !localized[1] || localized[0] === localized[1]) {
         var collision = new Error('对象 SKU 底图与替换主体必须是两张内容不同的图片');
         collision.code = 'sku_base_subject_collision';
@@ -19529,9 +21609,10 @@ function generateSkuOne(task, token, settings) {
         templateImage: localized[0]
       });
       return generateSkuOne(localizedTask, token, localizedSettings);
-    }).catch(function (error) {
+    }, function (error) {
       var localizedError = (error && error.message) || String(error);
-      state.skuTaskStatus[task.skuId] = { state: 'failed', error: localizedError };
+      if (token !== state.skuBatchToken || state.stopRequested || task._skuOwner !== String(state.archiveAccountKey || 'local')) return { ok: false, stopped: true, error: '已终止' };
+      state.skuTaskStatus[task.skuId] = { state: 'failed', ok: false, definitiveFailure: true, providerSubmitted: false, error: localizedError };
       renderSkuWorkspace();
       return { ok: false, error: localizedError, code: error && error.code || 'sku_input_localize_failed' };
     });
@@ -19544,14 +21625,15 @@ function generateSkuOne(task, token, settings) {
     layoutAnchorSkuId: task.skuId,
     visualPhase: 'subject-replace'
   });
-  settings.visualLock = createSkuVisualLockContract(settings, settings.visualLock && settings.visualLock.batchLockId);
+  settings.visualLock = settings._skuPaidFrozenSnapshot ? freezeSkuVisualContract(cloneGuideValue(settings._skuPaidFrozenSnapshot.contract))
+    : createSkuVisualLockContract(settings, settings.visualLock && settings.visualLock.batchLockId);
   settings.visualLockSignature = settings.visualLock.contractFingerprint;
-  var jobId = newJobId();
+  var jobId = task._skuReturnedJobId || newJobId();
   state.skuActiveJobIds[jobId] = task.skuId;
   state.skuTaskStatus[task.skuId] = { state: 'running', error: '', jobId: jobId };
   renderSkuWorkspace();
-  var prompt = skuPromptFor(item, idx, attr, settings);
-  var negative = skuSubjectReplaceNegativePrompt();
+  var prompt = settings._skuPaidFrozenSnapshot ? settings._skuPaidFrozenSnapshot.prompt : skuPromptFor(item, idx, attr, settings);
+  var negative = settings._skuPaidFrozenSnapshot ? settings._skuPaidFrozenSnapshot.negativePrompt : skuSubjectReplaceNegativePrompt();
   var payload = {
     prompt: prompt,
     negativePrompt: negative,
@@ -19581,24 +21663,59 @@ function generateSkuOne(task, token, settings) {
     watermark: 'false',
     _jobId: jobId
   };
-  return send('GENERATE_IMAGE', { jobId: jobId, config: settings.config, payload: payload }).then(function (resp) {
-    if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId]) {
+  var returnedResponse = task._skuReturnedResponse || null;
+  var request = { jobId: jobId, config: settings.config, payload: payload, _skuBatchToken: token, _skuPaidExpectedWorkspace:item._skuPaidWorkspace || '',
+    _skuArchiveBatchId: settings.archiveBatchId, _skuArchiveBatchTitle: settings.archiveBatchTitle };
+  if (skuWebsiteDurableRequest(request)) {
+    var cfg = settings.config || {};
+    request._skuDurablePreparation = {jobId:jobId,batchId:settings.archiveBatchId,
+      baseImage:task.replicaBaseSourceUrl || replicaBase,subjectImage:item.sourceInputUrl || item.url,
+      providerImages:{base:replicaBase,subject:item.url},
+      contract:settings.visualLock,geometry:{version:'SKU_PROVIDER_GEOMETRY_V1',contractFingerprint:settings.visualLock.contractFingerprint,
+        adapter:String(cfg.imageAdapter || ''),requestedSize:payload.size,effectiveSize:skuExpectedEffectiveProviderSize(settings,cfg.imageAdapter)},
+      output:{size:payload.outputSize,ratio:payload.outputRatio,resolution:payload.outputResolution,width:settings.outputWidth,height:settings.outputHeight},
+      prompt:prompt,negativePrompt:negative,model:{provider:String(cfg.provider || ''),imageModel:String(cfg.imageModel || ''),imageAdapter:String(cfg.imageAdapter || ''),imageEndpoint:String(cfg.imageEndpoint || '')},
+      snapshot:{skuId:task.skuId,skuCode:task.skuCode,title:frozenSkuTitle,attribute:attr || '',index:idx,archiveBatchTitle:settings.archiveBatchTitle || ''}};
+  }
+  var responsePromise = returnedResponse ? Promise.resolve(returnedResponse) : send('GENERATE_IMAGE',request);
+  return responsePromise.then(function (resp) {
+    if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId] || task._skuOwner !== String(state.archiveAccountKey || 'local')) {
       delete state.skuActiveJobIds[jobId];
       delete state.cancelledJobs[jobId];
-      state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止' };
+      if (task._skuOwner === String(state.archiveAccountKey || 'local') && skuTaskStatusFor(task.skuId).jobId === jobId) state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止', jobId: jobId, taskId: resp && resp.taskId || '' };
       return { ok: false, error: '已终止' };
     }
     if (resp && resp.ok && resp.images && resp.images.length) {
+      returnedResponse = resp;
+      if (resp.recoveredDelivery && resp._skuReceipt && resp._skuReceipt.jobId) {
+        delete state.skuActiveJobIds[jobId];
+        jobId = resp._skuReceipt.jobId;
+        state.skuActiveJobIds[jobId] = task.skuId;
+        state.skuTaskStatus[task.skuId] = { state: 'running', error: '', jobId: jobId, taskId: resp.taskId || '' };
+        if (resp._skuDurableSnapshot) {
+          var originalSnapshot = resp._skuDurableSnapshot;
+          replicaBase = originalSnapshot.baseImage;
+          item = Object.assign({},item,{url:originalSnapshot.subjectImage});
+          task = Object.assign({},task,{item:item,replicaBaseImage:replicaBase,_skuInputsLocalized:true});
+          settings = Object.assign({},settings,{replicaBaseImage:replicaBase,replacementSubjectImage:item.url,
+            templateImage:replicaBase,config:originalSnapshot.model,modelSize:originalSnapshot.geometry.requestedSize});
+          prompt = originalSnapshot.prompt;negative = originalSnapshot.negativePrompt;
+          frozenSkuTitle = originalSnapshot.metadata.title || frozenSkuTitle;
+          attr = originalSnapshot.metadata.attribute || '';idx = originalSnapshot.metadata.index == null ? idx : originalSnapshot.metadata.index;
+        }
+        settings = skuRestoreDeliveredSettings(resp, settings);
+      }
       var compositionSettings = skuCompositionSettingsFromResponse(resp, settings);
       return Promise.all(resp.images.map(function (url) {
         return enqueueSkuVisualComposition(url, task, compositionSettings, { jobId: jobId, token: token });
       })).then(function (composed) {
         delete state.skuActiveJobIds[jobId];
-        if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId]) {
+        if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId] || task._skuOwner !== String(state.archiveAccountKey || 'local')) {
           delete state.cancelledJobs[jobId];
-          state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止' };
+          if (task._skuOwner === String(state.archiveAccountKey || 'local') && skuTaskStatusFor(task.skuId).jobId === jobId) state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止', jobId: jobId, taskId: resp.taskId || '' };
           return { ok: false, error: '已终止' };
         }
+        var archives = [];
         composed.forEach(function (output, imageIndex) {
         var generatedItem = {
           url: output.url,
@@ -19612,6 +21729,7 @@ function generateSkuOne(task, token, settings) {
           taskId: resp.taskId || '',
           jobId: jobId,
           resultId: jobId + ':' + (imageIndex + 1),
+          skuDurableReceiptIdentity: resp._skuReceiptIdentity || undefined,
           archiveBatchId: settings.archiveBatchId,
           archiveSurfaceMode: 'sku',
           mimeType: 'image/jpeg',
@@ -19642,45 +21760,182 @@ function generateSkuOne(task, token, settings) {
         };
         stampSkuResultVisualIdentity(generatedItem);
         state.skuResults.push(generatedItem);
-        queueArchiveResult(generatedItem, { surfaceMode: 'sku', batchTitle: settings.archiveBatchTitle });
+        archives.push(queueArchiveResult(generatedItem, { surfaceMode: 'sku', batchTitle: settings.archiveBatchTitle, accountKey: task._skuOwner }));
       });
-      state.skuTaskStatus[task.skuId] = { state: 'success', error: '' };
+      state.skuTaskStatus[task.skuId] = { state: 'success', error: '', jobId: jobId, taskId: resp.taskId || '' };
       renderSkuWorkspace();
-        return Object.assign({}, resp, {
-          images: composed.map(function (output) { return output.url; }),
-          layoutAnchorImage: composed[0] && composed[0].layoutAnchorDataUrl || '',
-          generatedSkuId: task.skuId
+        return Promise.all(archives).then(function (saved) {
+          var archived = saved.length > 0 && saved.every(function (entry) { return entry && entry.ok; });
+          var audit = archived && resp._skuReceiptIdentity && /^sku_paid_workspace_/.test(resp._skuReceiptIdentity.workspaceKey)
+            ? globalThis.SZ_SKU_DURABLE_RECEIPT.recordPaidArchive(task._skuOwner,resp._skuReceipt.key,resp._skuReceiptIdentity.receiptId,
+              saved.map(function (entry) { var asset = entry.saved;return {archiveAssetId:asset.archiveAssetId,archiveBatchId:asset.archiveBatchId,resultId:asset.resultId,jobId:asset.jobId}; }))
+            : Promise.resolve(true);
+          return audit.then(function () { return archived ? acknowledgeSkuDelivery(resp) : false; }).then(function () { return Object.assign({}, resp, {
+            images: composed.map(function (output) { return output.url; }),
+            layoutAnchorImage: composed[0] && composed[0].layoutAnchorDataUrl || '',
+            generatedSkuId: task.skuId,
+            archived: archived
+          }); });
         });
       });
     } else {
       delete state.skuActiveJobIds[jobId];
-      state.skuTaskStatus[task.skuId] = { state: 'failed', error: (resp && resp.error) || '生图失败' };
+      state.skuTaskStatus[task.skuId] = Object.assign({}, resp || {}, { jobId: resp && resp.jobId || jobId, state: legacyImageDefinitelyNotSubmitted(resp) ? 'failed' : 'uncertain', error: (resp && resp.error) || '生图回执尚未确认，请先核对任务记录。' });
       renderSkuWorkspace();
     }
     return resp;
   }).catch(function (error) {
     delete state.skuActiveJobIds[jobId];
-    if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId]) {
+    if (token !== state.skuBatchToken || state.stopRequested || state.cancelledJobs[jobId] || task._skuOwner !== String(state.archiveAccountKey || 'local')) {
       delete state.cancelledJobs[jobId];
-      state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止' };
+      if (task._skuOwner === String(state.archiveAccountKey || 'local') && skuTaskStatusFor(task.skuId).jobId === jobId) state.skuTaskStatus[task.skuId] = { state: 'cancelled', error: '已终止', jobId: jobId, taskId: returnedResponse && returnedResponse.taskId || '' };
       renderSkuWorkspace();
       return { ok: false, error: '已终止' };
     }
-    state.skuTaskStatus[task.skuId] = { state: 'failed', error: (error && error.message) || String(error) };
+    state.skuTaskStatus[task.skuId] = returnedResponse
+      ? { state: 'processing_failed', stateUncertain: false, providerSubmitted: true, jobId: jobId, taskId: returnedResponse.taskId || '',
+          error: '返回图片未通过本地校验：' + ((error && error.message) || String(error)),
+          recovery: { owner: task._skuOwner, task: task, settings: settings, response: returnedResponse, jobId: jobId } }
+      : { state: 'uncertain', stateUncertain: true, jobId: jobId, error: (error && error.message) || String(error) };
     renderSkuWorkspace();
     return { ok: false, error: (error && error.message) || String(error) };
   });
 }
 
+function skuSettingsFromDurableEntry(entry) {
+  var snap = entry.snapshot, spec = snap.output;
+  var output = skuOutputSizeValidation({resolution:spec.resolution,ratio:spec.ratio,width:spec.width,height:spec.height});
+  var provider = skuProviderSpecForOutput(output), providerParts = skuSizeParts(provider && provider.size);
+  if (!output.ok || output.size !== spec.size || output.ratio !== spec.ratio || output.resolution !== spec.resolution ||
+      output.width !== spec.width || output.height !== spec.height || !providerParts || provider.size !== snap.geometry.requestedSize) {
+    var geometryError = new Error('原 SKU 回执的模型请求尺寸与冻结输出设置不一致；原任务仍保留。');
+    geometryError.code = 'SKU_RECEIPT_GEOMETRY_INVALID';
+    throw geometryError;
+  }
+  return {replicaBaseImage:snap.baseImage,replacementSubjectImage:snap.subjectImage,templateImage:snap.baseImage,
+    layoutAnchorUrl:snap.baseImage,visualPhase:'subject-replace',visualLock:freezeSkuVisualContract(cloneGuideValue(snap.contract)),
+    visualLockSignature:snap.contract.contractFingerprint,authorizedRegion:snap.contract.subject.authorizedRegion,
+    config:cloneGuideValue(snap.model),ratio:spec.ratio,outputRatio:spec.ratio,resolution:spec.resolution,outputResolution:spec.resolution,
+    size:spec.size,outputSize:spec.size,outputWidth:spec.width,outputHeight:spec.height,
+    modelSize:snap.geometry.requestedSize,modelRatio:provider.ratio,modelResolution:provider.resolution,
+    modelWidth:providerParts.width,modelHeight:providerParts.height,
+    archiveBatchId:entry.identity.batchId,archiveBatchTitle:snap.metadata.archiveBatchTitle || '',userPrompt:snap.prompt};
+}
+function restoreSkuDurableReceipts() {
+  var api = globalThis.SZ_SKU_DURABLE_RECEIPT, owner = String(state.archiveAccountKey || 'local');
+  if (!api || state.skuActive || state._skuDurableRestoring || !globalThis.chrome || !globalThis.chrome.runtime ||
+      globalThis.chrome.runtime.id !== 'shaozhuang-web-studio' || owner === 'local') return Promise.resolve(false);
+  var pointers = [], prefix = LEGACY_IMAGE_RECEIPT_PREFIX+encodeURIComponent(owner)+':';
+  state._skuDurableSeen = state._skuDurableSeen || {};
+  try {
+    for (var index = 0; index < localStorage.length && index < 1000; index++) {
+      var key = localStorage.key(index);
+      if (!key || key.indexOf(prefix) !== 0) continue;
+      var marker;
+      try { marker = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) { continue; }
+      if (marker && marker.version === 1 && marker.receiptId && marker.jobId && state._skuDurableSeen[key] !== marker.receiptId) pointers.push({key:key,marker:marker});
+      if (pointers.length >= state.skuMax) break;
+    }
+  } catch (_) { return Promise.resolve(false); }
+  if (!pointers.length) return Promise.resolve(false);
+  state._skuDurableRestoring = true;
+  return creativeWebAccountKey().then(function (current) {
+    if (current !== owner || current !== String(state.archiveAccountKey || 'local')) return false;
+    return Promise.all(pointers.map(function (pointer) {
+      return api.read(owner,pointer.key).then(function (entry) {
+        if (!entry || entry.identity.receiptId !== pointer.marker.receiptId || entry.identity.jobId !== pointer.marker.jobId ||
+            owner !== String(state.archiveAccountKey || 'local') || state.skuActive) return false;
+        var snap = entry.snapshot, existing = state.skuProducts.filter(function (item) {
+          return item._skuDurableReceiptKey === pointer.key || item.url === snap.subjectImage &&
+            skuReplicaBaseImage(item,{}) === snap.baseImage && item.skuId === snap.metadata.skuId;
+        })[0];
+        if (!existing) {
+          existing = {url:snap.subjectImage,name:snap.metadata.title || '',source:'sku-receipt-recovery',
+            skuId:'sku_receipt_'+entry.identity.receiptId,skuCode:snap.metadata.skuCode || '',
+            _skuDurableBaseImage:snap.baseImage,_skuDurableMetadata:snap.metadata,_skuDurableReceiptKey:pointer.key};
+          state.skuProducts.push(existing);ensureSkuProductIdentity(existing);
+        }
+        var status = skuTaskStatusFor(existing.skuId), recovery = {owner:owner,key:pointer.key,receiptId:entry.identity.receiptId,jobId:entry.identity.jobId};
+        state.skuSelections[existing.skuId] = false;
+        if (status.state === 'processing_failed' && status.jobId === entry.identity.jobId) status._skuRecovery = recovery;
+        else state.skuTaskStatus[existing.skuId] = {state:'uncertain',stateUncertain:true,jobId:entry.identity.jobId,
+          error:'原 SKU 回执仍待核对；核对只查询原任务，沿用原图片与冻结设置。',_skuRecovery:recovery};
+        state._skuDurableSeen[pointer.key] = entry.identity.receiptId;return true;
+      }).catch(function () { return false; });
+    })).then(function (values) { return values.some(Boolean); });
+  }).catch(function () { return false; }).then(function (changed) {
+    state._skuDurableRestoring = false;if (changed && owner === String(state.archiveAccountKey || 'local')) renderSkuWorkspace();return changed;
+  });
+}
+function recoverSkuDurableReceipt(skuId) {
+  if (state.skuActive || legacyImageUploadBusy()) return Promise.resolve({ok:false,error:'请等待当前 SKU 操作完成。'});
+  var pointer = skuTaskStatusFor(skuId)._skuRecovery, api = globalThis.SZ_SKU_DURABLE_RECEIPT;
+  if (!api || !pointer || pointer.owner !== String(state.archiveAccountKey || 'local')) return Promise.resolve({ok:false,code:'SKU_RECEIPT_UNAVAILABLE'});
+  state.stopRequested = false;var token = ++state.skuBatchToken;setSkuBusy(true);
+  return api.read(pointer.owner,pointer.key).then(function (entry) {
+    if (!entry || entry.identity.receiptId !== pointer.receiptId || entry.identity.jobId !== pointer.jobId) throw new Error('原 SKU 回执身份不匹配。');
+    return navigator.locks.request(pointer.key,{mode:'exclusive',ifAvailable:true},function (lock) {
+      if (!lock) return legacyImageUnknownResponse({jobId:pointer.jobId,code:'IMAGE_REQUEST_ACTIVE'});
+      var marker = JSON.parse(localStorage.getItem(pointer.key) || 'null');
+      if (!marker || marker.receiptId !== pointer.receiptId || marker.jobId !== pointer.jobId) throw new Error('原 SKU 回执保护已变化。');
+      return skuGetOriginalReceipt(pointer.owner,pointer.key,marker,{_skuBatchToken:token,payload:{}});
+    }).then(function (response) {
+      if (!response || !response.ok) {
+        if (pointer.owner === String(state.archiveAccountKey || 'local')) state.skuTaskStatus[skuId] = Object.assign({},response,{state:'uncertain',jobId:pointer.jobId,_skuRecovery:pointer});
+        return response;
+      }
+      var metadata = entry.snapshot.metadata;
+      var task = {skuId:skuId,skuCode:metadata.skuCode || '',attr:metadata.attribute || metadata.title || '',index:metadata.index || 0,
+        item:{url:entry.snapshot.subjectImage,name:metadata.title || '',skuId:skuId,skuCode:metadata.skuCode || ''},
+        replicaBaseImage:entry.snapshot.baseImage,_skuInputsLocalized:true,_skuOwner:pointer.owner,
+        _skuReturnedResponse:response,_skuReturnedJobId:pointer.jobId};
+      return generateSkuOne(task,token,skuSettingsFromDurableEntry(entry));
+    });
+  }).catch(function (error) {
+    var response = Object.assign(legacyImageUnknownResponse({jobId:pointer.jobId,error:error.message || String(error)}),{_skuRecovery:pointer});
+    if (pointer.owner === String(state.archiveAccountKey || 'local')) state.skuTaskStatus[skuId] = Object.assign({},response,{state:'uncertain'});return response;
+  }).finally(function () { if (token === state.skuBatchToken || state.stopRequested && state.skuActive) setSkuBusy(false);renderSkuWorkspace(); });
+}
+function retrySkuReturnedImages(skuId) {
+  if (state.skuActive || legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待当前 SKU 操作完成。' });
+  var recovery = skuTaskStatusFor(skuId).recovery;
+  var current = skuTaskBlueprints().filter(function (task) { return task.skuId === skuId; })[0];
+  if (!recovery || !current || recovery.owner !== String(state.archiveAccountKey || 'local') ||
+      current.item.url !== (recovery.task.item.sourceInputUrl || recovery.task.item.url) ||
+      skuReplicaBaseImage(current, { replicaBaseImage: state.skuTemplate, templateImage: state.skuTemplate }) !==
+        (recovery.task.replicaBaseSourceUrl || recovery.settings.replicaBaseImage) || current.attr !== recovery.task.attr) {
+    setPill('skuState', '原任务的账号、素材或标题已变化，请恢复原任务后重新处理返回图片。', 'warn');
+    return Promise.resolve({ ok: false, code: 'sku_recovery_input_changed' });
+  }
+  state.stopRequested = false;
+  var token = ++state.skuBatchToken;
+  setSkuBusy(true);
+  var task = Object.assign({}, recovery.task, { _skuReturnedResponse: recovery.response, _skuReturnedJobId: recovery.jobId });
+  return generateSkuOne(task, token, recovery.settings).then(function (response) {
+    if (token === state.skuBatchToken && recovery.owner === String(state.archiveAccountKey || 'local')) {
+      setPill('skuState', response && response.ok ? '返回图片处理完成，已保留 SKU 结果。' : '返回图片仍未通过校验，可查看原图与错误原因。', response && response.ok ? 'ok' : 'warn');
+    }
+    return response;
+  }).finally(function () {
+    if (token === state.skuBatchToken || state.stopRequested && state.skuActive) setSkuBusy(false);
+    delete state.skuActiveJobIds[recovery.jobId];
+    renderSkuWorkspace();
+  });
+}
+
 function generateSkuBatch(onlyFailed) {
+  if (state._skuPaidAuthorizing) return Promise.resolve({ok:false,error:'请等待新付费批次授权保存完成。'});
+  if (legacyImageUploadBusy()) return Promise.resolve({ ok: false, error: '请等待图片导入完成。' });
   state.skuPersistFeedbackToken++;
   if (state.skuActive) return Promise.resolve({ ok: false, error: 'SKU 批次正在运行' });
+  if (state.skuPersistError) return Promise.resolve({ ok: false, code: 'sku_draft_save_failed', error: '请先重试保存当前 SKU 草稿：' + state.skuPersistError });
   if (!state.skuProducts.length) {
     showProductSubjectRequired('sku');
     return Promise.resolve({ ok: false, error: productSubjectRequiredMessage('sku') });
   }
+  var owner = String(state.archiveAccountKey || 'local');
   var tasks = selectedSkuTasks(!!onlyFailed).map(function (task) {
-    return Object.assign({}, task, { item: Object.assign({}, task.item || {}) });
+    return Object.assign({}, task, { item: Object.assign({}, task.item || {}), _skuOwner: owner });
   });
   if (!tasks.length) {
     setPill('skuState', onlyFailed ? '没有可重试的失败项' : '请先选择至少 1 条 SKU 任务', 'warn');
@@ -19723,6 +21978,11 @@ function generateSkuBatch(onlyFailed) {
     setPill('skuState', missingTitleError, 'warn');
     return Promise.resolve({ ok: false, error: missingTitleError, code: 'sku_business_title_required' });
   }
+  if (state.skuTemplate && window.SZ_SKU_REGION && !window.SZ_SKU_REGION.get()) {
+    var regionError = '请先在对象底图上框选并确认本次替换的商品区域。';
+    setPill('skuState', regionError, 'warn');
+    return Promise.resolve({ ok: false, code: 'sku_region_confirmation_required', error: regionError });
+  }
   var outputSizeValidation = skuRenderSizeValidation(skuOutputSizeValidation());
   if (!outputSizeValidation.ok) {
     setPill('skuState', outputSizeValidation.error, 'warn');
@@ -19733,9 +21993,14 @@ function generateSkuBatch(onlyFailed) {
       code: outputSizeValidation.code || 'sku_output_size_invalid'
     });
   }
+  var settings;
+  try { settings = skuGenerationSettings(); }
+  catch (error) {
+    setPill('skuState', error.message || String(error), 'warn');
+    return Promise.resolve({ ok: false, code: error.code || 'sku_config_invalid', error: error.message || String(error) });
+  }
   state.stopRequested = false;
   var token = ++state.skuBatchToken;
-  var settings = skuGenerationSettings();
   settings.archiveBatchId = 'sku_batch_' + Date.now() + '_' + token;
   settings.archiveBatchTitle = '批量 SKU · ' + tasks.length + ' 项';
   var selectedIds = {};
@@ -19743,7 +22008,8 @@ function generateSkuBatch(onlyFailed) {
     selectedIds[task.skuId] = true;
     state.skuTaskStatus[task.skuId] = { state: 'queued', error: '' };
   });
-  state.skuResults = state.skuResults.filter(function (result) { return !selectedIds[result.skuId]; });
+  // A new attempt cannot erase an already accepted image. Keep prior versions
+  // downloadable while independent tasks finish or await their receipts.
   setSkuBusy(true);
   setPill('skuState', '对象底图已锁定，仅替换主体中 0/' + tasks.length, '');
   renderSkuWorkspace();
@@ -19751,7 +22017,7 @@ function generateSkuBatch(onlyFailed) {
   var completed = 0;
   var cursor = 0;
   function worker() {
-    if (state.stopRequested || token !== state.skuBatchToken) return Promise.resolve();
+    if (state.stopRequested || token !== state.skuBatchToken || owner !== String(state.archiveAccountKey || 'local')) return Promise.resolve();
     var task = tasks[cursor++];
     if (!task) return Promise.resolve();
     return generateSkuOne(task, token, settings).then(function (resp) {
@@ -19767,6 +22033,10 @@ function generateSkuBatch(onlyFailed) {
   var generation = Promise.all(workers);
 
   return generation.then(function () {
+    if (owner !== String(state.archiveAccountKey || 'local')) {
+      if (token === state.skuBatchToken) setSkuBusy(false);
+      return { ok: false, stale: true, total: tasks.length };
+    }
     setSkuBusy(false);
     state.skuActiveJobIds = {};
     if (state.stopRequested || token !== state.skuBatchToken) {
@@ -19775,19 +22045,27 @@ function generateSkuBatch(onlyFailed) {
       return { ok: false, stopped: true, total: tasks.length };
     }
     var failed = tasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'failed'; });
+    var uncertain = tasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'uncertain'; });
+    var processingFailed = tasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'processing_failed'; });
     var succeeded = tasks.filter(function (task) { return skuTaskStatusFor(task.skuId).state === 'success'; }).length;
-    var firstFailure = failed.length ? skuTaskStatusFor(failed[0].skuId) : null;
+    var incomplete = failed.concat(processingFailed, uncertain);
+    var firstFailure = incomplete.length ? skuTaskStatusFor(incomplete[0].skuId) : null;
     var firstFailureText = firstFailure && firstFailure.error ? skuVisibleError(firstFailure.error, 180) : '';
-    setPill('skuState', failed.length
-      ? ('SKU 批次完成：成功 ' + succeeded + '，失败 ' + failed.length +
-        (firstFailureText ? ('；首个错误 ' + failed[0].skuCode + '：' + firstFailureText) : '') + '；可点击重试')
-      : ('SKU 批次完成：成功 ' + succeeded + '/' + tasks.length + '；仅替换主体，未叠加 SKU 编号或业务标题'), failed.length ? 'warn' : 'ok');
+    var complete = succeeded === tasks.length;
+    setPill('skuState', complete
+      ? ('SKU 批次完成：成功 ' + succeeded + '/' + tasks.length + '；仅替换主体，未叠加 SKU 编号或业务标题')
+      : ('SKU 批次已返回：成功 ' + succeeded + '/' + tasks.length + '，未提交失败 ' + failed.length +
+        (processingFailed.length ? '，图片待处理 ' + processingFailed.length : '') +
+        (uncertain.length ? '，待核对回执 ' + uncertain.length : '') +
+        (firstFailureText ? ('；首个错误 ' + incomplete[0].skuCode + '：' + firstFailureText) : '')), complete ? 'ok' : 'warn');
     renderSkuWorkspace();
     return {
-      ok: failed.length === 0 && succeeded === tasks.length,
+      ok: complete,
       total: tasks.length,
       succeeded: succeeded,
       failed: failed.length,
+      processingFailed: processingFailed.length,
+      uncertain: uncertain.length,
       visualLockId: settings.visualLock && settings.visualLock.batchLockId || ''
     };
   });
@@ -19797,7 +22075,7 @@ function retryFailedSkuTasks() {
   Object.keys(state.skuSelections).forEach(function (skuId) { state.skuSelections[skuId] = false; });
   var selected = 0;
   skuTaskBlueprints().forEach(function (task) {
-    if (selected < state.skuMax && task.item && task.item.url && skuTaskStatusFor(task.skuId).state === 'failed') {
+    if (selected < state.skuMax && task.item && task.item.url && skuTaskStatusFor(task.skuId).state === 'failed' && legacyImageDefinitelyNotSubmitted(skuTaskStatusFor(task.skuId))) {
       state.skuSelections[task.skuId] = true;
       selected++;
     }
@@ -19918,7 +22196,7 @@ function loadContext(auto) {
         : '本次右键图片已使用或已失效，请重新右键采集', 'warn');
       return;
     }
-    var shouldAnalyze = !!(auto && params.get('analyze') !== '0' && r.config && r.config.apiKey);
+    var shouldAnalyze = !!(auto && params.get('analyze') !== '0' && r.config && creativeHasApiCredential(r.config, 'chat'));
     if (auto) {
       applyAndConsumeContextImage(r.context, shouldAnalyze);
       return;
@@ -20182,7 +22460,7 @@ function loadReferenceDetailBlueprint() {
   if (!referenceDetailConfirmationMutationAllowed()) return Promise.resolve(referenceDetailConfirmationBlocked('恢复已保存蓝图'));
   var detail = state.referenceDetail;
   if (!referenceDetailStrictSource() || !detail.sourceDigest) {
-    return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: '请先导入商品链接快照。' });
+    return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: '请先上传参考详情截图。' });
   }
   if (!REFERENCE_DETAIL_BLUEPRINT || typeof REFERENCE_DETAIL_BLUEPRINT.restoreWorkingBlueprint !== 'function') {
     return Promise.resolve({ ok: false, code: 'CONTRACT_RESTORE_UNAVAILABLE', error: '正式蓝图恢复模块未加载。' });
@@ -20277,8 +22555,8 @@ function saveReferenceDetailBlueprint(options) {
   var saved = referenceDetailFlushPendingRevision();
   if (saved && saved.ok === false) return Promise.resolve(saved);
   if (!referenceDetailStrictSource() || !detail.editor) {
-    setPill('detailState', '请使用商品 URL 或当前页提取入口', 'warn');
-    return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: '缺少正式来源快照' });
+    setPill('detailState', REFERENCE_DETAIL_EMPTY_MESSAGE, 'warn');
+    return Promise.resolve({ ok: false, code: 'FORMAL_SOURCE_REQUIRED', error: '请先上传参考详情截图' });
   }
   if (!REFERENCE_DETAIL_BLUEPRINT || typeof REFERENCE_DETAIL_BLUEPRINT.projectToContractEnvelope !== 'function' ||
       !REFERENCE_DETAIL_CONTRACT || typeof REFERENCE_DETAIL_CONTRACT.projectVisualStructureBlueprint !== 'function' ||
@@ -20973,8 +23251,17 @@ function bindReferenceDetailWorkbench() {
 function bind() {
   bindReferenceDetailWorkbench();
   bindReferenceDetailBatch();
+  if (window.SZ_SKU_REGION && window.SZ_SKU_REGION.bind) {
+    window.SZ_SKU_REGION.bind();
+    document.addEventListener('sku-region-change', function () {
+      if (!state.skuActive) { resetSkuVisualLock(); updateSkuCounts(); }
+    });
+  }
   if ($('openKnowledgeBtn')) $('openKnowledgeBtn').addEventListener('click', openBusinessKnowledge);
-  if ($('openConfigBtn')) $('openConfigBtn').addEventListener('click', openUnifiedApiSettings);
+  if ($('openConfigBtn')) $('openConfigBtn').addEventListener('click', function () {
+    if (['creative', 'mirror', 'link-image'].indexOf(new URLSearchParams(location.search).get('mode')) >= 0) return window.SZ_CREATIVE_TOOLS_BRIDGE.openConfig();
+    return openUnifiedApiSettings();
+  });
   if (window.addEventListener) window.addEventListener('focus', function () {
     refreshArchiveHistory({ silent: true });
     if (!state.awaitingUnifiedConfigRefresh) return;
@@ -20982,14 +23269,28 @@ function bind() {
     loadContext(false);
     setPill('configState', '已从统一 API 设置重新载入', 'ok');
   });
-  if ($('openArchiveBtn')) $('openArchiveBtn').addEventListener('click', function () {
-    refreshArchiveHistory({ silent: false });
-    var panel = $('archivePanel');
-    if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if ($('openArchiveBtn')) $('openArchiveBtn').addEventListener('click', function (ev) {
+    openArchiveHistory(ev.currentTarget);
   });
+  if ($('archiveHistoryCloseBtn')) $('archiveHistoryCloseBtn').addEventListener('click', closeArchiveHistory);
+  if ($('archiveHistoryModal')) $('archiveHistoryModal').addEventListener('click', function (ev) {
+    if (ev.target === $('archiveHistoryModal') && !archiveHistoryUpperModal()) closeArchiveHistory();
+  });
+  document.addEventListener('keydown', handleArchiveHistoryKeydown, true);
   if ($('archiveRefreshBtn')) $('archiveRefreshBtn').addEventListener('click', function () { refreshArchiveHistory({ silent: false }); });
+  if ($('archiveLoadMoreBtn')) $('archiveLoadMoreBtn').addEventListener('click', loadMoreArchiveBatches);
   if ($('archiveSearchInput')) $('archiveSearchInput').addEventListener('input', renderArchiveHistory);
   if ($('archiveRouteFilter')) $('archiveRouteFilter').addEventListener('change', renderArchiveHistory);
+  ['archiveDateStart', 'archiveDateEnd'].forEach(function (id) { if ($(id)) $(id).addEventListener('change', renderArchiveHistory); });
+  ['archiveClearFiltersBtn', 'archiveEmptyClearBtn'].forEach(function (id) { if ($(id)) $(id).addEventListener('click', clearArchiveFilters); });
+  if ($('archiveProjectViewBtn')) $('archiveProjectViewBtn').addEventListener('click', function () { archiveHistoryState.view = 'project'; renderArchiveHistory(); });
+  if ($('archiveDateViewBtn')) $('archiveDateViewBtn').addEventListener('click', function () { archiveHistoryState.view = 'date'; renderArchiveHistory(); });
+  if ($('archiveClearSelectionBtn')) $('archiveClearSelectionBtn').addEventListener('click', clearArchiveSelection);
+  if ($('archiveSelectionDownloadBtn')) $('archiveSelectionDownloadBtn').addEventListener('click', downloadArchiveSelection);
+  if ($('archiveSelectionTrashBtn')) $('archiveSelectionTrashBtn').addEventListener('click', function () { openArchiveDeleteModal(archiveSelectedAssets().map(function (asset) { return asset.archiveAssetId; })); });
+  if ($('archiveSelectionRestoreBtn')) $('archiveSelectionRestoreBtn').addEventListener('click', function () { restoreArchiveAssets(archiveSelectedAssets().map(function (asset) { return asset.archiveAssetId; })); });
+  if ($('archiveReadRetryBtn')) $('archiveReadRetryBtn').addEventListener('click', function () { refreshArchiveHistory({ silent: false }); });
+  if ($('archiveEmptyCreateBtn')) $('archiveEmptyCreateBtn').addEventListener('click', closeArchiveHistory);
   if ($('archiveTrashToggleBtn')) $('archiveTrashToggleBtn').addEventListener('click', function () {
     state.archiveTrashMode = !state.archiveTrashMode;
     $('archiveTrashToggleBtn').setAttribute('aria-pressed', state.archiveTrashMode ? 'true' : 'false');
@@ -21003,6 +23304,7 @@ function bind() {
   });
   if (window.addEventListener) window.addEventListener('beforeunload', releaseArchiveObjectUrls);
   $('saveConfigBtn').addEventListener('click', saveCfg);
+  if ($('usePlatformWalletBtn')) $('usePlatformWalletBtn').addEventListener('click', usePlatformWallet);
   if ($('configCloseBtn')) $('configCloseBtn').addEventListener('click', closeConfigModal);
   if ($('configCancelBtn')) $('configCancelBtn').addEventListener('click', closeConfigModal);
   if ($('configModal')) $('configModal').addEventListener('click', function (ev) {
@@ -21034,7 +23336,9 @@ function bind() {
     if (!el) return;
     var eventName = el.tagName === 'SELECT' ? 'change' : 'input';
     el.addEventListener(eventName, function () {
-      updateConfigSummary(cfgFromForm());
+      ++configApplySeq;
+      configFormDirty = true;
+      if (!pendingProviderProfile) updateConfigSummary(cfgFromForm());
       setPill('configState', el.id === 'apiKey' && !el.value ? '未配置' : '待保存', el.id === 'apiKey' && !el.value ? 'warn' : '');
       if (el.id !== 'apiKey') referenceDetailBatchNotifySettingsChanged();
     });
@@ -21049,29 +23353,36 @@ function bind() {
       return;
     }
     var referenceLimit = referenceImageLimit();
+    var screenshotRead = referenceDetailRouteActive();
+    var sourceDigestAtRead = state.referenceDetail.sourceDigest;
+    var confirmationSequenceAtRead = state.referenceDetail.confirmationSequence;
     var remain = Math.max(0, referenceLimit - Math.min(referenceImageList().length, referenceLimit));
     var selectedFiles = Array.prototype.slice.call((ev.target && ev.target.files) || []);
     var overflow = Math.max(0, selectedFiles.length - remain);
     var files = selectedFiles.slice(0, remain);
     if (!files.length) {
-      if (referenceImageList().length >= referenceLimit) setPill('contextState', referenceLimit === 1 ? '爆款裂变只使用1张图1参考' : '通用参考图已达 6 张上限', 'warn');
+      if (referenceImageList().length >= referenceLimit) setPill('contextState', referenceLimit === 1 ? '爆款裂变只使用1张图1参考' : '参考图已达 6 张上限', 'warn');
+      ev.target.value = '';
       return;
     }
-    setPill('contextState', '压缩通用参考图中 0/' + files.length + '...', '');
+    setPill('contextState', '读取参考' + (screenshotRead ? '详情截图' : '图') + ' 0/' + files.length + '...', '');
     var completed = 0;
     Promise.all(files.map(function (file) {
-      return fileToOptimizedDataUrl(file).then(function (url) {
+      return fileToOptimizedDataUrl(file, screenshotRead ? 2 * 1024 * 1024 : undefined, screenshotRead ? 2400 : undefined).then(function (url) {
         completed++;
-        setPill('contextState', '压缩通用参考图中 ' + completed + '/' + files.length + '...', '');
+        setPill('contextState', '读取参考图 ' + completed + '/' + files.length + '...', '');
         return url;
       });
     })).then(function (urls) {
+      if (screenshotRead && (sourceDigestAtRead !== state.referenceDetail.sourceDigest || confirmationSequenceAtRead !== state.referenceDetail.confirmationSequence || !referenceDetailRouteActive())) {
+        throw new Error('读取截图期间来源或确认状态已变化，本次上传已忽略');
+      }
       var next = addRefImages(urls);
       setPill('contextState', referenceLimit === 1
         ? ('图1爆款参考已就绪' + (overflow ? ('；其余 ' + overflow + ' 张未加入') : ''))
-        : ('已载入通用参考图 ' + next.length + ' / 6' + (overflow ? ('；超出上限的 ' + overflow + ' 张未加入') : '')), overflow ? 'warn' : 'ok');
+        : ('已载入' + (screenshotRead ? '详情截图 ' : '通用参考图 ') + next.length + ' / 6' + (overflow ? ('；超出上限的 ' + overflow + ' 张未加入') : '')), overflow ? 'warn' : 'ok');
       ev.target.value = '';
-    });
+    }).catch(function (error) { ev.target.value = ''; reportImageUploadError(error); });
   });
   Object.keys(PRODUCT_ANGLES).forEach(function (kind) {
     var meta = PRODUCT_ANGLES[kind];
@@ -21092,7 +23403,8 @@ function bind() {
           return;
         }
         setProductAngle(kind, url, '');
-      });
+        ev.target.value = '';
+      }).catch(function (error) { ev.target.value = ''; reportImageUploadError(error); });
     });
     if ($(meta.url)) $(meta.url).addEventListener('change', function () {
       setProductAngle(kind, normalizeImageUrl($(meta.url).value), $(meta.url).value);
@@ -21113,7 +23425,7 @@ function bind() {
       var f = ev.target.files && ev.target.files[0];
       if (!f) return;
       setPill('contextState', '压缩' + meta.label + '中...', '');
-      fileToOptimizedDataUrl(f).then(function (url) { setModelAngle(kind, url, ''); });
+      fileToOptimizedDataUrl(f).then(function (url) { setModelAngle(kind, url, ''); ev.target.value = ''; }).catch(function (error) { ev.target.value = ''; reportImageUploadError(error); });
     });
     if ($(meta.url)) $(meta.url).addEventListener('change', function () {
       setModelAngle(kind, normalizeImageUrl($(meta.url).value), $(meta.url).value);
@@ -21127,6 +23439,14 @@ function bind() {
   $('refUrl').addEventListener('change', function () {
     if (rejectReferenceDetailImageInput('contextState')) {
       $('refUrl').value = (state.refImages || []).filter(function (image) { return /^https?:\/\//.test(image); }).join(' ');
+      return;
+    }
+    if (referenceDetailRouteActive()) {
+      var urls = parseReferenceUrls($('refUrl').value);
+      setPill('contextState', '读取截图链接中...', '');
+      importReferenceDetailScreenshotUrls(urls).then(function (result) {
+        if (!result.ok) reportImageUploadError(new Error(result.error || '截图未导入'));
+      }).catch(reportImageUploadError).finally(function () { $('refUrl').value = ''; });
       return;
     }
     var localUploads = (state.refImages || []).filter(function (image) { return /^data:image\//.test(image); });
@@ -21174,6 +23494,7 @@ function bind() {
   if ($('detailLinkModeBtn')) $('detailLinkModeBtn').addEventListener('click', function () { setDetailMode('link'); });
   if ($('viralCaseModeBtn')) $('viralCaseModeBtn').addEventListener('click', function () { setViralCoreRoute('case'); });
   if ($('viralStyleModeBtn')) $('viralStyleModeBtn').addEventListener('click', function () { setViralCoreRoute('style-refresh'); });
+  if ($('viralSceneModeBtn')) $('viralSceneModeBtn').addEventListener('click', function () { setViralCoreRoute('scene-extension'); });
   if ($('styleRefreshSourceModes')) $('styleRefreshSourceModes').addEventListener('click', function (event) {
     var button = event.target && event.target.closest ? event.target.closest('[data-style-source]') : null;
     if (!button) return;
@@ -21381,7 +23702,8 @@ function bind() {
       markSkuTasksStale();
       renderSkuWorkspace();
       setPill('skuState', '已载入不可变对象 SKU 底图', 'ok');
-    });
+      ev.target.value = '';
+    }).catch(function (error) { ev.target.value = ''; reportImageUploadError(error); });
   });
   function syncSkuTemplateUrl() {
     resetSkuVisualLock();
@@ -21600,7 +23922,7 @@ function bind() {
   if ($('contextShareCardBtn')) $('contextShareCardBtn').addEventListener('click', function () {
     var ctx = state.contextItem;
     closeContextActionModal();
-    if (!$('apiKey') || !$('apiKey').value.trim()) {
+    if (!creativeHasApiCredential(cfgFromForm(), 'chat')) {
       setPill('runState', '请先在插件启动界面的“统一 API 设置”保存 API Key', 'warn');
       openUnifiedApiSettings();
       return;
@@ -21633,6 +23955,9 @@ function bind() {
   renderPromptErrors();
   renderImageEvidenceWarning();
   document.addEventListener('paste', function (ev) {
+    if (isSceneExtensionRoute()) return;
+    var pasteParams = new URLSearchParams(location.search);
+    if (['creative', 'mirror', 'link-image'].indexOf(pasteParams.get('mode')) >= 0 || pasteParams.get('studio') === '1') return;
     var items = ev.clipboardData && ev.clipboardData.items;
     if (!items) return;
     for (var i = 0; i < items.length; i++) {
@@ -21641,15 +23966,17 @@ function bind() {
         var explicitSubjectSlot = Object.keys(PRODUCT_ANGLES).some(function (kind) { return PRODUCT_ANGLES[kind].url === activeId; }) ||
           Object.keys(MODEL_ANGLES).some(function (kind) { return MODEL_ANGLES[kind].url === activeId; });
         if (referenceDetailRouteActive() && !explicitSubjectSlot) {
-          ev.preventDefault();
-          rejectReferenceDetailImageInput('contextState');
-          return;
+          if (rejectReferenceDetailImageInput('contextState')) { ev.preventDefault(); return; }
         }
         ev.preventDefault();
         var file = items[i].getAsFile();
         if (!file) return;
+        var screenshotPaste = referenceDetailRouteActive() && !explicitSubjectSlot;
+        var pasteSourceDigest = state.referenceDetail.sourceDigest;
+        var pasteConfirmationSequence = state.referenceDetail.confirmationSequence;
         setPill('contextState', '压缩粘贴图片中...', '');
-        fileToOptimizedDataUrl(file).then(function (url) {
+        fileToOptimizedDataUrl(file, screenshotPaste ? 2 * 1024 * 1024 : undefined, screenshotPaste ? 2400 : undefined).then(function (url) {
+          if (screenshotPaste && (pasteSourceDigest !== state.referenceDetail.sourceDigest || pasteConfirmationSequence !== state.referenceDetail.confirmationSequence || !referenceDetailRouteActive())) throw new Error('粘贴期间来源或确认状态已变化，本次导入已忽略');
           if (activeId === 'skuProductUrls') {
             addSkuProducts([{ url: url, name: '粘贴产品图', source: 'paste' }]);
             setPill('skuState', '已粘贴 SKU 产品图', 'ok');
@@ -21677,12 +24004,229 @@ function bind() {
             if (matched.indexOf('model:') === 0) setModelAngle(matched.split(':')[1], url, '');
             else if (!rejectReferenceDetailImageInput('contextState')) addRefImages([url]);
           }
-        });
+        }).catch(reportImageUploadError);
         return;
       }
     }
   });
 }
+
+// The website uses its existing saved provider profiles and account-scoped bridge.
+var creativeWebBusy = Object.create(null);
+function creativeWebIsBusy() { return Object.keys(creativeWebBusy).some(function (scope) { return creativeWebBusy[scope]; }); }
+function creativeWebSetApiBusy(scope, on) {
+  if (!!on !== !!creativeWebBusy[scope] && !pendingProviderSelection && !pendingProviderProfile) ++configReadEpoch;
+  creativeWebBusy[scope] = !!on;
+}
+function creativeWebProfile(provider, includeBoundApis, preferActiveWallet) {
+  var request = { provider: provider || '' };
+  if (preferActiveWallet) request.preferActiveWallet = true;
+  return send(includeBoundApis ? 'GET_STUDIO_CONFIG_SNAPSHOT' : 'GET_CONFIG_PROFILE', request).then(function (profile) {
+    if (!profile || !profile.ok || !profile.accountKey || profile.accountKey === 'local') {
+      throw new Error(profile && profile.error || '请先登录账号，再打开创作工具。');
+    }
+    return profile;
+  });
+}
+function creativeWebAccountKey() { return creativeWebProfile('').then(function (profile) { return String(profile.accountKey); }); }
+function creativeWebRefresh(options) {
+  options = options || {};
+  if (creativeWebIsBusy() || pendingProviderSelection || pendingProviderProfile) return Promise.resolve({ ok: false, code: 'CONFIG_BUSY' });
+  if (configFormDirty) return Promise.resolve({ ok: false, code: 'CONFIG_DIRTY', skipped: true });
+  var seq = ++configApplySeq, accountKey = state.archiveAccountKey, epoch = configReadEpoch;
+  return creativeWebProfile('', true).then(function (profile) {
+    if (!configReadIsCurrent(seq, accountKey, epoch)) return { ok: false, code: 'CONFIG_STALE', skipped: true };
+    if (creativeWebIsBusy() || pendingProviderSelection || pendingProviderProfile) return { ok: false, code: 'CONFIG_BUSY', skipped: true };
+    if (!configReplyMatchesAccount(profile, accountKey)) throw new Error('登录账号已变化，请重新打开工作台。');
+    applyCfg(profile.config);
+    return setArchiveAccountKey(profile.accountKey, { refresh: !options.deferArchive, deferArchive: !!options.deferArchive }).then(function () {
+      return { ok: true, accountKey: profile.accountKey, boundApis: profile.boundApis };
+    });
+  });
+}
+function creativeWebListBoundApis(snapshot) {
+  var accountKey = state.archiveAccountKey;
+  // Only the caller continuing this refresh may reuse its selector DTO. No
+  // global account/config cache can survive a later action or account switch.
+  return (snapshot ? Promise.resolve(snapshot) : send('GET_BOUND_IMAGE_APIS', {})).then(function (response) {
+    if (!response || !response.ok) throw new Error(response && response.error || '无法读取已配置 API。');
+    if (String(response.accountKey) !== String(accountKey) || state.archiveAccountKey !== accountKey) throw new Error('登录账号已变化，请重新打开工作台。');
+    return { ok: true, accountKey: accountKey, providers: response.providers || [] };
+  }).catch(function (error) { return { ok: false, error: error.message || String(error) }; });
+}
+function creativeWebSelectBoundApi(provider) {
+  if (creativeWebIsBusy()) return Promise.resolve({ ok: false, code: 'CONFIG_BUSY', error: '请等待当前任务结束后切换 API。' });
+  pendingProviderProfile = 0;
+  var accountKey = state.archiveAccountKey, seq = ++configApplySeq;
+  pendingProviderSelection = seq;
+  return creativeWebProfile(provider, false, provider === DEFAULT_CFG.provider).then(function (profile) {
+    if (!configReadIsCurrent(seq, accountKey)) return { ok: false, code: 'CONFIG_STALE', error: 'API 配置已变化，请重新选择。' };
+    var config = profile.config || {};
+    // The catalog offers platform credits when this provider has no usable
+    // external Key. Select that temporary route without replacing its profile.
+    if (provider === DEFAULT_CFG.provider && !String(config.apiKey || '').trim() &&
+        !creativeUsesPlatformWallet(config, 'image') && creativeUsesPlatformWallet(DEFAULT_CFG, 'image')) {
+      config = normalizeCfg(DEFAULT_CFG);
+    }
+    var platformWallet = creativeUsesPlatformWallet(config, 'image');
+    if (String(profile.accountKey) !== String(accountKey) || !platformWallet && (!profile.saved || !String(config.apiKey || '').trim())) throw new Error('该账号尚未保存此 API 配置。');
+    var keepWallet = profile.activeSupplyChannel === 'platform_wallet' && platformWallet;
+    return send(keepWallet ? 'USE_PLATFORM_WALLET' : 'SET_ACTIVE_PROVIDER', { provider: provider, accountKey: accountKey, config: keepWallet ? config : undefined }).then(function (changed) {
+      if (!changed || !changed.ok || String(changed.accountKey) !== String(accountKey)) throw new Error(changed && changed.error || '账号已变化，API 切换已停止。');
+      if (!configReadIsCurrent(seq, accountKey)) return { ok: false, code: 'CONFIG_STALE', error: 'API 配置已变化，请重新选择。' };
+      applyCfg(config);
+      return { ok: true, accountKey: accountKey, provider: provider };
+    });
+  }).catch(function (error) { return { ok: false, error: error.message || String(error) }; }).finally(function () {
+    if (pendingProviderSelection === seq) pendingProviderSelection = 0;
+  });
+}
+
+var sceneReadyResolve;
+var sceneReady = new Promise(function (resolve) { sceneReadyResolve = resolve; });
+var creativeToolsReadyResolve;
+var creativeToolsReady = new Promise(function (resolve) { creativeToolsReadyResolve = resolve; });
+var imageImportGenerateDisabled = null;
+var imageImportStatus = null;
+if (typeof window !== 'undefined') {
+  document.addEventListener('cu-import-state', function (event) {
+    if (event.detail.scope !== 'legacy') return;
+    updateSkuCounts();
+    if ($('generateBtn')) {
+      if (event.detail.pending) { imageImportGenerateDisabled = $('generateBtn').disabled; $('generateBtn').disabled = true; }
+      else if (imageImportGenerateDisabled !== null) { $('generateBtn').disabled = imageImportGenerateDisabled; imageImportGenerateDisabled = null; }
+    }
+    var status = $(currentLabMode() === 'sku' ? 'skuState' : 'contextState');
+    if (event.detail.pending && status) { imageImportStatus = { node: status, text: status.textContent, className: status.className }; setPill(status.id, '正在下载并校验图片 URL，请稍候…', ''); }
+    else if (imageImportStatus) { imageImportStatus.node.textContent = imageImportStatus.text; imageImportStatus.node.className = imageImportStatus.className; imageImportStatus = null; }
+  });
+  window.SZ_SCENE_EXTENSION_BRIDGE = {
+    send: send, config: cfgFromForm, archive: queueArchiveResult,
+    archiveContext: function () { return { accountKey: state.archiveAccountKey, surfaceMode: 'viral' }; },
+    ready: function () { return sceneReady; }, getAccountKey: creativeWebAccountKey,
+    withGenerationLock: function (owner, callback) {
+      if (!owner || !navigator.locks || !navigator.locks.request) return Promise.reject(new Error('当前浏览器不支持任务保护，请使用新版 Chrome。'));
+      return navigator.locks.request('sanjie-scene-generation:' + owner, { mode: 'exclusive', ifAvailable: true }, function (lock) {
+        if (!lock) throw new Error('该账号已有场景延展任务运行，请等待完成。');
+        return callback();
+      });
+    },
+    newJobId: newJobId, registerGenerationJob: registerGenerationJob, unregisterGenerationJob: unregisterGenerationJob,
+    setApiBusy: creativeWebSetApiBusy,
+    currentRoute: function () { return normalizeViralCoreRoute(state.viralCoreRoute); }
+  };
+  window.SZ_CREATIVE_TOOLS_BRIDGE = {
+    send: send, config: cfgFromForm, archive: queueArchiveResult,
+    archiveContext: function () { return { accountKey: state.archiveAccountKey, surfaceMode: 'main' }; },
+    getAccountKey: creativeWebAccountKey,
+    ready: function () { return creativeToolsReady; },
+    refresh: creativeWebRefresh,
+    listBoundApis: creativeWebListBoundApis, selectBoundApi: creativeWebSelectBoundApi,
+    setApiBusy: creativeWebSetApiBusy,
+    newJobId: newJobId, registerGenerationJob: registerGenerationJob, unregisterGenerationJob: unregisterGenerationJob,
+    modelInfo: function () {
+      var cfg = cfgFromForm();
+      var unsupported = !window.SZ_CREATIVE_TOOLS_CONTRACT || !window.SZ_CREATIVE_TOOLS_CONTRACT.supportsReferenceConfig(cfg);
+      return { provider: cfg.provider, model: cfg.imageModel, adapter: cfg.imageAdapter, imageAdapter: cfg.imageAdapter,
+        ready: !!(creativeHasApiCredential(cfg, 'image') && cfg.imageModel && cfg.imageEndpoint),
+        supplyChannel: creativeUsesPlatformWallet(cfg, 'image') ? 'platform_wallet' : 'external_key',
+        supportsReference: !unsupported,
+        qualityOptions: ['openai-images', 'generic-json'].indexOf(cfg.imageAdapter) >= 0 ? ['auto', 'low', 'medium', 'high'] : ['auto'],
+        generationSpeeds: ['standard'],
+        resolutions: ['1K', '2K', '4K'], specificationHint: '规格交由当前模型适配器发送，最终尺寸以原件为准。费用以所配置服务商为准。' };
+    },
+    openConfig: function () { if (creativeWebIsBusy()) return { ok: false, error: "请等待当前任务结束后配置 API。" }; openConfigModal(); return { ok: true }; },
+    openHistory: openArchiveHistory,
+    download: async function (item, filename) {
+      if (!item || !item.url) throw new Error('缺少可下载的原件。');
+      var owner = state.archiveAccountKey;
+      if (!owner || owner === 'local' || await creativeWebAccountKey() !== owner) throw new Error('登录账号已变化，请重新打开工作台后下载。');
+      var source = item.url, asset = null, objectUrl = '';
+      if (item.archiveAssetId && IMAGE_ARCHIVE) {
+        var batches = await IMAGE_ARCHIVE.list(owner, { trash: false, skipPurge: true });
+        batches.some(function (batch) { asset = (batch.assets || []).find(function (candidate) { return candidate.archiveAssetId === item.archiveAssetId; }); return !!asset; });
+        if (asset && asset.blob) { objectUrl = URL.createObjectURL(asset.blob); source = objectUrl; filename = String(filename || '爆款复刻.png').replace(/\.(?:png|jpe?g|webp|gif)$/i, '') + archiveFileExtension(asset); }
+      }
+      if (state.archiveAccountKey !== owner || await creativeWebAccountKey() !== owner) { if (objectUrl) URL.revokeObjectURL(objectUrl); throw new Error('登录账号已变化，下载已停止。'); }
+      try {
+        var result = await send('DOWNLOAD_ALL', { items: [{ url: source, filename: String(filename || '爆款复刻.png').replace(/[\\/]/g, '_') }] });
+        if (!result || !result.ok) throw new Error(result && result.error || '原件下载失败，请重试。');
+        return result;
+      } finally { if (objectUrl) setTimeout(function () { URL.revokeObjectURL(objectUrl); }, 60000); }
+    },
+    analyze: function (input) {
+      input = input || {};
+      var cfg = cfgFromForm();
+      if (!creativeHasApiCredential(cfg, 'chat')) return Promise.resolve({ ok: false, error: '请先在统一 API 设置中保存可用配置。' });
+      var studio = input.tool === 'product', settings = input.settings || {};
+      var images = (Array.isArray(input.products) ? input.products : []).map(function (entry) { return typeof entry === 'string' ? entry : entry && entry.image; }).filter(Boolean).slice(0, studio ? 6 : 3);
+      var facts = [];
+      function addFact(label, value, max) {
+        var content = typeof value === 'string' ? value.trim().slice(0, max || 160) : '';
+        if (content) facts.push(label + '：' + content);
+      }
+      if (studio) {
+        addFact('用户明确的图片要求（仅核对原图已有证据）', input.requirements, 6000);
+        addFact('目标平台', settings.platform, 120);
+        addFact('目标语言', settings.language, 120);
+        addFact('图片类型', settings.imageType || settings.mode, 40);
+        var modules = (Array.isArray(settings.modules) ? settings.modules : []).slice(0, 20).map(function (entry) {
+          var name = typeof entry === 'string' ? entry : entry && (entry.label || entry.name || entry.id);
+          return typeof name === 'string' ? name.trim().slice(0, 160) : '';
+        }).filter(Boolean);
+        if (modules.length) facts.push('已选画面模块：' + modules.join('、'));
+        if (settings.expertMode === true) facts.push('专家模式：交叉核对所有原图的款式、比例、颜色、材质外观、可见结构、部件数量、纹理与包装标识；分清可确认和需要补证的细节，列出可支持构图、景别、光线和留白规划的可见依据，不推断未知性能、尺寸或认证。');
+        if (input.purpose === 'brief') facts.push('用途：起草简洁的图片要求。优先提取可用于商品主体、细节特写和场景构图的可见事实，供用户随后核对；只返回现有商品事实 JSON，不扩写宣传承诺。');
+        else if (input.purpose === 'plan') facts.push('用途：规划同款商品的一组图片。提取选定模块所需的可见商品依据，供后续安排独立构图和镜头；只返回现有商品事实 JSON，未知信息留空。');
+      }
+      var payload = { productImages: images, category: input.tool === 'clothing' ? '服装' : '', requiredFacts: facts };
+      if (studio) payload.studioContext = true;
+      var request = { provider: cfg.provider, payload: payload };
+      if (creativeUsesPlatformWallet(cfg, 'chat')) {
+        request.platformConfig = Object.assign({}, cfg, { apiKey: '' });
+        request.accountKey = state.archiveAccountKey;
+      }
+      return send('ANALYZE_SUBJECT_ASSET', request);
+    },
+    resultActions: ['edit', 'fission'],
+    openResultAction: async function (action, item) {
+      if (!item || !item.url) throw new Error('缺少结果图片。');
+      if (action === 'edit') {
+        if (!Array.isArray(item.productImages) || !item.productImages.length) throw new Error('该结果缺少产品原图，请从保留素材的创作草稿打开编辑。');
+        // The guide editor owns its own protocol. Preserve business identity and
+        // original image evidence, but never carry a creative generation contract
+        // into the guide request or replace original products with the result.
+        var guideItem = cloneGuideValue(item);
+        var originTool = item.linkImageContractVersion ? 'link-image' : item.mirrorContractVersion ? 'aesthetic-mirror' : item.creativeTool || item.creativeRoute || '';
+        ['generationRoute', 'referenceMode', 'promptSource', 'creativeContractVersion', 'creativeTool', 'creativeMode',
+          'creativeShotId', 'creativePlanSignature', 'creativePayloadSignature', 'contractPlan', 'creativePlanSnapshot', 'promptRecord',
+          'studioGenesisVersion', 'studioGenesisPlan', 'studioGenesisPlanSnapshot', 'studioGenesisPlanSignature', 'studioGenesisShotId',
+          'mirrorContractVersion', 'mirrorPlan', 'mirrorPlanSnapshot', 'mirrorPayloadSignature', 'mirrorMode', 'mirrorShotId',
+          'mirrorPlanSignature', 'mirrorGroupIndex', 'mirrorVariationIndex',
+          'linkImageContractVersion', 'linkPlan', 'linkPlanSnapshot', 'linkPayloadSignature', 'linkPlanSignature', 'linkShotId', 'linkMode'].forEach(function (key) { delete guideItem[key]; });
+        guideItem.labMode = 'main';
+        guideItem.detailMode = 'main';
+        guideItem.creativeGuideOrigin = item.creativeGuideOrigin || { tool: originTool, mode: item.mirrorMode || item.creativeMode || '', shotId: item.mirrorShotId || item.creativeShotId || '' };
+        guideItem.modelImages = Array.isArray(item.modelImages) ? item.modelImages.slice() : [];
+        var panel = $('generationPanel');
+        if (panel) panel.classList.add('creative-edit-results');
+        var opened = openGuideRegenerateModal(guideItem);
+        if (opened && opened.ok === false) throw new Error(opened.error || '图片编辑未能打开。');
+        return { ok: true };
+      }
+      if (action === 'fission' || action === 'viral') {
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id === 'shaozhuang-web-studio') {
+          var handoff = window.SZ_LINK_RESULT_HANDOFF;
+          if (!handoff || typeof handoff.openCreativeFission !== 'function') throw new Error('官网裂变入口尚未就绪，请刷新后从原结果重试；原图片和任务仍保留。');
+          return handoff.openCreativeFission(item, state.archiveAccountKey);
+        }
+        return send('OPEN_CONTEXT_WORKBENCH', { route: 'viral', payload: { imageUrl: item.url, importRoute: 'viral', targetMode: 'viral' } });
+      }
+      throw new Error('不支持的结果操作。');
+    }
+  };
+}
+
 
 if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) {
   globalThis.__SZ_PROMPTLAB_TEST_API__ = {
@@ -21723,6 +24267,8 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) 
     guidePrimaryIssue: guidePrimaryIssue,
     guideEvidenceLevel: guideEvidenceLevel,
     guideAdapterCapability: guideAdapterCapability,
+    guideModelProfile: guideModelProfile,
+    modelAdaptiveGuidePrompt: modelAdaptiveGuidePrompt,
     guideContractUsesLocalMask: guideContractUsesLocalMask,
     createStructuredGuideContract: createStructuredGuideContract,
     validateStructuredGuideContract: validateStructuredGuideContract,
@@ -21766,6 +24312,9 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) 
     syncReferenceDetailStoryRouteClass: syncReferenceDetailStoryRouteClass,
     syncDetailWorkflowUi: syncDetailWorkflowUi,
     importReferenceDetailSource: importReferenceDetailSource,
+    importReferenceDetailScreenshots: importReferenceDetailScreenshots,
+    importReferenceDetailScreenshotUrls: importReferenceDetailScreenshotUrls,
+    moveReferenceDetailScreenshot: moveReferenceDetailScreenshot,
     migrateLegacyReferenceDetailUploadState: migrateLegacyReferenceDetailUploadState,
     loadReferenceDetailHandoff: loadReferenceDetailHandoff,
     renderReferenceDetailWorkbench: renderReferenceDetailWorkbench,
@@ -21953,6 +24502,10 @@ if (typeof globalThis !== 'undefined' && globalThis.__SZ_PROMPTLAB_TEST_MODE__) 
     downloadSkuResults: downloadSkuResults,
     selectedSkuTasks: selectedSkuTasks,
     generateSkuBatch: generateSkuBatch,
+    retrySkuReturnedImages: retrySkuReturnedImages,
+    recoverSkuDurableReceipt: recoverSkuDurableReceipt,
+    restoreSkuDurableReceipts: restoreSkuDurableReceipts,
+    skuSettingsFromDurableEntry: skuSettingsFromDurableEntry,
     retryFailedSkuTasks: retryFailedSkuTasks,
     runSkuGuideRegenerate: runSkuGuideRegenerate,
     stopSkuGeneration: stopSkuGeneration,
@@ -21990,7 +24543,18 @@ document.addEventListener('DOMContentLoaded', function () {
   renderResults();
   renderSkuWorkspace();
   refreshBusinessKnowledgeStatus();
-  loadContext(params.get('auto') === '1');
+  // Creative tools own account-scoped drafts, not legacy import contexts. Use
+  // one fresh configuration snapshot and defer archive reading until it opens.
+  // Product-first routes continue to initialize through their own bridge.
+  if (params.get('studio') !== '1') {
+    if (requestedMode === 'creative' || requestedMode === 'mirror' || requestedMode === 'link-image') creativeWebRefresh({ deferArchive: true }).then(function (snapshot) {
+      if (!snapshot || !snapshot.ok) throw new Error(snapshot && snapshot.error || '工作台配置尚未就绪。');
+      creativeToolsReadyResolve(snapshot);
+      sceneReadyResolve({ ok: true });
+    }).catch(function (error) { sceneReadyResolve({ ok: false, error: error.message || String(error) }); creativeToolsReadyResolve({ ok: false, error: error.message || String(error) }); });
+    else loadContext(params.get('auto') === '1').then(function () { sceneReadyResolve({ ok: true }); })
+      .catch(function (error) { sceneReadyResolve({ ok: false, error: error.message || String(error) }); });
+  }
   if (labMode === 'detail' && detailMode === 'reference') {
     renderReferenceDetailWorkbench();
     loadReferenceDetailHandoff(params);
@@ -21999,4 +24563,201 @@ document.addEventListener('DOMContentLoaded', function () {
     loadTaobaoSkuImportContext(params.get('skuImportContextId') || params.get('importToken') || '', params.get('draftId') || '');
   }
   if (labMode !== 'sku' && (source === 'linkmatrix' || subjectWorkbenchSource)) loadStoredLinks();
+  if (params.get('studio') !== '1' && ['creative', 'mirror', 'link-image'].indexOf(requestedMode) < 0 && params.get('layout') !== '1' && window.SZ_LAB_STARTUP) window.SZ_LAB_STARTUP.ready();
 });
+
+// Read-only pricing hints share the account/model quote contract. Existing BYOK
+// dispatch, source snapshots, receipts and archives remain authoritative.
+function refreshLegacyCreditHints() {
+  var hints = window.SZCreativeCreditHints;
+  if (!hints) return;
+  var config = cfgFromForm() || {};
+  var mode = currentLabMode() === 'detail' ? 'detail' : 'main';
+  var imageModel = config.imageModel || '';
+  var visionModel = config.visionModel || config.textModel || '';
+  var textModel = config.textModel || visionModel;
+  function image(id, requests, detail, analysis, model, channel) { hints.image($(id), model === undefined ? imageModel : model, requests, detail, analysis, channel); }
+  function chat(id, model, detail) { hints.chat($(id), model, detail); }
+  function ones(count) { return Number.isSafeInteger(count) && count >= 0 && count <= 1000 ? Array(count).fill(1) : null; }
+  function currentRecord(row, index, recordMode) {
+    recordMode = recordMode || mode;
+    var record = (state.linkPrompts[recordMode] || {})[canonicalLinkId(row['链接编号'], index)];
+    return record && promptRecordIsCurrent(record, recordMode, row) ? record : null;
+  }
+  // The submission parser also remembers category and subject state. Pricing only
+  // reads the input, so use its pure parsing helpers without those mutations.
+  var inputRows = null;
+  try {
+    var linkInput = $('linkJson');
+    if (linkInput) {
+      var rawLinks = String(linkInput.value || '').trim();
+      inputRows = [];
+      if (rawLinks) {
+        try { inputRows = normalizeLinkRows(JSON.parse(rawLinks)); } catch (_) {}
+        if (!inputRows.length) { try { inputRows = parseNdjsonLinks(rawLinks); } catch (_) {} }
+        if (!inputRows.length) inputRows = parseDelimitedLinks(rawLinks);
+      }
+    }
+  } catch (_) { inputRows = []; }
+  var rows = [], selected = [];
+  try {
+    rows = inputRows === null ? state.linkList || [] : normalizeLinkRowsForBatch(inputRows, true);
+    var subjectRows = subjectRowsForActiveBatch(rows);
+    var selection = subjectRows ? { rows: subjectRows } : selectRowsByLinkRange(rows);
+    selected = selection.missing && selection.missing.length ? [] : selection.rows;
+  } catch (_) {}
+  function pendingForMode(recordMode) {
+    return selected.filter(function (row) { return !currentRecord(row, rows.indexOf(row), recordMode); }).length;
+  }
+  var pendingPrompts = pendingForMode(mode);
+  function batchPromptModel(quantity, shared, quoteMode) {
+    quoteMode = quoteMode || mode;
+    if (quoteMode === 'main' && config.provider === 'deepseek-v4') return textModel;
+    var task = activeSubjectTask();
+    var profile = task && task.visualProfiles && task.visualProfiles[quoteMode];
+    var needsVisualEvidence = !!(profile && profile.approved && (state.activeVisualTemplateImages || []).length) || quoteMode === 'detail' && modelImageList().length > 0;
+    var primed = shared && shared.contractVersion === 'SHARED_SUBJECT_CONTEXT_V1' && shared.primed === true;
+    if (needsVisualEvidence || visionModel === textModel || quantity === 1 && !primed) return visionModel;
+    if (primed) return textModel;
+    // The first link reads product images; later links may use the shared facts.
+    // A batch using both models cannot be represented by either model's unit rate.
+    return '';
+  }
+  function promptBatchHint(button, quantity, detail, shared, quoteMode) {
+    if (!quantity) hints.local(button, '没有待请求的提示词；已有有效项直接复用');
+    else hints.chat(button, batchPromptModel(quantity, shared, quoteMode), detail);
+  }
+  var primaryUsesBatch = !inputRows || inputRows.length > 1 || !!state.subjectPlan;
+  var singleLinkModel = mode === 'main' && config.provider === 'deepseek-v4' ? textModel : visionModel;
+  chat('analyzeBtn', visionModel, '本次反推参考图提示词');
+  if (primaryUsesBatch) promptBatchHint($('buildPromptBtn'), pendingPrompts, '分析当前/选定范围的缺失提示词；已有有效项跳过');
+  else if (inputRows.length) chat('buildPromptBtn', singleLinkModel, '分析当前链接提示词，随输入和输出用量变化');
+  else hints.local($('buildPromptBtn'), '没有可请求的链接提示词');
+  promptBatchHint($('detailLinkGenerateBtn'), pendingForMode('detail'), '分析当前/选定链接的缺失详情提示词；已有有效项跳过', null, 'detail');
+  promptBatchHint($('batchLinksBtn'), pendingPrompts, '本次最多 ' + pendingPrompts + ' 条链接提示词；有效已有项跳过；首条读取商品图，后续可复用主体分析');
+  var promptContext = state.promptBatchContext || {};
+  var failedPrompts = promptContext.globalFailure ? 0 : (promptContext.failedIds || []).length;
+  promptBatchHint($('retryFailedPromptsBtn'), failedPrompts, '只重试当前批次失败编号，共 ' + failedPrompts + ' 条', promptContext.sharedSubjectContext, promptContext.mode);
+  document.querySelectorAll('[data-credit-prompt-retry]').forEach(function (button) { promptBatchHint(button, failedPrompts, '重试当前批次失败编号，已有成功提示词保留', promptContext.sharedSubjectContext, promptContext.mode); });
+  if (productImageList().length) chat('styleRefreshRecommendBtn', visionModel, '识别商品并推荐风格');
+  else hints.local($('styleRefreshRecommendBtn'), '按手填品类和材质推荐，不调用模型');
+  chat('referenceDetailBuildBtn', visionModel, '按来源有序分片分析结构；可含重试与跨片综合分析，按实际用量计费');
+  chat('referenceDetailRebuildBtn', visionModel, '重新拆解来源分片及综合结构，按实际用量计费');
+  hints.local($('detailModelGenerateBtn'), '本地整理模特三视图提示词，不生成图片');
+  if ((state.detailMode || 'reference') === 'link') promptBatchHint($('detailRefGenerateBtn'), pendingForMode('detail'), '分析当前/选定范围的缺失详情提示词；已有有效项跳过', null, 'detail');
+  else if (isStyleRefreshRoute() || referenceDetailRouteActive()) hints.local($('detailRefGenerateBtn'), '按已确认结构整理生成计划，不调用模型');
+  else chat('detailRefGenerateBtn', visionModel, '反推案例并生成可编辑画面规划；图片需另行确认生成');
+
+  var count = generationImageCount();
+  var reference = state.referencePrompts[mode];
+  var needsAnalysis = !isStyleRefreshRoute() && !referenceDetailRouteActive() && !promptRecordIsCurrent(reference, mode);
+  var planned = !needsAnalysis && reference && reference.data && Array.isArray(reference.data['主图规划']) && reference.data['主图规划'].length;
+  var requests = needsAnalysis ? null : mode === 'detail' || planned ? ones(count) : requestCountChunks(count);
+  image('generateBtn', requests, '本次目标 ' + count + ' 张；' + (needsAnalysis ? '先自动反推分析，分析完成后按新规划确认实际请求分组并报价' : '按当前已确认提示词的实际请求分组估算'), needsAnalysis);
+  image('batchBtn', ones($('batchMode') && $('batchMode').value === 'single' ? 1 : 4), '按所选方向各生成 1 张；不再乘以上方图片数量');
+  var guideConfig = state.guideDraft && state.guideDraft.config || config;
+  image('guideRunBtn', [1], '确认预案后重新请求 1 张图片；编辑和标注为本地操作', false, guideConfig.imageModel || imageModel, creativeSupplyChannel('image', guideConfig));
+  if (isStyleRefreshRoute()) {
+    var record = state.styleRefresh.promptRecord, run = state.styleRefresh.run;
+    var compatible = run && run.phase !== 'complete' && styleRefreshRunIsCompatible(run, record, count);
+    var remaining = compatible ? run.slots.filter(function (slot) { return !styleRefreshResultForScreen(run, slot.index); }).length : count;
+    var qaDetail = '生成后按每 8 张一组自动视觉质检；续跑可重新检查本批已完成图，分析按实际用量计费';
+    if (compatible && !remaining) chat('generateBtn', visionModel, '本批图片已齐，仅重新执行视觉质检；每 8 张一组');
+    else image('generateBtn', ones(remaining), '本次 ' + remaining + ' 张缺失图片；' + qaDetail, true);
+  }
+
+  var valid = selected.map(function (row) { return currentRecord(row, rows.indexOf(row)); }).filter(Boolean);
+  var perLink = captureGenerationSettings(mode, mode === 'detail' ? 'link' : state.detailMode).count;
+  var linkCount = valid.length * perLink;
+  // Match the same resume fingerprint as generation; stale receipts never reduce a new quote.
+  var resume = state.linkGenerationResume;
+  if (resume && valid.length) {
+    var settings = captureGenerationSettings(mode, mode === 'detail' ? 'link' : state.detailMode);
+    var fingerprint = sourceFingerprint(JSON.stringify({ mode: mode, product: currentProductFingerprint(), records: valid.map(function (item) { return [item.linkId,item.id,item.promptBatchId]; }), settings: settings, config: [config.provider,config.imageAdapter,config.imageEndpoint,config.imageModel] }));
+    if (resume.fingerprint === fingerprint) linkCount = (resume.failedKeys || []).length;
+  }
+  image('linkNumberGenerateBtn', ones(linkCount), '本次 ' + linkCount + ' 张；仅使用当前范围的有效提示词，续跑只补失败图片');
+  var readySubjects = state.subjectPlan && SUBJECT_ORCHESTRATION ? state.subjectPlan.tasks.filter(function (task) { return SUBJECT_ORCHESTRATION.taskStatus(task) === 'ready'; }) : [];
+  var subjectLinks = readySubjects.reduce(function (sum, task) { return sum + (task.linkIds || []).length; }, 0);
+  if (subjectLinks) {
+    chat('allSubjectPromptsBtn', visionModel === textModel ? visionModel : '', readySubjects.length + ' 个可生产主体、最多 ' + subjectLinks + ' 条提示词；跳过有效已有项；各主体按实际视觉或文本分析用量结算');
+    image('allSubjectImagesBtn', null, '各主体载入后按有效提示词确认张数，最多 ' + subjectLinks * perLink + ' 张；缺失/失效提示词跳过');
+  } else {
+    hints.local($('allSubjectPromptsBtn'), '没有可请求的主体提示词');
+    hints.local($('allSubjectImagesBtn'), '没有待生成的主体图片');
+  }
+  var skuTasks = selectedSkuTasks(false);
+  var failedSku = skuTaskBlueprints().filter(function (task) { return task.item && task.item.url && skuTaskStatusFor(task.skuId).state === 'failed'; }).slice(0,state.skuMax);
+  var skuConfig = skuConfigForGeneration();
+  image('skuGenerateBtn', ones(skuTasks.length), '本次所选 ' + skuTasks.length + ' 项 SKU，每项生成 1 张', false, skuConfig.imageModel || imageModel);
+  image('skuRetryFailedBtn', ones(failedSku.length), '本次最多重试 ' + failedSku.length + ' 项失败 SKU，每项 1 张', false, skuConfig.imageModel || imageModel);
+  hints.local($('skuPromptTemplateBtn'), '本地整理 SKU 提示词，不调用模型');
+  if (state.contextAuto && currentSurfaceMode() === 'main') chat('contextImportBtn',visionModel,'导入完成后自动反推参考图；单独导入图片为本地操作');
+  else hints.local($('contextImportBtn'),'导入已有图片，不调用模型');
+  if (currentSurfaceMode() === 'main') chat('contextShareCardBtn',visionModel,'导入后反推提示词，再本地制作分享卡');
+  else hints.local($('contextShareCardBtn'),'本地制作提示词分享卡');
+
+  var sidecar = state.referenceDetailBatch || {}, runtime = referenceDetailBatchRuntime();
+  var screens = sidecar.bundle ? referenceDetailApprovedScreenCount(sidecar.bundle) : Number($('referenceDetailBatchScreenCount') && $('referenceDetailBatchScreenCount').value) || 0;
+  var targets = (sidecar.rows || []).filter(function (row) { return row.selected !== false; }).length;
+  var batchConfig = sidecar.sessionConfig || config;
+  if (targets * screens) image('referenceDetailBatchStartBtn', ones(targets * screens), targets + ' 个已选商品 × ' + screens + ' 屏；每个商品先分析提示词，分析按实际用量计费', true, imageModel);
+  else hints.local($('referenceDetailBatchStartBtn'), '没有已选商品或已确认屏幕，不调用模型');
+  function taskQuote(button, taskId, retry) {
+    var items = runtime && runtime.tasks || null;
+    if (items) items = items.filter(function (task) { return (!taskId || task.taskId === taskId) && (retry ? task.prompt.status === 'failed' || task.screens.some(function (screen) { return screen.status === 'failed'; }) || referenceDetailBatchHasUnavailableResults(task) : ['pending','interrupted','prompting','generating'].includes(task.phase)); });
+    var analysis = false, total = 0;
+    (items || []).forEach(function (task) {
+      analysis = analysis || task.prompt.status !== 'completed';
+      var unavailable = retry && referenceDetailBatchHasUnavailableResults(task);
+      total += task.screens.filter(function (screen) {
+        var id = screen.resultRef && screen.resultRef.resultId;
+        if (!retry) return screen.status === 'pending' || screen.status === 'generating';
+        if (unavailable) return screen.status === 'completed' && (!id || !(sidecar.memoryResultUrls || {})[id]) || screen.status === 'pending';
+        return retry && task.prompt.status === 'completed' ? screen.status === 'failed' || screen.status === 'pending' : screen.status !== 'completed';
+      }).length;
+    });
+    hints.image(button,batchConfig.imageModel || imageModel,items?ones(total):null,(items?'本次 '+total+' 张待生成/缺失屏':'载入当前账号保存断点后确认本次张数')+'；提示词未完成时先分析，按实际 Token 用量计费',analysis || !items,creativeSupplyChannel('image',batchConfig));
+  }
+  taskQuote($('referenceDetailBatchResumeBtn'),null,false);
+  taskQuote($('referenceDetailBatchRetryFailedBtn'),null,true);
+  document.querySelectorAll('[data-batch-action="retry"]').forEach(function (button) { taskQuote(button,button.dataset.taskId,true); });
+  if (mode === 'detail' && referenceDetailRouteActive()) {
+    if (targets * screens) image('generateBtn',ones(targets*screens),targets+' 个已选商品 × '+screens+' 屏；每个商品先分析提示词，按实际用量计费',true);
+    else hints.local($('generateBtn'), '没有已选商品或已确认屏幕，不调用模型');
+  }
+}
+window.SZCreativeCreditHints?.register('legacy-image-workbench', refreshLegacyCreditHints);
+
+// Cached legacy workspaces may keep running; unloading still waits for local work.
+(function () {
+  var query = new URLSearchParams(location.search);
+  if (query.get('studio') === '1' || ['creative', 'mirror', 'link-image'].indexOf(query.get('mode')) >= 0) return;
+  var bridge = {
+    getTaskState: promptTaskState,
+    getState: promptTaskState,
+    end: promptTaskEnd,
+    canDeactivate: function () {
+      var snapshot = promptTaskState();
+      return { allowed: !snapshot.busy, reason: snapshot.busy ? '当前任务仍在处理；可切换图片入口继续工作，离开整个工作台前请结束等待。' : '' };
+    },
+    activate: function () {
+      var owner = promptTaskOwner();
+      return creativeWebAccountKey().then(function (current) {
+        if (current !== owner || owner !== promptTaskOwner()) return { ok: false, error: '当前账号已变化，请回到原账号后查看原任务。' };
+        promptTaskRender();
+        if (promptTaskState().busy || configFormDirty) return { ok: true, accountKey: owner };
+        return creativeWebRefresh();
+      }).catch(function () { return { ok: false, error: '当前账号暂未就绪，请恢复登录后再试。' }; });
+    }
+  };
+  window.SanjiePromptLabTaskBridge = bridge;
+  window.SanjiePromptTaskBridge = bridge;
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('beforeunload', function (event) {
+      if (promptTaskState().busy) { event.preventDefault(); event.returnValue = '当前任务仍在处理'; }
+    });
+    window.addEventListener('storage', function () { promptTaskRender(); });
+  }
+  if (typeof document.addEventListener === 'function') document.addEventListener('DOMContentLoaded', promptTaskRender, { once: true });
+})();

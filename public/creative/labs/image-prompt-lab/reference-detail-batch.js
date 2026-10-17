@@ -49,7 +49,7 @@
   function BatchError(code, message, path, details) {
     this.name = 'ReferenceDetailBatchError';
     this.code = code || 'BATCH_ERROR';
-    this.message = message || '参考成详批量运行时错误';
+    this.message = message || '清单成详批量运行时错误';
     this.path = path || '$';
     this.details = details || null;
     if (Error.captureStackTrace) Error.captureStackTrace(this, BatchError);
@@ -164,7 +164,7 @@
   function screenCountValue(value, path) {
     if (value === undefined) return 10;
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 5 || value > 16) {
-      fail('INVALID_SCREEN_COUNT', '参考成详输出屏数必须是 5–16 的整数 number。', path);
+      fail('INVALID_SCREEN_COUNT', '清单成详输出屏数必须是 5–16 的整数 number。', path);
     }
     return value;
   }

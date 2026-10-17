@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Sanjie resource headroom every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=sanjie-resource-watch.service
+
+[Install]
+WantedBy=timers.target

@@ -50,7 +50,7 @@ describe("DMP growth report shared viewer contract", () => {
   it("uses one report viewer for both the report-center preview and public share page", () => {
     expect(workspaceSource).toContain('from "@/components/tools/DmpReportViewer"');
     expect(sharedPageSource).toContain('from "@/components/tools/DmpReportViewer"');
-    expect(workspaceSource).toMatch(/<DmpReportViewer\b[^>]*record=\{selectedViewRecord\}[^>]*variant="preview"/s);
+    expect(workspaceSource).toMatch(/<DmpReportViewer\b[^>]*record=\{selectedRecord\}[^>]*variant="preview"/s);
     expect(sharedPageSource).toMatch(/<DmpReportViewer\b[^>]*record=\{record\}[^>]*variant="shared"/s);
 
     // The public wrapper keeps anonymous propagation tracking while delegating
@@ -106,6 +106,11 @@ describe("DMP growth report shared viewer contract", () => {
     expect(viewerSource).toContain("formatViewerCell(metric.subject, metric.label)");
     expect(viewerSource).toContain("formatViewerCell(metric.competitor, metric.label)");
     expect(viewerCss).toContain(".metricScope");
+    expect(viewerSource).toContain('data-report-quality="partial"');
+    expect(viewerSource).toContain("model.quality.notice");
+    expect(viewerSource).toContain("data-report-supplement");
+    expect(viewerSource).toContain("继续补采");
+    expect(viewerCss).toContain(".qualityBanner");
     expect(viewerSource).not.toContain("dangerouslySetInnerHTML");
     expect(viewerSource).toContain('typeof value === "number" && Number.isFinite(value)');
     expect(viewerSource).not.toContain("isExactNumber(value)");
@@ -268,12 +273,17 @@ describe("DMP growth report viewer projection", () => {
     expect(model.competitor.pictureUrl).toBe("https://img.alicdn.com/competitor.png");
     expect(model.kpis).toEqual([
       { label: "总GMV", subject: "91539.13", competitor: "227027.62", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "付费成交额", subject: "", competitor: "", scope: "2026-07-20 至 2026-08-18（30天）" },
       { label: "推广消耗", subject: "25942.88", competitor: "42242.14", scope: "2026-07-20 至 2026-08-18（30天）" },
       { label: "费比", subject: "28.34%", competitor: "18.61%", scope: "2026-07-20 至 2026-08-18（30天）" },
       { label: "ROI", subject: "2.31", competitor: "3.41", scope: "2026-07-20 至 2026-08-18（30天）" },
       { label: "PPC", subject: "1.23", competitor: "1.56", scope: "2026-07-20 至 2026-08-18（30天）" },
+      { label: "付费金额占比", subject: "", competitor: "", scope: "2026-07-20 至 2026-08-18（30天）" },
       { label: "全域ROAS", subject: "3.53", competitor: "5.37", scope: "2026-07-20 至 2026-08-18（30天）" }
     ]);
+    expect(model.kpis).toHaveLength(8);
+    expect(model.quality.effectiveQuality).toBe("partial");
+    expect(model.quality.notice).toContain("缺失值未按0计入");
   });
 
   it("prefers scoped overview rows and falls back one side at a time without replacing explicit zero", () => {

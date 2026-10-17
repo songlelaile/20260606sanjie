@@ -24,4 +24,18 @@ describe("creative proxy policy", () => {
     expect(assertResolvedAddresses(["1.2.3.4"]).ok).toBe(true);
     expect(assertResolvedAddresses(["10.0.0.8"]).ok).toBe(false);
   });
+
+  it("allows public IPv6 DNS but rejects local, mapped and empty results", () => {
+    expect(assertResolvedAddresses(["2606:4700:4700::1111"]).ok).toBe(true);
+    for (const addresses of [[], ["::ffff:127.0.0.1"], ["fe80::1"], ["fd00::1"], ["2001:db8::1"], ["not-an-ip"], ["224.0.0.1"]]) {
+      expect(assertResolvedAddresses(addresses).ok).toBe(false);
+    }
+  });
+
+  it("reads product reference images without permitting CDN writes or alternate ports", () => {
+    expect(evaluateCreativeProxy("https://img.alicdn.com/image.jpg", "GET").ok).toBe(true);
+    expect(evaluateCreativeProxy("https://img.alicdn.com/image.jpg", "POST").ok).toBe(false);
+    expect(evaluateCreativeProxy("https://sub.shaozhuangai.com:8443/v1/images/generations", "POST").ok).toBe(false);
+    expect(evaluateCreativeProxy("https://img.alicdn.com.evil.test/image.jpg", "GET").ok).toBe(false);
+  });
 });

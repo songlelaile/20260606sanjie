@@ -5,9 +5,10 @@ import { DmpReportWorkspace } from "@/components/tools/DmpReportWorkspace";
 import {
   getDmpBusinessReport,
   getDmpReportAccess,
-  listDmpBusinessReports
+  listDmpBusinessReportSummaries,
+  resolveDmpReportRequestContext
 } from "@/lib/dmp-report-store";
-import { resolveDmpReportPageSelection } from "@/lib/dmp-report-page-selection";
+import { getActiveShopCookie } from "@/lib/session-server";
 import { getShopSwitcherData } from "@/lib/store/runtime-store";
 
 export const metadata: Metadata = {
@@ -16,39 +17,78 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
+const REPORT_PAGE_SIZE = 24;
+const EMPTY_PAGINATION = {
+  page: 1,
+  pageSize: REPORT_PAGE_SIZE,
+  total: 0,
+  totalPages: 0,
+  hasNext: false
+};
+
 export default async function DmpReportPage({
   searchParams
 }: {
   searchParams: Promise<{ reportId?: string; view?: string; source?: string }>;
 }) {
   const query = await searchParams;
-  const access = await getDmpReportAccess();
-  if (!access) redirect("/tools?dmpAccess=paid");
   if (query.source === "dmp-extension") {
+    const access = await getDmpReportAccess();
+    if (!access) redirect("/tools?dmpAccess=paid");
     return <main id="dmp-extension-report-host" />;
   }
+
+  const activeShopId = String(await getActiveShopCookie() ?? "").trim();
+  const context = await resolveDmpReportRequestContext({ shopId: activeShopId });
+  if (!context.ok) {
+    if (context.status === 401) redirect("/tools?dmpAccess=paid");
+    return (
+      <>
+        <PageHeader title="达摩盘一体化报告中心｜少壮AI自动化" />
+        <DmpReportWorkspace
+          initialReports={[]}
+          initialPagination={EMPTY_PAGINATION}
+          initialShops={[]}
+          activeShopId=""
+          canCreateShop={false}
+          initialNotice={context.error}
+        />
+      </>
+    );
+  }
+
   const requestedReportId = query.reportId?.trim() ?? "";
-  const [listedReports, shopData] = await Promise.all([
-    listDmpBusinessReports(access),
-    getShopSwitcherData()
+  const [shopData, listed, requestedReport] = await Promise.all([
+    getShopSwitcherData(),
+    listDmpBusinessReportSummaries(context.access, {
+      shopId: context.shop.id,
+      page: 1,
+      pageSize: REPORT_PAGE_SIZE
+    }),
+    requestedReportId
+      ? getDmpBusinessReport(context.access, requestedReportId, context.shop.id)
+      : Promise.resolve(null)
   ]);
-  const listedRequestedReport = listedReports.find((report) => report.id === requestedReportId) ?? null;
-  const requestedReport = requestedReportId && !listedRequestedReport
-    ? await getDmpBusinessReport(access, requestedReportId)
-    : listedRequestedReport;
-  const selection = resolveDmpReportPageSelection(listedReports, requestedReportId, requestedReport);
-  if (!selection) notFound();
+  if (requestedReportId && !requestedReport) notFound();
+
+  const pagination = {
+    page: listed.page,
+    pageSize: listed.pageSize,
+    total: listed.total,
+    totalPages: listed.totalPages,
+    hasNext: listed.hasNext
+  };
 
   return (
     <>
-      <PageHeader
-        title="达摩盘一体化报告中心｜少壮AI自动化"
-      />
+      <PageHeader title="达摩盘一体化报告中心｜少壮AI自动化" />
       <DmpReportWorkspace
-        initialReports={selection.reports}
+        initialReports={listed.summaries}
+        initialPagination={pagination}
         initialShops={shopData.shops.map(({ id, name }) => ({ id, name }))}
+        activeShopId={context.shop.id}
         canCreateShop={shopData.canCreate}
-        initialSelectedId={selection.selectedReportId}
+        initialSelectedReport={requestedReport}
         focusReport={query.view === "report"}
       />
     </>

@@ -24,6 +24,8 @@
 
 ## 本地加载
 
+参考图反推需要至少一张参考图和一张商品主体图，图片导入完成后才会提交。同一账号、素材和配置的同时反推共用一次请求；上一轮结束前更换素材或配置，不会追加提交。素材或账号变更后，旧响应和旧错误不会写入当前提示词。
+
 1. 打开 `chrome://extensions/`。
 2. 开启「开发者模式」。
 3. 点「加载已解压的扩展程序」。
@@ -43,10 +45,10 @@
 - 豆包 / 火山方舟：`doubao-seed-evolving` 提词 + Seedream 生图适配器，默认生图模型为 `doubao-seedream-5-0-260128`。
 - ChatGPT / GPT Image 2：OpenAI chat/vision + `gpt-image-2` Images API。
 - Nano Banana / Gemini：Gemini 图片模型 `generateContent` 适配器。
-- 少壮 AI 网关 / OpenAI 兼容：默认走 `https://sub.shaozhuangai.com/v1`，文本模型 `chatGPT5.5`，生图模型 `image2`，也可手动切换为其它 OpenAI-compatible 模型。
+- 少壮 AI 网关 / OpenAI 兼容：默认走 `https://sub.shaozhuangai.com/v1`。配置和候选列表仍显示 `chatGPT5.5`、`image2`；发往官方中转站时分别改写成 `gpt-5.6-sol`、`gpt-image-2`。其它已填写的模型名原样发送。
 - 旧版本若把少壮托管提词模型保存成已失效的 `chatGPT5.6`，工作台会在载入时把 legacy、全局和各账号配置一次性迁移为 `chatGPT5.5`；自建兼容网关不参与该迁移。其他未开通模型会显示可操作的中文 `model_not_found` 提示，不再回显原始 HTTP JSON。
 - 官方托管通道若返回其他文本模型不存在（例如 `GPT-5.6 Luna`），会对当前账号仅重试一次默认 `chatGPT5.5`，成功后写回当前账号；不会改写其他账号或自建网关。图片模型不存在时只返回中文 `image_model_not_found`，不把文本模型当作图片模型回退。
-- 官方少壮文本端点会把误填的 `gpt-5.5` 转为网关别名 `chatGPT5.5`，官方少壮生图端点会把 `gpt-image-2` 转为 `image2`；文本和图片端点分别判断，因此混合使用自建端点时不会误改。托管候选列表仅展示网关别名，`gpt-*` 候选保留给 ChatGPT 直连来源。
+- 官方少壮文本端点会把误填的 `gpt-5.5`、`gpt-5.6-sol`、`chatGPT5.6` 存成网关别名 `chatGPT5.5`，官方少壮生图端点会把 `gpt-image-2` 存成 `image2`。保存后的别名在出站时再改写成中转站模型。文本和图片端点分别判断，因此混合使用自建端点时不会误改。托管候选列表仅展示网关别名，`gpt-*` 候选保留给 ChatGPT 直连来源。
 
 默认按少壮 AI 网关配置：
 

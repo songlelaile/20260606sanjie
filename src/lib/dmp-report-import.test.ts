@@ -523,12 +523,16 @@ describe("DMP JSON 工程文件识别", () => {
     const coverage = overviewMetric("花费覆盖");
     expect(String(coverage?.[1])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-02；缺少2026-08-03；缺失日未按0计入）");
     expect(String(coverage?.[2])).toContain("已返回2/3日（实际2026-08-01 至 2026-08-03；缺少2026-08-02；缺失日未按0计入）");
-    expect(tables[3].rows.map((row) => row.slice(2, 4))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
-    ]);
-    expect(tables[4].rows.slice(1).map((row) => row.slice(1, 3))).toEqual([
-      [30, 70], [0.1, 0.1], [3, 2], [2, 2], [0.333333, 0.285714], [10, 10]
-    ]);
+    const benchmarkPair = (metric: string) => tables[3].rows.find((row) => row[1] === metric)?.slice(2, 4);
+    const basePair = (metric: string) => tables[4].rows.find((row) => row[0] === metric
+      || (metric === "推广消耗" && row[0] === "广告/推广消耗"))?.slice(1, 3);
+    for (const [metric, pair] of [
+      ["推广消耗", [30, 70]], ["费比", [0.1, 0.1]], ["ROI", [3, 2]], ["PPC", [2, 2]],
+      ["关键词消耗占比", [0.333333, 0.285714]], ["全域ROAS", [10, 10]], ["付费金额占比", [0.3, 0.2]]
+    ] as const) {
+      expect(benchmarkPair(metric)).toEqual(pair);
+      expect(basePair(metric)).toEqual(pair);
+    }
   });
 
   it("preserves explicit zero and disclosed intervals while carrying interval formulas into blank cells", () => {
@@ -612,6 +616,90 @@ describe("DMP JSON 工程文件识别", () => {
     const coverage = tables[0].rows.find((row) => row[0] === "花费覆盖");
     expect(String(coverage?.[1])).toContain("已返回2/3日");
     expect(coverage?.[2]).toBe("");
+  });
+
+  it("keeps same-ID subject and competitor period rows isolated by their explicit roles", () => {
+    const itemId = "593063365092";
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [["商品ID", itemId, itemId, ""]]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "推广消耗", "营销推广点击量", "ROI", "PPC"],
+        // 故意把对手放在第一行，证明同 ID 时不会按首个 ID 命中而串值。
+        rows: [
+          [itemId, "目标对手", "200", "80", "20", "10", "", ""],
+          [itemId, "主体", "100", "50", "10", "5", "", ""]
+        ]
+      },
+      {
+        name: "对标总表",
+        columns: ["页面模块", "对标指标", "主体周期值", "对手周期值", "主体相对对手"],
+        rows: []
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: []
+      },
+      {
+        name: "商品与成功品",
+        columns: ["角色", "商品ID", "商品标题", "30日GMV"],
+        rows: [
+          ["主体", itemId, "主体口径", ""],
+          ["目标对手", itemId, "对手口径", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, itemId, itemId, 2);
+
+    const overviewPair = (metric: string) => tables[0].rows.find((row) => row[0] === metric)?.slice(1, 3);
+    expect(overviewPair("总GMV")).toEqual(["100", "200"]);
+    expect(overviewPair("付费成交额")).toEqual(["50", "80"]);
+    expect(overviewPair("推广消耗")).toEqual(["10", "20"]);
+    expect(overviewPair("ROI")).toEqual([5, 4]);
+    expect(overviewPair("PPC")).toEqual([2, 2]);
+    expect(tables[1].rows.map((row) => row.slice(6, 8))).toEqual([[4, 2], [5, 2]]);
+    expect(tables[4].rows.map((row) => row[3])).toEqual(["100", "200"]);
+  });
+
+  it("returns zero PPC only when an interval guarantees a positive paid-click denominator", () => {
+    const tables = [
+      {
+        name: "报告总览",
+        columns: ["项目", "主体", "对手", "范围"],
+        rows: [
+          ["商品ID", "593063365092", "623803508105", ""],
+          ["推广消耗", 0, 0, "2日"],
+          ["PPC", "", "", "2日"]
+        ]
+      },
+      {
+        name: "周期汇总",
+        columns: ["商品ID", "对象", "总GMV", "付费成交额", "推广消耗", "PPC"],
+        rows: [
+          ["593063365092", "主体", "100", "0", 0, ""],
+          ["623803508105", "目标对手", "100", "0", 0, ""]
+        ]
+      },
+      {
+        name: "基础指标对比",
+        columns: ["指标", "主体值", "对手值", "主体相对对手"],
+        rows: [
+          ["营销推广点击量", "<20", ">20", ""],
+          ["PPC", "", "", ""]
+        ]
+      }
+    ];
+
+    reconcileDmpCrossTableMetrics(tables, "593063365092", "623803508105", 2);
+
+    expect(tables[0].rows.find((row) => row[0] === "PPC")?.slice(1, 3)).toEqual(["", 0]);
+    expect(tables[1].rows.map((row) => row[5])).toEqual(["", 0]);
   });
 
   it("does not backfill a requested period when daily total spend is missing more than one day", () => {

@@ -1,0 +1,22 @@
+.sku-template-preview.sku-region-preview { position: relative; min-height: 260px; aspect-ratio: 1 / 1; }
+.sku-region-panel { padding: 10px 0 2px; font-size: 12px; }
+.sku-region-title { margin: 0 0 6px; color: var(--text); font-weight: 650; }
+.sku-region-help { margin: 0 0 9px; color: var(--muted); line-height: 1.6; }
+.sku-region-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.sku-region-actions .btn { min-height: 32px; padding: 6px 9px; font-size: 12px; }
+.sku-region-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 9px 0; }
+.sku-region-fields label { min-width: 0; color: var(--muted); font-size: 11px; }
+.sku-region-fields input { width: 100%; min-width: 0; box-sizing: border-box; margin-top: 4px; padding: 6px; }
+.sku-region-state { color: var(--muted); line-height: 1.6; }
+.sku-region-state.confirmed { color: var(--accent, #8fcf7b); }
+.sku-region-state.invalid { color: #edb57b; }
+.sku-region-overlay { position: absolute; z-index: 2; overflow: hidden; pointer-events: none; }
+.sku-region-overlay[hidden], .sku-region-selection[hidden] { display: none; }
+.sku-region-overlay.is-editing { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.sku-region-selection { position: absolute; box-sizing: border-box; border: 2px solid #f1c75b; box-shadow: 0 0 0 2000px rgba(0, 0, 0, .28); background: rgba(241, 199, 91, .08); pointer-events: none; }
+.sku-region-selection.is-confirmed { border-color: #8fcf7b; background: rgba(143, 207, 123, .06); }
+.sku-region-selection.is-invalid { border-color: #e58f74; }
+.sku-region-selection span { display: block; width: max-content; max-width: 100%; padding: 3px 5px; color: #17231a; background: #f1c75b; font-size: 10px; line-height: 1.3; white-space: nowrap; }
+.sku-region-selection.is-confirmed span { background: #8fcf7b; }
+.sku-task-state.processing_failed,
+.sku-task-state.uncertain { color: var(--danger); border-color: rgba(239,124,103,.45); }

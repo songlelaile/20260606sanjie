@@ -8,6 +8,7 @@ coverage/
 prisma/dev.db
 uploads/
 .claude/
+.codex-deploy/
 private-assets/dmp/*.zip
 
 # macOS

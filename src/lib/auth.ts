@@ -4,8 +4,8 @@
 
 export type Role = "tenant" | "admin";
 
-export const SESSION_COOKIE = "sanjie_session";
-export const ACTIVE_SHOP_COOKIE = "sanjie_active_shop";
+export const SESSION_COOKIE = process.env.SANJIE_SESSION_COOKIE_NAME || "sanjie_session";
+export const ACTIVE_SHOP_COOKIE = process.env.SANJIE_ACTIVE_SHOP_COOKIE_NAME || "sanjie_active_shop";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
 
 export interface Session {
@@ -29,10 +29,10 @@ export const ROLE_HOME: Record<Role, string> = {
 
 /** 每个角色可访问的页面路由前缀。 */
 const ROLE_ALLOWED_PREFIXES: Record<Role, string[]> = {
-  // 租户版：作图/视频工作台、AI 工具和模型网关。
-  tenant: ["/dashboards", "/creative", "/imports", "/prefill", "/tools", "/models", "/shared/dmp-reports"],
+  // 租户版：作图/视频工作台、三阶报告、AI 工具和模型网关。
+  tenant: ["/dashboards", "/reports", "/creative", "/imports", "/prefill", "/tools", "/models", "/profile", "/shared/dmp-reports"],
   // 管理版：在租户版全部功能之上，额外多一个「管理」（及管理后台/版本留痕）。
-  admin: ["/dashboards", "/creative", "/imports", "/prefill", "/tools", "/models", "/management", "/admin", "/versions", "/shared/dmp-reports"]
+  admin: ["/sower-work", "/dashboards", "/reports", "/creative", "/imports", "/prefill", "/tools", "/models", "/profile", "/management", "/admin", "/versions", "/shared/dmp-reports"]
 };
 
 export function canAccess(role: Role, pathname: string): boolean {

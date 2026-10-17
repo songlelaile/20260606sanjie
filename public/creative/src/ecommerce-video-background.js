@@ -46,6 +46,7 @@
     cancelEndpoint: 'https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/{taskId}',
     uploadEndpoint: '',
     providerModels: C ? C.DEFAULT_PROVIDER_MODELS : {
+      'seedance-2.0-mini': 'doubao-seedance-2-0-mini-260615', 'seedance-2.0-fast': 'doubao-seedance-2-0-fast-260128',
       'seedance-2.0': 'doubao-seedance-2-0-260128', 'seedance-2.5': 'doubao-seedance-2-5-260628'
     }
   });
@@ -112,6 +113,34 @@
     config = sanitizeConfig(config || {}, DEFAULT_CONFIG);
     return clone(config);
   }
+  function nativeEndpoint(path) {
+    var origin = root.location && root.location.origin;
+    if (!origin || !/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/.test(origin)) {
+      throw error('PLATFORM_ORIGIN_INVALID', '平台视频必须在当前网站的安全连接中使用。');
+    }
+    return origin + '/api/creative/native-video' + (path || '');
+  }
+  function isNativeConfig(config) {
+    return !!config && config._platformVideo === true && config.provider === 'shaozhuang-native' &&
+      config.createEndpoint === nativeEndpoint('');
+  }
+  function nativeConfig(creds, base) {
+    var cfg = creds && creds.config;
+    if (!cfg || cfg.platformVideo !== true || cfg.provider !== 'shaozhuang-native' || !Array.isArray(cfg.platformModels)) return base;
+    var mappings = { 'seedance-2.0-mini': '', 'seedance-2.0-fast': '', 'seedance-2.0': '', 'seedance-2.5': '' };
+    cfg.platformModels.forEach(function (model) { if (model && Object.prototype.hasOwnProperty.call(mappings, model.id)) mappings[model.id] = model.id; });
+    return Object.assign({}, base, { adapter: 'ark', provider: 'shaozhuang-native', createEndpoint: nativeEndpoint(''),
+      statusEndpoint: nativeEndpoint('/{taskId}'), cancelEndpoint: '', uploadEndpoint: '', providerModels: mappings,
+      _platformVideo: true, _platformModels: clone(cfg.platformModels), _maxBodyBytes: cfg.maxBodyBytes });
+  }
+  function nativeTaskConfig(task) {
+    if (!task || task._platformVideo !== true) return null;
+    var stored = task._dispatchConfig;
+    if (!stored || stored.createEndpoint !== nativeEndpoint('') || stored.statusEndpoint !== nativeEndpoint('/{taskId}') || stored.cancelEndpoint) {
+      throw error('PLATFORM_TASK_BINDING_INVALID', '原视频任务的供应绑定不可用，请先核对原任务。');
+    }
+    return Object.assign({}, stored, { _platformVideo: true });
+  }
   function makeStorage(env) {
     if (env.storageGet && env.storageSet) return { get: env.storageGet, set: env.storageSet };
     var area = env.storage || (env.chrome && env.chrome.storage && env.chrome.storage.local);
@@ -153,6 +182,67 @@
     if (!value) throw error('IDEMPOTENCY_KEY_REQUIRED', '启动或重试任务必须提供 idempotencyKey。');
     return value;
   }
+  // Keep a small diagnostic receipt, never the provider's raw response/request.
+  // Providers sometimes echo authorization headers or signed material URLs in
+  // validation errors, so redact before either displaying or persisting them.
+  function diagnosticText(value, max, secrets) {
+    if (value == null || typeof value === 'object') return '';
+    var output = String(value).slice(0, 40000);
+    (secrets || []).forEach(function (secret) {
+      if (typeof secret === 'string' && secret.length >= 4) {
+        output = output.split(secret).join('[凭据已隐藏]').split(encodeURIComponent(secret)).join('[凭据已隐藏]');
+      }
+    });
+    output = output.replace(/\\\//g, '/').replace(/data:[^\s"'<>]+/gi, '[素材数据已隐藏]')
+      .replace(/(?:[a-z][a-z0-9+.-]*:\/\/|blob:)[^\s"'<>]+/gi, '[链接已隐藏]')
+      .replace(/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, 'Bearer [凭据已隐藏]')
+      .replace(/((?:api[-_ ]?key|authorization|cookie|access[-_ ]?token|token|secret|password)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^\s"'<>;,]+/gi, '$1[凭据已隐藏]')
+      .replace(/\b(?:sk|rk|pk|ak)-[A-Za-z0-9_-]{8,}/g, '[凭据已隐藏]')
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+    return output.slice(0, max || 800);
+  }
+  function safeErrorDetails(details) {
+    details = plain(details) ? details : {};
+    var safe = {};
+    ['providerCode', 'providerMessage', 'providerParam', 'providerRequestId', 'reason', 'reasonCode'].forEach(function (key) {
+      var value = diagnosticText(details[key], key === 'providerMessage' ? 800 : 160);
+      if (value) safe[key] = value;
+    });
+    var status = Number(details.status);
+    if (Number.isInteger(status) && status >= 100 && status <= 599) safe.status = status;
+    var timeoutMs = Number(details.timeoutMs);
+    if (Number.isFinite(timeoutMs) && timeoutMs > 0 && timeoutMs <= 3600000) safe.timeoutMs = timeoutMs;
+    ['stateUncertain', 'providerSubmitted', 'definitiveFailure'].forEach(function (key) {
+      if (typeof details[key] === 'boolean') safe[key] = details[key];
+    });
+    return safe;
+  }
+  function providerDiagnostics(response, body, secrets) {
+    body = plain(body) ? body : {};
+    var nested = plain(body.error) ? body.error : plain(body.data) && plain(body.data.error) ? body.data.error : {};
+    var details = plain(body.details) ? body.details : {};
+    function header(name) {
+      try { return response && response.headers && response.headers.get(name); } catch (_) { return ''; }
+    }
+    return safeErrorDetails({
+      status: response && response.status,
+      providerCode: diagnosticText(nested.code || nested.type || body.error_code || body.errorCode || body.code || details.providerCode, 160, secrets),
+      providerMessage: diagnosticText(nested.message || nested.msg || (typeof body.error === 'string' ? body.error : '') ||
+        body.message || body.data && body.data.message || details.providerMessage, 800, secrets),
+      providerParam: diagnosticText(nested.param || nested.parameter || body.param || body.parameter || details.providerParam, 160, secrets),
+      providerRequestId: diagnosticText(nested.request_id || nested.requestId || body.request_id || body.requestId ||
+        body.data && (body.data.request_id || body.data.requestId) || details.providerRequestId ||
+        header('x-request-id') || header('request-id') || header('x-tt-logid'), 160, secrets)
+    });
+  }
+  function providerFailureMessage(prefix, details) {
+    var parts = [prefix];
+    if (details.providerMessage) parts.push(details.providerMessage);
+    if (details.providerCode) parts.push('错误码：' + details.providerCode);
+    if (details.providerParam) parts.push('参数：' + details.providerParam);
+    if (details.providerRequestId) parts.push('请求 ID：' + details.providerRequestId);
+    return parts.join('；').slice(0, 1600);
+  }
   function responseError(cause, type, requestId) {
     return {
       ok: false,
@@ -160,7 +250,7 @@
       payload: {
         schemaVersion: 1,
         requestId: requestId || '',
-        error: { code: cause && cause.code || 'VIDEO_STUDIO_ERROR', message: text(cause && cause.message || cause, 800), details: cause && cause.details }
+        error: { code: diagnosticText(cause && cause.code || 'VIDEO_STUDIO_ERROR', 160), message: diagnosticText(cause && cause.message || cause, 1600), details: cause && cause.details }
       }
     };
   }
@@ -183,15 +273,110 @@
     if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
     return headers;
   }
-  async function parseResponse(response) {
+  // Reserve each shot before dispatch. A successful or unresolved attempt keeps
+  // its reservation even when the user later discards the generated clip.
+  function productionGuard(raw, request) {
+    if (raw == null) return null;
+    if (!plain(raw)) throw error('PRODUCTION_INVALID', '镜头预算信息无效。');
+    var planId = text(raw.planId, 180); var shotId = text(raw.shotId, 100);
+    var budget = Number(raw.budgetYuan); var attempt = Number(raw.attempt);
+    var maxAttempts = Number(raw.maxAttempts);
+    if (!/^[A-Za-z0-9_.:-]+$/.test(planId) || !/^[A-Za-z0-9_.:-]+$/.test(shotId) ||
+        !Number.isFinite(budget) || budget <= 0 || budget > 10000 ||
+        !Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 2 ||
+        !Number.isInteger(attempt) || attempt < 1 || attempt > maxAttempts) {
+      throw error('PRODUCTION_INVALID', '预算必须为正数，每镜最多提交两次。');
+    }
+    if (request.durationSeconds !== 5 || request.videos.length || request.audios.length) {
+      throw error('PRODUCTION_QUOTE_UNSUPPORTED', '分镜预算目前仅支持 5 秒且无音视频参考的镜头。');
+    }
+    var rates = {
+      'seedance-2.0-mini': { '480p': 1.16, '720p': 2.48 },
+      'seedance-2.0-fast': { '480p': 1.86, '720p': 4.00 },
+      'seedance-2.0': { '480p': 2.31, '720p': 4.97, '1080p': 12.39, '4k': 25.27 },
+      'seedance-2.5': { '480p': 3.36, '720p': 7.56, '1080p': 18.71 }
+    };
+    var quote = rates[request.productKey] && rates[request.productKey][request.resolution];
+    if (!quote) throw error('PRODUCTION_QUOTE_UNSUPPORTED', '该模型或分辨率尚无已核验的镜头预算。');
+    return { planId: planId, shotId: shotId, attempt: attempt, maxAttempts: maxAttempts,
+      budgetYuan: Math.round(budget * 100) / 100, estimatedYuan: quote,
+      reservedYuan: Math.ceil(quote * 110) / 100,
+      priceVersion: request.productKey === 'seedance-2.0-fast' ? 'volcengine-list-2026-10-10-fast-no-ref-' + request.resolution : 'ark-list-20261009' };
+  }
+  function assertProductionBudget(b, production) {
+    if (!production) return;
+    var tasks = Object.keys(b.tasks).map(function (key) { return b.tasks[key]; }).filter(function (task) {
+      return task.production && task.production.planId === production.planId;
+    });
+    var attempts = tasks.filter(function (task) { return task.production.shotId === production.shotId; });
+    if (tasks.some(function (task) { return task.production.budgetYuan !== production.budgetYuan ||
+        task.production.maxAttempts !== production.maxAttempts; })) {
+      throw error('PRODUCTION_BUDGET_CONFLICT', '已开始计划的预算与重试上限不能被隐式修改。');
+    }
+    if (attempts.length >= production.maxAttempts || production.attempt !== attempts.length + 1) {
+      throw error('PRODUCTION_ATTEMPT_LIMIT', '该镜头已达到提交次数上限。');
+    }
+    if (attempts.some(function (task) { return task.status !== 'failed' && task.status !== 'cancelled'; })) {
+      throw error('PRODUCTION_SHOT_EXISTS', '镜头已有完成或待核对的任务，请复用结果或查询原任务。');
+    }
+    var reservedCents = tasks.reduce(function (sum, task) {
+      var actual = task.production.actualCostYuan;
+      var committed = actual != null && Number.isFinite(Number(actual)) && Number(actual) >= 0
+        ? Number(actual) : Number(task.production.reservedYuan);
+      return sum + (task.status === 'failed' || task.status === 'cancelled' ? 0 : Math.round(committed * 100));
+    }, 0);
+    if (reservedCents + Math.round(production.reservedYuan * 100) > Math.round(production.budgetYuan * 100)) {
+      throw error('PRODUCTION_BUDGET_EXCEEDED', '本次提交将超过计划估算预算，已停止后续生成；实际结算以回执为准。', { reservedYuan: reservedCents / 100, nextReservedYuan: production.reservedYuan });
+    }
+  }
+  function uncertainCreate(message, details) {
+    return error('PROVIDER_CREATE_UNCERTAIN', message + ' 任务可能已被接收，请核对原任务，勿重复提交。',
+      Object.assign({}, details || {}, { stateUncertain: true }));
+  }
+  function submissionUncertain(task) {
+    return !!task && (task._submissionUncertain === true || task.errorCode === 'PROVIDER_CREATE_UNCERTAIN' ||
+      task.errorCode === 'PROVIDER_CREATE_TIMEOUT' || task.errorCode === 'RUNTIME_TIMEOUT');
+  }
+  async function parseResponse(response, creating, nativeLocal, secrets) {
     var body = null;
+    var textResponse = response;
+    try { if (typeof response.clone === 'function') textResponse = response.clone(); } catch (_) {}
     try { body = await response.json(); } catch (_) {
-      try { body = { message: text(await response.text(), 500) }; } catch (_) { body = {}; }
+      try { body = { message: diagnosticText(await textResponse.text(), 800, secrets) }; } catch (_) { body = {}; }
+      if (creating) {
+        var invalidDetails = Object.assign(providerDiagnostics(response, body, secrets), { reason: 'invalid_json' });
+        throw uncertainCreate(providerFailureMessage('视频创建返回了无法核验的回执（HTTP ' + response.status + '）。', invalidDetails), invalidDetails);
+      }
     }
     if (!response.ok) {
-      throw error('PROVIDER_HTTP_ERROR', '视频供应商请求失败（HTTP ' + response.status + '）。', {
-        status: response.status, providerCode: text(body && (body.code || body.error && body.error.code), 100)
-      });
+      var diagnostic = providerDiagnostics(response, body, secrets);
+      var nativeNotSubmitted = nativeLocal === true && response.headers &&
+        response.headers.get('X-Sanjie-Provider-Submission') === 'not-submitted' && body &&
+        ((response.status === 503 && ['NATIVE_VIDEO_NOT_CONFIGURED', 'NATIVE_VIDEO_MODEL_UNAVAILABLE'].indexOf(body.code) >= 0) ||
+          (response.status === 409 && body.code === 'CREATIVE_ACCOUNT_CHANGED') ||
+          ([400, 401, 402, 403, 413, 429, 503].indexOf(response.status) >= 0 && body.code === 'NATIVE_VIDEO_REQUEST_NOT_SUBMITTED'));
+      if (creating && (response.szCreativeProxyNotSubmitted === true || nativeNotSubmitted) && body &&
+          (nativeNotSubmitted ||
+          ((response.status === 503 && ['CREATIVE_SUPPLY_NOT_CONFIGURED', 'CREATIVE_SUPPLY_UNAVAILABLE'].indexOf(body.code) >= 0) ||
+            (response.status === 409 && body.code === 'CREATIVE_ACCOUNT_CHANGED') ||
+            ([400, 401, 402, 403, 404, 413, 429, 502, 503].indexOf(response.status) >= 0 && body.code === 'CREATIVE_REQUEST_NOT_SUBMITTED'))) &&
+          body.providerSubmitted === false && body.definitiveFailure === true) {
+        if (nativeNotSubmitted && response.status === 402 && body.code === 'NATIVE_VIDEO_REQUEST_NOT_SUBMITTED' &&
+            body.reasonCode === 'INSUFFICIENT_BALANCE' && root.SZ_WEB_SUPPLY &&
+            typeof root.SZ_WEB_SUPPLY.showCreditPurchasePrompt === 'function') {
+          try { root.SZ_WEB_SUPPLY.showCreditPurchasePrompt(); } catch (_) {}
+        }
+        throw error(body.code, body.code === 'CREATIVE_ACCOUNT_CHANGED' ? '登录账号已变更，本次未提交，请回到原账号后重试。' :
+          providerFailureMessage('平台视频本次未提交（HTTP ' + response.status + '），请处理提示后重试。', diagnostic), Object.assign({}, diagnostic, {
+          status: response.status, reasonCode: diagnosticText(body.reasonCode, 100, secrets), providerSubmitted: false, definitiveFailure: true, stateUncertain: false
+        }));
+      }
+      if (creating && (nativeLocal === true || response.status === 408 || response.status === 409 || response.status >= 500)) {
+        throw uncertainCreate(providerFailureMessage('视频创建回执仍需核对（HTTP ' + response.status + '）。', diagnostic), Object.assign({}, diagnostic, {
+          status: response.status, reason: response.status === 408 ? 'request_timeout' : response.status === 409 ? 'unverified_conflict' : 'server_error'
+        }));
+      }
+      throw error('PROVIDER_HTTP_ERROR', providerFailureMessage('视频供应商请求失败（HTTP ' + response.status + '）。', diagnostic), diagnostic);
     }
     return body || {};
   }
@@ -257,14 +442,14 @@
     var number = Number(value);
     return Number.isFinite(number) && number >= 0 && number <= 100 ? Math.round(number * 100) / 100 : null;
   }
-  function providerErrorCode(body) {
-    return text(body && (body.error_code || body.errorCode || body.code
+  function providerErrorCode(body, secrets) {
+    return diagnosticText(body && (body.error_code || body.errorCode || body.code
       || body.error && (body.error.code || body.error.type)
-      || body.data && (body.data.error_code || body.data.errorCode || body.data.code)), 160);
+      || body.data && (body.data.error_code || body.data.errorCode || body.data.code)), 160, secrets);
   }
-  function providerMessage(body) {
-    return text(body && (body.message || body.error && (body.error.message || body.error.msg)
-      || body.data && (body.data.message || body.data.error && (body.data.error.message || body.data.error.msg))), 500);
+  function providerMessage(body, secrets) {
+    return diagnosticText(body && (body.message || (typeof body.error === 'string' ? body.error : body.error && (body.error.message || body.error.msg))
+      || body.data && (body.data.message || body.data.error && (body.data.error.message || body.data.error.msg))), 800, secrets);
   }
   function collectResultUrls(body) {
     var candidates = [];
@@ -274,7 +459,9 @@
       else if (value && typeof value === 'object') add(value.url || value.video_url || value.videoUrl);
     }
     add(body && body.video_url); add(body && body.videoUrl); add(body && body.result_url);
+    add(body && body.video);
     add(body && body.content); add(body && body.output); add(body && body.result);
+    add(body && body.data && body.data.video);
     add(body && body.data && (body.data.content || body.data.output || body.data.result || body.data.video_url));
     var seen = Object.create(null);
     return candidates.map(function (value) { return C.validRemoteAssetUrl(value); }).filter(function (value) {
@@ -382,33 +569,65 @@
     var startInflight = new Map();
     var pollInflight = new Map();
     var cancelInflight = new Map();
+    var nativeCreditPhases = new Map();
+
+    function notifyNativeVideoCreditsChanged(task) {
+      if (!task || task._platformVideo !== true) return;
+      var phase = task._submissionUncertain === true ? 'uncertain'
+        : task.providerTaskId ? (C.isTerminal(task.status) ? task.status : 'reserved') : '';
+      if (!phase) return;
+      var key = JSON.stringify([task.accountKey, task.taskId, task.generation]);
+      if (nativeCreditPhases.get(key) === phase) return;
+      nativeCreditPhases.set(key, phase);
+      // Refresh the signed-in account from the server; never infer a balance from a task quote.
+      function notify(target) {
+        try { target.dispatchEvent(new target.Event('sanjie:credits-changed')); } catch (_) {}
+      }
+      notify(root);
+      try { if (root.parent && root.parent !== root) notify(root.parent); } catch (_) {}
+    }
 
     function serial(fn) {
-      var next = mutationTail.then(fn, fn);
+      function locked() {
+        if (typeof env.withMutationLock === 'function') return env.withMutationLock(fn);
+        if (root.navigator && root.navigator.locks && typeof root.navigator.locks.request === 'function') {
+          return root.navigator.locks.request('sz-ecommerce-video-task-mutation', fn);
+        }
+        return fn();
+      }
+      var next = mutationTail.then(locked, locked);
       mutationTail = next.catch(function () {});
       return next;
     }
     async function resolveAccount(sender) {
       var resolved;
       if (typeof env.resolveAccountKey === 'function') resolved = await env.resolveAccountKey({ sender: sender });
-      else if (typeof root.resolveUnifiedConfigReference === 'function') resolved = await root.resolveUnifiedConfigReference({});
+      else if (typeof root.resolveUnifiedConfigReference === 'function') resolved = await root.resolveUnifiedConfigReference({ purpose: 'account' });
       else if (typeof root.authCheck === 'function') resolved = await root.authCheck();
       var key = accountFrom(resolved);
       if (!key) throw error('ACCOUNT_UNAVAILABLE', '无法确定当前登录账号，已阻止跨账号读写。');
       return key;
     }
-    async function credentials(accountKey, provider) {
+    async function credentials(accountKey, provider, purpose) {
       var resolved;
-      if (typeof env.resolveCredentials === 'function') resolved = await env.resolveCredentials({ accountKey: accountKey, provider: provider });
-      else if (typeof root.resolveUnifiedConfigReference === 'function') resolved = await root.resolveUnifiedConfigReference({ accountKey: accountKey, provider: provider });
+      var reference = { accountKey: accountKey, provider: provider };
+      if (purpose) reference.purpose = purpose;
+      if (typeof env.resolveCredentials === 'function') resolved = await env.resolveCredentials(reference);
+      else if (typeof root.resolveUnifiedConfigReference === 'function') resolved = await root.resolveUnifiedConfigReference(reference);
       else throw error('CREDENTIAL_RESOLVER_UNAVAILABLE', '统一 API 配置解析器未加载。');
       if (resolved && resolved.ok === false) throw error(resolved.code || 'CREDENTIALS_UNAVAILABLE', resolved.error || '当前账号的 API 配置不可用。');
       var returnedAccount = accountFrom(resolved);
       if (returnedAccount && returnedAccount !== accountKey) throw error('ACCOUNT_CHANGED', '解析 API 配置时账号已变更。');
       var cfg = resolved && resolved.config || resolved || {};
       var apiKey = text(cfg.apiKey || cfg.key, 1000);
-      if (!apiKey) throw error('CREDENTIALS_UNAVAILABLE', '当前账号未配置视频供应商 API Key。');
-      return { apiKey: apiKey, config: cfg };
+      var analysisBase = text(cfg.visionBaseUrl || cfg.baseURL, 2048).replace(/\/+$/, '');
+      var analysisEndpoint = /\/chat\/completions$/.test(analysisBase) ? analysisBase : analysisBase + '/chat/completions';
+      var hostedAnalysis = purpose === 'analysis' && !apiKey && root.SZ_WEB_SUPPLY &&
+        typeof root.SZ_WEB_SUPPLY.usesServerCredentials === 'function' && root.SZ_WEB_SUPPLY.usesServerCredentials(analysisEndpoint);
+      var hostedVideo = purpose !== 'analysis' && cfg.platformVideo === true && cfg.provider === 'shaozhuang-native';
+      if (hostedAnalysis || hostedVideo) apiKey = '';
+      else if (!apiKey) throw error('CREDENTIALS_UNAVAILABLE', '当前账号未配置视频供应商 API Key。');
+      return { apiKey: apiKey, config: cfg, accountKey: accountKey };
     }
     async function readConfigRoot() {
       var raw = unwrapStored(await storage.get(CONFIG_KEY), CONFIG_KEY);
@@ -416,7 +635,12 @@
     }
     async function getConfigFor(accountKey) {
       var rootConfig = await readConfigRoot();
-      return sanitizeConfig(rootConfig.accounts[accountKey] || {}, DEFAULT_CONFIG);
+      var saved = sanitizeConfig(rootConfig.accounts[accountKey] || {}, DEFAULT_CONFIG);
+      try { return nativeConfig(await credentials(accountKey, saved.provider), saved); }
+      catch (cause) {
+        if (cause && ['ACCOUNT_CHANGED', 'ACCOUNT_UNAVAILABLE'].indexOf(cause.code) >= 0) throw cause;
+        return saved;
+      }
     }
     async function saveConfigFor(accountKey, patch) {
       return serial(async function () {
@@ -485,16 +709,18 @@
       return 'data:' + (blob.type || 'application/octet-stream') + ';base64,' + encoded;
     }
     function analysisPrompt(request) {
+      var timelineSeconds = request.productionTimelineSeconds || request.durationSeconds;
       return [
-        '你是生成视频编导。请根据用户需求与获授权素材，输出可编辑的 ' + request.durationSeconds + ' 秒分镜脚本。',
+        '你是生成视频编导。请根据用户需求与获授权素材，输出可编辑的 ' + timelineSeconds + ' 秒分镜脚本。',
         '模式：' + request.mode + '；创作目标：' + (request.goal || '无') + '；补充要求：' + (request.supplementalRequirements || '无') + '。',
         creativeContext(request, true),
         request.mode === 'remix' ? '参考视频只用于节奏与结构重构，不得复制第三方品牌、人脸、受保护表达或未授权素材。' : '',
         request.audioMode === 'narration'
           ? '需要口播；把所有可发声的对话/口播句用中文双引号标出。'
-          : (request.audioMode === 'sound_only' ? '只需音效/BGM，脚本不得包含口播或对话。' : '全程无声，脚本不得包含口播或对话。'),
+          : (request.audioMode === 'sound_only' ? '只需音效/BGM，各分镜 narration 保持为空。' : '静音模式：各分镜 narration 保持为空，画面脚本可保留台词上下文，成片不加入声音。'),
+        request.productionTimelineSeconds ? '这是完整成片的确认时间轴；不得把时间轴缩短为单次供应商视频任务的时长。画面必须执行连续动作，上传音频仅作参考，最终口播按确认台词重新配音。' : '',
         '只输出 JSON 对象：{"creativeSummary":"...","script":"...","storyboard":[{"id":"shot-1","order":1,"startSecond":0,"endSecond":1,"durationSeconds":1,"visual":"...","narration":"","composition":"...","camera":"...","motion":"...","rhythm":"...","audioRole":"...","reconstructionIntent":"..."}]}。',
-        'storyboard 编辑时间轴之和必须等于 ' + request.durationSeconds + '；script 必须是可直接确认修改的完整生成提示。时间轴是编排目标，不得承诺供应商逐秒或帧级复现。参考重构只能依据按时间排序的关键帧重构静态视觉结构与镜头顺序；运镜、连续动作和声音必须为目标商品重新设计，不能声称从关键帧提取，也不能照抄参考内容。'
+        'storyboard 编辑时间轴之和必须等于 ' + timelineSeconds + '；script 必须是可直接确认修改的完整生成提示。时间轴是编排目标，不得承诺供应商逐秒或帧级复现。参考重构只能依据按时间排序的关键帧重构静态视觉结构与镜头顺序；运镜、连续动作和声音必须为目标商品重新设计，不能声称从关键帧提取，也不能照抄参考内容。'
       ].filter(Boolean).join('\n');
     }
     function parseAnalysisJson(value, durationSeconds) {
@@ -516,7 +742,7 @@
       };
     }
     async function defaultAnalyze(request, accountKey, provider) {
-      var creds = await credentials(accountKey, provider);
+      var creds = await credentials(accountKey, provider, 'analysis');
       var cfg = creds.config || {}; var base = text(cfg.visionBaseUrl || cfg.baseURL, 2048).replace(/\/+$/, '');
       var model = text(cfg.visionModel || cfg.textModel, 220);
       if (!base || !model) throw error('ANALYZER_CONFIG_INVALID', '当前账号的统一 API 配置缺少视觉/文本端点或模型。');
@@ -547,20 +773,28 @@
         code: 'ANALYSIS_TIMEOUT',
         message: '分析模型响应超时，本次分析状态未确认；系统不会自动重复请求。'
       }, async function analyzeRequest(signal) {
+        // Material reads can outlive the signed-in account that selected them.
+        // Re-check before sending their bytes and before returning the result.
+        await credentials(accountKey, provider, 'analysis');
         var response = await env.fetch(chatEndpoint, {
-          method: 'POST', headers: jsonHeaders(creds.apiKey), cache: 'no-store', signal: signal,
+          method: 'POST', headers: jsonHeaders(creds.apiKey), cache: 'no-store', signal: signal, szExpectedAccount: accountKey,
           body: JSON.stringify({ model: model, messages: [{ role: 'system', content: '只输出符合要求的合法 JSON。' }, { role: 'user', content: parts }], temperature: 0.2 })
         });
-        return parseResponse(response);
+        var parsed = await parseResponse(response, false, false, [creds.apiKey]);
+        await credentials(accountKey, provider, 'analysis');
+        return parsed;
       });
       var content = body && body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content;
-      return parseAnalysisJson(content, request.durationSeconds);
+      return parseAnalysisJson(content, request.productionTimelineSeconds || request.durationSeconds);
     }
-    async function resolveAssets(request, adapter) {
+    async function resolveAssets(request, adapter, platformVideo) {
       var groups = { images: [], videos: [], audios: [] };
       for (var g of ['images', 'videos', 'audios']) {
         for (var asset of request[g]) {
-          if (asset.remoteUrl) groups[g].push(asset);
+          if (asset.remoteUrl) {
+            if (platformVideo && /^asset:/i.test(asset.remoteUrl)) throw error('NATIVE_VIDEO_ASSET_UNSUPPORTED', '平台视频仅接受 HTTPS 素材地址，不支持未绑定当前账号的供应商素材编号。');
+            groups[g].push(asset);
+          }
           else {
             var local = await readLocal(asset);
             if (adapter === 'ark') {
@@ -578,7 +812,7 @@
                 groups[g].push(Object.assign({}, asset, { storageRef: null, remoteUrl: dataUrl }));
                 continue;
               }
-              throw error('LOCAL_ASSET_UPLOAD_REQUIRED', 'Ark 视频输入只接受公网 HTTPS/asset:// URL；请先通过 Assets/VOD/TOS 上传本地视频。');
+              throw error('LOCAL_ASSET_UPLOAD_REQUIRED', platformVideo ? '平台视频的生成参考视频需要可访问的 HTTPS 地址；本地视频可用于参考重构的关键帧分析，不能直接上传给生成供应。' : 'Ark 视频输入只接受公网 HTTPS/asset:// URL；请先通过 Assets/VOD/TOS 上传本地视频。');
             } else groups[g].push(local);
           }
         }
@@ -587,19 +821,35 @@
     }
     async function adapterCreate(config, creds, request, model, idemKey) {
       if (typeof env.fetch !== 'function') throw error('FETCH_UNAVAILABLE', '后台 fetch 不可用。');
-      var assets = await resolveAssets(request, config.adapter);
+      var assets = await resolveAssets(request, config.adapter, isNativeConfig(config));
+      var refreshedCredentials = await credentials(creds.accountKey, config.provider);
+      if (isNativeConfig(config) !== (refreshedCredentials.config.platformVideo === true)) {
+        throw error('PLATFORM_VIDEO_CONFIG_CHANGED', '视频供应配置已变化，本次尚未提交，请重新核对方案。', { providerSubmitted: false, definitiveFailure: true });
+      }
+      creds = refreshedCredentials;
       var requestInit;
       if (config.adapter === 'ark') {
-        var serializedArkBody = JSON.stringify(arkBody(request, model, assets));
+        var body = arkBody(request, model, assets);
+        var native = isNativeConfig(config);
+        if (native) {
+          var allowed = (config._platformModels || []).find(function (item) { return item.id === request.productKey; });
+          if (!allowed || allowed.durations.indexOf(request.durationSeconds) < 0 || allowed.resolutions.indexOf(request.resolution) < 0 ||
+              allowed.ratios.indexOf(request.ratio) < 0 || (request.generateSound === true && allowed.generateAudio !== true)) {
+            throw error('PLATFORM_VIDEO_PARAMETERS_UNAVAILABLE', '平台视频供应不支持当前模型、时长、尺寸或声音组合，请重新选择。');
+          }
+          body.model = request.productKey; body.expectedAccount = creds.accountKey;
+        }
+        var serializedArkBody = JSON.stringify(body);
         var arkBytes = typeof TextEncoder !== 'undefined'
           ? new TextEncoder().encode(serializedArkBody).byteLength
           : (typeof Buffer !== 'undefined' ? Buffer.byteLength(serializedArkBody, 'utf8') : serializedArkBody.length * 3);
-        if (arkBytes >= ARK_LIMITS.bodyBytes) {
-          throw error('ARK_REQUEST_TOO_LARGE', 'Ark 创建请求体必须小于 64MB。', { bodyBytes: arkBytes, limitBytes: ARK_LIMITS.bodyBytes });
+        var bodyLimit = native ? Math.min(24 * 1024 * 1024, Number(config._maxBodyBytes) || 24 * 1024 * 1024) : ARK_LIMITS.bodyBytes;
+        if (arkBytes >= bodyLimit) {
+          throw error('ARK_REQUEST_TOO_LARGE', '视频请求素材超过当前供应大小限制，请缩小素材后重新核对。', { bodyBytes: arkBytes, limitBytes: bodyLimit });
         }
         requestInit = {
-          method: 'POST', headers: jsonHeaders(creds.apiKey, idemKey),
-          body: serializedArkBody, cache: 'no-store'
+          method: 'POST', headers: jsonHeaders(native ? '' : creds.apiKey, idemKey),
+          body: serializedArkBody, cache: 'no-store', credentials: native ? 'same-origin' : undefined
         };
       } else {
         var form = new FormData();
@@ -633,25 +883,42 @@
         stateUncertain: true
       }, async function createRequest(signal) {
         requestInit.signal = signal;
-        return parseResponse(await env.fetch(config.createEndpoint, requestInit));
+        var response;
+        try { response = await env.fetch(config.createEndpoint, requestInit); }
+        catch (_) { throw uncertainCreate('视频创建连接中断，未收到可核验回执。', { reason: 'network_error' }); }
+        return parseResponse(response, true, isNativeConfig(config), [creds.apiKey]);
       });
       var remoteId = providerTaskId(body);
-      if (!remoteId) throw error('PROVIDER_TASK_ID_MISSING', '供应商未返回稳定任务 ID，不能伪造成功。');
-      return { providerTaskId: remoteId, body: body };
+      if (!remoteId) throw uncertainCreate('供应商未返回稳定任务 ID。', { reason: 'task_id_missing' });
+      if (await resolveAccount() !== creds.accountKey) throw uncertainCreate('视频提交后登录账号已变化，请回到原账号核对任务。', { reason: 'account_changed_after_submission' });
+      return { providerTaskId: remoteId, body: body, message: providerMessage(body, [creds.apiKey]), errorCode: providerErrorCode(body, [creds.apiKey]) };
     }
     async function adapterStatus(config, creds, task) {
+      var diagnostics = {};
       var body = await requestWithDeadline(env, {
         envKey: 'statusTimeoutMs',
         fallbackMs: REQUEST_TIMEOUT_MS.status,
         code: 'PROVIDER_STATUS_TIMEOUT',
         message: '视频供应商状态查询超时，任务状态保持不变。'
       }, async function statusRequest(signal) {
-        return parseResponse(await env.fetch(statusUrl(config, task.providerTaskId), {
-          method: 'GET', headers: jsonHeaders(creds.apiKey), cache: 'no-store', signal: signal
-        }));
+        var headers = isNativeConfig(config) ? { 'X-Sanjie-Expected-Account': task.accountKey } : jsonHeaders(creds.apiKey);
+        var response = await env.fetch(statusUrl(config, task.providerTaskId), {
+          method: 'GET', headers: headers, cache: 'no-store', signal: signal, credentials: isNativeConfig(config) ? 'same-origin' : undefined
+        });
+        var parsed = await parseResponse(response, false, false, [creds.apiKey]);
+        diagnostics = providerDiagnostics(response, parsed, [creds.apiKey]);
+        return parsed;
       });
+      var protectedNativeUrl = '';
+      if (isNativeConfig(config)) {
+        if (await resolveAccount() !== task.accountKey) throw error('ACCOUNT_CHANGED', '视频查询后登录账号已变化，请回到原账号核对任务。');
+        var nativeUrl = body && body.content && body.content.video_url;
+        if (typeof nativeUrl === 'string' && nativeUrl === '/api/creative/native-video/' + encodeURIComponent(task.providerTaskId) + '/content') {
+          protectedNativeUrl = nativeEndpoint('/' + encodeURIComponent(task.providerTaskId) + '/content');
+        }
+      }
       var providerState = statusValue(body); var state = canonicalProviderStatus(providerState);
-      var urls = collectResultUrls(body);
+      var urls = isNativeConfig(config) ? (protectedNativeUrl ? [protectedNativeUrl] : []) : collectResultUrls(body);
       if (state === 'succeeded' && !urls.length) {
         throw error('PROVIDER_RESULT_MISSING', '供应商报告完成，但未返回可验证的结果 URL。');
       }
@@ -659,8 +926,9 @@
         status: state,
         providerState: providerState,
         resultUrls: urls,
-        message: providerMessage(body),
-        errorCode: providerErrorCode(body),
+        message: state === 'failed' ? providerFailureMessage('视频供应商任务失败。', diagnostics) : providerMessage(body, [creds.apiKey]),
+        errorCode: providerErrorCode(body, [creds.apiKey]),
+        errorDetails: diagnostics,
         progress: providerProgress(body)
       };
     }
@@ -676,36 +944,60 @@
         return parseResponse(await env.fetch(cancelUrl(config, task.providerTaskId), {
           method: config.adapter === 'ark' ? 'DELETE' : 'POST', headers: jsonHeaders(creds.apiKey),
           body: config.adapter === 'ark' ? undefined : '{}', cache: 'no-store', signal: signal
-        }));
+        }), false, false, [creds.apiKey]);
       });
       return true;
     }
     async function submitExisting(accountKey, localTaskId, idemKey, config, model) {
       var capture = await mutateTask(accountKey, localTaskId, function (task) {
         task = C.transitionTask(task, 'submitting', { now: nowFrom(env) });
-        task.phase = 'provider_create'; task.error = ''; task.errorCode = ''; return task;
+        task.phase = 'provider_create'; task.error = ''; task.errorCode = ''; task.errorDetails = {}; return task;
       });
+      var accepted = null;
       try {
         var creds = await credentials(accountKey, config.provider);
         var created = await adapterCreate(config, creds, capture._request, model, idemKey);
-        return await mutateTask(accountKey, localTaskId, function (task) {
+        accepted = created;
+        var submitted = await mutateTask(accountKey, localTaskId, function (task) {
           if (task.generation !== capture.generation || task.status !== 'submitting') return task;
           task = C.transitionTask(task, 'processing', { now: nowFrom(env) });
           task.providerTaskId = created.providerTaskId; task.phase = 'provider_processing';
           task.providerState = statusValue(created.body);
           var createdProgress = providerProgress(created.body);
           if (createdProgress !== null) task.progress = createdProgress;
-          task.message = providerMessage(created.body);
-          task.errorCode = providerErrorCode(created.body);
+          task.message = created.message;
+          task.errorCode = created.errorCode;
+          if (created.body && created.body.stateUncertain === true) {
+            task._submissionUncertain = true; task.phase = 'provider_create_unknown';
+            task.message = '视频提交状态待核对，正在保留原任务查询；请勿重复生成。';
+          }
           task.submittedAt = nowFrom(env); return task;
         });
+        notifyNativeVideoCreditsChanged(submitted);
+        return submitted;
       } catch (cause) {
+        if (accepted && !(cause && cause.details && cause.details.stateUncertain === true)) {
+          cause = uncertainCreate('视频已提交，但保存回执失败。', { providerTaskId: accepted.providerTaskId });
+        }
         var failedTask = await mutateTask(accountKey, localTaskId, function (task) {
           if (task.generation !== capture.generation || task.status !== 'submitting') return task;
+          if (cause && cause.details && cause.details.stateUncertain === true) {
+            task._submissionUncertain = true;
+            task = C.transitionTask(task, 'unknown', { now: nowFrom(env) });
+            task.stateUncertain = true;
+            if (accepted && accepted.providerTaskId) task.providerTaskId = accepted.providerTaskId;
+            task.errorCode = diagnosticText(cause.code || 'PROVIDER_CREATE_UNCERTAIN', 160); task.error = diagnosticText(cause.message, 1600);
+            task.errorDetails = safeErrorDetails(cause.details);
+            task.phase = 'provider_create_unknown'; task.message = task.error; task.updatedAt = nowFrom(env);
+            return task;
+          }
           task = C.transitionTask(task, 'failed', { now: nowFrom(env) });
-          task.errorCode = cause && cause.code || 'PROVIDER_CREATE_FAILED'; task.error = text(cause && cause.message, 500);
+          if (task.production) task.production.reservationReleased = true;
+          task.errorCode = diagnosticText(cause && cause.code || 'PROVIDER_CREATE_FAILED', 160); task.error = diagnosticText(cause && cause.message, 1600);
+          task.errorDetails = safeErrorDetails(cause && cause.details);
           task.phase = 'failed'; task.finishedAt = nowFrom(env); return task;
         }).catch(function () { return null; });
+        notifyNativeVideoCreditsChanged(failedTask);
         if (failedTask && cause && typeof cause === 'object') {
           var causeDetails = plain(cause.details) ? clone(cause.details) : {};
           causeDetails.task = C.publicTask(failedTask);
@@ -719,16 +1011,26 @@
       var inflightKey = accountKey + ':' + C.fingerprint(idemKey, 'idem_');
       if (startInflight.has(inflightKey)) return startInflight.get(inflightKey);
       var promise = (async function () {
+        var dispatchStarted = false;
+        try {
         var requestBody = message.request || (plain(message.payload) && !message.payload.schemaVersion ? message.payload : message);
         var request = C.normalizeRequest(requestBody, { stage: 'submit' });
+        var production = productionGuard(message.production, request);
         var config = await getConfigFor(accountKey); var model = C.resolveModel(request.productKey, config.providerModels);
-        var requestFingerprint = C.fingerprint(request); var idemFingerprint = C.fingerprint(idemKey, 'idem_');
+        var requestFingerprint = C.fingerprint(production ? { request: request, production: production } : request);
+        var idemFingerprint = C.fingerprint(idemKey, 'idem_');
         var created = await serial(async function () {
           var state = await readTaskRoot(); var b = bucket(state, accountKey); var prior = b.idempotency[idemFingerprint];
           if (prior) {
             if (prior.requestFingerprint !== requestFingerprint) throw error('IDEMPOTENCY_CONFLICT', '同一 idempotencyKey 已绑定不同请求。');
             return { existing: true, task: clone(b.tasks[prior.taskId]) };
           }
+          var unresolved = Object.keys(b.tasks).map(function (key) { return b.tasks[key]; }).find(function (task) {
+            return (submissionUncertain(task) || (task.status === 'submitting' && !task.providerTaskId)) &&
+              C.stableStringify(task._request) === C.stableStringify(request);
+          });
+          if (unresolved) throw uncertainCreate('相同内容的原任务仍待核对，不能换请求标识重发。', { task: C.publicTask(unresolved) });
+          assertProductionBudget(b, production);
           var timestamp = nowFrom(env); var localId = taskId(env);
           var task = {
             schemaVersion: C.TASK_SCHEMA_VERSION, contractVersion: C.CONTRACT_VERSION,
@@ -736,57 +1038,106 @@
             creativeRoute: request.creativeRoute, styleProfile: request.styleProfile, generation: 1, attempt: 1,
             status: 'queued', phase: 'queued', productKey: model.productKey, displayName: model.displayName,
             providerModel: model.providerModel, adapter: config.adapter, provider: config.provider,
+            _platformVideo: isNativeConfig(config), _dispatchConfig: isNativeConfig(config) ? publicConfig(config) : null,
+            _nativeIdempotencyKey: isNativeConfig(config) ? idemKey : '',
             requestFingerprint: requestFingerprint, idempotencyFingerprint: idemFingerprint,
             providerTaskId: '', resultUrls: [], createdAt: timestamp, updatedAt: timestamp,
-            scriptConfirmed: request.scriptConfirmed, _request: request
+            scriptConfirmed: request.scriptConfirmed, _request: request,
+            production: production
           };
           b.tasks[localId] = task; b.idempotency[idemFingerprint] = { taskId: localId, requestFingerprint: requestFingerprint };
           await saveTaskRoot(state); return { existing: false, task: clone(task) };
         });
-        if (created.existing) return { task: C.publicTask(created.task), idempotent: true };
+        if (created.existing) {
+          notifyNativeVideoCreditsChanged(created.task);
+          if (submissionUncertain(created.task)) throw uncertainCreate('原视频任务的提交状态仍待核对。', { task: C.publicTask(created.task) });
+          return { task: C.publicTask(created.task), idempotent: true };
+        }
+        dispatchStarted = true;
         var submitted = await submitExisting(accountKey, created.task.taskId, idemKey, config, model);
         return { task: C.publicTask(submitted), idempotent: false };
+        } catch (cause) {
+          if (!dispatchStarted && !(cause && cause.details && cause.details.stateUncertain === true)) {
+            if (cause && typeof cause === 'object') cause.details = Object.assign({}, cause.details || {}, { providerSubmitted: false, definitiveFailure: true });
+          }
+          throw cause;
+        }
       })();
       startInflight.set(inflightKey, promise);
       try { return await promise; } finally { startInflight.delete(inflightKey); }
     }
     async function status(message, sender) {
       var accountKey = await resolveAccount(sender); var requestedTaskId = text(message.taskId, 240);
+      if (!requestedTaskId && (message.idempotencyKey || message.clientRequestId)) {
+        var lookupState = await readTaskRoot();
+        var lookup = bucket(lookupState, accountKey).idempotency[C.fingerprint(requireIdempotencyKey(message), 'idem_')];
+        if (!lookup) throw error('TASK_NOT_FOUND', '原请求尚未找到本地任务记录，请保留原请求标识核对。');
+        requestedTaskId = lookup.taskId;
+      }
       var key = accountKey + ':' + requestedTaskId;
       if (pollInflight.has(key)) return pollInflight.get(key);
       var promise = (async function () {
         var task = await readTask(accountKey, requestedTaskId);
+        notifyNativeVideoCreditsChanged(task);
         if (C.isTerminal(task.status)) return { task: C.publicTask(task), idempotent: true };
+        if (!task.providerTaskId && task._platformVideo === true && task._nativeIdempotencyKey) {
+          var recoveryResponse = await requestWithDeadline(env, { envKey: 'statusTimeoutMs', fallbackMs: REQUEST_TIMEOUT_MS.status,
+            code: 'PLATFORM_TASK_RECOVERY_TIMEOUT', message: '原视频任务查询超时，仍保留待核对。' }, function (signal) {
+            return env.fetch(nativeEndpoint('/resolve'), { method: 'GET', cache: 'no-store', credentials: 'same-origin', signal: signal,
+              headers: { 'Idempotency-Key': task._nativeIdempotencyKey, 'X-Sanjie-Expected-Account': accountKey } });
+          });
+          if (await resolveAccount(sender) !== accountKey) throw error('ACCOUNT_CHANGED', '恢复原视频任务时登录账号已变化。');
+          if (recoveryResponse.status === 404) return { task: C.publicTask(task), idempotent: true };
+          var recovered = await parseResponse(recoveryResponse);
+          var recoveredId = providerTaskId(recovered);
+          if (!recoveredId) throw error('PLATFORM_TASK_RECOVERY_INVALID', '平台没有返回可核验的原任务，请勿重新提交。');
+          task = await mutateTask(accountKey, requestedTaskId, function (current) {
+            current.providerTaskId = recoveredId;
+            if (current.status === 'submitting' || current.status === 'unknown') current = C.transitionTask(current, 'processing', { now: nowFrom(env) });
+            return current;
+          });
+        }
         if (!task.providerTaskId) return { task: C.publicTask(task), idempotent: true };
-        var captureGeneration = task.generation; var config = await getConfigFor(accountKey); var creds = await credentials(accountKey, config.provider);
+        var captureGeneration = task.generation; var config = nativeTaskConfig(task) || await getConfigFor(accountKey);
+        var creds = task._platformVideo === true ? { apiKey: '', accountKey: accountKey } : await credentials(accountKey, config.provider);
         var remote;
         try { remote = await adapterStatus(config, creds, task); }
         catch (cause) {
-          if (cause && cause.code === 'PROVIDER_RESULT_MISSING') {
+          if (cause && ['PROVIDER_RESULT_MISSING', 'PROVIDER_HTTP_ERROR', 'PROVIDER_STATUS_TIMEOUT'].indexOf(cause.code) >= 0) {
             await mutateTask(accountKey, requestedTaskId, function (current) {
               if (current.generation !== captureGeneration || C.isTerminal(current.status)) return current;
-              current = C.transitionTask(current, 'failed', { now: nowFrom(env) });
-              current.errorCode = cause.code; current.error = cause.message; current.finishedAt = nowFrom(env); return current;
+              current.errorCode = diagnosticText(cause.code, 160); current.error = diagnosticText(cause.message, 1600);
+              current.errorDetails = safeErrorDetails(cause.details);
+              if (cause.code === 'PROVIDER_RESULT_MISSING') current.phase = 'provider_result_pending';
+              current.updatedAt = nowFrom(env); return current;
             });
           }
           throw cause;
         }
         var updated = await mutateTask(accountKey, requestedTaskId, function (current) {
           if (current.generation !== captureGeneration || C.isTerminal(current.status)) return current;
-          if (remote.status !== 'processing') current = C.transitionTask(current, remote.status, { now: nowFrom(env) });
+          if (remote.status !== 'processing' || current.status === 'unknown') current = C.transitionTask(current, remote.status, { now: nowFrom(env) });
           else current.updatedAt = nowFrom(env);
           current.phase = remote.status === 'processing' ? 'provider_processing' : remote.status;
           current.providerState = remote.providerState;
           current.message = remote.message; current.resultUrls = remote.resultUrls;
+          if (remote.status !== 'processing') current._submissionUncertain = false;
+          if (remote.status !== 'processing') current.stateUncertain = false;
+          if (['PROVIDER_RESULT_MISSING', 'PROVIDER_HTTP_ERROR', 'PROVIDER_STATUS_TIMEOUT'].indexOf(current.errorCode) >= 0) {
+            current.errorCode = ''; current.error = ''; current.errorDetails = {};
+          }
           if (remote.progress !== null) current.progress = remote.progress;
           if (remote.status === 'failed') {
             current.errorCode = remote.errorCode || 'PROVIDER_FAILED';
             current.error = remote.message || '视频供应商任务失败。';
+            current.errorDetails = remote.errorDetails;
           }
           if (remote.status === 'succeeded') { current.progress = 100; current.finishedAt = nowFrom(env); }
           if (remote.status === 'failed' || remote.status === 'cancelled') current.finishedAt = nowFrom(env);
+          if (current.production && (remote.status === 'failed' || remote.status === 'cancelled')) current.production.reservationReleased = true;
           return current;
         });
+        notifyNativeVideoCreditsChanged(updated);
         return { task: C.publicTask(updated), idempotent: false };
       })();
       pollInflight.set(key, promise);
@@ -799,6 +1150,7 @@
       var promise = (async function () {
         var task = await readTask(accountKey, requestedTaskId);
         if (C.isTerminal(task.status)) return { task: C.publicTask(task), idempotent: true };
+        if (task._platformVideo === true) throw error('CANCEL_UNSUPPORTED', '平台视频尚不支持可核验的取消，任务会继续保留并查询。');
         if (!task.providerTaskId) {
           if (task.status === 'queued') {
             var local = await mutateTask(accountKey, requestedTaskId, function (current) {
@@ -831,8 +1183,10 @@
     async function retry(message, sender) {
       var accountKey = await resolveAccount(sender); var idemKey = requireIdempotencyKey(message);
       var old = await readTask(accountKey, text(message.taskId, 240));
+      if (submissionUncertain(old)) throw uncertainCreate('原视频任务的提交状态仍待核对，不能重试。', { task: C.publicTask(old) });
       if (old.status !== 'failed' && old.status !== 'cancelled') throw error('RETRY_NOT_ALLOWED', '只有 failed/cancelled 任务可重试。');
-      return start({ request: old._request, idempotencyKey: idemKey }, sender);
+      return start({ request: old._request, idempotencyKey: idemKey,
+        production: old.production ? Object.assign({}, old.production, { attempt: old.production.attempt + 1 }) : undefined }, sender);
     }
     async function analyze(message, sender) {
       var requestBody = message.request || (plain(message.payload) && !message.payload.schemaVersion ? message.payload : message);
@@ -845,22 +1199,35 @@
       else result = await defaultAnalyze(request, accountKey, (await getConfigFor(accountKey)).provider);
       return { mode: request.mode, status: 'needs_confirmation', analysis: result };
     }
+    async function analysisAvailability(accountKey, provider) {
+      try {
+        var creds = await credentials(accountKey, provider, 'analysis');
+        var cfg = creds.config || {};
+        var base = text(cfg.visionBaseUrl || cfg.baseURL, 2048).replace(/\/+$/, '');
+        if (!base || !text(cfg.visionModel || cfg.textModel, 220)) throw error('ANALYZER_CONFIG_INVALID', '脚本分析配置缺少端点或模型。');
+        endpoint(/\/chat\/completions$/.test(base) ? base : base + '/chat/completions', 'analysisEndpoint', false);
+        return { analysisAvailable: true, analysisStatus: { state: 'ready', code: 'READY', message: '脚本分析配置已就绪，调用时仍需核对平台额度。' } };
+      } catch (cause) {
+        return { analysisAvailable: false, analysisStatus: { state: 'unavailable', code: text(cause && cause.code, 100) || 'ANALYZER_CONFIG_UNAVAILABLE', message: text(cause && cause.message, 500) || '脚本分析配置不可用。' } };
+      }
+    }
     async function capabilities(sender) {
       var accountKey = await resolveAccount(sender); var config = await getConfigFor(accountKey);
+      var analysis = await analysisAvailability(accountKey, config.provider);
       var credentialAvailable = false;
       var credentialStatus = { state: 'unavailable', code: 'CREDENTIAL_CHECK_UNAVAILABLE', message: '暂时无法验证当前账号的 API 配置。' };
       try {
-        await credentials(accountKey, config.provider);
+        var checkedCredentials = await credentials(accountKey, config.provider);
         credentialAvailable = true;
         credentialStatus = {
           state: 'ready',
           code: 'READY',
-          message: '已读取当前账号的豆包 / 火山方舟 API 配置；Seedance 模型权限将在提交时由供应商验证。'
+          message: checkedCredentials.config.platformVideo === true ? '平台视频供应已就绪，将使用当前账号积分生成。' : '已读取当前账号的豆包 / 火山方舟 API 配置；Seedance 模型权限将在提交时由供应商验证。'
         };
       } catch (cause) {
         var code = text(cause && cause.code, 100).toLowerCase();
         if (/config_not_found|credentials_unavailable|missing_api_key|credential_missing/.test(code)) {
-          credentialStatus = { state: 'missing', code: 'CREDENTIALS_MISSING', message: '当前账号尚未配置该视频供应商的 API Key。' };
+          credentialStatus = { state: 'missing', code: 'CREDENTIALS_MISSING', message: text(cause && cause.message, 500) || '当前账号的视频供应尚未就绪。' };
         } else if (/account_changed/.test(code)) {
           credentialStatus = { state: 'account_changed', code: 'ACCOUNT_CHANGED', message: '账号已变更，请重新确认 API 配置。' };
         }
@@ -874,7 +1241,17 @@
         provider: config.provider, adapter: config.adapter,
         credentialAvailable: credentialAvailable,
         credentialStatus: credentialStatus,
-        models: C.modelCatalog(config.providerModels, { credentialAvailable: credentialAvailable }),
+        analysisAvailable: analysis.analysisAvailable,
+        analysisStatus: analysis.analysisStatus,
+        models: C.modelCatalog(config.providerModels, { credentialAvailable: credentialAvailable }).map(function (model) {
+          if (!isNativeConfig(config)) return model;
+          var limits = (config._platformModels || []).find(function (item) { return item.id === model.productKey; });
+          if (!limits) return model;
+          return Object.assign({}, model, { nativePlatform: true,
+            reservationCents: Number.isSafeInteger(limits.reservationCents) && limits.reservationCents > 0 ? limits.reservationCents : null,
+            limits: Object.assign({}, model.limits, { durations: limits.durations.slice(), generateAudio: limits.generateAudio === true, minDuration: Math.min.apply(Math, limits.durations),
+            maxDuration: Math.max.apply(Math, limits.durations), resolutions: limits.resolutions, ratios: limits.ratios }) });
+        }),
         capabilities: {
           remoteAssets: true,
           localAssets: config.adapter === 'generic-multipart' ? ['image', 'video', 'audio'] : ['image-data-url', 'audio-data-url'],
@@ -889,6 +1266,7 @@
     async function result(message, sender) {
       var accountKey = await resolveAccount(sender); var task = await readTask(accountKey, text(message.taskId, 240));
       if (task.status !== 'succeeded') throw error('RESULT_NOT_READY', '视频任务尚未成功完成。', { status: task.status });
+      notifyNativeVideoCreditsChanged(task);
       return { task: C.publicTask(task), resultUrls: clone(task.resultUrls || []) };
     }
     async function handleMessage(message, sender) {
@@ -897,7 +1275,11 @@
       try {
         var data;
         if (message.type === MESSAGE_TYPES.CAPABILITIES) data = await capabilities(sender);
-        else if (message.type === MESSAGE_TYPES.CONFIG_GET) data = { config: publicConfig(await getConfigFor(await resolveAccount(sender))) };
+        else if (message.type === MESSAGE_TYPES.CONFIG_GET) {
+          var accountKey = await resolveAccount(sender);
+          var config = await getConfigFor(accountKey);
+          data = Object.assign({ config: publicConfig(config) }, await analysisAvailability(accountKey, config.provider));
+        }
         else if (message.type === MESSAGE_TYPES.CONFIG_SAVE) data = { config: await saveConfigFor(await resolveAccount(sender), message.config || {}) };
         else if (message.type === MESSAGE_TYPES.ANALYZE) data = await analyze(message, sender);
         else if (message.type === MESSAGE_TYPES.START) data = await start(message, sender);

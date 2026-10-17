@@ -96,6 +96,9 @@ export function DmpGrowthReportViewer({
       </div>
 
       <main className={styles.main}>
+        {model.quality.effectiveQuality === "partial"
+          ? <PartialQualityBanner model={model} recordId={record.id} variant={variant} />
+          : null}
         {model.tables.map((table, index) => table.name === "报告总览" && model.kind === "growth"
           ? <GrowthOverview key={table.name} model={model} table={table} tableByName={tableByName} />
           : <ReportTableSection key={`${table.name}-${index}`} table={table} index={index} kind={model.kind} tableByName={tableByName} />)}
@@ -103,6 +106,32 @@ export function DmpGrowthReportViewer({
 
       <footer className={styles.footer}>{record.shopName ? `${record.shopName} · ` : ""}{displayTitle}</footer>
     </article>
+  );
+}
+
+function PartialQualityBanner({
+  model,
+  recordId,
+  variant
+}: {
+  model: DmpGrowthReportViewModel;
+  recordId: string;
+  variant: "preview" | "shared";
+}) {
+  return (
+    <aside className={styles.qualityBanner} data-report-quality="partial" role="status">
+      <div>
+        <strong>部分数据报告</strong>
+        <p>{model.quality.notice}</p>
+      </div>
+      {variant === "preview" ? (
+        <a
+          className={styles.qualityAction}
+          data-report-supplement
+          href={`/tools/dmp-report?source=dmp-extension&retryReportId=${encodeURIComponent(recordId)}`}
+        >继续补采</a>
+      ) : <span className={styles.qualityOwnerHint}>可由报告创建者继续补采</span>}
+    </aside>
   );
 }
 

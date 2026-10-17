@@ -4,7 +4,8 @@ import {
   getAiProviderPreset,
   isAiProvider,
   resolveAiProviderBaseUrl,
-  resolveAiProviderModel
+  resolveAiProviderModel,
+  resolveHostedUpstreamModel
 } from "@/lib/ai-provider-catalog";
 
 describe("AI provider catalog", () => {
@@ -42,6 +43,14 @@ describe("AI provider catalog", () => {
     expect(resolveAiProviderModel("shaozhuang", "gpt-5.5", "https://sub.shaozhuangai.com/v1"))
       .toBe("chatGPT5.5");
     expect(resolveAiProviderModel("shaozhuang", "chatGPT5.6", "https://sub.shaozhuangai.com/v1"))
+      .toBe("chatGPT5.5");
+    expect(resolveAiProviderModel("shaozhuang", "gpt-5.6-sol", "https://sub.shaozhuangai.com/v1"))
+      .toBe("chatGPT5.5");
+    expect(resolveHostedUpstreamModel("shaozhuang", "chatGPT5.5", "https://sub.shaozhuangai.com/v1"))
+      .toBe("gpt-5.6-sol");
+    expect(resolveHostedUpstreamModel("shaozhuang", "gpt-5.6-sol", "https://gateway.example.com/v1"))
+      .toBe("gpt-5.6-sol");
+    expect(resolveHostedUpstreamModel("custom", "chatGPT5.5", "https://sub.shaozhuangai.com/v1"))
       .toBe("chatGPT5.5");
     expect(resolveAiProviderModel("custom", "gpt-5.5", "https://sub.shaozhuangai.com/v1"))
       .toBe("gpt-5.5");

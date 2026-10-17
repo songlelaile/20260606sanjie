@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 export type ProxyDecision = { ok: true } | { ok: false; status: number; error: string };
 
 const WRITE_HOSTS = new Set([
@@ -22,25 +24,32 @@ const READ_HOST_SUFFIXES = [
   ".qpic.cn",
   ".googleusercontent.com",
   ".openai.com",
-  ".oaistatic.com"
+  ".oaistatic.com",
+  ".alicdn.com",
+  ".tbcdn.cn"
 ];
 
 function isPrivateIp(address: string) {
-  const normalized = address.toLowerCase();
-  if (normalized === "::1" || normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) {
-    return true;
+  const normalized = address.toLowerCase().replace(/^\[|\]$/g, "");
+  // Only global IPv6 unicast is usable here; mapped IPv4, link-local, ULA,
+  // multicast and IPv6 transition ranges must not bypass the IPv4 policy.
+  if (isIP(normalized) === 6) {
+    return !/^[23][0-9a-f]{0,3}:/.test(normalized) ||
+      /^2001:(?:0:|db8:)/.test(normalized) || /^2002:/.test(normalized);
   }
-  if (normalized.includes(":")) return true;
   const parts = normalized.split(".").map((part) => Number(part));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
     return false;
   }
   const [a, b] = parts;
-  if (a === 10 || a === 127 || a === 0) return true;
+  if (a === 10 || a === 127 || a === 0 || a >= 224) return true;
   if (a === 169 && b === 254) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
   if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 192 && (b === 0 || b === 2)) return true;
+  if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
+  if (a === 203 && b === 0 && parts[2] === 113) return true;
   return false;
 }
 
@@ -64,7 +73,7 @@ export function evaluateCreativeProxy(urlString: string, methodInput: string): P
   if (!["GET", "HEAD", "POST", "DELETE"].includes(method)) {
     return { ok: false, status: 405, error: "这个上游方法不允许转发。" };
   }
-  if (url.protocol !== "https:" || url.username || url.password) {
+  if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) {
     return { ok: false, status: 400, error: "只转发不带内嵌凭据的 HTTPS 上游。" };
   }
   const hostname = url.hostname.toLowerCase();
@@ -83,6 +92,9 @@ export function evaluateCreativeProxy(urlString: string, methodInput: string): P
 }
 
 export function assertResolvedAddresses(addresses: string[]): ProxyDecision {
+  if (!addresses.length || addresses.some((address) => !isIP(address))) {
+    return { ok: false, status: 502, error: "上游地址没有可用的公网解析结果。" };
+  }
   for (const address of addresses) {
     if (isPrivateIp(address)) {
       return { ok: false, status: 403, error: "上游解析到了内网地址，已停止转发。" };

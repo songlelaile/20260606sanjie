@@ -1,3 +1,4 @@
+import "server-only";
 import type {
   AudiencePlanItem,
   AudienceSourceRow,
@@ -19,6 +20,8 @@ import { assessEvidenceWindow } from "@/lib/analysis-evidence";
 import { countInclusiveDays } from "@/lib/analysis-period";
 import { currentIsoDate } from "@/lib/comparison-window";
 import { divideOrNull } from "@/lib/safe-math";
+import { marginMatrix } from "@/lib/algorithm/three-stage-config";
+export { gradeRows, lifecycleColumns, marginMatrix } from "@/lib/algorithm/three-stage-config";
 
 interface PromotionSummary {
   cost: number | null;
@@ -42,52 +45,6 @@ export interface ThreeStageInput {
   /** 三张分日源在店铺层的真实覆盖天数；实体没有经营活动不等于源数据缺日。 */
   sourceObservedDays?: Partial<Record<"product" | "promotion" | "audience", number>>;
 }
-
-export const lifecycleColumns: Lifecycle[] = [
-  "冷启期",
-  "新品成长期",
-  "成长期",
-  "新品打爆期",
-  "爆品期",
-  "平销期"
-];
-
-export const gradeRows: ProductGrade[] = ["S", "A", "B", "C"];
-
-export const marginMatrix: ProfitMarginMatrix = {
-  S: {
-    冷启期: -0.2,
-    新品成长期: -0.15,
-    成长期: -0.1,
-    新品打爆期: 0.05,
-    爆品期: 0.1,
-    平销期: 0.15
-  },
-  A: {
-    冷启期: -0.15,
-    新品成长期: -0.1,
-    成长期: -0.05,
-    新品打爆期: 0.05,
-    爆品期: 0.1,
-    平销期: 0.15
-  },
-  B: {
-    冷启期: -0.05,
-    新品成长期: 0,
-    成长期: 0.05,
-    新品打爆期: 0.1,
-    爆品期: 0.15,
-    平销期: 0.2
-  },
-  C: {
-    冷启期: 0,
-    新品成长期: 0.05,
-    成长期: 0.1,
-    新品打爆期: 0.1,
-    爆品期: 0.15,
-    平销期: 0.2
-  }
-};
 
 const dimensionLabels: Record<BreakthroughDimensionScore["key"], string> = {
   searchDisplayValue: "搜索展现价值",

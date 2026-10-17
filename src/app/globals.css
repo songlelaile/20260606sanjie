@@ -1334,7 +1334,9 @@ button:disabled {
   padding: 28px;
 }
 
-.main:has(.creative-studio) {
+.main:has(.creative-studio),
+.main:has(.reports-workspace),
+.main:has(.sower-work-workspace) {
   display: flex;
   flex-direction: column;
   min-height: 100dvh;
@@ -4342,10 +4344,6 @@ button.kpi:hover {
   min-width: 920px;
 }
 
-.history-table {
-  min-width: 1060px;
-}
-
 /* 邀请码表：码/链接/用量/时间紧凑，说明占余宽 */
 .invite-table th:nth-child(1),
 .invite-table td:nth-child(1) {
@@ -4441,32 +4439,6 @@ button.kpi:hover {
   word-break: break-word;
 }
 
-/* 历史数据清单：时间/区间不换行，五个数量列紧凑，备注占余宽 */
-.history-table th:nth-child(1),
-.history-table td:nth-child(1) {
-  width: 170px;
-  white-space: nowrap;
-}
-
-.history-table th:nth-child(2),
-.history-table td:nth-child(2) {
-  width: 195px;
-  white-space: nowrap;
-}
-
-.history-table th:nth-child(3),
-.history-table td:nth-child(3),
-.history-table th:nth-child(4),
-.history-table td:nth-child(4),
-.history-table th:nth-child(5),
-.history-table td:nth-child(5),
-.history-table th:nth-child(6),
-.history-table td:nth-child(6),
-.history-table th:nth-child(7),
-.history-table td:nth-child(7) {
-  width: 90px;
-}
-
 .management-table th:last-child,
 .management-table td:last-child {
   text-align: right;
@@ -4475,34 +4447,6 @@ button.kpi:hover {
 .management-table td {
   height: 56px;
   vertical-align: middle;
-}
-
-.history-table th:nth-child(1),
-.history-table td:nth-child(1) {
-  width: 180px;
-}
-
-.history-table th:nth-child(2),
-.history-table td:nth-child(2) {
-  width: 180px;
-}
-
-.history-table th:nth-child(3),
-.history-table td:nth-child(3),
-.history-table th:nth-child(4),
-.history-table td:nth-child(4),
-.history-table th:nth-child(5),
-.history-table td:nth-child(5),
-.history-table th:nth-child(6),
-.history-table td:nth-child(6),
-.history-table th:nth-child(7),
-.history-table td:nth-child(7) {
-  width: 118px;
-}
-
-.history-table th:nth-child(8),
-.history-table td:nth-child(8) {
-  width: 150px;
 }
 
 .invite-code-cell {
@@ -4534,10 +4478,6 @@ button.kpi:hover {
   text-transform: uppercase;
 }
 
-.management-section-label.danger {
-  color: #ff9a8b;
-}
-
 .management-primary-button {
   align-items: center;
   background: var(--brand);
@@ -4553,48 +4493,6 @@ button.kpi:hover {
   white-space: nowrap;
 }
 
-.management-history {
-  display: grid;
-  gap: 16px;
-}
-
-.management-history-policy {
-  align-items: center;
-  display: grid;
-  gap: 14px;
-  grid-template-columns: minmax(0, 1fr) 220px auto;
-  padding: 18px 18px 16px;
-}
-
-.management-history-policy-copy h2 {
-  color: #fff6d7;
-  font-size: 20px;
-  margin: 0 0 8px;
-}
-
-.management-history-policy-copy p,
-.management-history-danger-copy p,
-.management-history-preview-top p {
-  color: var(--muted);
-  line-height: 1.6;
-  margin: 0;
-}
-
-.management-history-input,
-.history-date-field {
-  display: grid;
-  gap: 8px;
-}
-
-.management-history-input span,
-.history-date-field span {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.management-history-input input,
-.history-date-field input,
-.management-history-report-row input,
 .management-form-panel input {
   background: #0b1307;
   border: 1px solid var(--line);
@@ -4603,147 +4501,6 @@ button.kpi:hover {
   min-height: 42px;
   outline: 0;
   padding: 0 14px;
-}
-
-.management-history-input input:focus,
-.history-date-field input:focus,
-.management-history-report-row input:focus {
-  border-color: var(--brand);
-}
-
-.management-history-danger {
-  display: grid;
-  gap: 12px;
-  padding: 16px 18px 18px;
-}
-
-.management-history-danger-copy {
-  align-items: flex-start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.management-history-danger-actions {
-  align-items: end;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: auto 180px auto auto;
-}
-
-.danger-solid {
-  background: #d35a54;
-  border-color: #c64d47;
-  color: #fff4ef;
-}
-
-.management-history-strip {
-  align-items: center;
-  color: var(--muted);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px 18px;
-  padding-left: 2px;
-}
-
-.management-history-strip strong {
-  color: var(--brand);
-}
-
-.management-history-preview {
-  display: grid;
-  gap: 16px;
-  padding: 18px;
-}
-
-.management-history-preview-top {
-  align-items: flex-start;
-  display: flex;
-  gap: 14px;
-  justify-content: space-between;
-}
-
-.management-history-preview-range {
-  display: flex;
-  gap: 10px;
-}
-
-.management-history-preview-range label {
-  display: grid;
-  gap: 6px;
-}
-
-.management-history-preview-range span {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.management-history-view-switches {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.history-view-pill {
-  background: transparent;
-  border: 1px solid var(--line-strong);
-  color: var(--ink);
-  min-height: 36px;
-  padding: 0 14px;
-}
-
-.history-view-pill.active {
-  background: rgba(246, 198, 95, 0.15);
-  border-color: var(--brand);
-  color: #fff0c1;
-}
-
-.management-history-bars {
-  display: grid;
-  gap: 10px;
-}
-
-.history-bar-row {
-  align-items: center;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: 92px minmax(0, 1fr) 92px;
-}
-
-.history-bar-row span,
-.history-bar-row small {
-  color: var(--muted);
-}
-
-.history-bar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(126, 146, 83, 0.4);
-  border-radius: 999px;
-  height: 18px;
-  overflow: hidden;
-}
-
-.history-bar-track i {
-  background: linear-gradient(90deg, #7fb86d, #bedb89);
-  border-radius: inherit;
-  display: block;
-  height: 100%;
-}
-
-.management-history-report-row {
-  align-items: center;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-.management-history-report-row input {
-  min-width: 0;
-}
-
-.management-history-hint {
-  color: var(--muted);
 }
 
 .section-band,
@@ -5525,12 +5282,6 @@ td small {
     grid-template-columns: 1fr;
   }
 
-  .management-history-policy,
-  .management-history-danger-actions,
-  .management-history-report-row {
-    grid-template-columns: 1fr;
-  }
-
   .management-topbar {
     align-items: flex-start;
     display: grid;
@@ -5554,14 +5305,6 @@ td small {
   .timeline-axis {
     margin-left: 106px;
     padding-right: 0;
-  }
-
-  .management-history-preview-top {
-    display: grid;
-  }
-
-  .management-history-preview-range {
-    flex-wrap: wrap;
   }
 }
 
@@ -6253,114 +5996,10 @@ td small {
   color: var(--muted);
 }
 
-.review-lens-sub {
-  margin: 2px 0 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-/* —— 经营复盘（三口径对比）—— */
-.review-console {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.review-action-list {
-  list-style: none;
-  margin: 0;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-height: 640px;
-  overflow-y: auto;
-}
-
-.review-action-item {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  text-align: left;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 12px;
-  color: var(--ink);
-  min-height: auto;
-}
-
-.review-action-item.active {
-  border-color: var(--brand);
-  background: rgba(246, 198, 95, 0.08);
-}
-
-.review-action-date {
-  font-size: 12px;
-  color: var(--brand);
-  font-weight: 700;
-}
-
-.review-action-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.review-action-meta {
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.review-window-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.review-window-controls label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.review-window-controls input {
-  width: 56px;
-  min-height: 34px;
-  background: #0b1307;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--ink);
-  text-align: center;
-}
-
-.review-body {
-  padding: 8px 18px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 22px;
-}
-
 .review-window-note {
   margin: 0;
   font-size: 13px;
   color: var(--muted);
-}
-
-.review-lens h3 {
-  font-size: 15px;
-  margin: 0 0 12px;
-  color: var(--ink);
-}
-
-.review-subhead {
-  font-size: 13px;
-  margin: 14px 0 8px;
-  color: var(--brand);
-  font-weight: 600;
 }
 
 .review-empty {
@@ -6520,12 +6159,6 @@ button.review-metric {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 6px 4px;
-}
-
-@media (max-width: 900px) {
-  .review-console {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* —— 优化动作标记 —— */

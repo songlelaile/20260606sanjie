@@ -55,13 +55,19 @@
   // 产品键/显示名与供应商模型 ID 有意拆成两张表。UI 名称永远不能进入 model 字段。
   var MODEL_DISPLAY_NAMES = freeze({
     'seedance-2.0': 'Seedance 2.0',
-    'seedance-2.5': 'Seedance 2.5'
+    'seedance-2.5': 'Seedance 2.5',
+    'seedance-2.0-mini': 'Seedance 2.0 Mini',
+    'seedance-2.0-fast': 'Seedance 2.0 Fast'
   });
   var DEFAULT_PROVIDER_MODELS = freeze({
+    'seedance-2.0-mini': 'doubao-seedance-2-0-mini-260615',
+    'seedance-2.0-fast': 'doubao-seedance-2-0-fast-260128',
     'seedance-2.0': 'doubao-seedance-2-0-260128',
     'seedance-2.5': 'doubao-seedance-2-5-260628'
   });
   var MODEL_ALIASES = freeze({
+    'seedance-2.0-mini': 'seedance-2.0-mini', 'seedance_2_0_mini': 'seedance-2.0-mini',
+    'seedance-2.0-fast': 'seedance-2.0-fast', 'seedance_2_0_fast': 'seedance-2.0-fast',
     'seedance-2.0': 'seedance-2.0', 'seedance_2_0': 'seedance-2.0', '2.0': 'seedance-2.0',
     'seedance-2.5': 'seedance-2.5', 'seedance_2_5': 'seedance-2.5', '2.5': 'seedance-2.5'
   });
@@ -140,6 +146,20 @@
     }
   });
   var MODEL_CAPABILITIES = freeze({
+    'seedance-2.0-fast': {
+      productKey: 'seedance-2.0-fast', providerModel: 'doubao-seedance-2-0-fast-260128',
+      minDuration: 4, maxDuration: 15, resolutions: ['480p', '720p'],
+      ratios: ['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', 'adaptive'],
+      imageMax: 9, videoMax: 3, audioMax: 3, maxAssets: 15,
+      maxVideoDuration: 15, maxAudioDuration: 15
+    },
+    'seedance-2.0-mini': {
+      productKey: 'seedance-2.0-mini', providerModel: 'doubao-seedance-2-0-mini-260615',
+      minDuration: 4, maxDuration: 15, resolutions: ['480p', '720p'],
+      ratios: ['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', 'adaptive'],
+      imageMax: 9, videoMax: 3, audioMax: 3, maxAssets: 15,
+      maxVideoDuration: 15, maxAudioDuration: 15
+    },
     'seedance-2.0': {
       productKey: 'seedance-2.0', providerModel: 'doubao-seedance-2-0-260128',
       minDuration: 4, maxDuration: 15, resolutions: ['480p', '720p', '1080p', '4k'],
@@ -158,7 +178,7 @@
   var ADAPTERS = freeze(['ark', 'generic-multipart']);
   var TASK_STATES = freeze([
     'draft', 'analyzing', 'needs_confirmation', 'queued', 'submitting', 'processing',
-    'succeeded', 'failed', 'cancelled'
+    'succeeded', 'failed', 'cancelled', 'unknown'
   ]);
   var TERMINAL_STATES = freeze(['succeeded', 'failed', 'cancelled']);
   var TRANSITIONS = freeze({
@@ -166,7 +186,8 @@
     analyzing: ['needs_confirmation', 'failed', 'cancelled'],
     needs_confirmation: ['analyzing', 'queued', 'cancelled'],
     queued: ['submitting', 'failed', 'cancelled'],
-    submitting: ['processing', 'succeeded', 'failed', 'cancelled'],
+    submitting: ['processing', 'succeeded', 'failed', 'cancelled', 'unknown'],
+    unknown: ['processing', 'succeeded', 'failed', 'cancelled'],
     processing: ['succeeded', 'failed', 'cancelled'],
     succeeded: [],
     failed: ['queued'],
@@ -379,6 +400,17 @@
     } catch (_) { return ''; }
   }
 
+  function normalizeAssetRole(raw, kind) {
+    var defaultRole = kind === 'image' ? 'product'
+      : (kind === 'audio' ? 'rhythm' : ((kind === 'video' || kind === 'reference_video' || kind === 'reference_frame') ? 'motion' : 'asset'));
+    var role = text(raw.role || raw.assetRole, 40).toLowerCase().replace(/[\s-]+/g, '_') || defaultRole;
+    // Earlier drafts used analysis-slot names as roles. Keep their assets and IDs,
+    // but do not accept these aliases in generation image/video/audio slots.
+    if ((kind === 'reference_video' && role === 'reference') ||
+        (kind === 'reference_frame' && role === 'reference_frame')) return 'asset';
+    return role;
+  }
+
   function normalizeAsset(raw, kind, index) {
     if (!plainObject(raw)) throw contractError('ASSET_INVALID', '素材必须是普通对象。', { kind: kind, index: index });
     if (raw.selected === false) return null;
@@ -401,9 +433,7 @@
     if (duration && (!Number.isFinite(duration) || duration <= 0 || duration > 3600)) {
       throw contractError('ASSET_DURATION_INVALID', '素材时长无效。', { kind: kind, index: index });
     }
-    var defaultRole = kind === 'image' ? 'product'
-      : (kind === 'audio' ? 'rhythm' : ((kind === 'video' || kind === 'reference_video' || kind === 'reference_frame') ? 'motion' : 'asset'));
-    var role = text(raw.role || raw.assetRole, 40).toLowerCase().replace(/[\s-]+/g, '_') || defaultRole;
+    var role = normalizeAssetRole(raw, kind);
     if (ASSET_ROLES.indexOf(role) < 0) {
       throw contractError('ASSET_ROLE_INVALID', '素材角色必须是 product、person、scene、style、motion、rhythm 或 asset。', {
         kind: kind, index: index, role: role
@@ -437,9 +467,7 @@
       id: text(raw.storageRef.id, 260)
     } : null;
     var remoteUrl = validRemoteAssetUrl(raw.remoteUrl || raw.url || raw.assetUrl || '');
-    var defaultRole = kind === 'image' ? 'product'
-      : (kind === 'audio' ? 'rhythm' : ((kind === 'video' || kind === 'reference_video' || kind === 'reference_frame') ? 'motion' : 'asset'));
-    var role = text(raw.role || raw.assetRole, 40).toLowerCase().replace(/[\s-]+/g, '_') || defaultRole;
+    var role = normalizeAssetRole(raw, kind);
     return {
       slot: kind + '_' + (index + 1),
       kind: kind,
@@ -631,7 +659,14 @@
     var script = text(raw.script || raw.confirmedScript, 30000);
     var goal = text(raw.goal || raw.creativeGoal, 5000);
     var confirmed = raw.scriptConfirmed === true || raw.confirmed === true;
-    var storyboard = normalizeStoryboard(raw.storyboard, { durationSeconds: durationSeconds });
+    var productionTimelineSeconds = 0;
+    if (stage === 'draft' && raw.productionTimelineSeconds != null) {
+      productionTimelineSeconds = safeInteger(raw.productionTimelineSeconds, 15, 60, 0);
+      if (!productionTimelineSeconds || productionTimelineSeconds % 5 !== 0) {
+        throw contractError('PRODUCTION_TIMELINE_INVALID', '动态成片分析时长必须为 15–60 秒，按 5 秒设置。');
+      }
+    }
+    var storyboard = normalizeStoryboard(raw.storyboard, { durationSeconds: productionTimelineSeconds || durationSeconds });
     var reviewFingerprint = text(raw.reviewFingerprint, 120);
     var reviewConfirmedAt = text(raw.reviewConfirmedAt, 80);
 
@@ -714,7 +749,7 @@
       rights.confirmedAt = new Date(rightsTime).toISOString();
     }
 
-    return freeze({
+    var normalized = {
       contractVersion: CONTRACT_VERSION,
       mode: mode,
       creativeRoute: creativeRoute,
@@ -743,7 +778,9 @@
         ? (raw.referenceRightsConfirmed === true || referenceVideo.rightsConfirmed === true)
         : false,
       rights: freeze(rights)
-    });
+    };
+    if (productionTimelineSeconds) normalized.productionTimelineSeconds = productionTimelineSeconds;
+    return freeze(normalized);
   }
 
   function transitionAllowed(from, to, context) {
@@ -804,8 +841,8 @@
       'schemaVersion', 'contractVersion', 'taskId', 'mode', 'accountKey', 'generation', 'attempt',
       'status', 'phase', 'creativeRoute', 'styleProfile', 'productKey', 'displayName', 'providerModel', 'adapter', 'provider',
       'requestFingerprint', 'idempotencyFingerprint', 'providerTaskId', 'providerState', 'progress', 'message',
-      'errorCode', 'error', 'createdAt', 'updatedAt', 'submittedAt', 'finishedAt', 'cancelledAt',
-      'resultUrls', 'scriptConfirmed', 'cancelPending'
+      'errorCode', 'error', 'errorDetails', 'createdAt', 'updatedAt', 'submittedAt', 'finishedAt', 'cancelledAt',
+      'resultUrls', 'scriptConfirmed', 'cancelPending', 'stateUncertain', 'production'
     ];
     var output = {};
     allowed.forEach(function (key) {

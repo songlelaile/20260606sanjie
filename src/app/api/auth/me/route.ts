@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, parseSession } from "@/lib/auth";
 import { isSessionAccountValid } from "@/lib/accounts";
+import { getCreativeAccessForSession, UNAVAILABLE_CREATIVE_ACCESS } from "@/lib/creative-entitlements";
 import {
   getDmpAutomationAccessForSession,
   NO_DMP_AUTOMATION_ACCESS
@@ -86,6 +87,7 @@ export async function GET(request: Request) {
   const dmpAccess = await getDmpAutomationAccessForSession(session).catch(() => ({
     ...NO_DMP_AUTOMATION_ACCESS
   }));
+  const creativeAccess = await getCreativeAccessForSession(session).catch(() => UNAVAILABLE_CREATIVE_ACCESS);
 
   return NextResponse.json(
     {
@@ -99,12 +101,16 @@ export async function GET(request: Request) {
           checkedAt: new Date().toISOString()
         },
         capabilities: {
+          creativeStudio: creativeAccess.allowed,
+          creativeImage: creativeAccess.allowed,
+          creativeVideo: creativeAccess.allowed,
           dmpAutomation: dmpAccess.allowed,
           dmpDownload: dmpAccess.allowed,
           dmpJsonImport: session.role === "admin" && dmpAccess.allowed,
           dmpReportExport: session.role === "admin" && dmpAccess.allowed
         },
-        dmpEntitlement: dmpAccess
+        dmpEntitlement: dmpAccess,
+        creativeEntitlement: creativeAccess
       }
     },
     { headers: CORS }

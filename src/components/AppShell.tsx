@@ -9,6 +9,7 @@ import {
   Menu,
   Network,
   Puzzle,
+  Workflow,
   X
 } from "lucide-react";
 import Link from "next/link";
@@ -17,26 +18,41 @@ import { useEffect, useState, type ReactNode } from "react";
 import type { Role } from "@/lib/auth";
 import type { ShopSummary } from "@/lib/types/domain";
 import { ShopSwitcher } from "@/components/ShopSwitcher";
+import { SanjieReportWorkspace } from "@/components/reports/SanjieReportWorkspace";
+import { isSanjieReportPath } from "@/lib/sanjie-report-navigation";
+import { AccountMenu } from "@/components/AccountMenu";
+import { BrandIdentity } from "@/components/BrandIdentity";
 
 const TENANT_NAV = [
-  { href: "/dashboards/operating-network", label: "作图", icon: ImageIcon, exact: true },
-  { href: "/dashboards/operating-network/video", label: "做视频", icon: Clapperboard, exact: true },
+  { href: "/dashboards/operating-network", label: "图像创作", icon: ImageIcon, exact: true },
+  { href: "/dashboards/operating-network/video", label: "视频创作", icon: Clapperboard, exact: true },
+  { href: "/reports", label: "三阶报告", icon: Workflow },
   { href: "/tools", label: "AI 工具", icon: Puzzle },
-  { href: "/models", label: "模型网关", icon: Network }
+  { href: "/models", label: "购买积分", icon: Network }
 ];
 
-// 管理版 = 租户版全部功能 + 多一个「管理」入口
-const ADMIN_NAV = [...TENANT_NAV, { href: "/management", label: "管理", icon: Brain }];
+// Sower Work 网页版先向管理账号开放，置于图像创作之前。
+const ADMIN_NAV = [
+  { href: "/sower-work", label: "Sower Work", icon: Brain },
+  ...TENANT_NAV,
+  { href: "/management", label: "管理", icon: Brain }
+];
 
 export function AppShell({
   children,
   role,
   userName,
-  shopSwitcher
+  userEmail,
+  shopSwitcher,
+  testLabel,
+  testExitUrl
 }: {
   children: ReactNode;
   role: Role;
   userName: string;
+  userEmail?: string;
+  testLabel?: string;
+  testExitUrl?: string;
   shopSwitcher: {
     shops: ShopSummary[];
     activeShopId: string;
@@ -47,6 +63,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const navItems = role === "admin" ? ADMIN_NAV : TENANT_NAV;
+  const reportPage = isSanjieReportPath(pathname, role);
   const home = "/dashboards/operating-network";
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -108,22 +125,20 @@ export function AppShell({
           href={home}
           prefetch={false}
           className="brand"
-          aria-label="三阶引擎"
+          aria-label="少壮AI自动化 · 智篆联合开发"
           onClick={() => setSidebarOpen(false)}
         >
-          <span className="brand-mark">
-            <ImageIcon size={23} />
-          </span>
-          <span>
-            <strong>三阶引擎</strong>
-            <small>{role === "admin" ? "管理版 · 作图视频" : "作图 · 视频"}</small>
-          </span>
+          <BrandIdentity subtitle={role === "admin" ? "管理版 · 作图视频" : "作图 · 视频"} />
         </Link>
         <ShopSwitcher {...shopSwitcher} />
+        {testLabel ? <div style={{ padding: "12px 16px", fontSize: 12, color: "#fbbf24" }}>
+          <strong>{testLabel}</strong>
+          {testExitUrl ? <p><a href={testExitUrl} style={{ color: "inherit" }}>退出测试版</a></p> : null}
+        </div> : null}
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const active = item.exact
+            const active = item.href === "/reports" ? reportPage : item.exact
               ? pathname === item.href
               : pathname === item.href || pathname.startsWith(`${item.href}/`);
             return (
@@ -132,6 +147,7 @@ export function AppShell({
                 href={item.href}
                 prefetch={false}
                 className={clsx("nav-item", active && "active")}
+                aria-current={active ? "page" : undefined}
                 onClick={() => setSidebarOpen(false)}
               >
                 <Icon size={18} />
@@ -164,9 +180,10 @@ export function AppShell({
             <Menu size={19} />
             菜单
           </button>
-          <span>三阶引擎</span>
+          <BrandIdentity variant="compact" />
         </div>
-        {children}
+        <AccountMenu key={userEmail || userName} userName={userName} email={userEmail} onLogout={logout} />
+        {reportPage ? <SanjieReportWorkspace role={role}>{children}</SanjieReportWorkspace> : children}
       </main>
     </div>
   );

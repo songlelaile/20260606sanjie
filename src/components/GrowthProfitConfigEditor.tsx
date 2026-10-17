@@ -7,7 +7,7 @@ import {
   gradeRows,
   lifecycleColumns,
   marginMatrix
-} from "@/lib/algorithm/three-stage";
+} from "@/lib/algorithm/three-stage-config";
 import { decimalToPercentInput, percentInputToDecimal } from "@/lib/percent-input";
 import type { GrowthProfitConfigRow, Lifecycle } from "@/lib/types/domain";
 

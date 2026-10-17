@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sower Work</title>
+  <link rel="stylesheet" href="/sower-work/app/cloud-detail/page.css">
+  <script src="/sower-work/app/_bridge-prefix.js"></script>
+  <script type="module" src="/sower-work/app/cloud-detail/page.mjs"></script>
+</head>
+<body>
+  <main>
+    <header><h1 data-i18n="title"></h1><p data-i18n="intro"></p></header>
+    <section class="toolbar">
+      <label><span data-i18n="upload"></span><input id="pictures" type="file" accept="image/png,image/jpeg,image/webp,image/avif" multiple></label>
+      <label><span data-i18n="projectTitle"></span><input id="title" maxlength="200"></label>
+      <label><span data-i18n="width"></span><input id="width" type="number" min="320" max="3840" value="750"></label>
+      <button id="save" data-i18n="save"></button>
+      <button id="whole" data-i18n="whole"></button>
+      <button id="slices" data-i18n="slices"></button>
+    </section>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div class="workspace"><section id="sections"></section><aside><h2 data-i18n="preview"></h2><div id="preview"></div><div id="downloads"></div></aside></div>
+  </main>
+</body>
+</html>

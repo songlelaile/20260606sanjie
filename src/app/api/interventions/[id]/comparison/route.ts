@@ -14,7 +14,7 @@ function clampDays(value: string | null, fallback: number): number {
 
 /**
  * 优化动作前后对比。view 决定视角：
- *  - overview（默认）：三口径（经营复盘/综合看板用）
+ *  - overview（默认）：三口径（综合看板用）
  *  - product：单品突破——逐商品前后变化
  *  - audience：人群计划——逐(计划·人群)前后变化
  */

@@ -3,12 +3,124 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <script src="/creative/web-chrome.js"></script>
   <title>少壮图片实验室 · 主图生成</title>
-  <link rel="stylesheet" href="promptlab.css?v=20260901-reference-detail-structure-batch-v2">
+  <style id="account-menu-config-entry">
+    /* Hosted configuration is opened from the outer account menu. */
+    #openConfigBtn, [data-action="config"], [data-action="open-config"] { display: none !important; }
+  </style>
+  <style id="labStartupStyle">
+    #labStartupStatus { display: none; }
+    html[data-lab-startup="pending"] body > :not(#labStartupStatus),
+    html[data-lab-startup="error"] body > :not(#labStartupStatus) { display: none !important; }
+    html[data-lab-startup="pending"] #labStartupStatus,
+    html[data-lab-startup="error"] #labStartupStatus {
+      display: flex; min-height: 240px; padding: 32px; box-sizing: border-box;
+      align-items: center; justify-content: center; flex-direction: column; gap: 16px;
+      color: var(--muted, #a8af9b); font: 14px/1.6 system-ui, sans-serif; text-align: center;
+    }
+    #labStartupStatus h2, #labStartupStatus p { margin: 0; }
+    #labStartupStatus button { padding: 8px 18px; border: 1px solid var(--border, #424b24);
+      border-radius: 8px; background: var(--panel, #19200f); color: var(--text, #eeeedd); cursor: pointer; }
+  </style>
+  <style id="studioStartupRecoveryStyle">
+    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] body > .app:not(#labStartupStatus) {
+      display: block !important;
+    }
+    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] #labStartupStatus {
+      display: none !important;
+    }
+  </style>
+  <script id="labStartupScript">
+    (() => {
+      const params = new URLSearchParams(location.search);
+      if (params.get('studio') === '1') return;
+      const mode = params.get('mode') || params.get('surface');
+      const source = params.get('source');
+      const tools = { clothing: 'DIY成图', buyer: '买家秀', refinement: '产品精修' };
+      const surface = mode === 'link-image' ? 'link-image' : mode === 'mirror' ? 'mirror' : mode === 'creative' ? (Object.hasOwn(tools, params.get('tool')) ? params.get('tool') : 'clothing')
+        : mode === 'sku' ? 'sku' : mode === 'viral' || ['viral-plugin', 'viral-derivative'].includes(source) ? 'viral'
+        : mode === 'main' && source === 'web' && params.get('layout') === '1' ? 'main-list'
+        : mode === 'detail' || ['detail-plugin', 'detail-reference', 'detail-batch'].includes(source) ? 'reference' : '';
+      if (!surface) return;
+      const workflowLabels = { case: '案例裂变', 'style-refresh': '风格焕新', 'scene-extension': '场景延展' };
+      const dedicated = mode === 'viral' && source === 'web' && params.get('layout') === '1' && params.get('workflow') === '1'
+        && Object.hasOwn(workflowLabels, params.get('creativeRoute'));
+      const label = (dedicated ? workflowLabels[params.get('creativeRoute')] : '') || tools[surface] || { 'link-image': '链接成图', mirror: '爆款复刻', 'main-list': '清单成图', reference: '清单成详', sku: '批量 SKU', viral: '爆款裂变' }[surface];
+      const html = document.documentElement;
+      html.dataset.labStartup = 'pending';
+      document.title = '少壮AI · ' + label;
+      let timer;
+      let failureKind = '';
+      let failureMessage = '';
+      const canFinish = () => html.dataset.labStartup === 'pending'
+        || html.dataset.labStartup === 'error' && failureKind === 'timeout' && (mode === 'creative' || mode === 'mirror' || mode === 'link-image' || dedicated);
+      const fail = (message, kind = 'fatal') => {
+        if (html.dataset.labStartup === 'ready') return;
+        if (failureKind === 'fatal' && kind === 'timeout') return;
+        clearTimeout(timer);
+        failureKind = kind;
+        failureMessage = message;
+        html.dataset.labStartup = 'error';
+        const status = document.getElementById('labStartupStatus');
+        if (!status) return;
+        status.replaceChildren();
+        status.setAttribute('role', 'alert');
+        const heading = document.createElement('h2'); heading.textContent = label + '暂未就绪';
+        const detail = document.createElement('p'); detail.textContent = message;
+        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新加载';
+        retry.addEventListener('click', () => location.reload());
+        status.append(heading, detail, retry);
+      };
+      let waitingForConfig = false;
+      const finish = () => { if (!canFinish()) return; clearTimeout(timer); failureKind = ''; html.dataset.labStartup = 'ready'; };
+      window.SZ_LAB_STARTUP = {
+        ready() {
+          if (!canFinish()) return;
+          if (!dedicated) { finish(); return; }
+          if (waitingForConfig) return;
+          waitingForConfig = true;
+          const bridge = window.SZ_SCENE_EXTENSION_BRIDGE;
+          if (!bridge || typeof bridge.ready !== 'function') { fail('工作台配置尚未就绪，请重新加载。'); return; }
+          Promise.resolve(bridge.ready()).then(result => {
+            if (result && result.ok) finish();
+            else fail(result && result.error || '工作台配置加载失败，请重新加载。');
+          }).catch(() => fail('工作台配置加载失败，请重新加载。'));
+        },
+        fail
+      };
+      window.addEventListener('error', (event) => {
+        const target = event.target;
+        if (target === window || target && ['SCRIPT', 'LINK'].includes(target.tagName)) fail('工作台资源加载失败，请重新加载。');
+      }, true);
+      document.addEventListener('DOMContentLoaded', () => {
+        if (html.dataset.labStartup === 'error') { fail(failureMessage, failureKind); return; }
+        if (html.dataset.labStartup !== 'pending') return;
+        const status = document.getElementById('labStartupStatus');
+        if (status) status.textContent = '正在打开' + label + '…';
+        // Bound restoration after the document and its scripts are available.
+        timer = setTimeout(() => fail('工作台加载超时，请重新加载。', 'timeout'), 30000);
+      }, { once: true });
+    })();
+  </script>
+  <script src="/creative/web-chrome.js?v=20261012-reference-screenshots-v1"></script>
+  <link rel="stylesheet" href="promptlab.css?v=20261016-task-status-v2">
   <link rel="stylesheet" href="reference-detail-blueprint.css?v=20260902-reference-detail-autonomous-release-v1">
+  <link rel="stylesheet" href="aesthetic-mirror.css?v=20261014-v1">
+  <link rel="stylesheet" href="link-image.css?v=task-list-cleanup-20261016-v1">
+  <script>if(new URLSearchParams(location.search).get('mode')==='mirror')document.documentElement.classList.add('aesthetic-mirror-page');</script>
+  <link rel="stylesheet" href="creative-tools.css?v=20261001-web-creative-tools-v1">
+  <link rel="stylesheet" href="studio-genesis.css?v=task-list-cleanup-20261016-v1">
+  <link rel="stylesheet" href="scene-extension.css?v=20261002-scene-v1">
+  <link rel="stylesheet" href="studio-legacy-layout.css?v=20261002-list-workspace-v1">
+  <link rel="stylesheet" href="image-upload.css?v=20261002-upload-v4">
+  <link rel="stylesheet" href="viral-workflow-layout.css?v=20261002-viral-split-v1">
+  <link rel="stylesheet" href="creative-credit-hints.css?v=20261010-api-credit-v1">
+  <link rel="stylesheet" href="sku-region-ui.css?v=20261012-sku-region-v1">
+  <link rel="stylesheet" href="./workspace-ux.css?v=20261016-1">
+  <script>if(new URLSearchParams(location.search).get('studio')==='1')document.documentElement.classList.add('studio-genesis-page');</script>
 </head>
 <body class="main-lab-mode">
+  <div id="labStartupStatus" role="status" aria-live="polite">正在打开创作工作台…</div>
   <main class="app">
     <header class="hero">
       <div class="hero-brand-block">
@@ -28,12 +140,33 @@
         </div>
       </div>
       <div class="hero-actions">
-        <button id="openArchiveBtn" class="btn ghost archive-entry-btn" type="button" title="查看当前账号保存在这台电脑上的生图档案">本机历史 · 0</button>
+        <button id="openArchiveBtn" class="btn ghost archive-entry-btn" type="button" title="查看当前账号保存在这台电脑上的生成记录">生成记录 · 0</button>
         <button id="openKnowledgeBtn" class="btn ghost knowledge-link" type="button" title="当前账号共享的业务知识库">知识库 · 未导入</button>
         <button id="loadSampleBtn" class="btn ghost" type="button">载入示例</button>
         <button id="openConfigBtn" class="btn primary" type="button" title="在插件启动界面统一管理主图、详情页、SKU 与链接清单的 API">统一 API 设置</button>
       </div>
     </header>
+
+    <section id="promptTaskPanel" class="prompt-task-panel" aria-label="当前创作任务" hidden>
+      <button id="promptTaskOpen" class="prompt-task-entry" type="button" aria-haspopup="dialog" aria-controls="promptTaskDialog" aria-expanded="false">
+        <span class="prompt-task-dot" aria-hidden="true"></span><strong>任务状态</strong>
+        <span id="promptTaskCurrent" class="prompt-task-current" hidden></span>
+        <time id="promptTaskCurrentElapsed" class="prompt-task-current-elapsed" aria-hidden="true" hidden></time>
+        <span id="promptTaskSummary" class="prompt-task-summary" role="status" aria-live="polite"></span>
+        <span class="prompt-task-entry-action" aria-hidden="true">查看详情 <span>›</span></span>
+      </button>
+      <dialog id="promptTaskDialog" class="prompt-task-dialog" aria-labelledby="promptTaskTitle" aria-modal="true">
+        <header class="prompt-task-dialog-head">
+          <div><h2 id="promptTaskTitle">任务状态</h2><p id="promptTaskDetailSummary"></p></div>
+          <button id="promptTaskClose" class="prompt-task-close" type="button" aria-label="关闭任务状态" autofocus>×</button>
+        </header>
+        <div class="prompt-task-dialog-body">
+          <ul id="promptTaskList" class="prompt-task-list"></ul>
+          <div id="promptTaskRecovery" class="prompt-task-recovery" hidden></div>
+          <p id="promptTaskNote" class="panel-subtitle"></p>
+        </div>
+      </dialog>
+    </section>
 
     <section id="viralCoreRouteStep" class="panel viral-core-only viral-core-route-panel">
       <div class="panel-head">
@@ -41,7 +174,7 @@
           <span class="flow-step-no">01</span>
           <div>
             <h2>选择爆款裂变方式</h2>
-            <p class="panel-subtitle">案例裂变学习指定爆款案例；风格焕新从经典视觉库开始。两条路线共享商品主体，但参考、提示词与结果完全隔离。</p>
+            <p class="panel-subtitle">案例裂变学习指定爆款案例；风格焕新从经典视觉库开始。场景延展将产品从细节带入完整场景。三种方式的素材、计划与结果分别保留。</p>
           </div>
         </div>
         <span id="viralCoreRouteState" class="pill">案例裂变</span>
@@ -59,14 +192,89 @@
           <small>商品主体 + V1经典风格 / V2智能推荐 / V3自由共创备选；文案由用户自主决定。</small>
           <em>无需案例图</em>
         </button>
+        <button id="viralSceneModeBtn" class="viral-core-route-card" type="button" role="tab" aria-selected="false" data-viral-core-route="scene-extension">
+          <span>PRODUCT TO SCENE · NEW</span>
+          <strong>场景延展</strong>
+          <small>上传同款产品的多角度图片，适用于地板、家具、日用品、珠宝饰品、美妆与服装。</small>
+          <em>同款原图</em>
+        </button>
       </div>
       <div class="detail-rule-strip">
         <span>商品主体是唯一身份</span>
         <span>路线素材互不混用</span>
         <span>生成前先看批量计划</span>
-        <span>结果自动检查商品保真</span>
+        <span>逐张核对商品保真</span>
       </div>
     </section>
+
+    <section id="sceneMaterialPanel" class="panel scene-extension-only">
+      <div class="scene-heading"><span class="scene-step">02</span><div><h2>把产品带入场景</h2><p>正面确认款式，细节看质感，侧面补充结构。同一组只放一个款式或色号。</p></div></div>
+      <fieldset id="sceneMaterialFields">
+        <div class="scene-material-grid">
+          <div class="scene-material-card"><h3>正面 · 必填</h3><p>尽量完整、清晰，作为款式、颜色与外观的主要依据。</p><div id="sceneFrontPreview" class="scene-material-preview" tabindex="0" aria-label="产品正面，可粘贴或拖入图片">粘贴或拖入正面图</div><input id="sceneFrontFile" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传产品正面"><button id="sceneFrontClear" class="btn ghost" type="button">移除</button></div>
+          <div class="scene-material-card"><h3>细节 · 可选</h3><p>补充纹理、工艺、局部造型或细小部件。</p><div id="sceneDetailPreview" class="scene-material-preview" tabindex="0" aria-label="产品细节，可粘贴或拖入图片">粘贴或拖入细节图</div><input id="sceneDetailFile" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传产品细节"><button id="sceneDetailClear" class="btn ghost" type="button">移除</button></div>
+          <div class="scene-material-card"><h3>侧面或结构 · 可选</h3><p>说明厚度、轮廓、连接方式或可见的内部结构。</p><div id="sceneSectionPreview" class="scene-material-preview" tabindex="0" aria-label="侧面或结构，可粘贴或拖入图片">粘贴或拖入侧面图</div><input id="sceneSectionFile" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传侧面或结构"><button id="sceneSectionClear" class="btn ghost" type="button">移除</button></div>
+          <div class="scene-material-card"><h3>补充角度 · 可选</h3><p>补充背面、斜视或另一角度，帮助理解产品形态与光泽。</p><div id="sceneAnglePreview" class="scene-material-preview" tabindex="0" aria-label="补充角度，可粘贴或拖入图片">粘贴或拖入角度图</div><input id="sceneAngleFile" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传补充角度"><button id="sceneAngleClear" class="btn ghost" type="button">移除</button></div>
+        </div>
+        <div class="scene-fields">
+          <label>产品名称 · 必填<input id="sceneMaterialName" maxlength="120" placeholder="例如：原木地板、休闲椅、项链、口红、连衣裙"></label>
+          <label>产品类型<select id="sceneCategory"><option value="general">通用产品</option><option value="material">材料 / 地板</option><option value="furniture">家具</option><option value="daily">日用品</option><option value="jewelry">珠宝 / 饰品</option><option value="beauty">美妆 / 口红</option><option value="clothing">服装</option></select></label>
+          <label>款式 / 色号<input id="sceneSku" maxlength="80" placeholder="可选；不同款式或色号分开生成"></label>
+          <label>真实规格<input id="sceneDimensions" maxlength="120" placeholder="可选，填写已知尺寸、容量或尺码"></label>
+          <label>颜色要点<input id="sceneColorNotes" maxlength="300" placeholder="可选，说明需要保留的底色与配色"></label>
+          <label>纹理要点<input id="sceneTextureNotes" maxlength="300" placeholder="可选，说明花纹、织纹、纹路或表面细节"></label>
+          <label>质感 / 光泽<input id="sceneFinishNotes" maxlength="300" placeholder="可选，例如：细腻哑光、金属光泽、柔软织物"></label>
+          <label class="scene-field-wide">产品展示要点<textarea id="sceneDisplayNotes" maxlength="1200" placeholder="例如：展示项链吊坠与佩戴比例，或突出椅子的弧形靠背和织物质感"></textarea></label>
+        </div>
+        <label class="scene-confirm"><input id="sceneSameMaterial" type="checkbox">这些图片属于同一款产品 / 色号，允许将产品呈现在我选择的场景与应用方式中。</label>
+      </fieldset>
+      <p class="scene-note">支持 JPG、PNG、WebP，单张不超过 20 MB。只有正面图也可以开始；没有提供的结构、规格和产品性能不会作为已知事实补写。</p>
+    </section>
+
+    <section id="sceneConfigPanel" class="panel scene-extension-only">
+      <div class="scene-heading"><span class="scene-step">03</span><div><h2>从产品细节，到完整场景</h2><p>设定整组风格、目标场景与景别。每张图都会参考产品原图，保持款式、颜色、纹理与光泽一致。</p></div></div>
+      <fieldset id="sceneConfigFields">
+        <div class="scene-settings">
+          <label class="scene-wide">统一风格调性<input id="sceneStyleTone" maxlength="600" placeholder="例如：自然简约、轻奢精致、复古温暖；整组沿用同一风格" value="自然简约，真实摄影，整组配色、光线与场景氛围协调一致"></label>
+          <label class="scene-wide">目标场景<textarea id="sceneSpace" maxlength="1200" placeholder="描述产品出现在哪里、如何展示或使用，以及与人物或环境的关系">适合该产品的真实展示或使用场景，背景简洁，产品清晰突出，环境与产品比例自然。</textarea></label>
+          <label>应用方式<input id="sceneInstallation" list="sceneApplicationOptions" maxlength="600" value="遵循产品真实用途，自然陈列或使用" placeholder="选择建议或直接输入自定义说明"><datalist id="sceneApplicationOptions"><option value="自然陈列，突出产品造型与细节"></option><option value="居家使用，呈现产品与环境的真实关系"></option><option value="佩戴展示，保持产品与身体的真实比例"></option><option value="穿着展示，保持服装版型、图案与面料质感"></option><option value="美妆展示，呈现产品外观、色号或真实使用情境"></option><option value="材料应用，遵循原图形态与真实比例"></option></datalist></label>
+          <label>场景光线<select id="sceneLighting"><option>中性自然光，保留原图底色与表面光泽</option><option>接近产品原图的光色与柔硬度，避免额外染色</option><option>柔和侧光，控制反射与阴影，避免偏色</option></select></label>
+          <label>画面比例<select id="sceneRatio"><option value="1:1">1:1</option><option value="3:4" selected>3:4</option><option value="16:9">16:9</option><option value="9:16">9:16</option><option value="21:9">21:9</option></select></label>
+          <label>清晰度<select id="sceneResolution"><option value="1K">1K</option><option value="2K" selected>2K</option><option value="4K">4K</option></select></label>
+        </div>
+        <p id="sceneOutputSize" class="scene-note" aria-live="polite">当前输出尺寸：1536 × 2048 px · 与风格焕新使用相同输出规格</p>
+        <div class="scene-count-row"><label>总生成数量<input id="sceneCount" type="number" min="1" max="20" step="1" value="3" inputmode="numeric" aria-describedby="sceneCountSummary"></label><p class="scene-note">1–20 张，按选中的景别依次分配。每个景别至少 1 张，多张时分别呈现不同角度。</p></div>
+        <div class="scene-shot-grid" role="group" aria-label="输出景别">
+          <label class="scene-shot"><input id="sceneShotMacro" type="checkbox" checked><strong>微观</strong><span>贴近产品，查看局部造型、纹理、工艺与光泽。</span><em id="sceneShotMacroCount" class="scene-shot-count">1 张</em></label>
+          <label class="scene-shot"><input id="sceneShotNear" type="checkbox" checked><strong>近观</strong><span>呈现产品主体及近距离的陈列、使用或佩戴关系。</span><em id="sceneShotNearCount" class="scene-shot-count">1 张</em></label>
+          <label class="scene-shot"><input id="sceneShotWide" type="checkbox" checked><strong>远观</strong><span>展示完整环境或人物关系，产品仍清楚可辨。</span><em id="sceneShotWideCount" class="scene-shot-count">1 张</em></label>
+          <label class="scene-shot"><input id="sceneShotUltrawide" type="checkbox"><strong>超远观</strong><span>拉开空间层次，按产品类型展示更完整的环境、陈列或人物关系。</span><em id="sceneShotUltrawideCount" class="scene-shot-count">0 张</em></label>
+        </div>
+        <p id="sceneCountSummary" class="scene-note scene-count-summary" role="status" aria-live="polite">共 3 张：微观 1 张 · 近观 1 张 · 远观 1 张。</p>
+        <button id="scenePlanBtn" class="btn primary" type="button">生成延展计划</button><span class="scene-note"> 这一步只整理计划，不调用生图模型。</span>
+      </fieldset>
+      <div id="sceneState" class="scene-state" role="status" aria-live="polite">上传产品正面图，填写产品名称，然后生成延展计划。</div>
+      <div id="scenePlanGrid" class="scene-plan-grid"></div>
+      <div class="scene-actions"><button id="sceneGenerateBtn" class="btn primary" type="button" disabled>按计划生成</button><button id="sceneStopBtn" class="btn ghost" type="button" hidden>停止后续生成</button><button id="sceneResolveBtn" class="btn ghost" type="button" hidden>已核对上一任务，允许继续</button></div>
+      <p class="scene-note">沿用“统一 API 设置”中的生图模型。请逐张对照产品原图核对款式、颜色、纹理与光泽；AI 场景图的产品一致性需逐张验收。</p>
+    </section>
+
+    <section id="sceneResultsPanel" class="panel scene-extension-only">
+      <div class="scene-heading"><span class="scene-step">04</span><div><h2>对照产品，查看延展结果</h2><p>左侧产品原图，右侧生成结果；点击缩略图可在页面内放大对比。成功图片保存到本机历史，永久档案状态见下方。</p></div></div>
+      <div id="sceneResultGrid" class="scene-result-grid"></div>
+      <p id="sceneEmptyResults" class="scene-note">计划确认并生成后，微观、近观、远观与超远观图片会按所选景别和角度依次出现在这里。</p>
+    </section>
+
+    <div id="sceneCompareModal" class="scene-compare-modal" role="dialog" aria-modal="true" aria-labelledby="sceneCompareTitle" hidden>
+      <section class="scene-compare-dialog">
+        <header class="scene-compare-header"><div><h2 id="sceneCompareTitle">产品与结果对比</h2><p>左右对照款式、颜色、纹理与光泽</p></div><button id="sceneCompareClose" class="btn ghost" type="button" aria-label="关闭左右对比">关闭 ×</button></header>
+        <div class="scene-compare-panes">
+          <figure><figcaption>产品原图</figcaption><div class="scene-compare-image"><img id="sceneCompareOriginal" alt="产品原图"><p id="sceneCompareOriginalState" role="status" hidden></p></div></figure>
+          <figure><figcaption>生成结果</figcaption><div class="scene-compare-image"><img id="sceneCompareResult" alt="生成结果"><p id="sceneCompareResultState" role="status" hidden></p></div></figure>
+        </div>
+        <p class="scene-note">按 Esc、点击关闭按钮或弹窗外空白处返回。</p>
+      </section>
+    </div>
 
     <section id="detailRouteStep" class="panel detail-only detail-flow-panel detail-route-panel">
       <div class="panel-head">
@@ -74,7 +282,7 @@
           <span class="flow-step-no">01</span>
           <div>
             <h2>选择详情策划方向</h2>
-            <p class="panel-subtitle">两条路线互斥：参考成详只消费正式来源快照；链接 JSON 负责编号定位与详情策略。</p>
+            <p class="panel-subtitle">参考详情结构：上传几张详情截图学习；链接 JSON 策划：按链接编号读取定位与详情策略。</p>
           </div>
         </div>
         <span id="detailSourceState" class="pill">待选择来源</span>
@@ -82,7 +290,7 @@
       <div class="detail-mode-grid">
         <button id="detailRefModeBtn" class="detail-mode-card active" type="button" data-detail-mode="reference">
           <strong>参考详情结构</strong>
-          <span>正式来源快照 → 可编辑结构框架 → 商品主体/可选模特 → 一次锁定 → 一结构多商品生成。</span>
+          <span>参考详情截图 → 学习与编辑结构 → 自家商品/可选模特 → 锁定结构 → 一结构多商品生成。</span>
         </button>
         <button id="detailLinkModeBtn" class="detail-mode-card" type="button" data-detail-mode="link">
           <strong>链接定位 JSON 策划</strong>
@@ -90,7 +298,7 @@
         </button>
       </div>
       <div id="detailModeHint" class="detail-rule-strip">
-        <span>正式来源快照只读</span>
+        <span>截图按顺序学习</span>
         <span>两条路线不混用</span>
         <span>revision 全程留痕</span>
         <span>确认后才可生成</span>
@@ -102,7 +310,7 @@
         <div class="panel-head">
           <div>
             <h2 id="referenceSourceTitle"><span class="detail-only flow-inline-step">01A</span><span id="referenceSourceTitleText">参考图 / 竞品图</span></h2>
-            <p id="referenceSourceSubtitle" class="panel-subtitle detail-only">通用参考图入口，供主图参考与案例 / 爆款裂变等非参考成详场景使用；最多 6 张，支持多选上传、URL、粘贴图片和网页图片右键导入。</p>
+            <p id="referenceSourceSubtitle" class="panel-subtitle detail-only">按详情阅读顺序上传 1–6 张截图，支持多选、粘贴和截图图片链接；可调整顺序后分析。</p>
           </div>
           <span id="contextState" class="pill">等待图片</span>
         </div>
@@ -134,7 +342,7 @@
               <button id="clearRefBtn" class="btn ghost" type="button">清空</button>
             </div>
             <input id="refUrl" type="text" placeholder="也可粘贴最多 6 个图片 URL（用空格分隔）；聚焦后 Cmd+V 可贴图片">
-            <div id="referenceLearningNote" class="reference-learning-note detail-only">通用参考图只用于对应非参考成详场景的视觉学习；商品身份始终由产品主体素材决定。</div>
+            <div id="referenceLearningNote" class="reference-learning-note detail-only">截图用于学习内容顺序、排版与视觉表达；生成时使用自家商品和文案。</div>
           </div>
         </div>
         <div class="actions main-lab-only">
@@ -233,9 +441,9 @@
     <section id="referenceDetailWorkbench" class="panel detail-only reference-detail-workbench" aria-labelledby="referenceDetailWorkbenchTitle" aria-describedby="referenceDetailSourceSummary" hidden>
       <div class="reference-detail-source-bar">
         <div>
-          <span class="reference-detail-eyebrow">REFERENCE_DETAIL_SOURCE_V1</span>
+          <span class="reference-detail-eyebrow">参考详情学习</span>
           <h2 id="referenceDetailWorkbenchTitle">参考详情结构工作台</h2>
-          <p id="referenceDetailSourceSummary">仅消费由插件弹窗正式交接或手动导入的 REFERENCE_DETAIL_SOURCE_V1 快照；来源保持只读。</p>
+          <p id="referenceDetailSourceSummary">上传几张参考详情截图，学习结构与视觉表达，再结合自家商品素材原创生成。</p>
         </div>
         <div class="reference-detail-source-meta" aria-live="polite">
           <span id="referenceDetailSourceKind" class="pill">未导入来源</span>
@@ -245,15 +453,15 @@
         <div class="reference-detail-source-actions">
           <label class="btn ghost reference-detail-file-button" for="referenceDetailSourceFile">
             <input id="referenceDetailSourceFile" type="file" accept="application/json,.json">
-            <span>导入正式来源快照</span>
+            <span>导入已有商品快照（可选）</span>
           </label>
           <button id="referenceDetailBuildBtn" class="btn primary" type="button" disabled>分析结构框架</button>
           <button id="referenceDetailCancelBtn" class="btn ghost" type="button" disabled>取消拆解</button>
         </div>
       </div>
 
-      <div id="referenceDetailMigrationNotice" class="reference-detail-migration-notice" role="status" aria-live="polite" hidden>检测到旧版上传参考图状态，已安全清理；请重新从插件弹窗提取正式商品详情快照。</div>
-      <p id="referenceDetailSourceEmptyState" class="reference-detail-source-empty-state" role="status" aria-live="polite">请从插件弹窗粘贴商品 URL 或提取当前商品详情</p>
+      <div id="referenceDetailMigrationNotice" class="reference-detail-migration-notice" role="status" aria-live="polite" hidden>旧版学习记录需要重新分析，请重新上传参考详情截图；原图仍保留。</div>
+      <p id="referenceDetailSourceEmptyState" class="reference-detail-source-empty-state" role="status" aria-live="polite">请在上方按详情阅读顺序上传或粘贴 1–6 张参考详情截图。</p>
 
       <div id="referenceDetailFormalFlow" class="reference-detail-formal-flow" hidden>
         <nav class="reference-detail-v2-flow" aria-label="参考详情结构批量生成流程">
@@ -269,13 +477,13 @@
         <div class="reference-detail-workbench-grid">
         <aside class="reference-detail-column reference-detail-source-column" data-reference-detail-stage="source" aria-labelledby="referenceDetailSourceHeading">
           <div class="reference-detail-column-head">
-            <div><span class="reference-detail-column-index">01</span><h3 id="referenceDetailSourceHeading">只读来源</h3></div>
+            <div><span class="reference-detail-column-index">01</span><h3 id="referenceDetailSourceHeading">参考详情</h3></div>
             <span id="referenceDetailSourceBlockCount">0 块</span>
           </div>
           <div id="referenceDetailCompleteness" class="reference-detail-completeness" role="list" aria-label="来源完整度"></div>
           <div id="referenceDetailWarnings" class="reference-detail-warnings" role="status" aria-live="polite"></div>
           <div id="referenceDetailSourcePreview" class="reference-detail-source-preview" role="list" aria-label="按原顺序展示的来源块">
-            <p class="reference-detail-empty-copy">导入商品快照后按原顺序显示结构角色与来源血缘；参考内容仅用于分析。</p>
+            <p class="reference-detail-empty-copy">按上传顺序显示参考详情；截图仅用于学习结构与视觉表达。</p>
           </div>
         </aside>
 
@@ -620,7 +828,7 @@
           <span class="flow-step-no style-refresh-only">04</span>
           <div>
             <h2 id="detailPromptStepTitle">按当前路线生成详情提示词</h2>
-            <p id="detailPromptStepSubtitle" class="panel-subtitle">参考成详路线只读取已锁定结构；链接路线严格按 L 编号逐条读取各自定位与文案，两条路线都必须绑定授权产品主体素材。</p>
+            <p id="detailPromptStepSubtitle" class="panel-subtitle">清单成详路线只读取已锁定结构；链接路线严格按 L 编号逐条读取各自定位与文案，两条路线都必须绑定授权产品主体素材。</p>
           </div>
         </div>
         <span id="detailState" class="pill">待生成</span>
@@ -630,9 +838,9 @@
           <div class="detail-empty" id="detailEmpty">
             <div class="detail-empty-icon">✦</div>
             <strong>按选定正式路线生成详情提示词</strong>
-            <span>参考成详需先导入正式来源快照并锁定结构；链接路线需载入链接定位 JSON。模特素材可留空。</span>
+            <span>清单成详需先上传参考详情截图、编辑并锁定结构；链接路线需载入链接定位 JSON。模特素材可留空。</span>
             <ol>
-              <li>参考成详路线：正式快照 → 结构框架编辑 → 商品主体/可选模特 → 一次锁定 → 批量生成</li>
+              <li>清单成详路线：参考截图 → 分析与编辑结构 → 自家商品/可选模特 → 锁定结构 → 批量生成</li>
               <li>链接路线：L001、L002…各自定位 + 同一产品主体图，严格逐条生成对应提示词</li>
               <li>模特可选；若上传，只作为尺度、动作、情绪或信任场景的辅助证据</li>
             </ol>
@@ -904,6 +1112,25 @@
                   <b id="skuTemplateCount">0 / 1</b>
                 </div>
                 <div id="skuTemplatePreview" class="sku-template-preview empty">对象 SKU 底图预览</div>
+                <div id="skuRegionPanel" class="sku-region-panel">
+                  <p class="sku-region-title">确认要替换的商品区域</p>
+                  <p class="sku-region-help">只框选商品及必要的接触阴影，避开文案、图标和装饰。区域外仍保留原底图像素。</p>
+                  <div class="sku-region-actions">
+                    <button id="skuRegionEditBtn" class="btn ghost" type="button" disabled>框选商品区域</button>
+                    <button id="skuRegionConfirmBtn" class="btn ghost" type="button" disabled>确认主体区域</button>
+                    <button id="skuRegionResetBtn" class="btn ghost" type="button" disabled>清除框选</button>
+                  </div>
+                  <details>
+                    <summary>精确调整区域（画布百分比）</summary>
+                    <div class="sku-region-fields">
+                      <label>左边距 %<input id="skuRegionX" type="number" min="1" max="79" step="0.1" disabled></label>
+                      <label>上边距 %<input id="skuRegionY" type="number" min="1" max="79" step="0.1" disabled></label>
+                      <label>宽度 %<input id="skuRegionW" type="number" min="20" max="98" step="0.1" disabled></label>
+                      <label>高度 %<input id="skuRegionH" type="number" min="20" max="98" step="0.1" disabled></label>
+                    </div>
+                  </details>
+                  <div id="skuRegionState" class="sku-region-state" role="status" aria-live="polite">请先添加对象底图，再框选商品及必要的接触阴影。</div>
+                </div>
                 <div class="sku-template-controls">
                   <label class="sku-drop compact">
                     <input id="skuTemplateFile" type="file" accept="image/*">
@@ -1017,11 +1244,16 @@
             <div class="sku-runbar">
               <div id="skuPreflight" class="sku-preflight">请先添加替换主体和对象 SKU 底图；生成前会检查是否具备一一对应的两张输入图。</div>
               <div class="sku-actions">
+                <button id="skuNewPaidBatchBtn" class="btn ghost" type="button">另建付费 SKU 批次</button>
+                <button id="skuExportPaidReceiptBtn" class="btn ghost" type="button" disabled>查看并导出本批回执凭证</button>
                 <button id="skuRetryFailedBtn" class="btn ghost" type="button" disabled hidden>重试失败项</button>
                 <button id="skuGenerateBtn" class="btn primary soft" type="button">生成所选 SKU（0）</button>
               </div>
             </div>
           </section>
+
+          <p id="skuPaidBatchInfo" class="sku-preflight" role="status">旧请求未确认时，可明确另建付费批次；旧标记与原件保留，新批次可能另外扣费。</p>
+          <pre id="skuPaidMetadataPreview" hidden style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:360px;overflow:auto"></pre>
 
           <section class="sku-step sku-result-step">
             <div class="sku-step-head sku-result-head">
@@ -1045,25 +1277,36 @@
       </div>
     </section>
 
+  </main>
+
+  <div id="archiveHistoryModal" class="archive-history-modal" role="dialog" aria-modal="true" aria-labelledby="archivePanelTitle" tabindex="-1" hidden>
     <section id="archivePanel" class="panel local-archive-panel" aria-labelledby="archivePanelTitle">
       <div class="panel-head archive-panel-head">
         <div class="flow-heading">
-          <span class="flow-step-no">历史</span>
+          <span class="flow-step-no archive-title-icon" aria-hidden="true"><svg class="archive-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></span>
           <div>
-            <h2 id="archivePanelTitle">本机成果档案</h2>
-            <p class="panel-subtitle">只展示当前账号在这台电脑上仍真实存在的图片档案；本机图片数据被删除后，不保留空卡片。</p>
+            <h2 id="archivePanelTitle">生成记录</h2>
+            <p class="panel-subtitle">本浏览器中当前账号的图片记录。进行中与待确认任务请查看工作区任务状态。</p>
           </div>
         </div>
         <div class="state-actions archive-head-actions">
-          <span id="archiveState" class="pill">正在读取本机档案</span>
-          <button id="archiveRefreshBtn" class="btn ghost" type="button">刷新本机档案</button>
+          <span id="archiveState" class="pill" role="status" aria-live="polite">正在读取生成记录</span>
+          <button id="archiveRefreshBtn" class="btn ghost" type="button">刷新生成记录</button>
+          <button id="archiveHistoryCloseBtn" class="btn ghost" type="button" aria-label="关闭生成记录">关闭</button>
         </div>
       </div>
+      <div class="archive-view-toolbar">
+        <div class="archive-view-switch" role="group" aria-label="生成记录阅读方式">
+          <button id="archiveProjectViewBtn" class="btn ghost" type="button" aria-pressed="true"><svg class="archive-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>按项目</button>
+          <button id="archiveDateViewBtn" class="btn ghost" type="button" aria-pressed="false"><svg class="archive-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>按日期</button>
+        </div>
+        <button id="archiveTrashToggleBtn" class="btn ghost archive-trash-toggle" type="button" aria-pressed="false">回收站 · 0</button>
+      </div>
       <div class="archive-toolbar">
-        <label class="archive-search-field">检索档案
-          <input id="archiveSearchInput" type="search" placeholder="批次名称、L编号、SKU或图片方向">
+        <label class="archive-search-field" for="archiveSearchInput">检索记录
+          <input id="archiveSearchInput" type="search" placeholder="项目、商品、L编号、SKU、任务号或提示词">
         </label>
-        <label>模块
+        <label for="archiveRouteFilter">模块
           <select id="archiveRouteFilter">
             <option value="all">全部生图</option>
             <option value="main">主图</option>
@@ -1071,18 +1314,48 @@
             <option value="sku">批量 SKU</option>
             <option value="case">案例裂变</option>
             <option value="style-refresh">风格焕新</option>
+              <option value="scene-extension">场景延展</option>
+            <option value="clothing">DIY成图</option><option value="buyer">买家秀</option><option value="refinement">产品精修</option>
           </select>
         </label>
-        <button id="archiveTrashToggleBtn" class="btn ghost archive-trash-toggle" type="button" aria-pressed="false">回收站 · 0</button>
+        <label class="archive-date-field" for="archiveDateStart">开始日期
+          <input id="archiveDateStart" type="date">
+        </label>
+        <label class="archive-date-field" for="archiveDateEnd">结束日期
+          <input id="archiveDateEnd" type="date">
+        </label>
+        <button id="archiveClearFiltersBtn" class="btn ghost" type="button" hidden>清除筛选</button>
+      </div>
+      <p id="archiveTimezoneNote" class="archive-timezone-note">按项目创建日期分组与筛选，时间使用本机时区；缺失日期归入“时间未记录”。</p>
+      <div id="archiveSelectionSummary" class="archive-selection-summary" hidden>
+        <span id="archiveSelectionCount" role="status" aria-live="polite">已选 0 张</span>
+        <div class="archive-selection-actions">
+          <button id="archiveSelectionDownloadBtn" class="btn ghost" type="button" data-credit-local="true">下载全部已选</button>
+          <button id="archiveSelectionTrashBtn" class="btn ghost" type="button" data-credit-local="true">全部已选移至回收站</button>
+          <button id="archiveSelectionRestoreBtn" class="btn ghost" type="button" data-credit-local="true" hidden>恢复全部已选</button>
+          <button id="archiveClearSelectionBtn" class="btn ghost" type="button">清空选择</button>
+        </div>
+      </div>
+      <div id="archiveReadError" class="archive-read-error" role="alert" hidden>
+        <span id="archiveReadErrorText"></span>
+        <button id="archiveReadRetryBtn" class="btn ghost" type="button">重试读取</button>
       </div>
       <div id="archiveLocalRule" class="archive-local-rule">生成结果会自动写入本机档案。回收站保留 7 天，超期自动从本机永久删除；已下载到普通文件夹的副本不受影响。</div>
-      <div id="archiveBatchList" class="archive-batch-list"></div>
-      <div id="archiveEmpty" class="archive-empty">
-        <strong>这台电脑上还没有可展示的生图档案</strong>
-        <span>完成生图后会自动出现在这里；本机档案被删除或清理后会同步消失。</span>
+      <div id="archiveBatchList" class="archive-batch-list" aria-busy="false"></div>
+      <div id="archivePagination" class="archive-pagination" hidden>
+        <span id="archivePageStatus"></span>
+        <button id="archiveLoadMoreBtn" class="btn ghost" type="button">加载更多记录</button>
+      </div>
+      <div id="archiveEmpty" class="archive-empty" hidden>
+        <strong>正在读取生成记录…</strong>
+        <span>正在读取本浏览器中当前账号的记录，请稍候。</span>
+        <div class="archive-empty-actions">
+          <button id="archiveEmptyClearBtn" class="btn ghost" type="button" hidden>清除筛选</button>
+          <button id="archiveEmptyCreateBtn" class="btn" type="button" hidden>返回工作区创作</button>
+        </div>
       </div>
     </section>
-  </main>
+  </div>
 
   <div id="generatedImagePreviewModal" class="generated-image-preview-modal" role="dialog" aria-modal="true" aria-labelledby="generatedImagePreviewTitle" hidden>
     <button id="generatedImagePreviewClose" class="generated-image-preview-close" type="button" aria-label="关闭大图预览">×</button>
@@ -1413,13 +1686,20 @@
       <button id="configCloseBtn" class="action-close" type="button" aria-label="关闭">×</button>
       <div class="config-titlebar">
         <div>
-          <h3 id="configTitle">独立版 API 配置</h3>
-          <p>此弹窗仅供独立实验室使用；主插件请在启动界面的“统一 API 设置”中管理所有服务商。</p>
+          <h3 id="configTitle">自定义 API 配置</h3>
+          <p>管理当前账户的模型来源、接口与密钥，保存后应用到创作工作台。</p>
         </div>
         <span id="configState" class="pill warn">未配置</span>
       </div>
 
       <div class="config-compact">
+        <div id="configWalletRow" class="config-wallet-row" hidden>
+          <div>
+            <strong>使用本站积分</strong>
+            <span>无需填写 API Key，点击后立即生效。</span>
+          </div>
+          <button id="usePlatformWalletBtn" class="btn primary" type="button">直接使用积分</button>
+        </div>
         <div class="config-current">
           <div class="config-current-main">
             <span class="config-dot"></span>
@@ -1445,7 +1725,7 @@
             </select>
           </label>
           <label>API Key
-            <input id="apiKey" type="password" placeholder="少壮托管租户填网关 Key；直连模型填对应平台 Key">
+            <input id="apiKey" type="password" placeholder="托管模型填专属网关 Key；直连模型填对应平台 Key">
           </label>
           <label>生图适配器
             <select id="imageAdapter">
@@ -1486,7 +1766,7 @@
         </div>
 
         <div class="gateway-note">
-          <strong>租户默认通道</strong>
+          <strong>默认通道</strong>
           <span>不会配置模型的账号可选择“少壮托管 / Auto Mode”，统一走 <code>sub.shaozhuangai.com</code>。托管默认别名为提词/文本 <code>chatGPT5.5</code>、生图 <code>image2</code>；若要填写 <code>gpt-*</code> 直连模型，请切换到“ChatGPT”来源。</span>
         </div>
 
@@ -1558,6 +1838,7 @@
       <datalist id="imageModelOptions">
         <option value="image2"></option>
         <option value="gpt-image-2"></option>
+        <option value="gpt-image-2.5-sunburst"></option>
         <option value="gpt-image-1.5"></option>
         <option value="gpt-image-1"></option>
         <option value="doubao-seedream-5-0-260128"></option>
@@ -1575,15 +1856,40 @@
   </div>
   <script src="../../src/local-import.js"></script>
   <script src="../../src/business-knowledge.js"></script>
+  <script src="../../src/knowledge-output-contract.js?v=20261012-local-knowledge-v1"></script>
   <script src="../../src/subject-orchestration.js"></script>
   <script src="../../src/subject-assets.js"></script>
-  <script src="../../src/reference-detail-contract.js?v=20260901-graphic-detail-lazy-range-v4"></script>
-  <script src="reference-detail-blueprint.js?v=20260830-reference-detail-ai-direction-v1"></script>
-  <script src="reference-detail-batch.js?v=20260828-reference-detail-batch-v1"></script>
+  <script src="../../src/reference-detail-contract.js?v=20261012-reference-screenshots-v1"></script>
+  <script src="reference-detail-blueprint.js?v=20261012-reference-screenshots-v1"></script>
+  <script src="reference-detail-batch.js?v=20261002-list-workspace-v1"></script>
   <script src="image-archive-store.js?v=20260830-sku-subject-replace-v2"></script>
+  <script src="guide-model-profile.js?v=20261009-sunburst-guide-v1"></script>
   <script src="viral-series-contract.js?v=20260721-v1875-viral-20"></script>
   <script src="style-refresh-contract.js?v=20260905-nutrition-catalog-r1"></script>
-  <script src="/creative/labs/image-prompt-lab/background.js"></script>
-  <script src="promptlab.js?v=20260904-sku-subject-replace-geometry-v4"></script>
+  <script src="../../src/reference-detail-interceptor.js"></script>
+  <script src="../../src/reference-detail-background.js?v=20261009-sunburst-guide-v1"></script>
+  <script src="../../src/taobao-sku-background.js"></script>
+  <script src="creative-tools-contract.js?v=20261014-mirror-v1"></script>
+  <script src="aesthetic-mirror-contract.js?v=20261014-v1"></script>
+  <script src="studio-genesis-contract.js?v=20261012-continue-recovery-v2"></script>
+  <script src="scene-extension-contract.js?v=20261002-list-workspace-v1"></script>
+  <script src="/creative/labs/image-prompt-lab/background.js?v=20261014-mirror-v1"></script>
+  <script src="image-upload.js?v=20261002-upload-v3"></script>
+  <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
+  <script src="creative-credit-hints.js?v=20261010-api-credit-v1"></script>
+  <script src="sku-region-ui.js?v=20261012-sku-region-v1"></script>
+  <script src="sku-delivery-store.js?v=20261013-sku-delivery-v1"></script>
+  <script src="sku-durable-receipt.js?v=20261013-sku-durable-v1"></script>
+  <script src="promptlab.js?v=20261016-task-status-v2"></script>
+  <script src="aesthetic-mirror-ui.js?v=20261014-v1"></script>
+  <script src="link-list-import.js?v=20261015-v1"></script>
+  <script src="link-image-contract.js?v=20261015-v1"></script>
+  <script src="link-image-ui.js?v=task-list-cleanup-20261016-v1"></script>
+  <script src="creative-tools-ui.js?v=20261002-credit-hints-v1"></script>
+  <script src="studio-genesis-ui.js?v=task-list-cleanup-20261016-v1"></script>
+  <script src="scene-extension-ui.js?v=20261002-credit-hints-v1"></script>
+  <script src="studio-legacy-layout.js?v=20261002-list-workspace-v1"></script>
+  <script src="viral-workflow-layout.js?v=20261002-viral-split-v1"></script>
+  <script src="viral-workflow-bridge.js?v=20261002-viral-split-v1"></script>
 </body>
 </html>

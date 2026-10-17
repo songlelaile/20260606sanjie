@@ -1,0 +1,3 @@
+/opt/sanjie-releases/20261007-image-repair-v1
+/opt/sanjie-releases/20261009-sunburst-guide-plugin84-v4
+/opt/sanjie-releases/credit-pool-shared-wallet-20261009-v1

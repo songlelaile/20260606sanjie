@@ -1,0 +1,35 @@
+.panel { display: grid; gap: 18px; padding: 24px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.header h2 { display: flex; align-items: center; gap: 9px; margin: 0 0 8px; font-size: 19px; }
+.header p, .hint { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.pool { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px; border-radius: 8px; background: var(--surface-2); }
+.pool span { color: var(--muted); font-size: 14px; }
+.pool strong { color: var(--brand); font-size: 27px; font-variant-numeric: tabular-nums; }
+.pool small { font-size: 13px; font-weight: 400; }
+.form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; }
+.field { display: grid; gap: 8px; min-width: 0; color: var(--muted); font-size: 13px; }
+.field input, .field select, .field textarea { width: 100%; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+.field textarea { resize: vertical; line-height: 1.6; }
+.reason { grid-column: 1 / -1; }
+.field input:disabled, .field select:disabled, .field textarea:disabled { opacity: .65; }
+.primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 10px 15px; border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.primary { background: var(--brand); color: var(--bg); border-color: var(--brand); }
+.secondary { background: var(--surface-2); color: var(--ink); }
+.primary:disabled, .secondary:disabled { opacity: .5; cursor: default; }
+.panel button:focus-visible, .panel input:focus-visible, .panel select:focus-visible, .panel textarea:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.error { margin: 0; padding: 12px 15px; border: 1px solid var(--bad); border-radius: 7px; color: var(--bad); font-size: 13px; line-height: 1.7; }
+.success, .pending, .preview { margin: 0; padding: 13px 16px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface-2); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.success { color: var(--good); }
+.success p, .pending p { margin: 5px 0; }
+.pending { color: var(--brand); }
+.preview strong { color: var(--brand); }
+.actions { display: flex; gap: 12px; }
+.history { min-width: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+.history h3 { margin: 0 0 16px; font-size: 15px; }
+.tableWrap { width: 100%; overflow-x: auto; }
+.tableWrap table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.tableWrap th { white-space: nowrap; background: var(--surface-2); color: var(--muted); font-weight: 500; }
+.tableWrap th, .tableWrap td { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.tableWrap td { min-width: 120px; vertical-align: top; font-variant-numeric: tabular-nums; }
+.tableWrap small { display: block; margin-top: 5px; color: var(--muted); max-width: 220px; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .panel { padding: 18px 14px; } .header { flex-direction: column; } .form { grid-template-columns: minmax(0, 1fr); } .pool { align-items: flex-start; flex-direction: column; gap: 7px; } .actions .primary { width: 100%; } }

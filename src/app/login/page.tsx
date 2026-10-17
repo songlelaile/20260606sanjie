@@ -1,16 +1,17 @@
 "use client";
 
 import { Eye, EyeOff } from "lucide-react";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { safeDmpReportReturnPath } from "@/lib/dmp-report-share-path";
+import { BrandIdentity } from "@/components/BrandIdentity";
 
 type Tab = "login" | "register" | "invite";
 
 const FEATURES = [
-  { title: "作图", desc: "主图、详情、参考成详、批量 SKU 和爆款裂变在同一工作台完成" },
+  { title: "作图", desc: "主图、详情、清单成图、清单成详、批量 SKU 和爆款裂变在同一工作台完成" },
   { title: "做视频", desc: "按创作路线和视觉风格提交真实视频任务" },
-  { title: "自主开通", desc: "手机号注册即可上手，也可凭邀请码开通" }
+  { title: "注册与开通", desc: "手机号自主注册建立独立工作区，充值后开通；受邀客户可凭邀请码访问" }
 ];
 
 export default function LoginPage() {
@@ -39,6 +40,7 @@ function LoginView() {
 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const submissionPending = useRef(false);
 
   // 管理后台「复制注册链接」生成的是 /login?invite=CODE：自动切到邀请注册并回填邀请码。
   useEffect(() => {
@@ -50,12 +52,15 @@ function LoginView() {
   }, [searchParams]);
 
   function switchTab(next: Tab) {
+    if (submissionPending.current) return;
     setTab(next);
     setError("");
   }
 
   async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submissionPending.current) return;
+    submissionPending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -79,12 +84,19 @@ function LoginView() {
     } catch {
       setError("网络连接失败，请检查网络后重试");
     } finally {
+      submissionPending.current = false;
       setBusy(false);
     }
   }
 
   async function submitRegister(event: React.FormEvent<HTMLFormElement>, withInvite: boolean) {
     event.preventDefault();
+    if (submissionPending.current) return;
+    if (withInvite && !inviteCode.trim()) {
+      setError("请输入邀请码，或切换到自主注册后充值开通");
+      return;
+    }
+    submissionPending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -95,7 +107,7 @@ function LoginView() {
           name: regName,
           username: regUsername,
           password: regPassword,
-          ...(withInvite ? { inviteCode } : {})
+          ...(withInvite ? { inviteCode: inviteCode.trim().toUpperCase() } : {})
         }),
         cache: "no-store"
       });
@@ -110,6 +122,7 @@ function LoginView() {
     } catch {
       setError("网络连接失败，请检查网络后重试");
     } finally {
+      submissionPending.current = false;
       setBusy(false);
     }
   }
@@ -123,6 +136,7 @@ function LoginView() {
             value={regName}
             onChange={(event) => setRegName(event.target.value)}
             autoComplete="name"
+            maxLength={50}
             placeholder="如何称呼你"
           />
         </label>
@@ -134,9 +148,11 @@ function LoginView() {
             autoComplete="tel"
             inputMode="numeric"
             maxLength={11}
+            required
+            pattern="1[3-9][0-9]{9}"
             placeholder="请输入 11 位手机号"
           />
-          <small className="auth-field-hint">用于登录及辅助找回密码</small>
+          <small className="auth-field-hint">作为登录账号；忘记密码请联系管理员重置</small>
         </label>
         <label>
           密码
@@ -146,6 +162,9 @@ function LoginView() {
               value={regPassword}
               onChange={(event) => setRegPassword(event.target.value)}
               autoComplete="new-password"
+              required
+              minLength={6}
+              maxLength={128}
               placeholder="至少 6 个字符"
             />
             <button
@@ -164,19 +183,24 @@ function LoginView() {
             邀请码
             <input
               value={inviteCode}
-              onChange={(event) => setInviteCode(event.target.value)}
+              onChange={(event) => setInviteCode(event.target.value.toUpperCase())}
+              autoComplete="off"
+              required
+              minLength={6}
+              maxLength={32}
+              pattern="[A-Za-z0-9]{6,32}"
               placeholder="请输入邀请码"
             />
           </label>
         ) : null}
-        {error ? <p className="auth-error">{error}</p> : null}
+        {error ? <p className="auth-error" role="alert">{error}</p> : null}
         <button type="submit" className="auth-submit" disabled={busy}>
-          {busy ? "注册中…" : "注册并登录"}
+          {busy ? "注册中…" : withInvite ? "凭邀请码注册并登录" : "注册独立工作区"}
         </button>
         {withInvite ? (
-          <p className="auth-hint">没有邀请码？可切换到「自主注册」直接开通。</p>
+          <p className="auth-hint">受邀客户注册后可访问作图与视频工作台。没有邀请码？可自主注册独立工作区，充值后开通。达摩盘工具需单独授权。</p>
         ) : (
-          <p className="auth-hint">注册后将自动创建属于你的独立工作区。</p>
+          <p className="auth-hint">注册后将创建属于你的独立工作区；非受邀客户须充值开通作图与视频工作台。达摩盘工具需单独授权。</p>
         )}
       </form>
     );
@@ -186,15 +210,11 @@ function LoginView() {
     <div className="auth-shell">
       <aside className="auth-hero">
         <div className="auth-hero-brand">
-          <span className="auth-hero-logo">三阶</span>
-          <div>
-            <strong>三阶引擎</strong>
-            <small>作图 · 视频</small>
-          </div>
+          <BrandIdentity variant="hero" subtitle="作图 · 视频" />
         </div>
         <div className="auth-hero-headline">
           <h2>把商品素材，变成可发布的主图和视频</h2>
-          <p>自主注册或邀请开通，登录后直接进入作图工作台。</p>
+          <p>自主注册建立独立工作区，充值后开通作图与视频；受邀客户可凭邀请码访问。</p>
         </div>
         <ul className="auth-hero-features">
           {FEATURES.map((f) => (
@@ -208,10 +228,12 @@ function LoginView() {
 
       <main className="auth-panel">
         <div className="auth-card">
+          <BrandIdentity variant="mobileLogin" subtitle="作图 · 视频" />
           <div className="auth-tabs" role="tablist">
             <button
               type="button"
               role="tab"
+              disabled={busy}
               aria-selected={tab === "login"}
               className={tab === "login" ? "is-active" : ""}
               onClick={() => switchTab("login")}
@@ -221,6 +243,7 @@ function LoginView() {
             <button
               type="button"
               role="tab"
+              disabled={busy}
               aria-selected={tab === "register"}
               className={tab === "register" ? "is-active" : ""}
               onClick={() => switchTab("register")}
@@ -230,6 +253,7 @@ function LoginView() {
             <button
               type="button"
               role="tab"
+              disabled={busy}
               aria-selected={tab === "invite"}
               className={tab === "invite" ? "is-active" : ""}
               onClick={() => switchTab("invite")}
@@ -246,6 +270,7 @@ function LoginView() {
                   value={username}
                   onChange={(event) => setUsername(event.target.value)}
                   autoComplete="username"
+                  required
                   placeholder="请输入账号或手机号"
                 />
               </label>
@@ -257,6 +282,7 @@ function LoginView() {
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
                     autoComplete="current-password"
+                    required
                     placeholder="请输入密码"
                   />
                   <button
@@ -270,7 +296,7 @@ function LoginView() {
                   </button>
                 </span>
               </label>
-              {error ? <p className="auth-error">{error}</p> : null}
+              {error ? <p className="auth-error" role="alert">{error}</p> : null}
               <button type="submit" className="auth-submit" disabled={busy}>
                 {busy ? "登录中…" : "登录"}
               </button>

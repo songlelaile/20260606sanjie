@@ -6,7 +6,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root) {
   'use strict';
 
-  var DB_NAME = 'sz_image_archive_v1';
+  var DB_NAME = 'sz_image_archive_v1' + (root.__SANJIE_ENVIRONMENT ? ':environment:' + encodeURIComponent(String(root.__SANJIE_ENVIRONMENT)) : '');
   var DB_VERSION = 2;
   var BATCH_STORE = 'batches';
   var ASSET_STORE = 'assets';
@@ -327,7 +327,8 @@
   }
 
   function openDb() {
-    return new Promise(function (resolve, reject) {
+    var ready = root.SZ_WEB_ACCOUNT ? root.SZ_WEB_ACCOUNT.require() : Promise.resolve();
+    return ready.then(function () { return new Promise(function (resolve, reject) {
       if (!root.indexedDB) { reject(new Error('当前环境不支持本机图片档案')); return; }
       var request = root.indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = function () {
@@ -357,7 +358,7 @@
       };
       request.onsuccess = function () { resolve(request.result); };
       request.onerror = function () { reject(request.error || new Error('无法打开本机图片档案')); };
-    });
+    }); });
   }
 
   function transaction(storeNames, mode, task) {
@@ -1336,6 +1337,9 @@
   }
 
   function purgeAllExpired(now) {
+    if (root.SZ_WEB_ACCOUNT) return root.SZ_WEB_ACCOUNT.require().then(function (id) {
+      return purgeExpired('user:' + String(id).replace(/[^\w@.+:-]/g, '_').slice(0, 120), now);
+    });
     now = Number(now) || Date.now();
     var accountKeys = {};
     var removed = 0;

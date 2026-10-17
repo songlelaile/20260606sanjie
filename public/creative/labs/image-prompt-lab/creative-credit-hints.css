@@ -1,0 +1,13 @@
+/* Preserve action layout when the shared credit caption wraps a button. */
+.actions > .sz-credit-action,.sg-actions > .sz-credit-action,.ct-actions > .sz-credit-action,.ct-card-actions > .sz-credit-action { align-self:flex-start; }
+[data-sz-credit] { overflow-wrap:anywhere; }
+.sg-submit > .sz-credit-action,.ct-result > .sz-credit-action,.ct-asset > .sz-credit-action:has(.ct-asset-preview),.scene-result-card > .sz-credit-action:has(.scene-compare-thumbnails) { width:100%; }
+.sg-tabs > .sz-credit-action { flex:1; text-align:center; }
+.ct-main-actions > .sz-credit-action:has(.primary) { flex:1; }
+.ct-tabs > .sz-credit-action { text-align:center; }
+.action-options > .sz-credit-action { width:100%; }
+.sz-credit-icon-action { position:absolute; top:3px; right:3px; align-items:center !important; z-index:2; }
+.sz-credit-icon-action > button { position:static !important; }
+.sz-credit-icon-action > small { font-size:10px !important; line-height:1.1 !important; padding:0 2px !important; white-space:nowrap !important; background:var(--panel,#16200d); border-radius:3px; }
+.action-modal .sz-credit-icon-action:has(.action-close) { top:16px; right:16px; }
+@media(max-width:760px) { .sg-actions > .sz-credit-action,.ct-actions > .sz-credit-action { max-width:100%; } }

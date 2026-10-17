@@ -15,6 +15,15 @@ const SESSION: Session = {
 
 const DEV_FALLBACK_SECRET = "sanjie-dev-insecure-secret-change-me";
 
+describe("personal center route access", () => {
+  it.each(["tenant", "admin"] as const)("allows %s to open their personal center without widening management access", (role) => {
+    expect(canAccess(role, "/profile")).toBe(true);
+    expect(canAccess(role, "/profile/settings")).toBe(true);
+    expect(canAccess(role, "/profile-other")).toBe(false);
+    if (role === "tenant") expect(canAccess(role, "/management")).toBe(false);
+  });
+});
+
 async function serializeLegacySignedSession(
   claims: object = SESSION
 ): Promise<string> {

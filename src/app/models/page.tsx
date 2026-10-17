@@ -1,39 +1,42 @@
 import type { Metadata } from "next";
-import { PageHeader } from "@/components/PageHeader";
 import { ModelGatewayConsole } from "@/components/model-gateway/ModelGatewayConsole";
 import {
-  GATEWAY_MODELS,
   GATEWAY_PLANS,
   gatewayProviderLabel
 } from "@/lib/model-gateway/catalog";
 import { getGatewayOverview } from "@/lib/model-gateway/store";
+import { listAvailableGatewayModels } from "@/lib/model-gateway/runtime-catalog";
 import { getCurrentUser } from "@/lib/server-session";
+import "@/components/model-gateway/PricingPage.css";
 
 export const metadata: Metadata = {
-  title: "模型网关 · 三阶引擎"
+  title: "购买积分 · 三阶引擎"
 };
 
 export const dynamic = "force-dynamic";
 
-export default async function ModelsPage() {
+export default async function ModelsPage({ searchParams }: { searchParams?: Promise<{ tab?: string | string[] }> }) {
   const user = await getCurrentUser();
   if (!user) {
     return null;
   }
-  const overview = await getGatewayOverview(user.id);
+  const [overview, catalog] = await Promise.all([
+    getGatewayOverview(user.id),
+    listAvailableGatewayModels().then((models) => ({ models, error: null })).catch(() => ({ models: [], error: "模型目录暂不可用，请管理员检查中转站配置后刷新。" }))
+  ]);
   const serializable = JSON.parse(JSON.stringify(overview));
+  const query = await searchParams;
+  const view = query?.tab === "api" ? "api" : "pricing";
 
   return (
     <>
-      <PageHeader
-        eyebrow="Model Gateway"
-        title="少壮 AI 模型网关"
-        description="统一接入少壮中转站（chatGPT5.5 / image2）以及 OpenAI、DeepSeek、通义、豆包、智谱直连。当前支持非流式聊天与生图；不支持 stream=true 与视频生成。"
-      />
       <ModelGatewayConsole
+        view={view}
         initialOverview={serializable}
         plans={GATEWAY_PLANS}
-        models={GATEWAY_MODELS.map((model) => ({
+        canManageRelay={user.authRole === "admin" && user.status === "active"}
+        modelCatalogError={catalog.error}
+        models={catalog.models.map((model) => ({
           id: model.id,
           label: model.label,
           provider: model.provider,

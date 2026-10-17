@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>视频本地合成验证</title>
+<style>body{font:16px system-ui;max-width:800px;margin:24px auto;padding:16px}button{padding:10px 16px;margin:6px}video{display:block;max-width:100%;max-height:480px;margin-top:16px}pre{white-space:pre-wrap}progress{width:100%}</style>
+<h1>15 秒本地合成验证</h1>
+<p>三段已有素材：红色图片、蓝色图片、绿色短视频。7.6 秒人声测试音跨越镜头持续播放，背景音乐循环 15 秒；不会请求任何模型。</p>
+<label>可选真实人声（不选则验证 7.6 秒测试音） <input id="narration-file" type="file" accept="audio/*"></label>
+<button id="run" type="button">运行真实录制测试</button><button id="cancel" type="button" disabled>取消</button>
+<progress id="progress" value="0" max="1"></progress><pre id="result" aria-live="polite">等待运行</pre>
+<video id="preview" controls playsinline></video><a id="download" hidden download="local-renderer-test.webm">下载测试视频</a> <a id="download-report" hidden download="local-renderer-test.json">下载验证报告</a>
+<script src="./video-studio-contract.js"></script><script src="./video-production.js"></script>
+<script>
+(function () {
+  'use strict';
+  var P = window.SZEcommerceVideoProduction, C = window.SZEcommerceVideoContract;
+  var controller, previousUrl, previousReportUrl;
+  var run = document.getElementById('run'), cancel = document.getElementById('cancel'), result = document.getElementById('result'), preview = document.getElementById('preview');
+  function check(condition, message) { if (!condition) throw new Error(message); }
+  function report(value) {
+    window.__videoProductionTestResult = value; result.textContent = JSON.stringify(value, null, 2);
+    var link = document.getElementById('download-report');
+    if (previousReportUrl) URL.revokeObjectURL(previousReportUrl);
+    previousReportUrl = URL.createObjectURL(new Blob([result.textContent], { type: 'application/json' })); link.href = previousReportUrl; link.hidden = value.status !== 'passed';
+  }
+  function event(media, name) {
+    return new Promise(function (resolve, reject) { var timer = setTimeout(function () { reject(new Error(name + ' timed out')); }, 10000);
+      media.addEventListener(name, function () { clearTimeout(timer); resolve(); }, { once: true });
+      media.addEventListener('error', function () { clearTimeout(timer); reject(new Error('media decode failed')); }, { once: true });
+    });
+  }
+  async function image(color) {
+    var canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 640;
+    var ctx = canvas.getContext('2d'); ctx.fillStyle = color; ctx.fillRect(0, 0, 360, 640);
+    var blob = await new Promise(function (resolve) { canvas.toBlob(resolve, 'image/png'); });
+    var url = URL.createObjectURL(blob);
+    try { return await fetch(url).then(function (response) { return response.blob(); }); } finally { URL.revokeObjectURL(url); }
+  }
+  function tone(seconds, frequency, amplitude) {
+    var frames = Math.round(48000 * seconds), data = new ArrayBuffer(44 + frames * 2), view = new DataView(data);
+    function text(at, value) { for (var i = 0; i < value.length; i++) view.setUint8(at + i, value.charCodeAt(i)); }
+    text(0, 'RIFF'); view.setUint32(4, 36 + frames * 2, true); text(8, 'WAVE'); text(12, 'fmt '); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 48000, true); view.setUint32(28, 96000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, frames * 2, true);
+    for (var i = 0; i < frames; i++) view.setInt16(44 + i * 2, Math.sin(2 * Math.PI * frequency * i / 48000) * amplitude, true);
+    return new Blob([data], { type: 'audio/wav' });
+  }
+  function amplitudeAt(buffer, seconds, frequency) {
+    var samples = buffer.getChannelData(0), first = Math.round(seconds * buffer.sampleRate), count = Math.min(Math.round(buffer.sampleRate * 0.25), samples.length - first);
+    var real = 0, imaginary = 0;
+    for (var i = 0; i < count; i++) { var angle = 2 * Math.PI * frequency * i / buffer.sampleRate; real += samples[first + i] * Math.cos(angle); imaginary += samples[first + i] * Math.sin(angle); }
+    return Math.sqrt(real * real + imaginary * imaginary) * 2 / count;
+  }
+  async function shortVideo() {
+    var canvas = document.createElement('canvas'); canvas.width = 360; canvas.height = 640;
+    var ctx = canvas.getContext('2d'); ctx.fillStyle = '#208a40'; ctx.fillRect(0, 0, 360, 640);
+    var audio = new AudioContext(); await audio.resume(); var destination = audio.createMediaStreamDestination();
+    var oscillator = audio.createOscillator(), gain = audio.createGain(); oscillator.frequency.value = 440; gain.gain.value = 0.03;
+    oscillator.connect(gain); gain.connect(destination); oscillator.start();
+    var stream = canvas.captureStream(20); destination.stream.getAudioTracks().forEach(function (track) { stream.addTrack(track); });
+    var parts = [], recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    var stopped = new Promise(function (resolve, reject) { recorder.onstop = resolve; recorder.onerror = reject; });
+    recorder.ondataavailable = function (e) { if (e.data.size) parts.push(e.data); }; recorder.start(100);
+    var tick = setInterval(function () { ctx.fillStyle = '#208a40'; ctx.fillRect(0, 0, 360, 640); }, 50);
+    try { await new Promise(function (resolve) { setTimeout(resolve, 1100); }); recorder.stop(); await stopped;
+      return await P.fixWebmDuration(new Blob(parts, { type: 'video/webm' }), 1.1);
+    } finally { clearInterval(tick); oscillator.stop(); oscillator.disconnect(); gain.disconnect(); stream.getTracks().forEach(function (track) { track.stop(); }); await audio.close(); }
+  }
+  function asset(id, kind) {
+    return { id: id, kind: kind, role: kind === 'audio' ? 'rhythm' : 'product', name: id, mimeType: kind === 'image' ? 'image/png' : kind === 'audio' ? 'audio/wav' : 'video/webm',
+      durationSeconds: kind === 'image' ? 0 : 1.1, storageRef: { dbName: C.ASSET_DB_NAME, storeName: C.ASSET_STORE_NAME, id: id }, rightsConfirmed: true };
+  }
+  run.onclick = async function () {
+    run.disabled = true; cancel.disabled = false; controller = new AbortController(); report({ status: 'running', paidCalls: 0 });
+    try {
+      var uploaded = document.getElementById('narration-file').files[0];
+      var fixtures = { red: await image('#b93232'), blue: await image('#304bc0'), green: await shortVideo(), music: tone(1, 220, 4000), narration: uploaded || tone(7.6, 660, 6000) };
+      var request = { mode: 'direct', productKey: 'seedance-2.0', ratio: '9:16', resolution: '720p', durationSeconds: 15, creativeRoute: 'hero_product', styleProfile: 'commerce_studio', audioMode: 'silent', script: '本地已有素材合成测试', images: [asset('red', 'image'), asset('blue', 'image')], videos: [asset('green', 'video')], audios: [asset('music', 'audio')] };
+      request.rights = { confirmed: true, confirmedAt: new Date().toISOString(), fingerprint: C.assetRightsFingerprint(request) };
+      var plan = P.buildPlan(request, { mode: 'economic', hybridAiSeconds: 0, totalDurationSeconds: 15, budgetYuan: 0 });
+      check(plan.shots.every(function (shot) { return shot.kind === 'local' && !shot.subtitle; }), 'all-local/no invented subtitle');
+      var output = await P.renderTimeline(plan, { signal: controller.signal, resolveAsset: async function (id) { check(!!fixtures[id], 'fixture missing'); return fixtures[id]; },
+        audioTracks: [{ id: 'narration', assetId: 'narration', role: 'narration', volume: 1, startSeconds: 0, loop: false },
+          { id: 'music', assetId: 'music', role: 'music', volume: 0.25, startSeconds: 0, loop: true }],
+        sourceAudioVolume: 0, resolveAudio: async function (track) { return fixtures[track.assetId]; },
+        resolveVideo: function () { throw new Error('no AI shot may be resolved'); }, onProgress: function (event) { document.getElementById('progress').value = event.progress; } });
+      check(output.blob.size > 1000 && output.mimeType.indexOf('video/webm') === 0, 'non-empty WebM');
+      check(output.width === 720 && output.height === 1280 && output.durationSeconds === 15, '720p portrait/15s');
+      if (previousUrl) URL.revokeObjectURL(previousUrl); previousUrl = URL.createObjectURL(output.blob);
+      var loaded = event(preview, 'loadeddata'); preview.src = previousUrl; preview.load(); await loaded;
+      check(Number.isFinite(preview.duration) && Math.abs(preview.duration - 15) < 0.1, 'downloaded WebM has finite 15-second duration');
+      var canvas = document.createElement('canvas'); canvas.width = 720; canvas.height = 1280; var ctx = canvas.getContext('2d'), samples = [];
+      for (var i = 0; i < 3; i++) {
+        var seeked = event(preview, 'seeked'); preview.currentTime = i * 5 + 0.5; await seeked; ctx.drawImage(preview, 0, 0, 720, 1280);
+        samples.push(Array.from(ctx.getImageData(360, 640, 1, 1).data).slice(0, 3));
+      }
+      check(samples[0][0] > samples[0][1] * 2 && samples[1][2] > samples[1][0] * 2 && samples[2][1] > samples[2][0] * 2, 'timeline red/blue/video-green frame order');
+      preview.muted = true; await preview.play(); var capture = preview.captureStream ? preview.captureStream() : null;
+      check(capture && capture.getAudioTracks().length === 1, 'local music audio track survives WebM encoding');
+      capture.getTracks().forEach(function (track) { track.stop(); }); preview.pause(); preview.muted = false; preview.currentTime = 0;
+      var decoder = new AudioContext(), verification;
+      try {
+        var decoded = await decoder.decodeAudioData(await output.blob.arrayBuffer());
+        verification = { decodedSeconds: decoded.duration, syntheticNarration: !uploaded,
+          musicStart: amplitudeAt(decoded, 0.5, 220), musicTail: amplitudeAt(decoded, 14.2, 220),
+          narrationAcrossShot: amplitudeAt(decoded, 5.5, 660), narrationTail: amplitudeAt(decoded, 7.3, 660), narrationAfterEnd: amplitudeAt(decoded, 9, 660) };
+        check(verification.musicStart > 0.012 && verification.musicTail > 0.012, 'BGM audible at start and end');
+        if (!uploaded) check(verification.narrationAcrossShot > 0.08 && verification.narrationTail > 0.08 && verification.narrationAfterEnd < 0.015, '7.6s narration survives shot boundary and tail, then stops without looping');
+        check(output.audioMix.narrationComplete && output.audioMix.tracks[0].outputDurationSeconds === output.audioMix.tracks[0].durationSeconds, 'complete narration duration receipt');
+      } finally { await decoder.close(); }
+      var download = document.getElementById('download'); download.href = previousUrl; download.hidden = false;
+      download.download = uploaded ? 'local-renderer-real-voice.webm' : 'local-renderer-paired-tones.webm';
+      document.getElementById('download-report').download = uploaded ? 'local-renderer-real-voice.json' : 'local-renderer-paired-tones.json';
+      report({ status: 'passed', paidCalls: 0, localShots: 3, width: output.width, height: output.height, durationSeconds: preview.duration, bytes: output.blob.size, mimeType: output.mimeType, frames: samples, audioTracks: 1, audioMix: output.audioMix, audioVerification: verification });
+    } catch (failure) { report({ status: failure.name === 'AbortError' ? 'cancelled' : 'failed', code: failure.code || '', message: failure.message, paidCalls: 0 }); }
+    finally { run.disabled = false; cancel.disabled = true; }
+  };
+  cancel.onclick = function () { if (controller) controller.abort(); };
+})();
+</script></html>

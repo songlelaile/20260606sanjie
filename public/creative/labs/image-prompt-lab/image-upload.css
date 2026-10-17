@@ -1,0 +1,66 @@
+/* Dimensions and details follow the supplied 308 × 128 image upload reference. */
+.cu-upload { width:308px; max-width:100%; min-width:0; color:#f3edd7; font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif; }
+.cu-upload,.cu-upload * { box-sizing:border-box; }
+.cu-upload [hidden] { display:none !important; }
+.cu-head { display:flex; align-items:center; gap:10px; min-height:34px; margin:0 0 18px; }
+.cu-image-icon { display:grid; place-items:center; flex:none; width:29px; height:29px; padding:6px; color:#aaa58f; background:#16200d; border-radius:9px; }
+.cu-image-icon svg { width:17px; height:17px; }
+.cu-heading { min-width:0; flex:1; }
+html body .cu-upload .cu-heading h3 { margin:0; color:#f3edd7; font-size:16px; font-weight:700; line-height:20px; }
+html body .cu-upload .cu-heading p { margin:0; min-height:0; color:#aaa58f; font-size:12px; line-height:16px; }
+.cu-count { flex:none; color:#aaa58f; font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+html body .cu-upload .cu-drop { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; width:100%; height:128px; min-height:128px; padding:16px 10px; background:#080f04; color:#f3edd7; border:1px dashed #6e6425; border-radius:12px; text-align:center; cursor:pointer; outline:none; }
+html body .cu-upload .cu-drop:hover,html body .cu-upload .cu-drop:focus-visible,html body .cu-upload .cu-drop:focus-within,html body .cu-upload .cu-drop.cu-dragging { border-color:#f6c65f; background:#16200d; }
+html body .cu-upload .cu-drop:focus-visible { outline:2px solid #f6c65f; outline-offset:3px; }
+.cu-upload-icon { display:grid; place-items:center; flex:none; width:34px; height:34px; padding:8px; margin-bottom:6px; border-radius:50%; background:#16200d; color:#aaa58f; }
+.cu-upload-icon svg { width:18px; height:18px; }
+html body .cu-upload .cu-drop strong { margin:0; font-size:13px; line-height:18px; font-weight:600; color:#f3edd7; }
+html body .cu-upload .cu-drop .cu-hint { margin:0; color:#aaa58f; font-size:10px; line-height:15px; }
+html body .cu-upload .cu-drop input[type="file"] { position:absolute !important; width:1px !important; height:1px !important; min-width:0 !important; inset:auto !important; margin:0 !important; padding:0 !important; border:0 !important; opacity:0 !important; overflow:hidden !important; clip-path:inset(50%) !important; }
+html body .cu-upload .cu-note { margin:21px 0 0 !important; color:#aaa58f; font-size:12px; line-height:20px; }
+.cu-upload .cu-error { margin:10px 0 0; font-size:12px; color:#ef7c67; white-space:pre-line; }
+.cu-upload .cu-methods { margin:8px 0; color:#aaa58f; font-size:11px; line-height:16px; text-align:center; }
+.cu-url-row { display:flex; gap:6px; align-items:center; }
+html body .cu-upload .cu-url-row input { flex:1; width:0; min-width:0; height:34px; padding:7px 9px; border:1px solid #3e431e; border-radius:7px; background:#111808; color:#f3edd7; font:12px/18px inherit; }
+html body .cu-upload .cu-url-row button { flex:none; height:34px; padding:7px 10px; border:1px solid #3e431e; border-radius:7px; background:#16200d; color:#f3edd7; font:12px/18px inherit; cursor:pointer; }
+.cu-upload.cu-importing .cu-methods::after { content:' · 正在读取（Esc 取消）'; }
+.cu-upload.cu-importing .cu-drop { opacity:.6; }
+.cu-replaced-url { display:none !important; }
+html body .sku-upload-card.cu-legacy-scope { padding:0; border:0; }
+html.studio-legacy-layout .sl-workspace .sku-upload-card.cu-legacy-scope { background:#191a20; }
+.cu-drop:has(input:disabled),fieldset:disabled .cu-drop,.cu-drop[aria-disabled="true"] { opacity:.5; cursor:not-allowed !important; }
+.cu-replaced-heading,.cu-legacy-scope > .preview.empty,.cu-legacy-scope > .sku-template-preview.empty { display:none !important; }
+.cu-legacy-scope > .scene-material-preview:not(:has(img)) { display:none !important; }
+html body .scene-material-grid:has(.cu-upload) { grid-template-columns:repeat(auto-fit,minmax(min(100%,328px),1fr)); }
+html.studio-legacy-layout .sl-workspace .scene-material-grid:has(.cu-upload) { grid-template-columns:minmax(0,1fr); }
+html body .scene-material-card:has(> .cu-upload),html body .image-box:has(> .cu-upload) { padding:0; border:0; }
+/* Product angle cards nest inside another image box. Keep the reference-sized
+   control inside that column rather than letting its intrinsic grid width clip. */
+html body .image-box.product-box:has(.cu-upload),html body .angle-card:has(> .cu-upload) { padding:0; border:0; }
+html body .angle-card:has(> .cu-upload) { grid-template-columns:minmax(0,1fr); }
+html body :is(.product-angle-grid,.model-angle-grid):has(.cu-upload),
+html body.viral-dedicated-workspace[data-viral-workflow] .vw-workspace :is(.product-angle-grid,.model-angle-grid):has(.cu-upload) { grid-template-columns:repeat(auto-fit,minmax(min(100%,308px),1fr)); }
+html.studio-legacy-layout .sl-workspace .scene-material-card:has(> .cu-upload),html.studio-legacy-layout .sl-workspace #referenceSourcePanel .image-box:has(> .cu-upload) { padding:0; border:0; }
+html body .cu-legacy-scope > .scene-material-preview { height:104px; border-style:solid; }
+.cu-legacy-scope { min-width:0; }
+html body .panel:has(> .cu-upload),html body .cu-legacy-scope,html body .scene-material-card:has(.cu-upload) { background:#191a20; }
+.cu-legacy-scope .cu-upload { margin-bottom:12px; }
+.cu-legacy-scope [data-cu-preview],.sg-asset img[data-product-preview] { cursor:zoom-in; }
+.cu-legacy-scope [data-cu-preview]:focus-visible,.sg-asset img[data-product-preview]:focus-visible { outline:2px solid #f6c65f; outline-offset:2px; }
+html body .cu-legacy-scope .row:has(.cu-upload) { display:block; }
+.cu-modal { position:fixed; inset:0; z-index:3600; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.72); }
+.cu-dialog { width:min(900px,100%); max-height:90vh; overflow:auto; padding:20px; background:#191a20; color:#f3edd7; border:1px solid #3e431e; border-radius:12px; }
+.cu-dialog header { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.cu-dialog h2 { flex:1; margin:0; font-size:16px; }
+.cu-dialog a,.cu-dialog button { padding:7px 11px; background:#16200d; color:#f3edd7; border:1px solid #3e431e; border-radius:7px; font:inherit; font-size:12px; cursor:pointer; text-decoration:none; }
+.cu-dialog img { display:block; max-width:100%; max-height:72vh; margin:auto; object-fit:contain; }
+.cu-picker { width:350px; }
+.cu-toolbar { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:8px; margin:0 0 12px; }
+.sg-workspace { grid-template-columns:minmax(290px,330px) minmax(0,1fr); }
+.sg-card:has(> .cu-upload),#creativeToolsRoot .panel:has(> .cu-upload) { padding:10px; }
+.sg-assets:empty { display:none; }
+.ct-workspace { grid-template-columns:minmax(290px,330px) minmax(0,1fr); }
+#creativeToolsRoot .ct-actions:has([data-action="clear-products"]:disabled) { display:none; }
+@media(max-width:760px) { .ct-workspace { grid-template-columns:1fr; } }
+@media(max-width:650px) { .sg-workspace { grid-template-columns:1fr; } }
+@media(max-width:380px) { .cu-modal { padding:12px; } .cu-dialog { padding:14px; } .cu-dialog header { flex-wrap:wrap; } .cu-heading h3 { overflow-wrap:anywhere; } }

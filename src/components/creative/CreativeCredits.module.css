@@ -1,0 +1,37 @@
+.container { border-bottom: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.summary { align-items: center; display: flex; flex-wrap: wrap; gap: 10px 18px; padding: 9px 24px; }
+.summary small, .note { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.rechargeLink { margin-left: auto; padding: 5px 11px; border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font-size: 12px; text-decoration: none; }
+.rechargeLink:hover { background: var(--sidebar-active); }
+.balanceButton { align-items: center; background: transparent; border: 0; color: var(--ink); cursor: pointer; display: flex; font: inherit; font-size: 12px; gap: 9px; padding: 3px 0; }
+.balanceButton strong { color: var(--ink); font-size: 17px; font-variant-numeric: tabular-nums; }
+.balanceButton span:last-child { color: var(--muted); margin-left: 8px; text-decoration: underline; text-underline-offset: 3px; }
+.panel { border-top: 1px solid var(--line); margin: 0; max-height: 540px; overflow: auto; padding: 20px 24px; }
+.panelHeader { align-items: start; display: flex; gap: 12px; justify-content: space-between; }
+.panel h2 { font-size: 17px; margin: 0 0 5px; }
+.panel p { font-size: 13px; line-height: 1.6; margin: 8px 0 12px; }
+.panelHeader p { color: var(--muted); margin: 0; }
+.panel button, .panel select, .panel input { border: 1px solid var(--line); border-radius: 6px; color: var(--ink); background: var(--surface); font: inherit; font-size: 12px; padding: 7px 10px; }
+.panel button { cursor: pointer; }
+.panel button:disabled { cursor: default; opacity: .5; }
+.tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 16px 0; }
+.tabs button[aria-pressed="true"] { background: var(--sidebar-active); font-weight: 700; }
+.tabs button:last-child { margin-left: auto; }
+.rows { display: grid; gap: 7px; margin-top: 14px; }
+.record { border: 1px solid var(--line); border-radius: 8px; padding: 11px 13px; }
+.record summary { align-items: center; cursor: pointer; display: flex; font-size: 13px; gap: 16px; justify-content: space-between; list-style: none; }
+.record summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.record small { color: var(--muted); display: block; font-size: 11px; font-weight: 400; margin-top: 5px; }
+.amount { flex: 0 0 auto; font-variant-numeric: tabular-nums; text-align: right; }
+.record dl { border-top: 1px solid var(--line); display: grid; font-size: 12px; gap: 8px 16px; grid-template-columns: 90px minmax(0, 1fr); margin: 12px 0 0; padding-top: 12px; }
+.record dt { color: var(--muted); }
+.record dd { margin: 0; overflow-wrap: anywhere; }
+.form { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.form label { color: var(--muted); display: grid; font-size: 12px; gap: 6px; }
+.form input { max-width: 90px; }
+.quote { align-items: center; background: var(--bg); border-radius: 8px; display: flex; flex-wrap: wrap; font-size: 13px; gap: 12px; padding: 12px; }
+.quote button { background: var(--sidebar-active); margin-left: auto; }
+.pagination { align-items: center; display: flex; font-size: 12px; gap: 12px; justify-content: flex-end; margin-top: 12px; }
+.reset { margin-top: 12px; }
+.notice { color: var(--ink); }
+@media (max-width: 760px) { .summary { padding: 8px 12px; } .panel { padding: 16px 12px; } .record summary { align-items: start; } .quote button { margin-left: 0; } }

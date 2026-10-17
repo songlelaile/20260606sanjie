@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "sourceRoot": "/Users/shaozhuang/Desktop/关键词衍生插件/uat-work/r42-bundled-installer-20260908/source",
+  "version": "1.9.73",
+  "sourceStatus": "retained TEST candidate; not a claim of latest production",
+  "files": [
+    {
+      "file": "manifest.json",
+      "sha256": "43c16799200d5fff59b57a5bac0a727684bacca755a658dd6da5900f2c0f2d89"
+    },
+    {
+      "file": "src/popup.js",
+      "sha256": "bd07b614d66fce6c37ed90b069bec18acc8670fb1b06aa6e69bb4665eb329255"
+    },
+    {
+      "file": "src/background.js",
+      "sha256": "3b2aa42f9cb565ab82932801022355c53cce903beeb7d03a97bb7322fea87a84"
+    },
+    {
+      "file": "src/interceptor.js",
+      "sha256": "19f1f7c5676c46a421b3e262a6cc4a5ef321fb1d758ef4f2507135729d743940"
+    },
+    {
+      "file": "src/content.js",
+      "sha256": "f9c5f6b5b621e1ec98313f43686c30843a526ad452ca8ea4e2fbfbc17beeef92"
+    },
+    {
+      "file": "src/linkmatrix.js",
+      "sha256": "ce824516d4f62553d9c79c4ab9981592a21efcfcb6db140dc2c31e561e82890f"
+    },
+    {
+      "file": "src/taobao-market.js",
+      "sha256": "81e10a902d6ff1adceed7c1b99642fa895b7f7af316d25f3e760c8ddaf326dcf"
+    },
+    {
+      "file": "src/local-import.js",
+      "sha256": "ad49848a18394126730e2fc32da51fedb5bb4c5600a303946ed5a537864fe409"
+    }
+  ],
+  "extracted": [
+    {
+      "source": "src/popup.js",
+      "symbol": "keywordMergeKey",
+      "line": 2344,
+      "sha256": "fda6aad00a88d760ae0fa3ab59f5c1a59d16b8d981c5a00378600ebc9d8853e3"
+    },
+    {
+      "source": "src/popup.js",
+      "symbol": "pushKeywordEvidence",
+      "line": 2349,
+      "sha256": "1459efcd17badb140b1d8c397cca8114a9c7837d4d36b494e113b3219379e6ec"
+    },
+    {
+      "source": "src/popup.js",
+      "symbol": "mergeKeywordSources",
+      "line": 2356,
+      "sha256": "3f54ed63d783cb36ba921dcd81bcd4339b9882174b6fe81ba9c24d1f86e3e289"
+    }
+  ],
+  "vendorFiles": [
+    {
+      "file": "keywordMerge.cjs",
+      "sha256": "a93044df5cfe3bc810cf10f156701a334d448829d6f6712889b8d66bbd03379c"
+    },
+    {
+      "file": "linkmatrix.js",
+      "sha256": "ce824516d4f62553d9c79c4ab9981592a21efcfcb6db140dc2c31e561e82890f"
+    }
+  ]
+}

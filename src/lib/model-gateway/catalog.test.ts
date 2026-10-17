@@ -17,7 +17,7 @@ describe("model gateway catalog", () => {
     expect(chat).toMatchObject({
       id: "chatGPT5.5",
       provider: "shaozhuang",
-      upstreamModel: "chatGPT5.5",
+      upstreamModel: "gpt-5.6-sol",
       defaultBaseUrl: "https://sub.shaozhuangai.com/v1",
       baseUrlEnv: "MODEL_GATEWAY_SHAOZHUANG_BASE_URL",
       apiKeyEnv: "MODEL_GATEWAY_SHAOZHUANG_API_KEY"
@@ -25,7 +25,7 @@ describe("model gateway catalog", () => {
     expect(image).toMatchObject({
       id: "image2",
       provider: "shaozhuang",
-      upstreamModel: "image2",
+      upstreamModel: "gpt-image-2",
       endpoint: "images.generations",
       defaultBaseUrl: "https://sub.shaozhuangai.com/v1"
     });
@@ -39,8 +39,11 @@ describe("model gateway catalog", () => {
   it("keeps direct vendor models and rejects cross-endpoint lookups", () => {
     expect(findGatewayModel("deepseek-chat", "chat.completions")?.provider).toBe("deepseek");
     expect(findGatewayModel("gpt-image-1", "images.generations")?.provider).toBe("openai");
+    expect(findGatewayModel("gpt-5.6-sol", "chat.completions")?.id).toBe("chatGPT5.5");
+    expect(findGatewayModel("gpt-image-2", "images.generations")?.id).toBe("image2");
     expect(findGatewayModel("chatGPT5.5", "images.generations")).toBeUndefined();
     expect(findGatewayModel("image2", "chat.completions")).toBeUndefined();
+    expect(findGatewayModel("gpt-5.6-sol", "images.generations")).toBeUndefined();
     expect(GATEWAY_MODELS.some((item) => item.provider === "openai")).toBe(true);
     expect(GATEWAY_MODELS.some((item) => item.provider === "zhipu")).toBe(true);
   });

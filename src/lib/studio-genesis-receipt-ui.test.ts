@@ -1,0 +1,160 @@
+import { describe, expect, it, vi } from "vitest";
+import { harness, ready, deferred, clone, accountKey, oldReceipt, pendingKey } from "./test-fixtures/studio-genesis-ui-harness";
+
+describe("receipt recovery UI keeps 100 concurrency without manual unlocking",()=>{
+  it.each(["main","detail","ad","batch"] as const)("keeps %s independent draft available while an older task is unresolved", async entry=>{
+    const storage=new Map([[pendingKey,JSON.stringify(oldReceipt)]]),h=harness(entry,false,storage);
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    expect(h.document.control("[data-setting=model]").disabled).toBe(false);
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.document.root.querySelector("[data-uncertain-confirm]")).toBeNull();
+    expect(h.document.control("[data-pending-receipt]").textContent).toContain("无需手动解除");
+    expect(h.document.root.textContent).toContain("最多 100 张同时生成");
+    expect(h.bridge.setApiBusy).toHaveBeenLastCalledWith("studio-genesis",false);
+    expect(storage.get(pendingKey)).toBe(JSON.stringify(oldReceipt));
+    expect(h.bridge.send).not.toHaveBeenCalled();
+    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(true);
+  });
+  it("protects only the pending image while making an independent image ready",async()=>{
+    const h=harness("main"),record=h.saved.snapshot.tasks[0];
+    h.saved.draft.settings.count=2;
+    h.saved.draft.tasks[0].plan=h.engine.createPlan(h.saved.draft.tasks[0],h.saved.draft.settings);
+    record.plan=h.saved.draft.tasks[0].plan;
+    record.slots=record.plan.shots.map((shot:unknown,index:number)=>({shot,status:index?"ready":"uncertain",item:null,error:"",archiveOk:false}));
+    const receipt={...oldReceipt,taskId:record.id,shotId:record.slots[0].shot.id,batchId:h.saved.snapshot.batchId||"old-batch"};
+    h.saved.snapshot.batchId=receipt.batchId;record.slots[0].pendingReceipt=receipt;h.saved.snapshot.uncertain=receipt;
+    h.storage.set(`sz_studio_genesis_pending_v2:${accountKey}:single:main:${receipt.jobId}`,JSON.stringify(receipt));
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    expect(h.controller().state.tasks[0].slots.map((slot:{status:string})=>slot.status)).toEqual(["uncertain","ready"]);
+    expect(h.document.root.textContent).toContain("结果待确认");
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.bridge.send).not.toHaveBeenCalled();
+  });
+  it("automatically rereads receipts on focus without submitting an image",async()=>{
+    const h=harness("main",false,new Map([[pendingKey,JSON.stringify(oldReceipt)]]));ready(h);
+    await vi.waitFor(()=>expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    const calls=h.recoveryStarted.mock.calls.length;
+    h.dispatchWindow("focus");
+    await vi.waitFor(()=>expect(h.recoveryStarted.mock.calls.length).toBe(calls+1));
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.bridge.send).not.toHaveBeenCalled();
+    expect(h.storage.has(pendingKey)).toBe(true);
+  });
+  it("enumerates pending receipts separately for each image",async()=>{
+    const h=harness("main"),record=h.saved.snapshot.tasks[0];
+    h.saved.draft.settings.count=3;h.saved.draft.tasks[0].plan=h.engine.createPlan(h.saved.draft.tasks[0],h.saved.draft.settings);
+    record.plan=h.saved.draft.tasks[0].plan;h.saved.snapshot.batchId="three-batch";
+    record.slots=record.plan.shots.map((shot:{id:string},index:number)=>{
+      const receipt={...oldReceipt,jobId:`three-job-${index}`,taskId:record.id,shotId:shot.id,batchId:"three-batch"};
+      h.storage.set(`sz_studio_genesis_pending_v2:${accountKey}:single:main:${receipt.jobId}`,JSON.stringify(receipt));
+      return {shot,status:"ready",item:null,error:"",archiveOk:false};
+    });
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
+    expect(h.controller().state.tasks[0].slots.map((slot:{status:string})=>slot.status)).toEqual(["uncertain","uncertain","uncertain"]);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    expect(h.document.control("[data-action=generate]").textContent).toContain("按当前方案生成新图");
+    expect(h.document.control("[data-new-generation-note]").textContent).toContain("另生成 3 张新图");
+    expect(h.document.control("[data-pending-receipt]").textContent).toContain("3 张图片");
+    expect(h.bridge.send).not.toHaveBeenCalled();
+  });
+  it("allows retrying another failed image while a timed out original request is still live",async()=>{
+    const h=harness("main",false,new Map(),"",{timeoutMs:20}), record=h.saved.snapshot.tasks[0];
+    h.saved.draft.settings.count=2;h.saved.draft.tasks[0].plan=h.engine.createPlan(h.saved.draft.tasks[0],h.saved.draft.settings);
+    record.plan=h.saved.draft.tasks[0].plan;record.slots=record.plan.shots.map((shot:unknown)=>({shot,status:"ready",item:null,error:"",archiveOk:false}));
+    const original=deferred<unknown>();let sends=0;
+    h.bridge.send.mockImplementation(()=>++sends===1?original.promise:Promise.resolve({ok:false,definitiveFailure:true,providerSubmitted:false,error:"fixture before-submit failure"}));
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    h.document.root.dispatch("click",h.document.control("[data-action=generate]"));
+    await vi.waitFor(()=>expect(h.document.control("[data-action=retry]").disabled).toBe(false));
+    expect(h.controller().hasInFlightRequest()).toBe(true);
+    expect(h.controller().state.awaitingReceipt).toBe(true);
+    expect(h.controller().state.tasks[0].slots.map((slot:{status:string})=>slot.status)).toEqual(["uncertain","failed"]);
+    expect(h.document.root.querySelectorAll("[data-action=retry-slot]")).toHaveLength(1);
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect((await h.navigationGuard().canDeactivate()).allowed).toBe(false);
+    h.document.root.dispatch("click",h.document.control("[data-action=retry]"));
+    await vi.waitFor(()=>expect(h.bridge.send).toHaveBeenCalledTimes(3));
+    const jobs=h.bridge.send.mock.calls.map(call=>(call[1] as {jobId:string}).jobId);
+    expect(jobs[2]).not.toBe(jobs[0]);
+    expect(h.controller().state.tasks[0].slots[0].status).toBe("uncertain");
+    original.complete({ok:false,definitiveFailure:true,providerSubmitted:false,error:"fixture original confirmed not submitted"});
+    await vi.waitFor(()=>expect(h.controller().hasInFlightRequest()).toBe(false));
+    await vi.waitFor(()=>expect(h.document.control("[data-action=retry]").disabled).toBe(false));
+    expect(h.bridge.send).toHaveBeenCalledTimes(3);
+    expect(h.controller().state.tasks[0].slots[0].status).toBe("failed");
+  });
+
+  it.each(["main","detail","ad","batch"] as const)("explicitly starts a new %s task after editing without resending its unknown original",async entry=>{
+    const h=harness(entry),record=h.saved.snapshot.tasks[0],shot=record.plan.shots[0];
+    const receipt={...oldReceipt,taskId:record.id,shotId:shot.id,batchId:"original-plan-batch"};
+    h.saved.snapshot.batchId=receipt.batchId;record.slots[0].status="uncertain";record.slots[0].pendingReceipt=receipt;h.saved.snapshot.uncertain=receipt;
+    h.saved.draft.tasks[0].plan=h.engine.editShot(record.plan,shot.id,{prompt:shot.prompt+"\n重新编辑的画面要求"});
+    h.storage.set(`sz_studio_genesis_pending_v2:${accountKey}:single:main:${receipt.jobId}`,JSON.stringify(receipt));
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.root.querySelector("[data-pending-receipt]")).not.toBeNull());
+    const button=h.document.control("[data-action=generate]");
+    expect(button.disabled).toBe(false);
+    expect(button.textContent).toContain("按当前方案生成新图");
+    expect(h.document.root.querySelector("[data-action=retry-slot]")).toBeNull();
+    expect(h.document.root.querySelector("[data-action=resolve]")).toBeNull();
+    expect(h.bridge.send).not.toHaveBeenCalled();
+    h.bridge.send.mockResolvedValue({ok:false,definitiveFailure:true,providerSubmitted:false,error:"fixture new task not submitted"});
+    h.document.root.dispatch("click",button);
+    h.document.root.dispatch("click",button);
+    await vi.waitFor(()=>expect(h.bridge.send).toHaveBeenCalledTimes(1));
+    await vi.waitFor(()=>expect(h.document.control("[data-action=retry]").disabled).toBe(false));
+    const records=h.controller().state.tasks;
+    expect(records).toHaveLength(2);
+    const original=records.find((value:{id:string})=>value.id===record.id),fresh=records.find((value:{id:string})=>value.id!==record.id);
+    expect(original.slots[0].status).toBe("uncertain");
+    expect(original.slots[0].pendingReceipt.jobId).toBe(receipt.jobId);
+    expect(fresh.plan.shots[0].prompt).toContain("重新编辑的画面要求");
+    expect(fresh.plan.input.products).toEqual(record.plan.input.products);
+    expect(fresh.plan.taskId).toBe(fresh.id);
+    expect(h.storage.size).toBe(1);
+    expect([...h.storage.values()][0]).toBe(JSON.stringify(receipt));
+  });
+
+  it("disables generation on a focus-time account change and preserves original pending data",async()=>{
+    const raw=JSON.stringify(oldReceipt),h=harness("main",false,new Map([[pendingKey,raw]]));ready(h);
+    await vi.waitFor(()=>expect(h.document.control("[data-action=generate]").disabled).toBe(false));
+    h.bridge.getAccountKey.mockResolvedValue("account:other-owner");h.dispatchWindow("focus");
+    await vi.waitFor(()=>expect(h.document.control("[data-message]").textContent).toContain("登录账号已变化"));
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    expect(h.storage.get(pendingKey)).toBe(raw);
+    expect(h.saved.draft.tasks[0].requirements).toBe("已保存的创作要求");
+    expect(h.bridge.send).not.toHaveBeenCalled();
+  });
+
+  it("retains the new-image confirmation and storage guards while preserving other image-type plans",async()=>{
+    const h=harness("batch"),record=h.saved.snapshot.tasks[0],entry=h.saved.draft.tasks[0];
+    const receipt={...oldReceipt,taskId:record.id,shotId:record.slots[0].shot.id,batchId:"saved-batch"};
+    record.slots[0].status="uncertain";record.slots[0].pendingReceipt=receipt;
+    h.saved.snapshot.batchId=receipt.batchId;h.saved.snapshot.uncertain=receipt;
+    h.storage.set(pendingKey,JSON.stringify(receipt));
+    Object.assign(entry,{typeDrafts:{main:{plan:clone(entry.plan),confirmed:true}}});
+    Object.assign(h.saved.draft,{viewStep:2});
+    entry.confirmed=false;
+    ready(h);
+    await vi.waitFor(()=>expect(h.document.root.querySelector("[data-new-generation-note]")).not.toBeNull());
+    await vi.waitFor(()=>expect(h.document.control("[data-setting=model]").disabled).toBe(false));
+    expect(h.document.control("[data-action=generate]").disabled).toBe(true);
+    const confirm=h.document.control("[data-confirm]");confirm.checked=true;h.document.root.dispatch("change",confirm);
+    expect(h.document.control("[data-action=generate]").disabled).toBe(false);
+    h.writeControl.error=new Error("fixture disk full");
+    h.document.root.dispatch("click",h.document.control("[data-action=generate]"));
+    await vi.waitFor(()=>expect(h.document.control("[data-message]").textContent).toContain("fixture disk full"));
+    expect(h.bridge.send).not.toHaveBeenCalled();
+    expect(h.storage.get(pendingKey)).toBe(JSON.stringify(receipt));
+    const saved=h.writes.at(-1)!.value as {draft:{tasks:Array<{id:string;plan:{taskId:string};typeDrafts:{main:{plan:{taskId:string}}}}>} };
+    expect(saved.draft.tasks[0].id).not.toBe(record.id);
+    expect(saved.draft.tasks[0].plan.taskId).toBe(saved.draft.tasks[0].id);
+    expect(saved.draft.tasks[0].typeDrafts.main.plan.taskId).toBe(saved.draft.tasks[0].id);
+    expect(h.controller().state.tasks).toHaveLength(1);
+  });
+
+});

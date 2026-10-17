@@ -1,0 +1,92 @@
+/* Keep the supplied transparent logo intact; its alpha follows the UI palette. */
+.sz-brand-lockup {
+  --sz-brand-size: 18px;
+  --sz-partner-width: 76px;
+  align-items: center;
+  color: var(--ink, #f3edd7);
+  display: inline-flex;
+  gap: 10px;
+  max-width: 100%;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.sz-brand-primary {
+  color: var(--ink, #f3edd7);
+  flex: 0 0 auto;
+  font-size: var(--sz-brand-size);
+  font-weight: 750;
+  letter-spacing: -.35px;
+  line-height: 1.35;
+}
+.sz-brand-divider {
+  align-self: center;
+  background: var(--line-strong, #6e6425);
+  flex: 0 0 1px;
+  height: 17px;
+}
+.sz-brand-partner {
+  aspect-ratio: 8000 / 1831;
+  background: var(--brand, #f6c65f);
+  display: block;
+  flex: 0 0 var(--sz-partner-width);
+  width: var(--sz-partner-width);
+  -webkit-mask: url('/branding/zhizhuan-reversed.png') center / contain no-repeat;
+  mask: url('/branding/zhizhuan-reversed.png') center / contain no-repeat;
+}
+.sidebar .sz-brand-host .brand-mark,
+.auth-hero-brand.sz-brand-host .auth-hero-logo {
+  display: none;
+}
+.sidebar .sz-brand-host > span:last-child {
+  min-width: 0;
+}
+.sidebar .sz-brand-host small {
+  font-size: 12px;
+  margin-top: 6px;
+}
+.sz-brand-lockup--compact {
+  --sz-brand-size: 15px;
+  --sz-partner-width: 60px;
+  gap: 7px;
+}
+.sz-brand-lockup--login {
+  --sz-brand-size: 24px;
+  --sz-partner-width: 96px;
+  gap: 14px;
+}
+.auth-hero-brand.sz-brand-host small {
+  display: block;
+  margin-top: 9px;
+}
+.sz-brand-mobile-login {
+  display: none;
+}
+@media (max-width: 1024px) {
+  .sidebar .sz-brand-lockup {
+    --sz-brand-size: 15px;
+    --sz-partner-width: 60px;
+    gap: 7px;
+  }
+  .mobile-shell-bar > span {
+    min-width: 0;
+  }
+}
+@media (max-width: 880px) {
+  .sz-brand-mobile-login {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 26px;
+  }
+}
+@media (max-width: 359px) {
+  .mobile-shell-bar {
+    gap: 6px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .mobile-shell-bar .sz-brand-lockup {
+    --sz-brand-size: 13px;
+    --sz-partner-width: 52px;
+    gap: 5px;
+  }
+}
