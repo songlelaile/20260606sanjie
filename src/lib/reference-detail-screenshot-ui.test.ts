@@ -43,18 +43,38 @@ function storage() {
     removeItem: (key: string) => items.delete(key) };
 }
 
+interface ScreenshotSource {
+  orderedBlocks: Array<{ originalIndex: number; assetIds: string[] }>;
+  assets: Array<{ assetId: string; url: string; rightsStatus: string }>;
+}
+interface ImageReply { ok: boolean; dataUrl?: string; error?: string }
+interface ImageRequest { url: string }
+interface TestEvent { target: TestElement; currentTarget: TestElement; preventDefault(): void }
+interface TestElement {
+  tagName: string; id: string; value: string; textContent: string; className: string; innerHTML?: string; hidden: boolean;
+  disabled: boolean; checked: boolean; dataset: Record<string, string>; style: { setProperty: ReturnType<typeof vi.fn> };
+  children: TestElement[]; options: TestElement[]; attributes: Map<string, string>; parentNode?: TestElement;
+  focus: ReturnType<typeof vi.fn>; click: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn>;
+  querySelectorAll(): TestElement[]; querySelector(): TestElement | null; closest(): TestElement | null;
+  setAttribute(name: string, value: string): void; getAttribute(name: string): string | null;
+  appendChild(child: TestElement): TestElement;
+  addEventListener(type: string, callback: (event: TestEvent) => unknown): void;
+  dispatch(type: string, event?: Partial<TestEvent>): Promise<void>;
+  classList: { add(...names: string[]): void; remove(...names: string[]): void; contains(name: string): boolean; toggle(name: string, force?: boolean): boolean };
+}
+
 function element(tag = "div", id = "") {
-  const classes = new Set<string>(), listeners = new Map<string, Array<(event: any) => unknown>>();
-  const node: any = {
+  const classes = new Set<string>(), listeners = new Map<string, Array<(event: TestEvent) => unknown>>();
+  const node: TestElement = {
     tagName: tag.toUpperCase(), id, value: "", textContent: "", className: "", hidden: true,
     disabled: false, checked: false, dataset: {}, style: { setProperty: vi.fn() },
-    children: [] as any[], options: [] as any[], attributes: new Map<string, string>(),
+    children: [], options: [], attributes: new Map<string, string>(),
     focus: vi.fn(), click: vi.fn(), remove: vi.fn(), querySelectorAll: () => [], querySelector: () => null,
     closest: () => null, setAttribute(name: string, value: string) { this.attributes.set(name, value); },
     getAttribute(name: string) { return this.attributes.get(name) ?? null; },
-    appendChild(child: any) { this.children.push(child); child.parentNode = this; if (child.tagName === "OPTION") this.options.push(child); return child; },
-    addEventListener(type: string, callback: (event: any) => unknown) { listeners.set(type, [...(listeners.get(type) || []), callback]); },
-    async dispatch(type: string, event: any = {}) { for (const callback of listeners.get(type) || []) await callback.call(node, { target: node, currentTarget: node, preventDefault: vi.fn(), ...event }); },
+    appendChild(child) { this.children.push(child); child.parentNode = this; if (child.tagName === "OPTION") this.options.push(child); return child; },
+    addEventListener(type, callback) { listeners.set(type, [...(listeners.get(type) || []), callback]); },
+    async dispatch(type, event = {}) { for (const callback of listeners.get(type) || []) await callback.call(node, { target: node, currentTarget: node, preventDefault: vi.fn(), ...event }); },
     classList: { add: (...names: string[]) => names.forEach(name => classes.add(name)), remove: (...names: string[]) => names.forEach(name => classes.delete(name)),
       contains: (name: string) => classes.has(name), toggle(name: string, force?: boolean) { const next = force ?? !classes.has(name); if (next) classes.add(name); else classes.delete(name); return next; } }
   };
@@ -63,10 +83,10 @@ function element(tag = "div", id = "") {
 }
 
 function runtime() {
-  const elements = new Map<string, any>();
-  const document: any = {
+  const elements = new Map<string, TestElement>();
+  const document = {
     readyState: "loading", body: element("body"), documentElement: element("html"),
-    getElementById(id: string) { if (!elements.has(id)) elements.set(id, element("div", id)); return elements.get(id); },
+    getElementById(id: string) { const existing = elements.get(id); if (existing) return existing; const created = element("div", id); elements.set(id, created); return created; },
     createElement: element, querySelectorAll: () => [], querySelector: () => null, addEventListener: vi.fn()
   };
   document.body.classList.add("detail-lab-mode");
@@ -84,14 +104,14 @@ function runtime() {
   context.window = context;
   for (const file of scripts) vm.runInContext(readFileSync(file, "utf8"), context, { filename: file, timeout: 2000 });
   const api = context.__SZ_PROMPTLAB_TEST_API__;
-  const dispatch = vi.fn(async (_type: string, _payload?: any): Promise<any> => ({ ok: false, error: "Unexpected background dispatch in local screenshot import" }));
+  const dispatch = vi.fn<(type: string, payload?: ImageRequest) => Promise<ImageReply>>(async () => ({ ok: false, error: "Unexpected background dispatch in local screenshot import" }));
   api.setTestSend(dispatch);
   return { api, context, document, fetch, dispatch };
 }
 
-function sourceImages(source: any) {
+function sourceImages(source: ScreenshotSource) {
   return [...source.orderedBlocks].sort((a, b) => a.originalIndex - b.originalIndex)
-    .map(block => source.assets.find((asset: any) => asset.assetId === block.assetIds[0])?.url);
+    .map(block => source.assets.find(asset => asset.assetId === block.assetIds[0])?.url);
 }
 
 describe("reference detail screenshot learning UI", () => {
@@ -107,7 +127,7 @@ describe("reference detail screenshot learning UI", () => {
     expect(source.source.platform).not.toBe("tmall");
     expect(source.source.itemId || "").toBe("");
     expect(source.facts || []).toEqual([]);
-    expect(source.assets.every((asset: any) => asset.rightsStatus === "reference_only")).toBe(true);
+    expect(source.assets.every((asset: ScreenshotSource["assets"][number]) => asset.rightsStatus === "reference_only")).toBe(true);
     expect(h.document.getElementById("referenceDetailSourceKind").textContent).toMatch(/截图/);
     expect(h.document.getElementById("referenceDetailBuildBtn").disabled).toBe(false);
     expect(h.document.getElementById("referenceSourcePanel").hidden).toBe(false);
@@ -168,7 +188,7 @@ describe("reference detail screenshot learning UI", () => {
     h.api.setRefImages(images, "");
     const source = h.api.state.referenceDetail.source;
     h.api.state.referenceDetail.confirmationContext = { token: "confirmation-in-progress" };
-    try { h.api.setRefImages([images[1]], ""); } catch (error: any) { expect(error.code).toBe("CONFIRMATION_IN_PROGRESS"); }
+    try { h.api.setRefImages([images[1]], ""); } catch (error: unknown) { expect(error && typeof error === "object" && "code" in error ? error.code : undefined).toBe("CONFIRMATION_IN_PROGRESS"); }
     expect(h.api.state.referenceDetail.source).toBe(source);
     expect(h.api.state.refImages).toEqual(images);
     expect(h.dispatch).not.toHaveBeenCalled();
@@ -179,7 +199,7 @@ describe("reference detail screenshot learning UI", () => {
     h.api.setRefImages(images, "");
     const source = h.api.state.referenceDetail.source;
     h.api.state.referenceDetailBatch.activeJobs = { "still-running": { taskId: "target-a" } };
-    try { h.api.setRefImages([images[1]], ""); } catch (error: any) { expect(error.code).toBe("REFERENCE_DETAIL_BATCH_ACTIVE"); }
+    try { h.api.setRefImages([images[1]], ""); } catch (error: unknown) { expect(error && typeof error === "object" && "code" in error ? error.code : undefined).toBe("REFERENCE_DETAIL_BATCH_ACTIVE"); }
     expect(h.api.state.referenceDetail.source).toBe(source);
     expect(h.api.state.refImages).toEqual(images);
     expect(h.dispatch).not.toHaveBeenCalled();
@@ -187,10 +207,11 @@ describe("reference detail screenshot learning UI", () => {
 
   it("reads URL images through FETCH_IMAGE and keeps their requested order despite completion order", async () => {
     const h = runtime();
-    let completeFirst!: (value: any) => void;
-    const first = new Promise(resolve => { completeFirst = resolve; });
-    h.dispatch.mockImplementation(async (type: any, payload: any) => {
+    let completeFirst!: (value: ImageReply) => void;
+    const first = new Promise<ImageReply>(resolve => { completeFirst = resolve; });
+    h.dispatch.mockImplementation(async (type, payload) => {
       expect(type).toBe("FETCH_IMAGE");
+      if (!payload) throw new Error("Missing FETCH_IMAGE payload");
       if (payload.url.endsWith("first.png")) return first;
       return { ok: true, dataUrl: images[1] };
     });
@@ -198,7 +219,7 @@ describe("reference detail screenshot learning UI", () => {
     completeFirst({ ok: true, dataUrl: images[0] });
     await loading;
     expect(sourceImages(h.api.state.referenceDetail.source)).toEqual([images[0], images[1]]);
-    expect(h.dispatch.mock.calls.map(([type]: any) => type)).toEqual(["FETCH_IMAGE", "FETCH_IMAGE"]);
+    expect(h.dispatch.mock.calls.map(([type]) => type)).toEqual(["FETCH_IMAGE", "FETCH_IMAGE"]);
     expect(h.fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
   });
 
@@ -216,7 +237,7 @@ describe("reference detail screenshot learning UI", () => {
   it("ignores a late URL read after the user replaces the screenshot source", async () => {
     const h = runtime();
     h.api.setRefImages([images[0]], "");
-    let complete!: (value: any) => void;
+    let complete!: (value: ImageReply) => void;
     h.dispatch.mockImplementation(async () => new Promise(resolve => { complete = resolve; }));
     const pending = h.api.importReferenceDetailScreenshotUrls(["https://image.test/late.png"]);
     h.api.setRefImages([images[2]], "");
@@ -231,7 +252,7 @@ describe("reference detail screenshot learning UI", () => {
     const h = runtime();
     h.api.setRefImages([images[0]], "");
     const source = h.api.state.referenceDetail.source;
-    let complete!: (value: any) => void;
+    let complete!: (value: ImageReply) => void;
     h.dispatch.mockImplementation(async () => new Promise(resolve => { complete = resolve; }));
     const pending = h.api.importReferenceDetailScreenshotUrls(["https://image.test/late.png"]);
     h.api.state.referenceDetail.confirmationSequence += 1;
@@ -245,7 +266,7 @@ describe("reference detail screenshot learning UI", () => {
     const h = runtime();
     h.api.setRefImages([images[0]], "");
     const source = h.api.state.referenceDetail.source;
-    let complete!: (value: any) => void;
+    let complete!: (value: ImageReply) => void;
     h.dispatch.mockImplementation(async () => new Promise(resolve => { complete = resolve; }));
     const pending = h.api.importReferenceDetailScreenshotUrls(["https://image.test/late.png"]);
     h.document.body.classList.remove("detail-lab-mode");

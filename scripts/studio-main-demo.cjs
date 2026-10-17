@@ -100,7 +100,36 @@ function bridgeScript(missingApi) {
     bridge.modelInfo=()=>({provider:'openai-compatible',model:'demo-image-fixture',adapter:'generic-json',imageAdapter:'generic-json',qualityOptions:['auto','low','medium','high'],generationSpeeds:['standard'],ready:!missingApi,supportsReference:true,resolutions:['0.5K','1K','2K','4K'],specificationHint:'本地演示样图；未调用模型。'});
     bridge.listBoundApis=async()=>({ok:true,accountKey:await bridge.getAccountKey(),providers:missingApi?[]:[{provider:'openai-compatible',label:'本地演示（预设响应）',imageModel:'demo-image-fixture',imageAdapter:'generic-json'}]});
     document.addEventListener('DOMContentLoaded',()=>{
-      const banner=document.createElement('div');banner.id='studio-main-demo-banner';banner.textContent=(missingApi?'未配置 API 场景 · ':'')+'本地交互演示 · 未调用付费模型';banner.setAttribute('role','status');banner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:2147483600;padding:8px 12px;text-align:center;background:#fff5d6;color:#68510e;font:12px/1.5 sans-serif;box-shadow:0 1px 0 #e9daa8';document.body.prepend(banner);document.body.style.paddingTop='38px';
+      const banner=document.createElement('div');banner.id='studio-main-demo-banner';banner.textContent=(missingApi?'未配置 API 场景 · ':'')+'本地交互演示 · 未调用付费模型';banner.setAttribute('role','status');banner.style.cssText='position:fixed;top:0;left:0;right:0;z-index:2147483600;padding:8px 12px;text-align:center;background:#fff5d6;color:#68510e;font:12px/1.5 sans-serif;box-shadow:0 1px 0 #e9daa8;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 12px';
+      const fixtureButton=document.createElement('button');fixtureButton.type='button';fixtureButton.id='studio-demo-fixture-input';fixtureButton.textContent='载入本地合成示例图';fixtureButton.disabled=true;fixtureButton.style.cssText='padding:5px 10px;border:1px solid #a78535;border-radius:5px;background:#fff;color:#513d0c;font:inherit;cursor:pointer';
+      const fixtureStatus=document.createElement('span');fixtureStatus.id='studio-demo-fixture-input-status';fixtureStatus.textContent='仅供本地 QA：合成素材导入，不验证系统文件选择器。';fixtureButton.setAttribute('aria-describedby',fixtureStatus.id);banner.append(fixtureButton,fixtureStatus);document.body.prepend(banner);
+      const fitBanner=()=>{document.body.style.paddingTop=Math.ceil(banner.getBoundingClientRect().height)+'px';};fitBanner();
+      if(typeof ResizeObserver==='function')new ResizeObserver(fitBanner).observe(banner);
+      let fixtureLoading=false;
+      const fixtureInput=()=>{
+        if(document.documentElement.dataset.studioStartup!=='ready'||document.documentElement.dataset.labStartup!=='ready')return null;
+        return Array.from(document.querySelectorAll('#studioGenesisRoot input[type="file"][data-files]')).find(input=>!input.disabled)||null;
+      };
+      const syncFixtureButton=()=>{const available=!!fixtureInput(),disabled=fixtureLoading||!available;if(fixtureButton.disabled!==disabled)fixtureButton.disabled=disabled;fixtureButton.title=disabled?'请等待工作台就绪、产品图输入可用后再载入。':'通过正常产品图输入导入本地合成 PNG；不验证系统文件选择器。';};
+      new MutationObserver(syncFixtureButton).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['disabled','data-lab-startup','data-studio-startup']});syncFixtureButton();
+      fixtureButton.addEventListener('click',async()=>{
+        const input=fixtureInput();
+        if(fixtureLoading||!input){fixtureStatus.textContent='工作台尚未就绪或正在处理，请稍后再载入。';await record('fixture-input',{phase:'blocked',reason:'product-input-unavailable',nativePicker:false});return;}
+        fixtureLoading=true;syncFixtureButton();fixtureStatus.textContent='正在载入同源本地合成 PNG…';
+        await record('fixture-input',{phase:'attempt',nativePicker:false,method:'visible-demo-button-file-input-change',taskId:input.dataset.files});
+        try{
+          if(typeof File!=='function'||typeof DataTransfer!=='function')throw new Error('浏览器不支持本地示例导入；可下载演示图后手动选择。');
+          const response=await nativeFetch('/__demo/product.png',{cache:'no-store'});
+          if(!response.ok||!String(response.headers.get('content-type')||'').startsWith('image/png'))throw new Error('本地合成示例图无法读取，请稍后重试。');
+          const blob=await response.blob();
+          if(fixtureInput()!==input){fixtureStatus.textContent='工作台状态已变化，示例图尚未导入，请再次点击。';await record('fixture-input',{phase:'blocked',reason:'product-input-changed',nativePicker:false});return;}
+          const file=new File([blob],'local-synthetic-demo-tote.png',{type:'image/png',lastModified:Date.now()}),transfer=new DataTransfer();transfer.items.add(file);input.files=transfer.files;
+          input.dispatchEvent(new Event('change',{bubbles:true}));
+          fixtureStatus.textContent='已交给正常产品图输入，请核对缩略图。合成素材 QA，不代表系统选择器上传验收。';
+          await record('fixture-input',{phase:'dispatched',nativePicker:false,method:'visible-demo-button-file-input-change',taskId:input.dataset.files,fileName:file.name,bytes:file.size});
+        }catch(error){fixtureStatus.textContent=error.message||'本地合成示例导入失败，请重试。';await record('fixture-input',{phase:'failed',nativePicker:false,reason:'fixture-input-failed'});}
+        finally{fixtureLoading=false;syncFixtureButton();}
+      });
       const demoLink=anchor=>{if(!anchor||!anchor.hasAttribute('href'))return;const url=new URL(anchor.getAttribute('href'),location.href);if(url.origin===location.origin&&url.pathname.endsWith('/promptlab.html')&&url.searchParams.get('studio')==='1'&&url.searchParams.get('demo')!=='1'){url.searchParams.set('demo','1');anchor.setAttribute('href',url.pathname+url.search+url.hash);}};
       const rewriteLinks=()=>document.querySelectorAll('a[href]').forEach(demoLink);
       rewriteLinks();new MutationObserver(rewriteLinks).observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['href']});
@@ -148,7 +177,7 @@ function createDemoServer({port=defaultPort,bundled=false}={}) {
   // Optional production entry packaging, with the same explicit local-only
   // analysis/generation fixtures. Run this mode with node --import tsx.
   const entry = bundled ? require('../src/lib/creative-entry-bundle.ts') : null;
-  const metrics = { startedAt:new Date().toISOString(), environment, fixtureAnalysis:0, fixtureGeneration:0, localArchives:0, blockedProxyRequests:0, blockedOtherApiRequests:0, outboundProviderRequests:0, events:[], requests:{} };
+  const metrics = { startedAt:new Date().toISOString(), environment, fixtureInputAttempts:0, fixtureInputDispatched:0, fixtureInputBlocked:0, fixtureInputFailures:0, fixtureAnalysis:0, fixtureGeneration:0, localArchives:0, blockedProxyRequests:0, blockedOtherApiRequests:0, outboundProviderRequests:0, events:[], requests:{} };
   const png = productFixture(); fs.mkdirSync(fixtureDir,{recursive:true});
   const productPath=path.join(fixtureDir,'demo-product-tote.png');fs.writeFileSync(productPath,png);
   const origin = `http://127.0.0.1:${port}`;
@@ -167,7 +196,7 @@ function createDemoServer({port=defaultPort,bundled=false}={}) {
     if(route==='/__demo/product.png')return send(200,png,'image/png');
     if(route==='/__demo/event'&&req.method==='POST'){
       let body='';for await(const part of req){body+=part;if(body.length>16384){req.destroy();return;}}
-      try{const event=JSON.parse(body);if(event.type==='fixture-analysis')metrics.fixtureAnalysis++;if(event.type==='fixture-generation')metrics.fixtureGeneration++;if(event.type==='local-archive'&&event.ok)metrics.localArchives++;metrics.events.push({...event,at:new Date().toISOString()});metrics.events=metrics.events.slice(-1000);return send(200,{ok:true});}catch{return send(400,{ok:false});}
+      try{const event=JSON.parse(body);if(event.type==='fixture-input'){if(event.phase==='attempt')metrics.fixtureInputAttempts++;if(event.phase==='dispatched')metrics.fixtureInputDispatched++;if(event.phase==='blocked')metrics.fixtureInputBlocked++;if(event.phase==='failed')metrics.fixtureInputFailures++;}if(event.type==='fixture-analysis')metrics.fixtureAnalysis++;if(event.type==='fixture-generation')metrics.fixtureGeneration++;if(event.type==='local-archive'&&event.ok)metrics.localArchives++;metrics.events.push({...event,at:new Date().toISOString()});metrics.events=metrics.events.slice(-1000);return send(200,{ok:true});}catch{return send(400,{ok:false});}
     }
     if(route==='/'||route==='/demo'||route==='/dashboards/operating-network')return send(200,shell(),'text/html; charset=utf-8');
     const target=path.resolve(publicRoot,`.${route}`);

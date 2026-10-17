@@ -11,6 +11,13 @@ const first = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAw
 const second = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const capturedAt = "2026-10-12T00:00:00.000Z";
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+interface MutableScreenshotSource {
+  facts: Array<{ value: string }>;
+  orderedBlocks: Array<{ text?: string }>;
+  assets: Array<{ rightsStatus: string }>;
+  source: { itemId?: string };
+  productFacts?: Array<{ label: string }>;
+}
 
 describe("reference detail screenshot learning source", () => {
   it("preserves screenshot order and an immutable digest without inventing a product source", () => {
@@ -56,14 +63,15 @@ describe("reference detail screenshot learning source", () => {
 
   it("rejects fact, brand, direct-use and order mutations of screenshot source records", () => {
     const original = contract.createScreenshotSource([first, second], { capturedAt });
-    for (const mutate of [
-      (value: any) => { value.facts.push({ value: "竞品价格" }); },
-      (value: any) => { value.orderedBlocks[0].text = "竞品品牌"; },
-      (value: any) => { value.assets[0].rightsStatus = "self_owned"; },
-      (value: any) => { value.orderedBlocks.reverse(); },
-      (value: any) => { value.source.itemId = "12345"; },
-      (value: any) => { value.productFacts = [{ label: "竞品规格" }]; }
-    ]) {
+    const mutations: Array<(value: MutableScreenshotSource) => void> = [
+      value => { value.facts.push({ value: "竞品价格" }); },
+      value => { value.orderedBlocks[0].text = "竞品品牌"; },
+      value => { value.assets[0].rightsStatus = "self_owned"; },
+      value => { value.orderedBlocks.reverse(); },
+      value => { value.source.itemId = "12345"; },
+      value => { value.productFacts = [{ label: "竞品规格" }]; }
+    ];
+    for (const mutate of mutations) {
       const changed = clone(original);
       mutate(changed);
       expect(contract.validateSourceSnapshot(changed).ok).toBe(false);

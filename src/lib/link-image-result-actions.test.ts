@@ -9,34 +9,79 @@ const folder = resolve(process.env.CREATIVE_ASSET_TEST_ROOT || 'public/creative'
 const script = readFileSync(resolve(folder, 'link-image-result-actions.js'), 'utf8');
 const workflow = createRequire(import.meta.url)(resolve(folder, 'link-image-contract.js'));
 const img = (n: number) => { const b = Buffer.alloc(40); Buffer.from([137,80,78,71,13,10,26,10]).copy(b); b.writeUInt32BE(64,16); b.writeUInt32BE(64,20); b[24]=n; return 'data:image/png;base64,' + b.toString('base64'); };
-type Win = Record<string, any>;
+interface ResultItem {
+  url: string; productImages: string[];
+  apiKey?: string; provider?: string; generationRoute?: string; labMode?: string;
+  creativeGuideOrigin: { mode: string; provenance: { shotId: string; mode: string } };
+}
+type RecordedCall = ['edit', string, ResultItem] | ['native-edit', ResultItem]
+  | ['product' | 'model', string, string] | ['reference', string];
+interface HandoffOutcome { ok: boolean; imported?: boolean; action?: string; error?: string }
+interface HandoffApi {
+  open(payload: ReturnType<typeof input>): Promise<HandoffOutcome>;
+  openCreativeFission(item: unknown, accountKey: string): Promise<HandoffOutcome>;
+  receive(): Promise<HandoffOutcome>;
+  claim(token: string | null, child: Win, accountKey: string): Promise<{ action: string; item: ResultItem }>;
+  complete(token: string | null, child: Win, outcome: HandoffOutcome): boolean;
+}
+interface MockNode { id: string; style: Record<string, string>; textContent: string; setAttribute(): void }
+interface MockFrame { src: string; contentWindow: Win; ownerDocument: ReturnType<typeof doc>; isConnected: boolean }
+interface MockState {
+  archiveAccountKey: string; productImages: Record<string, string>; modelImages: Record<string, string>; refImages: string[];
+  results: Array<{ url: string }>; activeJobIds: Record<string, unknown>; activeJobId?: string; refImage?: string;
+  referencePrompts?: { main: { id: string } }; linkList?: Array<{ id: string }>;
+  referenceDetail?: { currentBlueprint: { id: string } }; activePromptRecord?: { id: string };
+  styleRefresh?: { run: { phase: string } }; guideDraft?: { id: string }; linkResultDraftId?: string;
+  linkResultProvenance: Record<string, unknown>; linkResultSourceEvidence: { products: string[] };
+}
+interface Win {
+  location: { href: string; readonly origin: string; readonly search: string; replace(next: string): void };
+  document: ReturnType<typeof doc>; state: MockState; closed: boolean; __SANJIE_ENVIRONMENT: string;
+  parent: Win; top: Win; opener: Win | null; frameElement: MockFrame;
+  calls: RecordedCall[]; timers: Map<number, () => void>; close(): void; open(url: string): Win | null;
+  SZ_LINK_RESULT_HANDOFF: HandoffApi; SZ_LINK_IMAGE_WORKFLOW: unknown;
+  SZ_CREATIVE_TOOLS_BRIDGE: { getAccountKey(): Promise<string>; openResultAction(action: string, item: ResultItem): Promise<void> };
+  SZ_SCENE_EXTENSION_BRIDGE: { ready(): Promise<{ ok: boolean }> };
+  SZ_CREATIVE_TOOLS_UI?: { getState(): unknown }; SanjiePromptLabTaskBridge?: { getState(): { busy: boolean } };
+  fetch?: (url: string) => Promise<{ ok: boolean; blob?: () => Promise<{ size: number; type?: string }> }>;
+  FileReader?: new () => object;
+  setTimeout(fn: () => void): number; clearTimeout(id: number): void;
+  setProductAngle(angle: string, image: string): void; setModelAngle(angle: string, image: string): void; setRefImage(image: string): void;
+}
+function recordedItem(calls: RecordedCall[], kind: 'edit' | 'native-edit'): ResultItem {
+  const call = calls.find(call => call[0] === kind);
+  if (!call || (call[0] !== 'edit' && call[0] !== 'native-edit')) throw new Error(`Missing ${kind} result action`);
+  return call[0] === 'edit' ? call[2] : call[1];
+}
 function deferred() { let resolve!: (value: string) => void; return { promise: new Promise<string>(yes => { resolve = yes; }), finish: (value: string) => resolve(value) }; }
 function doc() {
-  const nodes = new Map<string, any>();
-  const iframeNodes: Win[] = [];
-  const app = { insertBefore(node: any) { nodes.set(node.id, node); }, appendChild(node: any) { nodes.set(node.id, node); }, firstChild: null };
+  const nodes = new Map<string, MockNode>();
+  const iframeNodes: MockFrame[] = [];
+  const app = { insertBefore(node: MockNode) { nodes.set(node.id, node); }, appendChild(node: MockNode) { nodes.set(node.id, node); }, firstChild: null };
   return { readyState: 'loading', body: app, addEventListener() {}, getElementById(id: string) { return nodes.get(id); },
     iframeNodes, querySelectorAll(selector: string) { return selector === 'iframe' ? iframeNodes : []; },
     querySelector(selector: string) { return selector === '.app' ? app : null; },
     createElement() { return { id: '', style: {}, textContent: '', setAttribute() {} }; }, nodes };
 }
 function windowAt(url: string): Win {
-  const location: Win = { href: url };
+  const location = { href: url } as Win['location'];
   Object.defineProperties(location, { origin: { get: () => new URL(location.href).origin }, search: { get: () => new URL(location.href).search } });
   location.replace = (next: string) => { location.href = next; };
   const timers = new Map<number, () => void>(); let sequence = 0;
-  const calls: any[] = [], document = doc();
-  const win: Win = { location, document, state: { archiveAccountKey: 'account:alice', productImages: {}, modelImages: {}, refImages: [], results: [], activeJobIds: {} },
+  const calls: RecordedCall[] = [], document = doc();
+  // The real script injects the handoff API and generated provenance into this
+  // mutable host; the fixture wires its window relationships immediately below.
+  const win = { location, document, state: { archiveAccountKey: 'account:alice', productImages: {}, modelImages: {}, refImages: [], results: [], activeJobIds: {} },
     crypto: webcrypto, structuredClone, __SANJIE_ENVIRONMENT: 'fixture', closed: false,
     setTimeout(fn: () => void) { const id=++sequence; timers.set(id,fn); return id; }, clearTimeout(id: number) { timers.delete(id); },
     close() { win.closed = true; }, calls, timers,
     SZ_LINK_IMAGE_WORKFLOW: workflow,
-    SZ_CREATIVE_TOOLS_BRIDGE: { getAccountKey: async () => 'account:alice', openResultAction: async (action: string, item: any) => { calls.push(['edit',action,item]); } },
+    SZ_CREATIVE_TOOLS_BRIDGE: { getAccountKey: async () => 'account:alice', openResultAction: async (action: string, item: ResultItem) => { calls.push(['edit',action,item]); } },
     SZ_SCENE_EXTENSION_BRIDGE: { ready: async () => ({ ok: true }) },
     setProductAngle(angle: string, image: string) { win.state.productImages[angle]=image; calls.push(['product',angle,image]); },
     setModelAngle(angle: string, image: string) { win.state.modelImages[angle]=image; calls.push(['model',angle,image]); },
     setRefImage(image: string) { win.state.refImage=image; win.state.refImages=[image]; calls.push(['reference',image]); }
-  };
+  } as unknown as Win;
   win.parent=win;win.top=win;win.opener=null;
   return win;
 }
@@ -71,7 +116,7 @@ function fixture(sourceUrl='https://test.invalid/creative/labs/image-prompt-lab/
   source.open = (url: string) => { opened++; expect(url).toBe('about:blank'); popup.opener=source;return popup; };
   const api = install(source);
   return { source,popup,target,frame,api,get opened() { return opened; },
-    async start(payload: Win) { const result=api.open(payload); await spin(); install(target); return { result, received: target.SZ_LINK_RESULT_HANDOFF.receive() }; } };
+    async start(payload: ReturnType<typeof input>) { const result=api.open(payload); await spin(); install(target); return { result, received: target.SZ_LINK_RESULT_HANDOFF.receive() }; } };
 }
 
 describe('link result action handoff', () => {
@@ -84,17 +129,17 @@ describe('link result action handoff', () => {
     expect(f.target.state.productImages.front).toBe(payload.item.productImages[0]);
     expect(f.target.state.linkResultProvenance).toMatchObject({linkId:'L001',mode:'main',sourceJobId:'job-original',accountKey:'account:alice'});
     expect(f.target.state.linkResultDraftId).toBeTruthy();
-    if(action==='guided-regenerate') { const item=f.target.calls.find((call: any[]) => call[0]==='edit')[2]; expect(item.apiKey).toBeUndefined(); expect(item.provider).toBeUndefined(); expect(item.generationRoute).toBeUndefined(); expect(item.productImages).toEqual(payload.item.productImages); expect(item.creativeGuideOrigin.provenance.shotId).toBe(payload.shot.id); }
+    if(action==='guided-regenerate') { const item=recordedItem(f.target.calls, 'edit'); expect(item.apiKey).toBeUndefined(); expect(item.provider).toBeUndefined(); expect(item.generationRoute).toBeUndefined(); expect(item.productImages).toEqual(payload.item.productImages); expect(item.creativeGuideOrigin.provenance.shotId).toBe(payload.shot.id); }
     if(action==='case-fission') expect(f.target.state.refImages).toEqual([payload.item.url]);
     if(action==='style-refresh') { expect(f.target.state.refImages).toEqual([]); expect(new URL(f.target.location.href).searchParams.get('creativeRoute')).toBe('style-refresh'); }
-    expect(f.target.calls.every((call: any[]) => ['product','model','reference','edit'].includes(call[0]))).toBe(true);
+    expect(f.target.calls.every((call) => ['product','model','reference','edit'].includes(call[0]))).toBe(true);
   });
   it('copies a local blob result into the independent draft before detaching its source', async () => {
     const f=fixture(), p=input(); p.item.url='blob:https://test.invalid/local-result'; const fetches:string[]=[];
     f.target.fetch=async(url:string)=>{fetches.push(url);return {ok:true,blob:async()=>({type:'image/png',size:40})};};
     f.target.FileReader=class { result=img(30); onload=()=>{}; readAsDataURL() { queueMicrotask(()=>this.onload()); } };
     const h=await f.start(p); expect((await h.received).ok).toBe(true); await h.result;
-    expect(fetches).toEqual(['blob:https://test.invalid/local-result']); expect(f.target.calls.find((call:any[])=>call[0]==='edit')[2].url).toBe(img(30));
+    expect(fetches).toEqual(['blob:https://test.invalid/local-result']); expect(recordedItem(f.target.calls, 'edit').url).toBe(img(30));
     expect(p.item.url).toBe('blob:https://test.invalid/local-result'); expect(f.target.opener).toBeNull(); expect(f.popup.opener).toBeNull();
   });
   it('keeps a failed local blob import separate without changing the source or any target draft', async () => {
@@ -111,14 +156,14 @@ describe('link result action handoff', () => {
     const start=native.indexOf('window.SZ_CREATIVE_TOOLS_BRIDGE = {'), end=native.indexOf('\n  };',start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const f=fixture(), sends: unknown[]=[];
-    const stubs: Win={ window:f.target, state:f.target.state, cfgFromForm:()=>({provider:'retained-custom',apiKey:'stays-in-target'}),
+    const stubs: Record<string, unknown>={ window:f.target, state:f.target.state, cfgFromForm:()=>({provider:'retained-custom',apiKey:'stays-in-target'}),
       send:(...args:unknown[])=>{sends.push(args);throw new Error('No dispatch expected');},
       creativeWebAccountKey:async()=> 'account:alice', cloneGuideValue:structuredClone, $:()=>null,
-      openGuideRegenerateModal:(item:any)=>{f.target.calls.push(['native-edit',item]);return {ok:true};} };
+      openGuideRegenerateModal:(item: ResultItem)=>{f.target.calls.push(['native-edit',item]);return {ok:true};} };
     ['queueArchiveResult','creativeWebRefresh','creativeWebListBoundApis','creativeWebSelectBoundApi','creativeWebSetApiBusy','newJobId','registerGenerationJob','unregisterGenerationJob','openArchiveHistory'].forEach(name=>{stubs[name]=()=>{};});
     runInContext(native.slice(start,end+'\n  };'.length),createContext(stubs));
     const p=input('guided-regenerate',2,'detail'), h=await f.start(p); expect((await h.received).ok).toBe(true); await h.result;
-    const item=f.target.calls.find((call:any[])=>call[0]==='native-edit')[1];
+    const item=recordedItem(f.target.calls, 'native-edit');
     expect(item.productImages).toEqual(p.item.productImages); expect(item.labMode).toBe('main'); expect(item.creativeGuideOrigin.provenance.mode).toBe('detail');
     expect(item.generationRoute).toBeUndefined(); expect(item.apiKey).toBeUndefined(); expect(sends).toEqual([]);
   });
@@ -187,16 +232,16 @@ describe('link result action handoff', () => {
   it('retains all six source originals and clearly explains the native three-slot limit', async () => {
     const f=fixture(), p=input('style-refresh',6), h=await f.start(p); expect((await h.received).ok).toBe(true); await h.result;
     expect(Object.keys(f.target.state.productImages)).toHaveLength(3); expect(f.target.state.linkResultSourceEvidence.products).toEqual(p.item.productImages);
-    expect(f.target.document.nodes.get('linkResultImportNotice').textContent).toContain('其余 3 张仍保留在源清单');
+    expect(f.target.document.nodes.get('linkResultImportNotice')!.textContent).toContain('其余 3 张仍保留在源清单');
   });
   it('keeps all six originals for the guide execution snapshot, including detail source provenance', async () => {
     const f=fixture(), p=input('guided-regenerate',6,'detail'), h=await f.start(p); expect((await h.received).ok).toBe(true); await h.result;
-    const item=f.target.calls.find((call: any[])=>call[0]==='edit')[2]; expect(item.productImages).toHaveLength(6); expect(item.creativeGuideOrigin.mode).toBe('detail');
+    const item=recordedItem(f.target.calls, 'edit'); expect(item.productImages).toHaveLength(6); expect(item.creativeGuideOrigin.mode).toBe('detail');
   });
   it('uses only one receiving operation when startup invokes it twice', async () => {
     const f=fixture(), opening=f.api.open(input()); await spin(); f.popup.opener=f.source; const receiver=install(f.target);
     const first=receiver.receive(), second=receiver.receive(); expect(first).toBe(second); await first; await opening;
-    expect(f.target.calls.filter((call: any[])=>call[0]==='edit')).toHaveLength(1);
+    expect(f.target.calls.filter((call)=>call[0]==='edit')).toHaveLength(1);
   });
   it('fails safely when the original tab closes or target reloads after consumption', async () => {
     const target=windowAt('https://test.invalid/creative/labs/image-prompt-lab/promptlab.html?mode=main&source=web&linkResultToken=expired');
@@ -267,7 +312,7 @@ describe('website-shell preserving result handoff',()=>{
     const f=fixture(),p=input(),pending=f.api.open(p);await spin();const token=new URL(f.popup.location.href).searchParams.get('linkResultToken');
     const payload=await f.api.claim(token,f.target,'account:alice');f.api.complete(token,f.target,{ok:true});await pending;
     const direct=windowAt(`https://test.invalid/creative/labs/image-prompt-lab/promptlab.html?source=web&mode=main&linkResultToken=${token}`),oldSource=windowAt(f.source.location.href);
-    let completed=false;oldSource.SZ_LINK_RESULT_HANDOFF={claim:async(received:string,child:Win,account:string)=>{expect(received).toBe(token);expect(child).toBe(direct);expect(account).toBe('account:alice');return structuredClone(payload);},complete:(received:string,child:Win)=>{completed=received===token&&child===direct;return completed;}};
+    let completed=false;Object.assign(oldSource,{SZ_LINK_RESULT_HANDOFF:{claim:async(received:string,child:Win,account:string)=>{expect(received).toBe(token);expect(child).toBe(direct);expect(account).toBe('account:alice');return structuredClone(payload);},complete:(received:string,child:Win)=>{completed=received===token&&child===direct;return completed;}}});
     direct.opener=oldSource;install(direct);expect(await direct.SZ_LINK_RESULT_HANDOFF.receive()).toMatchObject({ok:true});expect(completed).toBe(true);expect(direct.opener).toBeNull();
     const fresh=fixture(),freshPending=fresh.api.open(input());await spin();const freshToken=new URL(fresh.popup.location.href).searchParams.get('linkResultToken');
     direct.location.href=direct.location.href.replace(token!,freshToken!);direct.opener=fresh.source;await expect(fresh.api.claim(freshToken,direct,'account:alice')).rejects.toThrow('失效');
@@ -297,7 +342,7 @@ describe('creative result uses the same shell-bound handoff without raw context 
     expect(f.target.state.linkResultProvenance).toMatchObject({schema:'CREATIVE_RESULT_REUSE_V1',tool,shotId:f.item.creativeShotId,sourceJobId:f.item.jobId});
     expect(f.target.state.linkResultProvenance.linkId).toBeUndefined();expect(f.source.state).toEqual(stateBefore);expect(f.snapshot).toEqual(snapshotBefore);expect(f.item).toEqual(itemBefore);
     expect(f.getState).toHaveBeenCalledOnce();expect(JSON.stringify(f.target.state)).not.toMatch(/DO_NOT_COPY|CURRENT_SECRET|generationConfig|current-api/);
-    expect(f.target.calls.every((call:Win[])=>['product','model','reference'].includes(String(call[0])))).toBe(true);expect(f.popup.opener).toBeNull();
+    expect(f.target.calls.every((call)=>['product','model','reference'].includes(String(call[0])))).toBe(true);expect(f.popup.opener).toBeNull();
     if(tool==='refinement'){expect(f.item.productImages).toEqual([img(50)]);expect(f.target.state.linkResultSourceEvidence.products).toHaveLength(1);}
   });
 

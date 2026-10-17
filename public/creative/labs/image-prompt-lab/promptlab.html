@@ -94,9 +94,21 @@
         },
         fail
       };
-      window.addEventListener('error', (event) => {
+      const ownedResource = (value, extension) => {
+        if (typeof value !== 'string' || !value.trim()) return false;
+        try {
+          const root = new URL('../../', location.href), resource = new URL(value, location.href);
+          return resource.protocol === root.protocol && resource.host === root.host
+            && resource.pathname.startsWith(root.pathname) && extension.test(resource.pathname);
+        } catch (_) { return false; }
+      };
+      window.addEventListener('error', event => {
         const target = event.target;
-        if (target === window || target && ['SCRIPT', 'LINK'].includes(target.tagName)) fail('工作台资源加载失败，请重新加载。');
+        const script = target && target.tagName === 'SCRIPT' && ownedResource(target.src, /\.js$/i);
+        const stylesheet = target && target.tagName === 'LINK'
+          && String(target.rel || '').toLowerCase().split(/\s+/).includes('stylesheet') && ownedResource(target.href, /\.css$/i);
+        const runtime = target === window && ownedResource(event.filename, /\.js$/i);
+        if (script || stylesheet || runtime) fail('工作台资源加载失败，请重新加载。');
       }, true);
       document.addEventListener('DOMContentLoaded', () => {
         if (html.dataset.labStartup === 'error') { fail(failureMessage, failureKind); return; }
@@ -160,9 +172,21 @@
         observer = new MutationObserver(sync);
         observer.observe(html, { attributes: true, attributeFilter: ['data-lab-startup', 'data-studio-startup'] });
       }
+      const ownedResource = (value, extension) => {
+        if (typeof value !== 'string' || !value.trim()) return false;
+        try {
+          const root = new URL('../../', location.href), resource = new URL(value, location.href);
+          return resource.protocol === root.protocol && resource.host === root.host
+            && resource.pathname.startsWith(root.pathname) && extension.test(resource.pathname);
+        } catch (_) { return false; }
+      };
       window.addEventListener('error', event => {
         const target = event.target;
-        if (target === window || target && ['SCRIPT', 'LINK'].includes(target.tagName)) fail('resource');
+        const script = target && target.tagName === 'SCRIPT' && ownedResource(target.src, /\.js$/i);
+        const stylesheet = target && target.tagName === 'LINK'
+          && String(target.rel || '').toLowerCase().split(/\s+/).includes('stylesheet') && ownedResource(target.href, /\.css$/i);
+        const runtime = target === window && ownedResource(event.filename, /\.js$/i);
+        if (script || stylesheet || runtime) fail('resource');
       }, true);
       document.addEventListener('DOMContentLoaded', () => {
         sync();

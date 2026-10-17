@@ -15,7 +15,7 @@ const studioRecoveryStyle = html.match(/<style id="studioStartupRecoveryStyle">(
 if (!startupScript || !startupStyle || !studioBootstrapScript || !studioBootstrapStyle || !studioRecoveryStyle) throw new Error("Missing the real entry startup assets");
 
 type Listener = () => void;
-type ResourceListener = (event: { target: unknown }) => void;
+type ResourceListener = (event: { target: unknown; filename?: string; message?: string; error?: unknown }) => void;
 class Element {
   readonly attributes = new Map<string, string>();
   readonly children: Element[] = [];
@@ -125,7 +125,7 @@ function harness(search: string) {
   };
   const reload = vi.fn();
   const context = createContext({ document, URLSearchParams, URL, console, crypto: { randomUUID },
-    location: { search, reload }, localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
+    location: { search, reload, href: "https://site.test/creative/labs/image-prompt-lab/promptlab.html" + search }, localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
     setTimeout: (callback: Listener, delay: number) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id: number) => timers.delete(id),
     addEventListener: (name: string, listener: ResourceListener) => windowListeners.set(name, [...windowListeners.get(name) || [], listener]),
@@ -148,7 +148,10 @@ function harness(search: string) {
   const element = (id: string) => { const node = document.getElementById(id); if (!node) throw new Error(`Missing ${id}`); return node; };
   return { context, document, parseBody, domReady, element, timers, reload,
     mutations: () => { for (const observer of observers) if (observer.connected) observer.callback(); },
-    resourceError: (tagName = "SCRIPT", url = "") => windowListeners.get("error")?.forEach(listener => listener({ target: { tagName, src: url, href: url } })),
+    resourceError: (tagName = "SCRIPT", url = "promptlab.js", rel = "stylesheet") => windowListeners.get("error")?.forEach(listener => listener({ target: { tagName, src: url, href: url, rel } })),
+    runtimeError: (filename = "", error: Error = new Error("Script failure")) => windowListeners.get("error")?.forEach(listener => listener({
+      target: runInContext("window", context), filename, error, message: error.message
+    })),
     expire: () => [...timers.values()].filter(timer => timer.delay === 30000).forEach(timer => timer.callback()) };
 }
 
@@ -163,6 +166,49 @@ const routes = [
 
 const listMainRoute = ["清单成图", "?mode=main&source=web&layout=1"] as const;
 const linkImageRoute = ["链接成图", "?mode=link-image&source=web"] as const;
+
+describe.each([
+  ["studio", "?source=web&studio=1"],
+  ["legacy creative", "?mode=creative&tool=buyer&source=web"]
+])("%s startup attributes only owned creative resource errors", (_label, search) => {
+  it("ignores anonymous third-party CSP rejections and extension errors, then permits genuine readiness", () => {
+    const h = harness(search); h.parseBody(); h.domReady();
+    h.runtimeError("", new EvalError("Evaluating a string as JavaScript violates Content Security Policy: unsafe-eval"));
+    h.runtimeError("chrome-extension://injected-extension/content-script.js");
+    h.runtimeError("https://unrelated.test/injected.js");
+    h.runtimeError("https://site.test/unrelated/injected.js");
+    h.resourceError("SCRIPT", "chrome-extension://injected-extension/content-script.js");
+    h.resourceError("SCRIPT", "https://unrelated.test/creative/injected.js");
+    h.resourceError("LINK", "https://unrelated.test/creative/injected.css");
+    h.resourceError("SCRIPT", "");
+    h.resourceError("LINK", "studio-entry.css", "preload");
+    expect(h.document.documentElement.dataset.labStartup).toBe("pending");
+    expect(h.element("labStartupStatus").getAttribute("role")).toBe("status");
+    expect(h.timers.size).toBe(1);
+    if (search.includes("studio=1")) {
+      h.document.documentElement.setAttribute("data-lab-startup", "ready");
+      h.document.documentElement.setAttribute("data-studio-startup", "ready"); h.mutations();
+      expect(h.document.documentElement.dataset.studioBootstrap).toBe("ready");
+    } else h.context.SZ_LAB_STARTUP.ready();
+    expect(h.document.documentElement.dataset.labStartup).toBe("ready"); expect(h.timers.size).toBe(0);
+  });
+
+  it.each(["/creative/web-chrome.js?v=owned", "/creative/labs/image-prompt-lab/studio-entry.js?v=owned"])("keeps an actual owned runtime/parser error fatal: %s", filename => {
+    const h = harness(search);
+    h.runtimeError("https://site.test" + filename, new SyntaxError("Unexpected token in owned bundle"));
+    expect(h.document.documentElement.dataset.labStartup).toBe("error");
+    h.parseBody(); h.domReady();
+    if (search.includes("studio=1")) {
+      expect(h.document.documentElement.dataset.studioBootstrap).toBe("resource-error");
+      h.document.documentElement.setAttribute("data-lab-startup", "ready");
+      h.document.documentElement.setAttribute("data-studio-startup", "ready"); h.mutations();
+    } else h.context.SZ_LAB_STARTUP.ready();
+    expect(h.document.documentElement.dataset.labStartup).toBe("error");
+    expect(h.element("labStartupStatus").textContent).toContain("资源加载失败");
+    expect(h.element("labStartupStatus").querySelector("button")).not.toBeNull();
+    expect(h.timers.size).toBe(0);
+  });
+});
 
 describe("image studio entry does not paint the legacy main page", () => {
   it("installs both startup rules and route selection before any external resource", () => {
