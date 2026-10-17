@@ -1,0 +1,36 @@
+{
+  "id": "production-3d2e878a-b661-4663-a717-d3fa54a2badc",
+  "status": "failed",
+  "resolution": "720p",
+  "phase": "planned",
+  "planResolution": "720p",
+  "planVersion": 1,
+  "shotRuns": [
+    {
+      "id": "production_7d23283f-7fcf-485d-9105-ad950609653d_shot_1",
+      "status": "succeeded",
+      "taskId": "video_76ed65f1-2097-4f1d-ad83-946cf98c2a2f",
+      "providerTaskId": "cgt-20261018015949-jfgzr",
+      "error": "",
+      "resultAssetId": "production-3d2e878a-b661-4663-a717-d3fa54a2badc_production_7d23283f-7fcf-485d-9105-ad950609653d_shot_1_attempt1",
+      "attempts": 1
+    },
+    {
+      "id": "production_7d23283f-7fcf-485d-9105-ad950609653d_shot_2",
+      "status": "failed",
+      "taskId": "video_f35eb682-9cdf-4c61-a16f-4ff2de7644b1",
+      "error": "参考素材可能包含真人，当前模型拒绝；请改用不含真人的商品素材，或使用供应商认证的可信人像素材。（HTTP 400；错误码 InputImageSensitiveContentDetected.PrivacyInformation）",
+      "resultAssetId": "",
+      "attempts": 1
+    },
+    {
+      "id": "production_7d23283f-7fcf-485d-9105-ad950609653d_shot_3",
+      "status": "pending",
+      "taskId": "",
+      "resultAssetId": "",
+      "attempts": 0
+    }
+  ],
+  "error": "镜头失败，已完成镜头保留；可手动仅重试失败镜头。",
+  "updatedAt": "2026-10-17T18:05:12.258Z"
+}

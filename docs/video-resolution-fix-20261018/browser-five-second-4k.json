@@ -1,0 +1,35 @@
+{
+  "status": "complete",
+  "results": [
+    {
+      "resolution": "4k",
+      "ratio": "16:9",
+      "expected": {
+        "width": 3840,
+        "height": 2160
+      },
+      "actual": {
+        "width": 3840,
+        "height": 2160,
+        "duration": 5
+      },
+      "bytes": 303264,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "4k",
+      "ratio": "9:16",
+      "expected": {
+        "width": 2160,
+        "height": 3840
+      },
+      "actual": {
+        "width": 2160,
+        "height": 3840,
+        "duration": 5
+      },
+      "bytes": 148446,
+      "mimeType": "video/webm;codecs=vp9"
+    }
+  ]
+}

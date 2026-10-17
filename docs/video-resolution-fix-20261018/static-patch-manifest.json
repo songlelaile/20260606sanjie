@@ -1,0 +1,177 @@
+{
+  "sourceRef": "399342a",
+  "scope": "resolution-only-static-hotfix",
+  "files": [
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-production.js",
+      "before": "e478c7f55acbd35c6bd529ebb5a0c6a30e91dc3677d298be64d413675ee62b73",
+      "after": "ad4c94f440c82884c9bbdc645f76201a6beed3ee30f65bf082891a991ab937f3",
+      "edits": [
+        [
+          10,
+          10,
+          "  // Official five-second reference examples, without video input. These are not\n  // calculated from the final canvas: the provider may align its raw dimensions.\n  // https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1\n  var RESOLUTION_PRICES = Object.freeze({\n    'seedance-2.0-mini': Object.freeze({ '480p': 1.16, '720p': 2.48 }),\n    'seedance-2.0': Object.freeze({ '480p': 2.31, '720p': 4.97, '1080p': 12.39, '4k': 25.27 }),\n    'seedance-2.5': Object.freeze({ '480p': 3.36, '720p': 7.56, '1080p': 18.71 })\n  });\n"
+        ],
+        [
+          11,
+          11,
+          "  // Product export sizes, independent of model-native source alignment/pricing.\n  var OUTPUT_SIZES = Object.freeze({ '480p': [854, 480], '720p': [1280, 720], '1080p': [1920, 1080], '4k': [3840, 2160] });\n  var OUTPUT_BITRATES = Object.freeze({ '480p': 2000000, '720p': 4000000, '1080p': 8000000, '4k': 24000000 });\n"
+        ],
+        [
+          28,
+          28,
+          "  function outputDimensions(resolution, ratio) {\n    var size = Object.prototype.hasOwnProperty.call(OUTPUT_SIZES, resolution) && OUTPUT_SIZES[resolution];\n    if (!size) throw error('PRODUCTION_RESOLUTION_UNSUPPORTED', '\u4e0d\u652f\u6301\u6b64\u6210\u7247\u5206\u8fa8\u7387\uff0c\u7981\u6b62\u81ea\u52a8\u964d\u7ea7\u3002');\n    if (['16:9', '9:16'].indexOf(ratio) < 0) throw error('PRODUCTION_RATIO_UNSUPPORTED', '\u6210\u7247\u5408\u6210\u4ec5\u652f\u6301 16:9 \u6216 9:16\uff0c\u7981\u6b62\u81ea\u52a8\u66f4\u6539\u753b\u5e45\u3002');\n    return { width: ratio === '9:16' ? size[1] : size[0], height: ratio === '9:16' ? size[0] : size[1] };\n  }\n  function planOutput(plan) {\n    // Historical plans were always composed at 720p, even if an older request\n    // snapshot happened to contain another UI selection. Never read current UI.\n    var legacy = plan.version == null || plan.version === 1;\n    if (!legacy && plan.version !== 2) throw error('PRODUCTION_PLAN_VERSION_UNSUPPORTED', '\u65e0\u6cd5\u6838\u9a8c\u6b64\u7248\u672c\u7684\u6210\u7247\u5c3a\u5bf8\uff0c\u8bf7\u4fdd\u7559\u539f\u8ba1\u5212\u6838\u5bf9\u3002');\n    var resolution = plan.resolution || (legacy ? '720p' : '');\n    var dimensions = outputDimensions(resolution, plan.ratio);\n    if ((!legacy && (plan.width == null || plan.height == null)) ||\n        (plan.width != null && plan.width !== dimensions.width) || (plan.height != null && plan.height !== dimensions.height) ||\n        (!legacy && plan.request && (plan.request.resolution !== resolution || plan.request.ratio != null && plan.request.ratio !== plan.ratio)) ||\n        (!legacy && plan.shots.some(function (shot) { return shot.kind === 'ai' && (!shot.request || shot.request.resolution !== resolution || shot.request.ratio !== plan.ratio); }))) {\n      throw error('PRODUCTION_DIMENSIONS_MISMATCH', '\u6210\u7247\u5c3a\u5bf8\u4e0e\u5df2\u4fdd\u5b58\u8ba1\u5212\u4e0d\u4e00\u81f4\uff0c\u7981\u6b62\u6539\u5199\u539f\u8ba1\u5212\u6216\u9759\u9ed8\u964d\u7ea7\u3002');\n    }\n    if (!legacy && plan.outputFrameRate != null && plan.outputFrameRate !== 24) throw error('PRODUCTION_FRAME_RATE_UNSUPPORTED', '\u65e0\u6cd5\u6838\u9a8c\u6b64\u6210\u7247\u8ba1\u5212\u7684\u8f93\u51fa\u5e27\u7387\uff0c\u8bf7\u4fdd\u7559\u539f\u8ba1\u5212\u6838\u5bf9\u3002');\n    return { resolution: resolution, width: dimensions.width, height: dimensions.height, frameRate: legacy ? 30 : 24, videoBitsPerSecond: legacy ? 4000000 : OUTPUT_BITRATES[resolution] };\n  }\n"
+        ],
+        [
+          56,
+          57,
+          "    var rates = Object.prototype.hasOwnProperty.call(RESOLUTION_PRICES, key) && RESOLUTION_PRICES[key];\n    var rate = rates && Object.prototype.hasOwnProperty.call(rates, request.resolution) && rates[request.resolution];\n"
+        ],
+        [
+          58,
+          61,
+          "    if (!rate) throw error('PRODUCTION_PRICE_UNKNOWN', '\u8be5\u6a21\u578b\u4e0e\u5206\u8fa8\u7387\u7ec4\u5408\u6ca1\u6709\u5df2\u6838\u5bf9\u7684\u955c\u5934\u53c2\u8003\u4ef7\u683c\uff0c\u7981\u6b62\u81ea\u52a8\u964d\u7ea7\u3002');\n    if (['16:9', '9:16'].indexOf(request.ratio) < 0) {\n      throw error('PRODUCTION_PRICE_UNKNOWN', '\u9884\u7b97\u4ec5\u652f\u6301 16:9 \u6216 9:16\uff0c\u4e0d\u4f30\u7b97\u5176\u4ed6\u753b\u5e45\u3002');\n"
+        ],
+        [
+          118,
+          119,
+          "      resolution: original.resolution, audioMode: 'silent', generateSound: false, narration: false, narrationLanguage: '', images: clone(images), videos: [], audios: [],\n"
+        ],
+        [
+          133,
+          133,
+          "    var dimensions = outputDimensions(request.resolution, request.ratio);\n"
+        ],
+        [
+          175,
+          176,
+          "      id: planId, version: 2, createdAt: new Date().toISOString(), options: options, request: request,\n"
+        ],
+        [
+          178,
+          179,
+          "      resolution: request.resolution, ratio: request.ratio, width: dimensions.width, height: dimensions.height,\n      outputDimensionPolicy: 'standard-video-v1', outputFrameRate: 24,\n"
+        ],
+        [
+          180,
+          182,
+          "      estimateScope: '\u9996\u8f6e 5 \u79d2 AI \u955c\u5934\u7684\u5b98\u65b9\u65e0\u53c2\u8003\u89c6\u9891\u4f30\u4ef7\u793a\u4f8b\uff0c\u6309\u6a21\u578b\u4e0e\u8bf7\u6c42\u5206\u8fa8\u7387\u533a\u5206\uff1b\u4e0a\u6e38\u539f\u751f\u5c3a\u5bf8\u4e0e\u6700\u7ec8\u5408\u6210\u753b\u5e03\u5206\u522b\u5904\u7406\u3002\u9884\u7559\u4e0d\u662f\u8d39\u7528\u4e0a\u9650\uff0c\u5b9e\u9645\u8d39\u7528\u4ee5\u4f9b\u5e94\u5546\u7528\u91cf\u56de\u6267\u4e3a\u51c6\uff1b\u4e0d\u542b\u751f\u56fe\u3001\u7d20\u6750\u91c7\u8d2d\u3001\u5b58\u50a8\u6216\u4ed8\u8d39\u526a\u8f91\u3002',\n      adjustments: [request.audioMode && request.audioMode !== 'silent' ? 'AI \u955c\u5934\u4f7f\u7528\u9759\u97f3\u751f\u6210\uff0c\u5df2\u4e0a\u4f20\u58f0\u97f3\u4ec5\u5728\u672c\u5730\u5408\u6210\u3002' : '', audios.length > 1 ? '\u672c\u5730\u5408\u6210\u4f7f\u7528\u7b2c\u4e00\u4e2a\u8282\u594f/\u58f0\u97f3\u7d20\u6750\uff0c\u5176\u4f59\u97f3\u9891\u672a\u6df7\u5165\u3002' : ''].filter(Boolean)\n"
+        ],
+        [
+          360,
+          361,
+          "      var output = planOutput(plan), width = output.width, height = output.height;\n"
+        ],
+        [
+          362,
+          362,
+          "      if (canvas.width !== width || canvas.height !== height) throw error('PRODUCTION_CAPTURE_DIMENSIONS', '\u6d4f\u89c8\u5668\u4e0d\u652f\u6301\u6240\u9009\u6210\u7247\u5c3a\u5bf8\uff0c\u7981\u6b62\u964d\u4f4e\u5206\u8fa8\u7387\u8f93\u51fa\u3002');\n"
+        ],
+        [
+          450,
+          451,
+          "      stream = canvas.captureStream(output.frameRate);\n      var videoTracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : [];\n      var trackSettings = videoTracks[0] && typeof videoTracks[0].getSettings === 'function' ? videoTracks[0].getSettings() : null;\n      if (trackSettings && ((trackSettings.width != null && trackSettings.width !== width) || (trackSettings.height != null && trackSettings.height !== height))) throw error('PRODUCTION_CAPTURE_DIMENSIONS', '\u6d4f\u89c8\u5668\u6355\u83b7\u5c3a\u5bf8\u4e0e\u6240\u9009\u5206\u8fa8\u7387\u4e0d\u4e00\u81f4\uff0c\u5df2\u505c\u6b62\u5408\u6210\uff0c\u4e0d\u4f1a\u964d\u4f4e\u6e05\u6670\u5ea6\u3002');\n"
+        ],
+        [
+          452,
+          453,
+          "      try { recorder = new root.MediaRecorder(stream, { mimeType: recorderMime(), videoBitsPerSecond: output.videoBitsPerSecond, audioBitsPerSecond: 128000 }); }\n      catch (_) { throw error('PRODUCTION_RECORDER_RESOLUTION_UNSUPPORTED', '\u6d4f\u89c8\u5668\u65e0\u6cd5\u6309\u6240\u9009\u5206\u8fa8\u7387\u5f55\u5236\u6210\u7247\uff0c\u8bf7\u66f4\u6362\u6d4f\u89c8\u5668\u540e\u7ee7\u7eed\u672c\u5730\u5408\u6210\uff1b\u5df2\u751f\u6210\u955c\u5934\u4fdd\u7559\u3002'); }\n"
+        ],
+        [
+          486,
+          487,
+          "              else timer = root.setTimeout(frame, Math.min(1000 / output.frameRate, (currentShot.durationSeconds - elapsed) * 1000));\n"
+        ],
+        [
+          503,
+          504,
+          "      return { blob: blob, resolution: output.resolution, width: width, height: height, frameRate: output.frameRate, durationSeconds: total, mimeType: blob.type, warnings: warnings, audioMix: audioMix };\n"
+        ],
+        [
+          517,
+          518,
+          "  return Object.freeze({ MODES: MODES, PRICES_PER_FIVE_SECONDS: PRICES, PRICES_PER_FIVE_SECONDS_BY_RESOLUTION: RESOLUTION_PRICES, outputDimensions: outputDimensions, normalizeOptions: normalizeOptions, normalizeAudioTracks: normalizeAudioTracks, estimateShot: estimateShot, buildPlan: buildPlan, renderTimeline: renderTimeline, fixWebmDuration: fixWebmDuration });\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "bcba8ae2ec62ae0a42b8402792ef3c0c52172ed11d559c81d5669bbcbaecbef2",
+      "after": "bdc04cc22fe9dcfbcf1c054f1070b9c93f29bf2e5046063144ba424faa38ae8c",
+      "edits": [
+        [
+          740,
+          741,
+          "    // Keep the user's choice visible. Unsupported combinations fail validation rather than silently changing resolution.\n"
+        ],
+        [
+          743,
+          744,
+          "      if (resolutions.indexOf(state.settings.resolution) < 0) {\n        dom.resolutionHelp.textContent = '\u5f53\u524d\u6a21\u578b\u4e0d\u652f\u6301\u6240\u9009 ' + state.settings.resolution + '\uff0c\u8bf7\u66f4\u6362\u6a21\u578b\u6216\u660e\u786e\u9009\u62e9\u53d7\u652f\u6301\u7684\u5206\u8fa8\u7387\u3002';\n      } else if (model.nativePlatform) {\n"
+        ],
+        [
+          981,
+          984,
+          ""
+        ],
+        [
+          988,
+          989,
+          "    var resolution = Contract.RESOLUTIONS.indexOf(requestedResolution) >= 0\n"
+        ],
+        [
+          990,
+          991,
+          "      : '720p';\n"
+        ],
+        [
+          2955,
+          2956,
+          "      resolution: state.settings.resolution, ratio: state.settings.ratio, audioMode: state.settings.audioMode,\n"
+        ],
+        [
+          3016,
+          3017,
+          "        if (!model || !model.configured || model.resolutions.indexOf(shot.request.resolution) < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('\u65b9\u6848\u4f7f\u7528\u7684 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' \u6a21\u578b\u5f53\u524d\u4e0d\u53ef\u7528\u6216\u4e0d\u652f\u6301 ' + shot.request.resolution + ' / 5 \u79d2\u3002');\n"
+        ],
+        [
+          3063,
+          3064,
+          "        dom.productionNote.textContent = plan.aiSeconds + ' \u79d2 AI + ' + plan.localSeconds + ' \u79d2\u7d20\u6750\uff1b\u6309\u6240\u9009 ' + plan.resolution + ' \u5408\u6210\uff08' + plan.width + '\u00d7' + plan.height + '\uff09\u3002' + (platform ? plan.aiSeconds ? '\u5e73\u53f0\u6bcf\u955c\u63d0\u4ea4\u65f6\u6309\u672c\u6b21\u56fa\u5b9a\u62a5\u4ef7\u6263\u79ef\u5206\uff0c\u6210\u529f\u4e0d\u8c03\u5dee\u989d\uff0c\u5931\u8d25\u9000\u56de\uff0c\u53d6\u6d88\u4e0d\u9000\u3002\u5931\u8d25\u955c\u5934\u4ec5\u624b\u52a8\u91cd\u8bd5\uff0c\u6210\u529f\u4f46\u4e0d\u91c7\u7528\u4ecd\u8ba1\u8d39\u3002' : '\u4f7f\u7528\u5df2\u6709\u7d20\u6750\u5728\u672c\u5730\u5408\u6210\u3002' : '\u8d85\u8fc7\u4f30\u7b97\u9884\u7b97\u505c\u6b62\u540e\u7eed\u955c\u5934\uff1b\u81ea\u6709 API \u8d39\u7528\u7531\u5bf9\u5e94\u670d\u52a1\u8ba1\u8d39\u3002\u5931\u8d25\u955c\u5934\u4ec5\u624b\u52a8\u91cd\u8bd5\uff0c\u6210\u529f\u4f46\u4e0d\u91c7\u7528\u4ecd\u8ba1\u6210\u672c\u3002');\n"
+        ],
+        [
+          3078,
+          3079,
+          ""
+        ],
+        [
+          3260,
+          3261,
+          "      resolution: plan.resolution, ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,\n"
+        ],
+        [
+          4466,
+          4466,
+          "      syncSettingsFromDom: syncSettingsFromDom, syncParameterControlsForModel: syncParameterControlsForModel,\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "0aae700583115feee1bd373589a1376755618dfa329aae0efa591f273fe04a92",
+      "after": "ecc290c1bba1ab3044aad647a6eeb45ccd00cd97b4d98399956f7aae03665e65",
+      "edits": [
+        [
+          471,
+          472,
+          "  <script src=\"./video-production.js?v=resolution-20261018-v1\"></script>\n"
+        ],
+        [
+          473,
+          474,
+          "  <script src=\"./video-studio.js?v=resolution-20261018-v1\"></script>\n"
+        ]
+      ]
+    }
+  ]
+}

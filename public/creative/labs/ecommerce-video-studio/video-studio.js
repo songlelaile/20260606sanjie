@@ -738,10 +738,12 @@
       input.disabled = resolutions.indexOf(input.value) < 0;
       input.closest('label').classList.toggle('is-disabled', input.disabled);
     });
-    if (resolutions.indexOf(state.settings.resolution) < 0) state.settings.resolution = resolutions[0];
+    // Keep the user's choice visible. Unsupported combinations fail validation rather than silently changing resolution.
     setRadio('resolution', state.settings.resolution);
     if (dom.resolutionHelp) {
-      if (model.nativePlatform) {
+      if (resolutions.indexOf(state.settings.resolution) < 0) {
+        dom.resolutionHelp.textContent = '当前模型不支持所选 ' + state.settings.resolution + '，请更换模型或明确选择受支持的分辨率。';
+      } else if (model.nativePlatform) {
         dom.resolutionHelp.textContent = '当前平台供应支持 ' + resolutions.join(' / ') + '；以实际生成原件为准。';
       } else if (model.productKey === 'seedance-2.5') {
         dom.resolutionHelp.textContent = 'Seedance 2.5 支持 480P / 720P / 1080P；1080P 为 10-bit H.265，部分浏览器可能无法直接预览。';
@@ -979,16 +981,13 @@
       return item && item.productKey === productKey;
     });
     var limits = (model && (model.limits || model.capabilities)) || model || effectiveLimits(mode, productKey);
-    var resolutions = Array.isArray(limits.resolutions) && limits.resolutions.length
-      ? limits.resolutions
-      : Contract.RESOLUTIONS;
     var ratios = Array.isArray(limits.ratios) && limits.ratios.length
       ? limits.ratios
       : Contract.RATIOS;
     var requestedResolution = cleanText(raw.resolution).toLowerCase();
-    var resolution = resolutions.indexOf(requestedResolution) >= 0
+    var resolution = Contract.RESOLUTIONS.indexOf(requestedResolution) >= 0
       ? requestedResolution
-      : (resolutions.indexOf('720p') >= 0 ? '720p' : resolutions[0]);
+      : '720p';
     var requestedRatio = cleanText(raw.ratio || raw.aspectRatio).toLowerCase();
     var ratio = ratios.indexOf(requestedRatio) >= 0
       ? requestedRatio
@@ -2953,7 +2952,7 @@
     // The planner owns the long timeline. The legacy request snapshot remains within its model's limit.
     var request = {
       mode: state.mode, productKey: state.settings.productKey, durationSeconds: state.settings.durationSeconds,
-      resolution: '720p', ratio: state.settings.ratio, audioMode: state.settings.audioMode,
+      resolution: state.settings.resolution, ratio: state.settings.ratio, audioMode: state.settings.audioMode,
       narrationLanguage: state.settings.narrationLanguage, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, script: state.mode === 'direct' ? state.prompt : (state.review.script || state.prompt),
       goal: state.prompt, supplementalRequirements: state.expertEnabled ? state.expertRequirements : '',
@@ -3014,7 +3013,7 @@
       if (ai.length && analyzing && state.analysisAvailable === false) errors.push('脚本分析不可用，请先配置分析 API。');
       if (ai.length && (!analyzing || options.requireReview)) ai.forEach(function (shot) {
         var model = state.modelCatalog.find(function (item) { return item.productKey === shot.productKey; });
-        if (!model || !model.configured || model.resolutions.indexOf('720p') < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 720p / 5 秒。');
+        if (!model || !model.configured || model.resolutions.indexOf(shot.request.resolution) < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 ' + shot.request.resolution + ' / 5 秒。');
       });
       var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
       if (reserve > state.productionOptions.budgetYuan + 0.00001) errors.push(productionUsesPlatform(plan) ? '本次生成已达到预算限制，请调整成片方案。' : '首轮参考费用含 10% 预留超出估算预算，请调整方案或预算。');
@@ -3061,7 +3060,7 @@
         if (dom.productionAudioSummary) dom.productionAudioSummary.textContent = plan.finalAudio.tracks.length ? plan.finalAudio.tracks.map(function (track) { var asset = plan.finalAudio.assets.find(function (item) { return item.id === track.assetId; }); return (track.role === 'narration' ? '完整口播 ' : '背景音乐 ') + formatDuration(asset.durationSec) + ' · 音量 ' + Math.round(track.volume * 100) + '%' + (track.loop ? ' · 循环' : ''); }).join('；') : '未选择最终音轨；按已有视频原声音量输出。';
         var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
         dom.productionEstimate.textContent = '首轮上游估算 ¥' + Number(plan.estimateYuan).toFixed(2) + ' · 含预留 ¥' + reserve.toFixed(2) + ' / 预算 ¥' + Number(state.productionOptions.budgetYuan).toFixed(2);
-        dom.productionNote.textContent = plan.aiSeconds + ' 秒 AI + ' + plan.localSeconds + ' 秒素材；统一 720p。' + (platform ? plan.aiSeconds ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。失败镜头仅手动重试，成功但不采用仍计费。' : '使用已有素材在本地合成。' : '超过估算预算停止后续镜头；自有 API 费用由对应服务计费。失败镜头仅手动重试，成功但不采用仍计成本。');
+        dom.productionNote.textContent = plan.aiSeconds + ' 秒 AI + ' + plan.localSeconds + ' 秒素材；按所选 ' + plan.resolution + ' 合成（' + plan.width + '×' + plan.height + '）。' + (platform ? plan.aiSeconds ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。失败镜头仅手动重试，成功但不采用仍计费。' : '使用已有素材在本地合成。' : '超过估算预算停止后续镜头；自有 API 费用由对应服务计费。失败镜头仅手动重试，成功但不采用仍计成本。');
       }
     } catch (error) {
       dom.productionEstimate.textContent = '先补齐方案素材';
@@ -3076,7 +3075,6 @@
       if (!button || state.actionPending) return;
       state.legacySingle = false;
       state.productionOptions = normalizeProductionOptions(Object.assign({}, state.productionOptions, { mode: button.dataset.productionMode }));
-      state.settings.resolution = '720p';
       applySettingsToDom(); renderMode(); renderAssets(); updateEstimate(); renderReadiness(); scheduleDraftSave();
     });
     [dom.productionDuration, dom.productionAiSeconds, dom.productionBudget, dom.productionAttempts].forEach(function (input) {
@@ -3258,7 +3256,7 @@
     plan = Object.assign({}, plan, { id: makeId('production') });
     var run = { id: plan.id, taskId: plan.id, purpose: 'production', accountKey: state.accountKey,
       mode: state.mode, status: 'queued', phase: 'planned', plan: plan, durationSeconds: plan.totalSeconds,
-      resolution: '720p', ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,
+      resolution: plan.resolution, ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, prompt: state.prompt, createdAt: new Date().toISOString(),
       resultUrls: [], shotRuns: plan.shots.map(function (shot) { return { id: shot.id, status: shot.kind === 'local' ? 'ready' : 'pending', adoptionStatus: 'accepted', attempts: [], taskId: '', resultAssetId: '' }; }) };
     await persistProductionRun(run);
@@ -4464,6 +4462,7 @@
       buildRequest: buildRequest,
       claimStartupMediaImport: claimStartupMediaImport,
       normalizeSettingsSnapshot: normalizeSettingsSnapshot,
+      syncSettingsFromDom: syncSettingsFromDom, syncParameterControlsForModel: syncParameterControlsForModel,
       normalizeModelCatalog: normalizeModelCatalog, refreshCapabilities: refreshCapabilities, updateEstimate: updateEstimate, submissionQuote: submissionQuote,
       normalizeProductionOptions: normalizeProductionOptions, productionValidationErrors: productionValidationErrors,
       startProductionGeneration: startProductionGeneration, executeProductionRun: executeProductionRun,

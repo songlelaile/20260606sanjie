@@ -1,0 +1,157 @@
+{
+  "verifiedAt": "2026-10-17T18:06:16.676299+00:00",
+  "vitestFiles": 7,
+  "vitestPassed": 108,
+  "nodeProviderRegressionPassed": 4,
+  "typescript": "passed",
+  "changedTestEslint": "passed using existing eslintrc config",
+  "javascriptSyntax": "passed",
+  "diffWhitespace": "passed",
+  "build": "not run; static public files only, no compiled server change",
+  "independentReview": "passed",
+  "nativeBrowserExports": [
+    {
+      "resolution": "480p",
+      "ratio": "9:16",
+      "expected": {
+        "width": 480,
+        "height": 854
+      },
+      "actual": {
+        "width": 480,
+        "height": 854,
+        "duration": 1
+      },
+      "bytes": 20255,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "480p",
+      "ratio": "16:9",
+      "expected": {
+        "width": 854,
+        "height": 480
+      },
+      "actual": {
+        "width": 854,
+        "height": 480,
+        "duration": 1
+      },
+      "bytes": 35029,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "720p",
+      "ratio": "9:16",
+      "expected": {
+        "width": 720,
+        "height": 1280
+      },
+      "actual": {
+        "width": 720,
+        "height": 1280,
+        "duration": 1
+      },
+      "bytes": 23391,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "720p",
+      "ratio": "16:9",
+      "expected": {
+        "width": 1280,
+        "height": 720
+      },
+      "actual": {
+        "width": 1280,
+        "height": 720,
+        "duration": 1
+      },
+      "bytes": 39412,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "1080p",
+      "ratio": "9:16",
+      "expected": {
+        "width": 1080,
+        "height": 1920
+      },
+      "actual": {
+        "width": 1080,
+        "height": 1920,
+        "duration": 1
+      },
+      "bytes": 9410,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "1080p",
+      "ratio": "16:9",
+      "expected": {
+        "width": 1920,
+        "height": 1080
+      },
+      "actual": {
+        "width": 1920,
+        "height": 1080,
+        "duration": 1
+      },
+      "bytes": 61394,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "4k",
+      "ratio": "16:9",
+      "expected": {
+        "width": 3840,
+        "height": 2160
+      },
+      "actual": {
+        "width": 3840,
+        "height": 2160,
+        "duration": 5
+      },
+      "bytes": 303264,
+      "mimeType": "video/webm;codecs=vp9"
+    },
+    {
+      "resolution": "4k",
+      "ratio": "9:16",
+      "expected": {
+        "width": 2160,
+        "height": 3840
+      },
+      "actual": {
+        "width": 2160,
+        "height": 3840,
+        "duration": 5
+      },
+      "bytes": 148446,
+      "mimeType": "video/webm;codecs=vp9"
+    }
+  ],
+  "oneSecond4kStress": "1s landscape sample returned empty and was rejected; real 5s landscape and portrait samples passed without code changes",
+  "paid480pSupplierGenerationPerformed": false,
+  "newPaidVerificationPlanCreated": false,
+  "existingUserPlanResumed": true,
+  "existingUserPlanFirstShotResubmitted": false,
+  "existingUserPlanStatus": "failed on shot 2 with provider privacy rejection; shot 1 saved, shot 3 not submitted",
+  "activeRelease": "/opt/sanjie-releases/20261018-image-studio-online-uat-v3",
+  "activePort": 53452,
+  "inactiveRelease53451RestoredToOriginalHashes": true,
+  "processesRestarted": false,
+  "nginxChanged": false,
+  "databaseOrProviderConfigurationChanged": false,
+  "automaticReportingCandidateDeployed": false,
+  "live480pUi": {
+    "resolution": "480p",
+    "portraitDimensions": [
+      480,
+      854
+    ],
+    "firstRoundEstimateYuan": 6.93,
+    "firstRoundReservedYuan": 7.65,
+    "configuredBudgetYuan": 30
+  }
+}
