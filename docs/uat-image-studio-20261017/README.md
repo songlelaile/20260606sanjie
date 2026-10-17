@@ -60,7 +60,7 @@
 - Nginx 在部署锁和原配置哈希校验下切换，语法检查通过后平滑 reload。常规站点指向候选 53450；精确生成代理继续经原 Gate 53449 到原后端 53448，UAT 44119 保持独立。其他常规 API 随候选运行，其源码和数据配置保持原生产版本。旧服务继续在线，183 份旧静态资源在候选中保留，支持已打开页面继续加载。
 - [发布后只读回归](deployment/postdeploy-smoke.json) 验证正式动态登录页为新 build、UAT 动态登录页仍为旧 UAT build，代理双路径维持 405，匿名鉴权和带条件 ETag 的资源请求均为 401，原 Gate 进程与配置未变。现有 access log 关闭，没有宣称从访问日志完成上游追踪。
 
-切流、回执及 PM2 持久化见 [traffic-switch.txt](deployment/traffic-switch.txt)、[deployment-receipt.json](deployment/deployment-receipt.json)、[pm2-save.txt](deployment/pm2-save.txt)。切流后首个新 manifest 探针曾由 reload 期间的旧 worker 返回一次 404，重试后读取到新 build；正式健康核验通过。回滚脚本保留哈希和部署锁保护：[rollback-traffic.py](deployment/rollback-traffic.py)。旧发布目录仍被生成代理使用，不能作为闲置副本删除。
+切流、回执及 PM2 持久化见 [traffic-switch.txt](deployment/traffic-switch.txt)、[deployment-receipt.json](deployment/deployment-receipt.json)、[pm2-save.txt](deployment/pm2-save.txt)。切流后首个新 manifest 探针曾由 reload 期间的旧 worker 返回一次 404，重试后读取到新 build；正式健康核验通过。回滚脚本保留哈希和部署锁保护：[rollback-traffic.py](deployment/rollback-traffic.py)。旧发布目录仍被生成代理使用，不能作为闲置副本删除。候选的既有环境与共享依赖链接仍引用 `submission-billing-20261011-v1`，该目录同样需要保留；本次只独立化 `.bin` 和已有独立 Next，没有运行安装或 Prisma generate。
 
 ## 浏览器截图
 
