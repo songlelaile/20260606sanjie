@@ -274,6 +274,32 @@
     return !!task && (task._submissionUncertain === true || task.errorCode === 'PROVIDER_CREATE_UNCERTAIN' ||
       task.errorCode === 'PROVIDER_CREATE_TIMEOUT' || task.errorCode === 'RUNTIME_TIMEOUT');
   }
+  function safeProviderIdentifier(value) {
+    // Persist only bounded diagnostic identifiers, never upstream prose, URLs or payloads.
+    if (typeof value !== 'string' || value.length > 160 ||
+        !/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(value) || /^(data|https?|asset|blob):/i.test(value)) return '';
+    return value;
+  }
+  function providerHttpDetails(response, body) {
+    var nested = body && body.error && typeof body.error === 'object' ? body.error : {};
+    var details = { status: response.status,
+      providerCode: safeProviderIdentifier(body && body.code) || safeProviderIdentifier(nested.code) };
+    var requestId = safeProviderIdentifier(body && (body.request_id || body.requestId || body.RequestId)) ||
+      safeProviderIdentifier(nested.request_id || nested.requestId || nested.RequestId);
+    if (!requestId && response.headers && typeof response.headers.get === 'function') {
+      requestId = safeProviderIdentifier(response.headers.get('x-request-id')) ||
+        safeProviderIdentifier(response.headers.get('x-tt-logid'));
+    }
+    if (requestId) details.requestId = requestId;
+    return details;
+  }
+  function providerHttpMessage(details) {
+    var message = details.status === 400 && details.providerCode === 'InputImageSensitiveContentDetected.PrivacyInformation'
+      ? '参考素材可能包含真人，当前模型拒绝；请改用不含真人的商品素材，或使用供应商认证的可信人像素材。'
+      : '视频供应商请求失败。';
+    return message + '（HTTP ' + details.status + (details.providerCode ? '；错误码 ' + details.providerCode : '') +
+      (details.requestId ? '；请求 ID ' + details.requestId : '') + '）';
+  }
   async function parseResponse(response, creating, nativeLocal) {
     var body = null;
     try { body = await response.json(); } catch (_) {
@@ -281,6 +307,7 @@
       try { body = { message: text(await response.text(), 500) }; } catch (_) { body = {}; }
     }
     if (!response.ok) {
+      var httpDetails = providerHttpDetails(response, body);
       var nativeNotSubmitted = nativeLocal === true && response.headers &&
         response.headers.get('X-Sanjie-Provider-Submission') === 'not-submitted' && body &&
         ((response.status === 503 && ['NATIVE_VIDEO_NOT_CONFIGURED', 'NATIVE_VIDEO_MODEL_UNAVAILABLE'].indexOf(body.code) >= 0) ||
@@ -303,13 +330,13 @@
         });
       }
       if (creating && (nativeLocal === true || response.status === 408 || response.status === 409 || response.status >= 500)) {
-        throw uncertainCreate('视频创建回执仍需核对（HTTP ' + response.status + '）。', {
-          status: response.status, reason: response.status === 408 ? 'request_timeout' : response.status === 409 ? 'unverified_conflict' : 'server_error'
-        });
+        throw uncertainCreate('视频创建回执仍需核对（HTTP ' + response.status + '）。', Object.assign({}, httpDetails, {
+          reason: response.status === 408 ? 'request_timeout' : response.status === 409 ? 'unverified_conflict' : 'server_error'
+        }));
       }
-      throw error('PROVIDER_HTTP_ERROR', '视频供应商请求失败（HTTP ' + response.status + '）。', {
-        status: response.status, providerCode: text(body && (body.code || body.error && body.error.code), 100)
-      });
+      // A direct supplier HTTP 400 is a confirmed rejection. Explain known policy
+      // errors without changing unknown-submission, retry, budget or idempotency rules.
+      throw error('PROVIDER_HTTP_ERROR', providerHttpMessage(httpDetails), httpDetails);
     }
     return body || {};
   }

@@ -1,0 +1,117 @@
+{
+  "deploymentChain": [
+    {
+      "files": [
+        {
+          "after": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+          "before": "0f846bb34e21916a9c15fccf0a664d8238496803c36d34fb8f930ad512c12bdf",
+          "path": "public/creative/src/ecommerce-video-background.js"
+        },
+        {
+          "after": "592c7720ec0d05c97536331ff367123930976294191a813f9ebb4fac695c0c32",
+          "before": "e3fc54c8a6cf62dfef8f9e7b438545e52473b4368b3ffd31c58749c4d1a95f93",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.js"
+        },
+        {
+          "after": "31e75f1f645139761b2e9b9fb8be3555905f9c6e6d39238d0c8998183e28ceb9",
+          "before": "f1cda23bdb04281a3a8921a6fd1101b14a6d136e898e3cc5c32060ef6e2f66ac",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.html"
+        }
+      ],
+      "manifestPath": "docs/video-http400-repair-20261018/static-patch-manifest.json",
+      "manifestSha256": "25a86190c71caeb6724a111570fe414ba60f744ff571631e1357be28e49ca967",
+      "receiptPath": "docs/video-http400-repair-20261018/deployment-receipt-r1.json",
+      "receiptSha256": "3065fbba97de65bd6067f9b122b53e714c52a8b9c640d8aa8bbf9e8aeba4cb35",
+      "serverReceiptPath": "/opt/sanjie-private/video-http400-repair-20261018-r1/receipt.json"
+    },
+    {
+      "files": [
+        {
+          "after": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+          "before": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+          "path": "public/creative/src/ecommerce-video-background.js"
+        },
+        {
+          "after": "d56afb19d8f919b1efb7a963211a6874ff07b293d8eb520cf342530b32e54f91",
+          "before": "7b8e083917eedfba902a49812127637b35525bb3b0bc295de491b20110272cee",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.css"
+        },
+        {
+          "after": "13b58bdc98a3e30259253f90674b91e61cf083e47efa206d3d46b9e7d5b31241",
+          "before": "592c7720ec0d05c97536331ff367123930976294191a813f9ebb4fac695c0c32",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.js"
+        },
+        {
+          "after": "4dead9da739ff6c72d965c6b06891adacf6491fcbebda2a0715a8f1d8b7de0be",
+          "before": "31e75f1f645139761b2e9b9fb8be3555905f9c6e6d39238d0c8998183e28ceb9",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.html"
+        }
+      ],
+      "manifestPath": "docs/video-http400-repair-20261018/static-patch-manifest-r2.json",
+      "manifestSha256": "17eef4755ba7d71a8b15374837e0f8c299499303ced18d60ceb71130b47c0bcd",
+      "receiptPath": "docs/video-http400-repair-20261018/deployment-receipt-r2.json",
+      "receiptSha256": "d09b2d8f9e465802576ea721caac1098d61251c368cd4c4ba38ad4ba6d7d2bbb",
+      "serverReceiptPath": "/opt/sanjie-private/video-http400-repair-20261018-r2/receipt.json"
+    },
+    {
+      "files": [
+        {
+          "after": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+          "before": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+          "path": "public/creative/src/ecommerce-video-background.js"
+        },
+        {
+          "after": "d56afb19d8f919b1efb7a963211a6874ff07b293d8eb520cf342530b32e54f91",
+          "before": "d56afb19d8f919b1efb7a963211a6874ff07b293d8eb520cf342530b32e54f91",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.css"
+        },
+        {
+          "after": "bcba8ae2ec62ae0a42b8402792ef3c0c52172ed11d559c81d5669bbcbaecbef2",
+          "before": "13b58bdc98a3e30259253f90674b91e61cf083e47efa206d3d46b9e7d5b31241",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.js"
+        },
+        {
+          "after": "0aae700583115feee1bd373589a1376755618dfa329aae0efa591f273fe04a92",
+          "before": "4dead9da739ff6c72d965c6b06891adacf6491fcbebda2a0715a8f1d8b7de0be",
+          "path": "public/creative/labs/ecommerce-video-studio/video-studio.html"
+        }
+      ],
+      "manifestPath": "docs/video-http400-repair-20261018/static-patch-manifest-r3.json",
+      "manifestSha256": "4023bd8e0aa1a8012654403df1bd6d0d5736605e1e8fa3d918a475c1c7a1c490",
+      "receiptPath": "docs/video-http400-repair-20261018/deployment-receipt-r3.json",
+      "receiptSha256": "19b5639c5e4a08426271b916ef0980ce4fd7ccf9e18fc2b9de63c347fb4d917e",
+      "serverReceiptPath": "/opt/sanjie-private/video-http400-repair-20261018-r3/receipt.json"
+    }
+  ],
+  "evidence": "Live SHA collection and exact Git bytes plus replay of committed R1/R2/R3 manifests; fresh server revalidation remains mandatory.",
+  "liveBeforeManifestSha256": "9fe3173f6a164244bd125ccf01e189df252750ecc5b8730a01c1a49574f232f1",
+  "oldReleaseReceiptModified": false,
+  "originalManifestSha256": "c6c0a17e21798571e18da153e0c844b05f85c52e5b15ba2f89ad99b3458a9345",
+  "originalSourceCommit": "48f34e33a2dd6a7d573f92d1e8f5d5a262999c73",
+  "overlays": [
+    {
+      "afterSha256": "d56afb19d8f919b1efb7a963211a6874ff07b293d8eb520cf342530b32e54f91",
+      "beforeSha256": "7b8e083917eedfba902a49812127637b35525bb3b0bc295de491b20110272cee",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.css"
+    },
+    {
+      "afterSha256": "0aae700583115feee1bd373589a1376755618dfa329aae0efa591f273fe04a92",
+      "beforeSha256": "f1cda23bdb04281a3a8921a6fd1101b14a6d136e898e3cc5c32060ef6e2f66ac",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html"
+    },
+    {
+      "afterSha256": "bcba8ae2ec62ae0a42b8402792ef3c0c52172ed11d559c81d5669bbcbaecbef2",
+      "beforeSha256": "e3fc54c8a6cf62dfef8f9e7b438545e52473b4368b3ffd31c58749c4d1a95f93",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js"
+    },
+    {
+      "afterSha256": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971",
+      "beforeSha256": "0f846bb34e21916a9c15fccf0a664d8238496803c36d34fb8f930ad512c12bdf",
+      "path": "public/creative/src/ecommerce-video-background.js"
+    }
+  ],
+  "sourceFileCount": 748,
+  "version": 1,
+  "videoSourceCommit": "399342af0a09d981ed96b1c60d13928625384d1e",
+  "videoSourceParentCommit": "405995fbeae90ba363773860039508ada43d91ae"
+}
