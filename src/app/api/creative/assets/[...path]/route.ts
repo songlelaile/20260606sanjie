@@ -7,7 +7,7 @@ import { getCurrentSession } from "@/lib/server-session";
 import { getCreativeAccessForSession } from "@/lib/creative-entitlements";
 import { createUatEnvironmentScript } from "@/lib/uat-environment";
 import { CREATIVE_ASSET_HEADERS, creativeAssetContentType } from "@/lib/creative-asset-policy";
-import { CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS, isCreativeEntryPath, loadCreativeEntryBundle } from "@/lib/creative-entry-bundle";
+import { CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_HTML, isCreativeEntryPath, loadCreativeEntryBundle } from "@/lib/creative-entry-bundle";
 
 export const dynamic = "force-dynamic";
 
@@ -81,7 +81,13 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
     let bytes: Buffer;
     if (isCreativeEntryPath(relative)) {
       const bundle = await loadCreativeEntryBundle(root);
-      bytes = Buffer.from(relative === CREATIVE_ENTRY_CSS ? bundle.css : relative === CREATIVE_ENTRY_JS ? bundle.js : bundle.html);
+      if (relative === CREATIVE_ENTRY_HTML) bytes = Buffer.from(bundle.html);
+      else {
+        // Frozen production releases keep their original asset requests. Do not
+        // advertise a synthetic empty bundle or serve a stale file from disk.
+        if (!bundle.bundled) return errorResponse("资源不存在", 404);
+        bytes = Buffer.from(relative === CREATIVE_ENTRY_CSS ? bundle.css : bundle.js);
+      }
     } else {
       const filename = await realpath(path.join(root, ...parts));
       relative = path.relative(root, filename);

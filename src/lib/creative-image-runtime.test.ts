@@ -92,6 +92,7 @@ function send(context: vm.Context, type: string, payload: object = {}) {
 describe("image studio background and UI coexistence", () => {
   it("initializes the real protected tail bundle with the same bridge, contracts and API behavior", async () => {
     const bundle = await loadCreativeEntryBundle(path.join(publicRoot, "creative"));
+    if (!bundle.bundled) throw new Error("Expected bundled fixture");
     const individual = imageRuntime(), bundled = imageRuntime(bundle.js);
     for (const key of ["SZ_REFERENCE_DETAIL_CONTRACT", "SZ_REFERENCE_DETAIL_BLUEPRINT", "SZ_REFERENCE_DETAIL_BATCH", "SZ_IMAGE_ARCHIVE", "SZ_CREATIVE_TOOLS_CONTRACT", "SZ_STUDIO_GENESIS"]) {
       expect(Object.keys(bundled.context[key])).toEqual(Object.keys(individual.context[key]));
