@@ -1,0 +1,40 @@
+{
+  "localTestedCommit": "e6dd218d4496f0761258ccc87a9f7e8101ff5ce1",
+  "productionBaselineCommit": "928d9da5ba2a9b5489948f97bbf376edabcf14e5",
+  "baselineFiles": 746,
+  "codeFilesCompared": 748,
+  "allShippedCodeByteIdenticalToClaudeTestedTree": true,
+  "local": {
+    "passed": 3797,
+    "failed": 0,
+    "skipped": 277,
+    "total": 4074,
+    "testFilesPassed": 208,
+    "testFilesSkipped": 10,
+    "lintExit": 0,
+    "lintWarningsRetained": true,
+    "typecheckExit": 0,
+    "buildExit": 0,
+    "auditOk": true
+  },
+  "original": {
+    "passed": 3485,
+    "failed": 135,
+    "skipped": 277,
+    "suiteLoadErrors": 3
+  },
+  "classification135": {
+    "historicalFixtures": 86,
+    "outdatedExpectationsWithSourceEvidence": 41,
+    "frozenPackContract": 8,
+    "demonstratedOriginalProductionFunctionDefects": 0
+  },
+  "suiteLoadFixtures": 3,
+  "semanticMappings": {
+    "fromFailed": 9,
+    "fromPassed": 1,
+    "reviewedSameIntent": true
+  },
+  "productionDatabaseMigrationsOrSeedRun": false,
+  "productionPaidImageGenerationClaimed": false
+}
