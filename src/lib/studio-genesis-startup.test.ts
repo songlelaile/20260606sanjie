@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const assetRoot = process.env.CREATIVE_ASSET_TEST_ROOT || "public/creative";
 const source = (name: string) => readFileSync(resolve(assetRoot, "labs/image-prompt-lab", name), "utf8");
@@ -27,6 +27,7 @@ class Element {
   readonly children: Element[] = [];
   readonly listeners = new Map<string, Array<(event: DomEvent) => void>>();
   parentNode: Element | null = null;
+  readonly style = { cssText: "" };
   value = "";
   checked = false;
   text = "";
@@ -140,6 +141,8 @@ class TestDocument {
 }
 
 type StartupEntry = "main" | "detail" | "ad" | "batch";
+const liveIntervals = new Set<ReturnType<typeof globalThis.setInterval>>();
+afterEach(() => { liveIntervals.forEach(handle => globalThis.clearInterval(handle)); liveIntervals.clear(); });
 type StartupOptions = { holdRecovery?: boolean; omitRecovery?: boolean; timeoutMs?: number; apiDialog?: boolean };
 function harness(entry: StartupEntry, holdRestore = false, storage = new Map<string, string>(), environment = "", startup: StartupOptions = {}) {
   const mode = entry === "detail" ? "detail" : "main";
@@ -164,29 +167,69 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     modelInfo: vi.fn(() => ({ ready: true, supportsReference: true, provider: provider.provider, model: provider.imageModel })),
     setApiBusy: vi.fn(), openConfig: vi.fn(), analyze: vi.fn(), send: vi.fn()
   };
+  // A keyed, serialized IndexedDB model of the production draft store: each key
+  // has its own value, absent keys read as undefined, readwrite puts are staged
+  // until the transaction completes and are discarded on abort or error.
+  const persistedDrafts = new Map<string, unknown>();
+  const initialDraftKey = `${accountKey}:${entry === "batch" ? "batch" : "single"}:${mode}${entry === "ad" ? ":ad" : ""}`;
+  let initialDraftSeeded = false, transactionQueue = Promise.resolve();
+  let activeWriteTransaction: { abort(): void } | undefined;
   const db = {
+    close: vi.fn(),
     transaction: (_store: string, access?: string) => {
-      const tx = { oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), error: undefined as undefined | Error, objectStore: () => ({
-        get: (key: string) => {
-          reads.push(key);
-          const request = { result: undefined as unknown, onsuccess: undefined as undefined | (() => void) };
-          read.promise.then(value => { request.result = clone(value); request.onsuccess?.(); });
-          return request;
-        },
-        put: (value: unknown, key: string) => { writes.push({ key, value: clone(value) }); Promise.resolve(writeControl.wait).then(() => { if (writeControl.error) { tx.error = writeControl.error; tx.onerror?.(); } else tx.oncomplete?.(); }); }
-      }) };
-      if (access && access !== "readwrite") throw new Error(`Unexpected access: ${access}`);
+      if (access !== undefined && access !== "readwrite") throw new Error(`Unexpected access: ${access}`);
+      const prior = transactionQueue; let release!: () => void;
+      transactionQueue = new Promise<void>(resolve => { release = resolve; });
+      const staged = new Map<string, unknown>(); let pending = 0, finished = false;
+      const tx = { oncomplete: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), onabort: undefined as undefined | (() => void), error: undefined as undefined | Error,
+        abort: () => finish("abort"), objectStore: () => ({
+          get: (key: string) => {
+            reads.push(key);
+            const request = { result: undefined as unknown, onsuccess: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void) };
+            pending++;
+            prior.then(() => read.promise).then(value => {
+              if (finished) return;
+              if (!initialDraftSeeded) { initialDraftSeeded = true; if (value !== undefined) persistedDrafts.set(initialDraftKey, clone(value)); }
+              const saved = staged.has(key) ? staged.get(key) : persistedDrafts.get(key);
+              request.result = saved === undefined ? undefined : clone(saved); request.onsuccess?.();
+            }).finally(() => { pending--; idle(); });
+            return request;
+          },
+          put: (value: unknown, key: string) => {
+            if (access !== "readwrite") throw new Error("ReadOnlyError");
+            const captured = clone(value); writes.push({ key, value: captured }); pending++;
+            prior.then(() => writeControl.wait).then(() => {
+              if (finished) return;
+              if (writeControl.error) { tx.error = writeControl.error; finish("error"); }
+              else staged.set(key, captured);
+            }).finally(() => { pending--; idle(); });
+          }
+        }) };
+      function finish(kind: "complete" | "abort" | "error") {
+        if (finished) return; finished = true;
+        if (kind === "complete") staged.forEach((value, key) => persistedDrafts.set(key, clone(value)));
+        if (activeWriteTransaction === tx) activeWriteTransaction = undefined;
+        release(); queueMicrotask(() => { if (kind === "complete") tx.oncomplete?.(); else if (kind === "abort") tx.onabort?.(); else tx.onerror?.(); });
+      }
+      const idle = () => queueMicrotask(() => { if (!pending && !finished) finish("complete"); });
+      if (access === "readwrite") activeWriteTransaction = tx;
+      prior.then(idle);
       return tx;
     }
   };
   const indexedDB = { open: vi.fn(() => {
-    const request = { result: db, onsuccess: undefined as undefined | (() => void) };
+    const request = { result: db, onsuccess: undefined as undefined | (() => void), onerror: undefined as undefined | (() => void), onupgradeneeded: undefined as undefined | (() => void) };
     queueMicrotask(() => request.onsuccess?.()); return request;
   }) };
-  const context = createContext({ document, indexedDB, URL, URLSearchParams, crypto: { randomUUID }, console, setTimeout, clearTimeout,
+  // Real timers, tracked so a test never leaks an interval into the next one.
+  const setInterval = (callback: () => void, ms: number) => { const handle = globalThis.setInterval(callback, ms); liveIntervals.add(handle); return handle; };
+  const clearInterval = (handle: ReturnType<typeof globalThis.setInterval>) => { liveIntervals.delete(handle); globalThis.clearInterval(handle); };
+  const firstPaint = { complete: vi.fn() };
+  const context = createContext({ document, indexedDB, URL, URLSearchParams, crypto: { randomUUID }, console, setTimeout, clearTimeout, setInterval, clearInterval,
     __SANJIE_ENVIRONMENT: environment,
     navigator: { locks: { request: async (name: string, _options: unknown, callback: (lock: { name: string }) => unknown) => callback({ name }) } },
     location: { search: `?studio=1&mode=${mode}${entry === "ad" ? "&type=ad" : entry === "batch" ? "&batch=1" : ""}` }, localStorage: {
+      get length() { return storage.size; }, key: (index: number) => [...storage.keys()][index] ?? null,
       getItem: (key: string) => storage.get(key) ?? null,
       setItem: vi.fn((key: string, value: string) => storage.set(key, value)),
       removeItem: vi.fn((key: string) => storage.delete(key)),
@@ -194,7 +237,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     addEventListener: (name: string, listener: (event: UnloadEvent) => void) => {
       const listeners = windowListeners.get(name) || []; listeners.push(listener); windowListeners.set(name, listeners);
     },
-    SZ_CREATIVE_TOOLS_BRIDGE: bridge });
+    SZ_LAB_FIRST_PAINT: firstPaint, SZ_CREATIVE_TOOLS_BRIDGE: bridge });
   context.window = context;
   // Use the matching production upload markup when the UI references it,
   // without starting its decoration observer in this focused startup harness.
@@ -245,6 +288,7 @@ function harness(entry: StartupEntry, holdRestore = false, storage = new Map<str
     return event;
   };
   return { document, bridge, refresh, catalog, read, restore, restoreStarted, recovery, recoveryStarted, reads, writes, saved, beforeUnload, storage, engine, context, writeControl,
+    persistedDrafts, firstPaint, abortPendingWrite: () => activeWriteTransaction?.abort(),
     controller: () => uiController, dispatchWindow,
     navigationGuard: () => context.SanjieStudioGenesisBridge as { canDeactivate(): Promise<{ allowed: boolean; reason?: string }> } };
 }
