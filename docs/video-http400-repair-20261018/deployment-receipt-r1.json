@@ -1,0 +1,57 @@
+{
+  "appliedAt": 1792256371.9870777,
+  "root": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2",
+  "backup": "/opt/sanjie-private/video-http400-repair-20261018-r1",
+  "files": [
+    {
+      "path": "public/creative/src/ecommerce-video-background.js",
+      "before": "0f846bb34e21916a9c15fccf0a664d8238496803c36d34fb8f930ad512c12bdf",
+      "after": "19ae4667c05d487b2f8431185ee51888e7c78ce6fa4c0e039986444ee8639971"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "e3fc54c8a6cf62dfef8f9e7b438545e52473b4368b3ffd31c58749c4d1a95f93",
+      "after": "592c7720ec0d05c97536331ff367123930976294191a813f9ebb4fac695c0c32"
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "f1cda23bdb04281a3a8921a6fd1101b14a6d136e898e3cc5c32060ef6e2f66ac",
+      "after": "31e75f1f645139761b2e9b9fb8be3555905f9c6e6d39238d0c8998183e28ceb9"
+    }
+  ],
+  "nginxHashUnchanged": "7ecee59857a43530e58e49f6b7f4665662af1d71d61e05f3849da08ad8b094bc",
+  "processesUnchanged": {
+    "50": {
+      "pid": 3612108,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/credit-pool-shared-wallet-20261009-v1"
+    },
+    "88": {
+      "pid": 229880,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/link-image-workspace-20261015-v1"
+    },
+    "89": {
+      "pid": 644499,
+      "status": "online",
+      "cwd": "/opt/sanjie-platform-modules-pause-20261016-tools-r1"
+    },
+    "90": {
+      "pid": 965082,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-optimize-v1"
+    },
+    "91": {
+      "pid": 989625,
+      "status": "online",
+      "cwd": "/opt/sanjie-releases/20261017-image-studio-tests-green-v2"
+    }
+  },
+  "readOnlyHttpStatus": {
+    "/login": 200,
+    "/api/creative/proxy": 405,
+    "/api/creative/assets/src/ecommerce-video-background.js": 401
+  },
+  "processRestarted": false,
+  "databaseOrProviderConfigurationChanged": false
+}
