@@ -1597,15 +1597,15 @@
   async function resetCurrentDraft() {
     var hasContent = state.prompt || state.assets.image.length || state.assets.video.length ||
       state.assets.audio.length || state.reference || state.review.script;
-    if (hasContent && !globalThis.confirm('清空当前模式草稿？本地保存的相关素材也会被删除，此操作不可恢复。')) return;
+    if (hasContent && !globalThis.confirm('清空当前模式草稿？本地保存的相关素材也会被删除（成片计划仍引用的素材保留），此操作不可恢复。')) return;
 
     var all = state.assets.image.concat(state.assets.video, state.assets.audio, state.referenceFrames);
     if (state.reference) all.push(state.reference);
+    var retained = await productionRetainedAssetIds();
     await Promise.all(all.map(function remove(item) {
       revokePreview(item);
       var storedId = localStorageAssetId(item);
-      var retainedByPlan = state.history.some(function (run) { return run.purpose === 'production' && run.plan && run.plan.shots.some(function (shot) { return shot.sourceAssetId === item.id; }); });
-      return storedId && !retainedByPlan
+      return storedId && retained && !retained.has(storedId) && !retained.has(item.id)
         ? Store.deleteAsset(storedId).catch(function ignore() {})
         : Promise.resolve();
     }));
@@ -1980,6 +1980,25 @@
     });
   }
 
+  // Draft sources and saved production plans share local asset ids. Returns null when saved plans cannot be read,
+  // so callers keep the local copy instead of deleting a blob an unfinished plan may still need.
+  async function productionRetainedAssetIds() {
+    var runs;
+    try { runs = await Store.listRuns(); } catch (error) { return null; }
+    var ids = new Set();
+    function add(id) { id = cleanText(id); if (id) ids.add(id); }
+    (Array.isArray(runs) ? runs : []).concat(state.history || []).forEach(function (run) {
+      if (!run || run.purpose !== 'production' || !run.plan) return;
+      var plan = run.plan, request = plan.request || {}, finalAudio = plan.finalAudio || {};
+      (plan.shots || []).forEach(function (shot) { add(shot && shot.sourceAssetId); });
+      (plan.musicAssetIds || []).forEach(add);
+      [].concat(request.images || [], request.videos || [], request.audios || [], finalAudio.assets || [], finalAudio.tracks || []).forEach(function (item) {
+        if (!item) return; add(item.id); add(item.assetId); add(item.storageRef && item.storageRef.id);
+      });
+    });
+    return ids;
+  }
+
   async function removeAsset(kind, id) {
     var list = state.assets[kind] || [];
     var index = list.findIndex(function find(item) { return item.id === id; });
@@ -1989,9 +2008,14 @@
     revokePreview(asset);
     var storedId = localStorageAssetId(asset);
     if (storedId) {
-      await Store.deleteAsset(storedId).catch(function onDelete(error) {
-        showToast('本地素材删除失败：' + safeErrorMessage(error), 'error');
-      });
+      var retained = await productionRetainedAssetIds();
+      if (!retained) showToast('素材已从草稿移除；暂时无法核对成片计划引用，本地副本保留。', 'error');
+      else if (retained.has(storedId) || retained.has(asset.id)) showToast('素材已从草稿移除；已保存的成片计划仍引用它，本地副本保留。', 'success');
+      else {
+        await Store.deleteAsset(storedId).catch(function onDelete(error) {
+          showToast('本地素材删除失败：' + safeErrorMessage(error), 'error');
+        });
+      }
     }
     invalidateRights();
     invalidateReviewForSourceChange('素材已变化，请重新分析后再确认脚本。');
@@ -3168,18 +3192,41 @@
   function canStartNewProductionPlan(run) {
     if (!run || run.purpose !== 'production' || run.status !== 'failed' || !state.accountKey || run.accountKey !== state.accountKey ||
         !Array.isArray(run.shotRuns) || !run.shotRuns.length) return false;
-    function unresolved(receipt) {
+    // savedSuccess exempts only the success markers of one already-transferred shot; its nested receipts stay checked.
+    function unresolved(receipt, savedSuccess) {
       if (!receipt || typeof receipt !== 'object') return false;
       if (receipt.stateUncertain === true || receipt.cancelPending || submissionStateUncertain(receipt) ||
-          ['succeeded', 'submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(receipt.status || receipt.state) >= 0 ||
-          receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)) return true;
+          ['submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(receipt.status || receipt.state) >= 0 ||
+          (!savedSuccess && ((receipt.status || receipt.state) === 'succeeded' ||
+            receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)))) return true;
       return Object.keys(receipt).some(function (key) {
         var value = receipt[key];
-        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(unresolved) : unresolved(value));
+        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(function (item) { return unresolved(item); }) : unresolved(value));
       });
     }
+    function savedSuccess(shot) { return shot.status === 'succeeded' && typeof shot.resultAssetId === 'string' && !!shot.resultAssetId.trim(); }
+    // Unsubmitted means no attempt or task identity at all; otherwise the shot contradicts its pending state.
+    function unsubmitted(shot) {
+      return (!Array.isArray(shot.attempts) || !shot.attempts.length) && !shot.taskId && !shot.providerTaskId && !shot.resultAssetId;
+    }
     var shots = run.shotRuns.concat(run.narrationRuns || []);
-    return !unresolved(run) && shots.every(function (shot) { return shot && ['failed', 'pending', 'ready'].indexOf(shot.status) >= 0; });
+    var runFields = Object.assign({}, run); delete runFields.shotRuns; delete runFields.narrationRuns;
+    if (unresolved(runFields)) return false;
+    var valid = shots.every(function (shot) {
+      if (!shot || typeof shot !== 'object') return false;
+      if (shot.status === 'failed') return !unresolved(shot);
+      if (shot.status === 'pending' || shot.status === 'ready') return unsubmitted(shot) && !unresolved(shot);
+      if (shot.status === 'succeeded') return savedSuccess(shot) && !unresolved(shot, true);
+      return false;
+    });
+    // A plan whose shots all succeeded keeps its free resume/composition path instead of a new paid plan.
+    return valid && (!shots.some(savedSuccess) || shots.some(function (shot) { return shot.status === 'failed'; }));
+  }
+  function productionNewPlanGuidance(run, released) {
+    var kept = (run.shotRuns || []).some(function (shot) { return shot.status === 'succeeded'; })
+      ? '原计划及其已成功镜头、结果和费用记录均保留在历史中，不会转入新计划' : '原计划与费用记录均保留在历史中';
+    return kept + (released ? '。可编辑当前素材和方案，再点击生成：' : '；继续编辑当前素材和方案，点击生成后才会创建新计划，') +
+      '新计划按当前设置单独估算、核对权利与预算并重新提交。';
   }
   function releasedProductionPlan(run) { return !!(run && run.newPlanRequestedAt && canStartNewProductionPlan(run)); }
   async function startNewProductionPlan() {
@@ -3196,7 +3243,7 @@
       if (index < 0) state.history.unshift(released); else state.history[index] = released;
       state.productionRun = null;
       renderHistory();
-      setNotice(dom.composerValidation, '原计划与费用记录已保留。可编辑当前素材和方案，再点击生成创建新计划。', 'success');
+      setNotice(dom.composerValidation, productionNewPlanGuidance(run, true), 'success');
       return true;
     } catch (error) {
       setNotice(dom.composerValidation, safeErrorMessage(error), 'error');
@@ -3234,7 +3281,10 @@
       dom.productionNewPlan.hidden = !!run.newPlanRequestedAt || !canStartNewProductionPlan(run);
       dom.productionNewPlan.disabled = state.actionPending || state.productionBusy || state.productionStarting;
     }
-    if (dom.productionNewPlanHelp) dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+    if (dom.productionNewPlanHelp) {
+      dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+      if (!dom.productionNewPlanHelp.hidden) dom.productionNewPlanHelp.textContent = productionNewPlanGuidance(run, false);
+    }
     if (globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(dom.productionResume, productionRunCreditSpec(run));
     if (dom.productionStop) { dom.productionStop.hidden = !state.productionBusy || run.phase !== 'rendering'; dom.productionStop.disabled = !state.productionAbortController; }
     var costs = productionCostSummary(run);
@@ -4499,6 +4549,7 @@
       startProductionGeneration: startProductionGeneration, executeProductionRun: executeProductionRun,
       canStartNewProductionPlan: canStartNewProductionPlan, startNewProductionPlan: startNewProductionPlan, restoreHistory: restoreHistory,
       productionCommitments: productionCommitments, productionCostSummary: productionCostSummary, retryProductionShot: retryProductionShot,
+      productionRetryState: productionRetryState, removeAsset: removeAsset,
       snapshotProductionAudio: snapshotProductionAudio, productionAudioRenderOptions: productionAudioRenderOptions,
       localUploadSupported: localUploadSupported, maxForKind: maxForKind, validateAssetMetadata: validateAssetMetadata,
       productionTemplate: productionTemplate, state: state, renderProductionRun: renderProductionRun,
