@@ -1,0 +1,30 @@
+{
+  "sourceRef": "retry-visibility-r1-deployed",
+  "scope": "prevent-retry-button-wrapping-beside-long-errors",
+  "files": [
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "dd9709b8923eccd94c0ad9755542012591500bfdde6f83cfec57831c453b40dc",
+      "after": "d99b5fa100948fc3702877ca816e16b50ca1ef1e74d254e259e0b472c3eb9858",
+      "edits": [
+        [
+          3260,
+          3260,
+          "        retryButton.style.whiteSpace = 'nowrap';\n        retryButton.style.flexShrink = '0';\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "b46893e80fa3d23bb378e3b07cbf52efa1a6518b60b69edd948eca8b18ebad4c",
+      "after": "d088d90d9ae7d6fcceaa5cd548c4d6a039dc1d8c79fc95be6e43393ed9d0317b",
+      "edits": [
+        [
+          473,
+          474,
+          "  <script src=\"./video-studio.js?v=retry-visibility-20261018-v2\"></script>\n"
+        ]
+      ]
+    }
+  ]
+}

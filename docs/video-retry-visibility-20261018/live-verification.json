@@ -1,0 +1,12 @@
+{
+  "retryButton": {
+    "text": "仅重试此镜",
+    "disabled": true,
+    "title": "已达本计划尝试上限（1/1），当前不能重试。",
+    "width": 84,
+    "height": 33,
+    "whiteSpace": "nowrap"
+  },
+  "notice": "镜头失败，已完成镜头保留。失败镜头已达本计划尝试上限，当前不能重试。",
+  "script": "https://www.shaozhuangai.com/creative/labs/ecommerce-video-studio/video-studio.js?v=retry-visibility-20261018-v2"
+}

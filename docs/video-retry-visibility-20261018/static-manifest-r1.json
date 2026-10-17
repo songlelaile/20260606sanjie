@@ -1,0 +1,55 @@
+{
+  "sourceRef": "147b0d6",
+  "scope": "retry-button-visibility-and-accurate-guidance-only",
+  "files": [
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "before": "bdc04cc22fe9dcfbcf1c054f1070b9c93f29bf2e5046063144ba424faa38ae8c",
+      "after": "dd9709b8923eccd94c0ad9755542012591500bfdde6f83cfec57831c453b40dc",
+      "edits": [
+        [
+          3205,
+          3205,
+          "  function productionRetryState(run, shot) {\n    var used = shot && Array.isArray(shot.attempts) ? shot.attempts.length : 0;\n    var limit = Number(run && run.plan && run.plan.options && run.plan.options.maxAttempts);\n    var exhausted = Number.isInteger(limit) && limit > 0 && used >= limit;\n    var reason = !shot || shot.status !== 'failed' ? '\u4ec5\u5931\u8d25\u955c\u5934\u53ef\u4ee5\u91cd\u8bd5\u3002' :\n      !run.accountKey || run.accountKey !== state.accountKey ? '\u8bf7\u5207\u56de\u539f\u8d26\u53f7\u540e\u6838\u5bf9\u955c\u5934\u3002' :\n      releasedProductionPlan(run) ? '\u539f\u8ba1\u5212\u5df2\u4fdd\u7559\uff0c\u5f53\u524d\u4e0d\u80fd\u91cd\u8bd5\u6b64\u8ba1\u5212\u3002' :\n      !Number.isInteger(limit) || limit < 1 ? '\u65e0\u6cd5\u6838\u5bf9\u672c\u8ba1\u5212\u5c1d\u8bd5\u4e0a\u9650\uff0c\u8bf7\u5148\u6838\u5bf9\u539f\u8ba1\u5212\u3002' :\n      exhausted ? '\u5df2\u8fbe\u672c\u8ba1\u5212\u5c1d\u8bd5\u4e0a\u9650\uff08' + used + '/' + limit + '\uff09\uff0c\u5f53\u524d\u4e0d\u80fd\u91cd\u8bd5\u3002' : '';\n    return { allowed: !reason, exhausted: exhausted, used: used, limit: limit, reason: reason };\n  }\n  function productionShotFailureMessage(run) {\n    var failed = (run.shotRuns || []).filter(function (shot) { return shot.status === 'failed'; });\n    if (failed.some(function (shot) { return productionRetryState(run, shot).allowed; })) {\n      return '\u955c\u5934\u5931\u8d25\uff0c\u5df2\u5b8c\u6210\u955c\u5934\u4fdd\u7559\uff1b\u53ef\u5728\u5931\u8d25\u955c\u5934\u53f3\u4fa7\u70b9\u51fb\u201c\u4ec5\u91cd\u8bd5\u6b64\u955c\u201d\uff0c\u63d0\u4ea4\u524d\u4ecd\u4f1a\u6838\u5bf9\u9884\u7b97\u3002';\n    }\n    if (failed.length && failed.every(function (shot) { return productionRetryState(run, shot).exhausted; })) {\n      return '\u955c\u5934\u5931\u8d25\uff0c\u5df2\u5b8c\u6210\u955c\u5934\u4fdd\u7559\u3002\u5931\u8d25\u955c\u5934\u5df2\u8fbe\u672c\u8ba1\u5212\u5c1d\u8bd5\u4e0a\u9650\uff0c\u5f53\u524d\u4e0d\u80fd\u91cd\u8bd5\u3002';\n    }\n    return '\u955c\u5934\u672a\u5b8c\u6210\uff0c\u5df2\u5b8c\u6210\u955c\u5934\u4fdd\u7559\uff1b\u8bf7\u67e5\u770b\u5404\u955c\u5934\u72b6\u6001\u548c\u53ef\u7528\u64cd\u4f5c\u3002';\n  }\n"
+        ],
+        [
+          3230,
+          3231,
+          "      var retryState = productionRetryState(run, shot);\n      note.textContent = ({ pending: '\u5f85\u751f\u6210', ready: '\u7d20\u6750\u5c31\u7eea', submitting: '\u63d0\u4ea4\u4e2d', processing: '\u751f\u6210\u4e2d', unknown: '\u63a5\u6536\u72b6\u6001\u672a\u77e5\uff1a\u4fdd\u7559\u9884\u7b97\uff0c\u53ea\u6838\u5bf9\u4efb\u52a1', succeeded: '\u5df2\u8f6c\u5b58\uff0c\u53ef\u590d\u7528', failed: retryState.allowed ? '\u5931\u8d25\uff0c\u53ef\u624b\u52a8\u91cd\u8bd5' : retryState.exhausted ? '\u5931\u8d25\uff0c\u5df2\u8fbe\u5c1d\u8bd5\u4e0a\u9650' : '\u5931\u8d25\uff0c\u5f53\u524d\u4e0d\u80fd\u91cd\u8bd5' }[shot.status] || shot.status) + ' \u00b7 \u5c1d\u8bd5 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' \u00b7 \u4e0d\u91c7\u7528\uff0c\u8d39\u7528\u4fdd\u7559' : '') + (shot.status === 'failed' && !retryState.allowed ? ' \u00b7 ' + retryState.reason : '') + (shot.error ? ' \u00b7 ' + shot.error : '');\n"
+        ],
+        [
+          3235,
+          3236,
+          "      if (shot.status === 'failed') {\n        retryButton = action('\u4ec5\u91cd\u8bd5\u6b64\u955c', 'retry');\n        retryButton.disabled = retryButton.disabled || !retryState.allowed;\n        retryButton.title = retryState.reason || (state.productionBusy || state.productionStarting ? '\u5f53\u524d\u8ba1\u5212\u6b63\u5728\u6267\u884c\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002' : '\u4ec5\u91cd\u8bd5\u6b64\u955c\u5934\uff0c\u63d0\u4ea4\u524d\u4ecd\u4f1a\u6838\u5bf9\u539f\u8ba1\u5212\u9884\u7b97\u3002');\n      }\n"
+        ],
+        [
+          3240,
+          3241,
+          "    // Old saved generic guidance may promise a retry after its attempt limit is exhausted.\n    // Correct the display without changing the saved error, plan, budget or receipts.\n    var notice = run.error === '\u955c\u5934\u5931\u8d25\uff0c\u5df2\u5b8c\u6210\u955c\u5934\u4fdd\u7559\uff1b\u53ef\u624b\u52a8\u4ec5\u91cd\u8bd5\u5931\u8d25\u955c\u5934\u3002' ? productionShotFailureMessage(run) : run.error;\n    setNotice(dom.productionRunNotice, notice || (run.status === 'succeeded' ? '\u6210\u7247\u5df2\u4fdd\u5b58\uff0c\u53ef\u4ee5\u4ece\u751f\u6210\u5386\u53f2\u9884\u89c8\u4e0e\u4e0b\u8f7d\u3002' : ''), run.status === 'succeeded' ? 'success' : 'error');\n"
+        ],
+        [
+          3352,
+          3353,
+          "    if (!productionRetryState(run, shot).allowed) return;\n"
+        ],
+        [
+          3377,
+          3378,
+          "        if (shot.status === 'failed' || shot.status === 'cancelled') throw makeStudioError('PRODUCTION_SHOT_FAILED', productionShotFailureMessage(run));\n"
+        ]
+      ]
+    },
+    {
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "before": "ecc290c1bba1ab3044aad647a6eeb45ccd00cd97b4d98399956f7aae03665e65",
+      "after": "b46893e80fa3d23bb378e3b07cbf52efa1a6518b60b69edd948eca8b18ebad4c",
+      "edits": [
+        [
+          473,
+          474,
+          "  <script src=\"./video-studio.js?v=retry-visibility-20261018-v1\"></script>\n"
+        ]
+      ]
+    }
+  ]
+}

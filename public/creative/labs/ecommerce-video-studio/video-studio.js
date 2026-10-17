@@ -3203,6 +3203,27 @@
       return false;
     } finally { state.productionStarting = false; renderProductionRun(); }
   }
+  function productionRetryState(run, shot) {
+    var used = shot && Array.isArray(shot.attempts) ? shot.attempts.length : 0;
+    var limit = Number(run && run.plan && run.plan.options && run.plan.options.maxAttempts);
+    var exhausted = Number.isInteger(limit) && limit > 0 && used >= limit;
+    var reason = !shot || shot.status !== 'failed' ? '仅失败镜头可以重试。' :
+      !run.accountKey || run.accountKey !== state.accountKey ? '请切回原账号后核对镜头。' :
+      releasedProductionPlan(run) ? '原计划已保留，当前不能重试此计划。' :
+      !Number.isInteger(limit) || limit < 1 ? '无法核对本计划尝试上限，请先核对原计划。' :
+      exhausted ? '已达本计划尝试上限（' + used + '/' + limit + '），当前不能重试。' : '';
+    return { allowed: !reason, exhausted: exhausted, used: used, limit: limit, reason: reason };
+  }
+  function productionShotFailureMessage(run) {
+    var failed = (run.shotRuns || []).filter(function (shot) { return shot.status === 'failed'; });
+    if (failed.some(function (shot) { return productionRetryState(run, shot).allowed; })) {
+      return '镜头失败，已完成镜头保留；可在失败镜头右侧点击“仅重试此镜”，提交前仍会核对预算。';
+    }
+    if (failed.length && failed.every(function (shot) { return productionRetryState(run, shot).exhausted; })) {
+      return '镜头失败，已完成镜头保留。失败镜头已达本计划尝试上限，当前不能重试。';
+    }
+    return '镜头未完成，已完成镜头保留；请查看各镜头状态和可用操作。';
+  }
   function renderProductionRun() {
     if (!dom.productionPanel) return;
     var run = state.productionRun;
@@ -3228,17 +3249,27 @@
       var row = document.createElement('div'); row.className = 'production-shot-row is-' + shot.status;
       var main = document.createElement('div'), title = document.createElement('strong'), note = document.createElement('small');
       title.textContent = '镜头 ' + (definition.index + 1) + ' · ' + definition.durationSeconds + ' 秒 · ' + (definition.kind === 'local' ? '已有素材' : Contract.MODEL_DISPLAY_NAMES[definition.productKey] || definition.productKey);
-      note.textContent = ({ pending: '待生成', ready: '素材就绪', submitting: '提交中', processing: '生成中', unknown: '接收状态未知：保留预算，只核对任务', succeeded: '已转存，可复用', failed: '失败，可手动重试' }[shot.status] || shot.status) + ' · 尝试 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' · 不采用，费用保留' : '') + (shot.error ? ' · ' + shot.error : '');
+      var retryState = productionRetryState(run, shot);
+      note.textContent = ({ pending: '待生成', ready: '素材就绪', submitting: '提交中', processing: '生成中', unknown: '接收状态未知：保留预算，只核对任务', succeeded: '已转存，可复用', failed: retryState.allowed ? '失败，可手动重试' : retryState.exhausted ? '失败，已达尝试上限' : '失败，当前不能重试' }[shot.status] || shot.status) + ' · 尝试 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' · 不采用，费用保留' : '') + (shot.status === 'failed' && !retryState.allowed ? ' · ' + retryState.reason : '') + (shot.error ? ' · ' + shot.error : '');
       main.append(title, note); row.appendChild(main);
       var actions = document.createElement('div'); actions.className = 'production-shot-actions';
       function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
       var retryButton;
-      if (!releasedProductionPlan(run) && shot.status === 'failed' && shot.attempts.length < run.plan.options.maxAttempts) retryButton = action('仅重试此镜', 'retry');
+      if (shot.status === 'failed') {
+        retryButton = action('仅重试此镜', 'retry');
+        retryButton.disabled = retryButton.disabled || !retryState.allowed;
+        retryButton.style.whiteSpace = 'nowrap';
+        retryButton.style.flexShrink = '0';
+        retryButton.title = retryState.reason || (state.productionBusy || state.productionStarting ? '当前计划正在执行，请稍后重试。' : '仅重试此镜头，提交前仍会核对原计划预算。');
+      }
       if (shot.status === 'succeeded') action(shot.adoptionStatus === 'rejected' ? '采用此镜' : '标记不采用', 'adopt');
       row.appendChild(actions); dom.productionShotList.appendChild(row);
       if (retryButton && globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(retryButton, productionRunCreditSpec(run, shot.id));
     });
-    setNotice(dom.productionRunNotice, run.error || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
+    // Old saved generic guidance may promise a retry after its attempt limit is exhausted.
+    // Correct the display without changing the saved error, plan, budget or receipts.
+    var notice = run.error === '镜头失败，已完成镜头保留；可手动仅重试失败镜头。' ? productionShotFailureMessage(run) : run.error;
+    setNotice(dom.productionRunNotice, notice || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
   }
   async function startProductionGeneration() {
     if (state.productionBusy || state.productionStarting) return;
@@ -3350,7 +3381,7 @@
   async function retryProductionShot(run, shotId) {
     if (state.productionBusy || state.productionStarting || releasedProductionPlan(run)) return;
     var shot = run.shotRuns.find(function (item) { return item.id === shotId; });
-    if (!shot || shot.status !== 'failed' || shot.attempts.length >= run.plan.options.maxAttempts) return;
+    if (!productionRetryState(run, shot).allowed) return;
     state.productionStarting = true; setPending(true, '正在保存镜头重试…');
     try {
       shot.status = 'pending'; shot.taskId = ''; shot.providerTaskId = ''; shot.error = ''; run.status = 'queued'; run.error = '';
@@ -3375,7 +3406,7 @@
           await queryProductionShot(run, shot);
           if (shot.status === 'unknown') throw makeStudioError('PRODUCTION_UNKNOWN', '有镜头接收状态未知：请核对，禁止重复提交。');
         }
-        if (shot.status === 'failed' || shot.status === 'cancelled') throw makeStudioError('PRODUCTION_SHOT_FAILED', '镜头失败，已完成镜头保留；可手动仅重试失败镜头。');
+        if (shot.status === 'failed' || shot.status === 'cancelled') throw makeStudioError('PRODUCTION_SHOT_FAILED', productionShotFailureMessage(run));
         if (shot.status === 'succeeded') await storeProductionShotResult(run, shot);
       }
       if (run.shotRuns.some(function (shot) { return shot.adoptionStatus === 'rejected'; })) throw makeStudioError('PRODUCTION_NOT_ADOPTED', '有成功镜头被标记不采用，费用仍保留；采用所需镜头后可继续合成。');
