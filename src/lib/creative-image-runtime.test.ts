@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as fs from "node:fs";
 import assert from "node:assert/strict";
-import { webcrypto } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { createRequire } from "node:module";
 import path from "node:path";
 import vm from "node:vm";
@@ -14,24 +14,75 @@ const scripts = [...readFileSync(htmlPath, "utf8").matchAll(/<script[^>]+src="([
   .map((match) => match[1].split("?")[0])
   .map((src) => src.startsWith("/") ? path.join(publicRoot, src) : path.resolve(path.dirname(htmlPath), src));
 
+// Reviewed frozen-pack inventory: exact leaf order with pinned raw and loaded
+// SHA-256 per leaf. 19 leaves are byte-identical; 5 reviewed published drifts
+// (reference-detail-contract, reference-detail-blueprint, creative-tools-contract,
+// background, studio-genesis-ui) keep separate raw and loaded pins. Never derived
+// from the code under test; any other difference, order change, duplicate or
+// path outside public/creative fails.
+const FROZEN_LEAVES: Record<string, Array<{ source: string; raw: string; loaded: string }>> = {
+  "studio-prerequisites-20261009-v1.js": [
+    { source: "creative/src/local-import.js", raw: "5f2020a015f672a9aa2ad9dcdb33b5551af0b7117d5ac8ccffecfdd2300eed57", loaded: "5f2020a015f672a9aa2ad9dcdb33b5551af0b7117d5ac8ccffecfdd2300eed57" },
+    { source: "creative/src/business-knowledge.js", raw: "e5e60f61fb28736752e64ac64bec8b5cbe57aa052aece0623adb3a9e6d6ffa78", loaded: "e5e60f61fb28736752e64ac64bec8b5cbe57aa052aece0623adb3a9e6d6ffa78" },
+    { source: "creative/src/subject-orchestration.js", raw: "23dfdf1fbd0cc6fded96678ea53e402225b1f243621b638174ec4b59b026a6f2", loaded: "23dfdf1fbd0cc6fded96678ea53e402225b1f243621b638174ec4b59b026a6f2" },
+    { source: "creative/src/subject-assets.js", raw: "75ab6f95c3c087bd4e6ebd84abb8cad96873af4cda207114dbda6bef6d1c40b1", loaded: "75ab6f95c3c087bd4e6ebd84abb8cad96873af4cda207114dbda6bef6d1c40b1" },
+    { source: "creative/src/reference-detail-contract.js", raw: "d30bab12b893642d847ae3dac5a69d12c4b9027a38d465e01562ec5dc42deb68", loaded: "e23d4e47f5ca346641772ae41a0e47ef50d0ac89aaed0691688d99a5cddc3a2a" },
+    { source: "creative/labs/image-prompt-lab/reference-detail-blueprint.js", raw: "ed194765709b06adbfe7c27dc64d407a31f7ac6c9a7024755591b304a60711b6", loaded: "ef9dedea3027d7a2c9178178780cef05c8071f73025305fc1255da7a783f45c9" },
+    { source: "creative/labs/image-prompt-lab/reference-detail-batch.js", raw: "d56a05ec814d96a8fb585414683018a220aad4e4afbb73240e1a9793e9e9122b", loaded: "d56a05ec814d96a8fb585414683018a220aad4e4afbb73240e1a9793e9e9122b" },
+    { source: "creative/labs/image-prompt-lab/image-archive-store.js", raw: "097a6e2a51dd82cdb3285ad1b70de62c0b45e03be93eff823710e182eba19542", loaded: "097a6e2a51dd82cdb3285ad1b70de62c0b45e03be93eff823710e182eba19542" },
+    { source: "creative/labs/image-prompt-lab/guide-model-profile.js", raw: "7040759b204a896efd07cee8d0edb26a720b794cf041a9e14e122deab5fd9b17", loaded: "7040759b204a896efd07cee8d0edb26a720b794cf041a9e14e122deab5fd9b17" },
+  ],
+  "studio-runtime-20261010-credit-v3.js": [
+    { source: "creative/labs/image-prompt-lab/style-refresh-contract.js", raw: "5d33e00059cf0ce35772e352a54135d4da525edead6e4159cee48b66f8bfd38e", loaded: "5d33e00059cf0ce35772e352a54135d4da525edead6e4159cee48b66f8bfd38e" },
+    { source: "creative/labs/image-prompt-lab/creative-tools-contract.js", raw: "ed4d3e37f4af64eb4451230c168587ffbb16683884f76120e1937777b7f06607", loaded: "2ab7031c678f566560d6ef190c26c52d1625c8e02dc975991a0d84115f89d960" },
+    { source: "creative/labs/image-prompt-lab/studio-genesis-contract.js", raw: "790b4e13d213fa217cf6dd2698754a3029551608e55f7f3791ddaa5e53800cc9", loaded: "790b4e13d213fa217cf6dd2698754a3029551608e55f7f3791ddaa5e53800cc9" },
+    { source: "creative/labs/image-prompt-lab/scene-extension-contract.js", raw: "a5c901cd13f318592c2a28020dc966249ad2db7c38e66def00dc783a2b7d3bcb", loaded: "a5c901cd13f318592c2a28020dc966249ad2db7c38e66def00dc783a2b7d3bcb" },
+    { source: "creative/src/knowledge-output-contract.js", raw: "17a5bed48816604a3ef17413024d6db48d037e39005c8ed8e128d69f2d087948", loaded: "17a5bed48816604a3ef17413024d6db48d037e39005c8ed8e128d69f2d087948" },
+    { source: "creative/labs/image-prompt-lab/background.js", raw: "cd693992b18ec31beabdbc242c087f5e68ed36cd215344a3adf8b6c867df5fd5", loaded: "d2b2de7dae61eaaadb9dfa1be42ce4832d89e4542bed4f7e9baeda2a885949e7" },
+    { source: "creative/labs/image-prompt-lab/image-upload.js", raw: "5dffe2fd3e2d24007fe21898201f367cda6d5d3b9d328da3d63da4e8309f4812", loaded: "5dffe2fd3e2d24007fe21898201f367cda6d5d3b9d328da3d63da4e8309f4812" },
+    { source: "creative/credit-display.js", raw: "da5199bcd6791d7627ec6c4f9dc14169db973847e16c687a2dc31537ff8784d7", loaded: "da5199bcd6791d7627ec6c4f9dc14169db973847e16c687a2dc31537ff8784d7" },
+    { source: "creative/labs/image-prompt-lab/creative-credit-hints.js", raw: "8c5f10a9a61419534401c9fc04919a44579b6b507f97fb84833b03d8cabc741b", loaded: "8c5f10a9a61419534401c9fc04919a44579b6b507f97fb84833b03d8cabc741b" },
+  ],
+  "studio-views-20261010-credit-v3.js": [
+    { source: "creative/labs/image-prompt-lab/creative-tools-ui.js", raw: "8e9a54bd99a7fbdca8321720fe33329d68fd9f2a4d5b39c247279c0ba751bd49", loaded: "8e9a54bd99a7fbdca8321720fe33329d68fd9f2a4d5b39c247279c0ba751bd49" },
+    { source: "creative/labs/image-prompt-lab/studio-genesis-ui.js", raw: "49fc8e22d6179d4e5b9f3aad2c9496e193ca05779550b92a957eb5700ccb5bc0", loaded: "349c7b291cc8e7cc043db844bee9ea011af5ba01ac7ab272a0a1b30a7af8670a" },
+    { source: "creative/labs/image-prompt-lab/scene-extension-ui.js", raw: "268a64b67f7c644dc67ebe0ea271536713d39a09e8b9172a1f1e3255f5ed2263", loaded: "268a64b67f7c644dc67ebe0ea271536713d39a09e8b9172a1f1e3255f5ed2263" },
+    { source: "creative/labs/image-prompt-lab/studio-legacy-layout.js", raw: "3681f7afef2193e2444902f075eeb3de4e0fa36474eaec6ff20b9e83c662679a", loaded: "3681f7afef2193e2444902f075eeb3de4e0fa36474eaec6ff20b9e83c662679a" },
+    { source: "creative/labs/image-prompt-lab/viral-workflow-layout.js", raw: "8315c049c884dbb8aad8864c0bbd2cb56abfbe13ce1aee744b89960a939bd944", loaded: "8315c049c884dbb8aad8864c0bbd2cb56abfbe13ce1aee744b89960a939bd944" },
+    { source: "creative/labs/image-prompt-lab/viral-workflow-bridge.js", raw: "64e160b8d0d5b8314a811875e065c5a06ef52b662c2d6b03e0af0dcfdf75b1ad", loaded: "64e160b8d0d5b8314a811875e065c5a06ef52b662c2d6b03e0af0dcfdf75b1ad" },
+  ],
+};
+const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
+const FROZEN_MARKER = /\n;\n\/\* Frozen source: (public\/creative\/[^\r\n]+\.js) \*\/\n/g;
+
+// Validate one frozen pack against the pinned inventory and return its raw source files.
+function validateFrozenPack(name: string, text: string, readRaw: (file: string) => Buffer): string[] {
+  const expected = FROZEN_LEAVES[name];
+  if (!expected) throw new Error(`Unreviewed frozen pack: ${name}`);
+  const markers = [...text.matchAll(FROZEN_MARKER)];
+  if (!markers.length || markers[0].index !== 0) throw new Error(`Frozen pack ${name} has unmarked leading bytes`);
+  const leaves = markers.map((marker, index) => ({ source: marker[1].slice("public/".length),
+    bytes: text.slice(marker.index! + marker[0].length, index + 1 < markers.length ? markers[index + 1].index! : text.length) }));
+  const sources = leaves.map(leaf => leaf.source);
+  if (new Set(sources).size !== sources.length) throw new Error(`Duplicate source segment in ${name}`);
+  if (JSON.stringify(sources) !== JSON.stringify(expected.map(leaf => leaf.source))) throw new Error(`Frozen leaf order changed in ${name}: ${sources.join(", ")}`);
+  return leaves.map((leaf, index) => {
+    const pin = expected[index], file = path.resolve(publicRoot, leaf.source);
+    if (path.relative(path.join(publicRoot, "creative"), file).startsWith("..")) throw new Error(`Frozen leaf escapes public/creative: ${leaf.source}`);
+    const raw = readRaw(file);
+    if (sha256(leaf.bytes) !== pin.loaded) throw new Error(`Loaded bytes changed for ${leaf.source} in ${name}`);
+    if (sha256(raw) !== pin.raw) throw new Error(`Raw source changed for ${leaf.source}`);
+    if (pin.raw === pin.loaded && leaf.bytes !== raw.toString("utf8")) throw new Error(`Identical leaf differs from raw: ${leaf.source}`);
+    return file;
+  });
+}
+
 const expandedScripts = new Map<string, string[]>();
 function scriptSources(file: string): string[] {
   const cached = expandedScripts.get(file);
   if (cached) return cached;
   if (!/^studio-(?:prerequisites|runtime|views)-[A-Za-z0-9_-]+\.js$/.test(path.basename(file))) return [file];
-  const raw = readFileSync(file, "utf8");
-  const markers = [...raw.matchAll(/\n;\n\/\* Frozen source: (public\/creative\/[^\r\n]+\.js) \*\/\n/g)];
-  expect(markers.length, `Missing frozen source segments in ${file}`).toBeGreaterThan(0);
-  const sources = markers.map((marker, index) => {
-    const relative = marker[1].slice("public/".length);
-    const sourceFile = path.resolve(publicRoot, relative);
-    expect(path.relative(publicRoot, sourceFile).startsWith(".."), relative).toBe(false);
-    const start = marker.index! + marker[0].length;
-    const end = index + 1 < markers.length ? markers[index + 1].index! : raw.length;
-    expect(raw.slice(start, end), `Frozen source bytes: ${relative}`).toBe(readFileSync(sourceFile, "utf8"));
-    return sourceFile;
-  });
-  expect(new Set(sources).size, `Duplicate source segment in ${file}`).toBe(sources.length);
+  const sources = validateFrozenPack(path.basename(file), readFileSync(file, "utf8"), source => readFileSync(source));
   expandedScripts.set(file, sources);
   return sources;
 }
@@ -107,6 +158,36 @@ function send(context: vm.Context, type: string, payload: object = {}) {
   });
 }
 
+describe("frozen pack integrity against the reviewed inventory", () => {
+  const packFile = (name: string) => path.join(publicRoot, "creative/labs/image-prompt-lab", name);
+  it("pins every loaded leaf and raw source, with 19 identical leaves and 5 reviewed drifts", () => {
+    let identical = 0, drift = 0;
+    for (const name of Object.keys(FROZEN_LEAVES)) {
+      expect(validateFrozenPack(name, readFileSync(packFile(name), "utf8"), file => readFileSync(file))).toHaveLength(FROZEN_LEAVES[name].length);
+      for (const leaf of FROZEN_LEAVES[name]) leaf.raw === leaf.loaded ? identical++ : drift++;
+    }
+    expect([identical, drift]).toEqual([19, 5]);
+    expect(Object.values(FROZEN_LEAVES).flat().filter(leaf => leaf.raw !== leaf.loaded).map(leaf => leaf.source)).toEqual([
+      "creative/src/reference-detail-contract.js", "creative/labs/image-prompt-lab/reference-detail-blueprint.js",
+      "creative/labs/image-prompt-lab/creative-tools-contract.js", "creative/labs/image-prompt-lab/background.js",
+      "creative/labs/image-prompt-lab/studio-genesis-ui.js"
+    ]);
+  });
+  it("rejects unknown drift, reordering, duplicates and leaves outside public/creative", () => {
+    const name = "studio-views-20261010-credit-v3.js", text = readFileSync(packFile(name), "utf8"), read = (file: string) => readFileSync(file);
+    const marker = (source: string) => `\n;\n/* Frozen source: public/${source} */\n`;
+    expect(() => validateFrozenPack(name, text.replace("function render", "function renderChanged"), read)).toThrow(/Loaded bytes changed/);
+    expect(() => validateFrozenPack(name, text, file => file.endsWith("scene-extension-ui.js") ? Buffer.from("changed") : readFileSync(file))).toThrow(/Raw source changed/);
+    const [first, second] = FROZEN_LEAVES[name];
+    const firstStart = text.indexOf(marker(first.source)), secondStart = text.indexOf(marker(second.source));
+    const swapped = text.slice(secondStart, text.indexOf(marker(FROZEN_LEAVES[name][2].source))) + text.slice(firstStart, secondStart) + text.slice(text.indexOf(marker(FROZEN_LEAVES[name][2].source)));
+    expect(() => validateFrozenPack(name, swapped, read)).toThrow(/order changed/);
+    expect(() => validateFrozenPack(name, text + marker(first.source) + "dup", read)).toThrow(/Duplicate source segment/);
+    expect(() => validateFrozenPack(name, text.replace(marker(first.source), marker("creative/../../etc/escape.js")), read)).toThrow(/order changed|escapes/);
+    expect(() => validateFrozenPack("studio-views-unreviewed.js", text, read)).toThrow(/Unreviewed frozen pack/);
+  });
+});
+
 describe("image studio background and UI coexistence", () => {
   it("loads all HTML scripts in order and retains explicit shared exports", () => {
     const { context, document, exportedContracts } = imageRuntime();
@@ -144,6 +225,7 @@ describe("image studio background and UI coexistence", () => {
       "creative/labs/image-prompt-lab/creative-tools-contract.js",
       "creative/labs/image-prompt-lab/studio-genesis-contract.js",
       "creative/labs/image-prompt-lab/scene-extension-contract.js",
+      "creative/src/knowledge-output-contract.js",
       "creative/labs/image-prompt-lab/background.js",
       "creative/labs/image-prompt-lab/image-upload.js",
       "creative/credit-display.js",
