@@ -35,7 +35,7 @@ const FROZEN_LEAVES: Record<string, Array<{ source: string; raw: string; loaded:
   "studio-runtime-20261010-credit-v3.js": [
     { source: "creative/labs/image-prompt-lab/style-refresh-contract.js", raw: "5d33e00059cf0ce35772e352a54135d4da525edead6e4159cee48b66f8bfd38e", loaded: "5d33e00059cf0ce35772e352a54135d4da525edead6e4159cee48b66f8bfd38e" },
     { source: "creative/labs/image-prompt-lab/creative-tools-contract.js", raw: "ed4d3e37f4af64eb4451230c168587ffbb16683884f76120e1937777b7f06607", loaded: "2ab7031c678f566560d6ef190c26c52d1625c8e02dc975991a0d84115f89d960" },
-    { source: "creative/labs/image-prompt-lab/studio-genesis-contract.js", raw: "790b4e13d213fa217cf6dd2698754a3029551608e55f7f3791ddaa5e53800cc9", loaded: "790b4e13d213fa217cf6dd2698754a3029551608e55f7f3791ddaa5e53800cc9" },
+    { source: "creative/labs/image-prompt-lab/studio-genesis-contract.js", raw: "912f2d35628ae23f87975dba6e36475502ea7803af151219c3698b6a29bb4dc8", loaded: "912f2d35628ae23f87975dba6e36475502ea7803af151219c3698b6a29bb4dc8" },
     { source: "creative/labs/image-prompt-lab/scene-extension-contract.js", raw: "a5c901cd13f318592c2a28020dc966249ad2db7c38e66def00dc783a2b7d3bcb", loaded: "a5c901cd13f318592c2a28020dc966249ad2db7c38e66def00dc783a2b7d3bcb" },
     { source: "creative/src/knowledge-output-contract.js", raw: "17a5bed48816604a3ef17413024d6db48d037e39005c8ed8e128d69f2d087948", loaded: "17a5bed48816604a3ef17413024d6db48d037e39005c8ed8e128d69f2d087948" },
     { source: "creative/labs/image-prompt-lab/background.js", raw: "cd693992b18ec31beabdbc242c087f5e68ed36cd215344a3adf8b6c867df5fd5", loaded: "d2b2de7dae61eaaadb9dfa1be42ce4832d89e4542bed4f7e9baeda2a885949e7" },
@@ -45,7 +45,7 @@ const FROZEN_LEAVES: Record<string, Array<{ source: string; raw: string; loaded:
   ],
   "studio-views-20261010-credit-v3.js": [
     { source: "creative/labs/image-prompt-lab/creative-tools-ui.js", raw: "8e9a54bd99a7fbdca8321720fe33329d68fd9f2a4d5b39c247279c0ba751bd49", loaded: "8e9a54bd99a7fbdca8321720fe33329d68fd9f2a4d5b39c247279c0ba751bd49" },
-    { source: "creative/labs/image-prompt-lab/studio-genesis-ui.js", raw: "49fc8e22d6179d4e5b9f3aad2c9496e193ca05779550b92a957eb5700ccb5bc0", loaded: "349c7b291cc8e7cc043db844bee9ea011af5ba01ac7ab272a0a1b30a7af8670a" },
+    { source: "creative/labs/image-prompt-lab/studio-genesis-ui.js", raw: "87e12c85d31ed3e701b6e97a884ef14042a7658ba31c7a56978ca4b625105c8f", loaded: "2f156614449a3118f6252cb868df127e623675b1bad1c37fb0355572b647b6a7" },
     { source: "creative/labs/image-prompt-lab/scene-extension-ui.js", raw: "268a64b67f7c644dc67ebe0ea271536713d39a09e8b9172a1f1e3255f5ed2263", loaded: "268a64b67f7c644dc67ebe0ea271536713d39a09e8b9172a1f1e3255f5ed2263" },
     { source: "creative/labs/image-prompt-lab/studio-legacy-layout.js", raw: "3681f7afef2193e2444902f075eeb3de4e0fa36474eaec6ff20b9e83c662679a", loaded: "3681f7afef2193e2444902f075eeb3de4e0fa36474eaec6ff20b9e83c662679a" },
     { source: "creative/labs/image-prompt-lab/viral-workflow-layout.js", raw: "8315c049c884dbb8aad8864c0bbd2cb56abfbe13ce1aee744b89960a939bd944", loaded: "8315c049c884dbb8aad8864c0bbd2cb56abfbe13ce1aee744b89960a939bd944" },

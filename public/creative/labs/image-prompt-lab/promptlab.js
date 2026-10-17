@@ -517,8 +517,20 @@ function archiveSurfaceForItem(item) {
   return 'main';
 }
 
+function archiveCreativeRouteForItem(item) {
+  item = item || {};
+  if (item.creativeRoute) return item.creativeRoute;
+  var plan = item.studioGenesisPlan;
+  // The original plan owns the subtype, even if a different workbench is now
+  // visible. Keep the existing main storage surface and all archive identities.
+  if ((item.generationRoute === 'studio-genesis' || item.promptSource === 'studio-genesis') &&
+      plan && plan.settings && plan.settings.mode === 'main' && plan.settings.imageType === 'ad') return 'ad';
+  return '';
+}
+
 function archiveRouteKey(batch) {
   batch = batch || {};
+  if (batch.surfaceMode === 'main' && batch.creativeRoute === 'ad') return 'ad';
   if (['clothing', 'buyer', 'refinement'].indexOf(batch.creativeRoute) >= 0) return batch.creativeRoute;
   if (batch.surfaceMode === 'viral') return normalizeViralCoreRoute(batch.creativeRoute);
   return batch.surfaceMode || 'main';
@@ -527,7 +539,7 @@ function archiveRouteKey(batch) {
 function archiveRouteLabel(batch) {
   var key = archiveRouteKey(batch);
   return {
-    main: '主图', detail: '详情页', sku: '批量 SKU', case: '案例裂变', 'style-refresh': '风格焕新', 'scene-extension': '场景延展', clothing: 'DIY成图', buyer: '买家秀', refinement: '产品精修'
+    main: '主图', ad: '广告图', detail: '详情页', sku: '批量 SKU', case: '案例裂变', 'style-refresh': '风格焕新', 'scene-extension': '场景延展', clothing: 'DIY成图', buyer: '买家秀', refinement: '产品精修'
   }[key] || '生图';
 }
 
@@ -537,6 +549,7 @@ function archiveBatchTitleForItem(item) {
   if (surface === 'viral') return archiveRouteLabel({ surfaceMode: surface, creativeRoute: item.creativeRoute }) + (item.linkId ? (' · ' + item.linkId) : '');
   if (surface === 'sku') return '批量 SKU' + (item.skuCode ? (' · ' + item.skuCode) : '');
   if (surface === 'detail') return '详情页' + (item.linkId ? (' · ' + item.linkId) : ' · 参考图');
+  if (surface === 'main' && archiveCreativeRouteForItem(item) === 'ad') return '广告图' + (item.linkId ? (' · ' + item.linkId) : ' · 参考图');
   return '主图' + (item.linkId ? (' · ' + item.linkId) : ' · 参考图');
 }
 
@@ -611,7 +624,7 @@ function archiveBusinessMetaForItem(item, options) {
   item = item || {};
   options = options || {};
   var surface = options.surfaceMode || archiveSurfaceForItem(item);
-  var routeLabel = archiveRouteLabel({ surfaceMode: surface, creativeRoute: item.creativeRoute || '' });
+  var routeLabel = archiveRouteLabel({ surfaceMode: surface, creativeRoute: archiveCreativeRouteForItem(item) });
   var record = item.promptRecord || {};
   var data = record.data || {};
   var config = data['风格焕新配置'] || {};
@@ -791,7 +804,7 @@ function queueArchiveResult(item, options) {
   var archiveInput = {
     accountKey: accountKey,
     surfaceMode: surface,
-    creativeRoute: item.creativeRoute || '',
+    creativeRoute: archiveCreativeRouteForItem(item),
     detailMode: item.detailMode || '',
     sourceBatchId: sourceBatchId,
     technicalSourceBatchId: technicalSourceBatchId,
@@ -1166,6 +1179,17 @@ function archiveBatchMatches(batch, query, route, start, end) {
 }
 
 function archiveItemCompatibleWithCurrentSurface(asset) {
+  var route = archiveRouteKey(asset);
+  var studio = window.SanjieStudioGenesisBridge;
+  if (studio) {
+    // The in-frame tabs can change type without changing this document's URL.
+    // An initializing or older bridge cannot prove the active workspace type.
+    if (typeof studio.getWorkspaceType !== 'function') return false;
+    var workspace;
+    try { workspace = studio.getWorkspaceType(); } catch (_) { return false; }
+    return ['main', 'detail', 'ad'].indexOf(workspace) >= 0 && route === workspace;
+  }
+  if (route === 'ad') return false;
   var current = currentSurfaceMode();
   if (current !== (asset.surfaceMode || 'main')) return false;
   if (current !== 'viral') return true;
@@ -1323,7 +1347,13 @@ function renderArchiveAssetCard(batch, asset, trashMode, selection) {
     guide.title = asset.creativeRoute === 'scene-extension' ? '请返回场景延展，重新确认产品原图与计划' : skuGuideUnavailable
       ? '本机档案未保存完整 SKU 版式锁，不能从档案发起引导重生；请在当前 SKU 结果区操作'
       : (guide.disabled ? '切换到这张图片所属的工作台后再引导重生' : '基于这张本机档案图片引导重生');
-    guide.addEventListener('click', function () { openGuideRegenerateModal(resultItem); });
+    guide.addEventListener('click', function () {
+      if (!archiveItemCompatibleWithCurrentSurface(asset)) {
+        setPill('archiveState', '切换到这张图片所属的工作台后再引导重生', 'warn');
+        return;
+      }
+      openGuideRegenerateModal(resultItem);
+    });
     actions.appendChild(download);
     if (asset.creativeRoute !== 'scene-extension') actions.appendChild(guide);
     body.appendChild(actions);

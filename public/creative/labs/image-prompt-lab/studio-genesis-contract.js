@@ -239,6 +239,10 @@
     function id(prefix) { return prefix + '_' + Date.now() + '_' + Math.random().toString(16).slice(2); }
     function hasInFlightRequest() { return Object.keys(requests).length > 0; }
     function concurrentReceipts() { return !!(deps.journal && deps.journal.concurrent === true); }
+    function foreignWorkspaceReceipt(receipt) {
+      var identity = concurrentReceipts() && deps.workspaceKey && durableReceiptIdentity(receipt);
+      return !!(identity && identity.accountKey === state.accountKey && identity.workspaceKey !== deps.workspaceKey);
+    }
     function queueStopped(execution) { return !!(execution && execution.stopped) || !concurrentReceipts() && !!state.uncertain; }
     function rememberPending(receipt) {
       if (!receipt || receipt.accountKey !== state.accountKey) return;
@@ -435,6 +439,7 @@
       pending.forEach(function (receipt) {
         if (!receipt || excluded.indexOf(receipt.jobId) >= 0) return;
         if (receipt.accountKey !== state.accountKey) { foreign = receipt; return; }
+        if (foreignWorkspaceReceipt(receipt)) return;
         if (!first) first = receipt;
         bindPending(receipt);
       });
@@ -518,7 +523,19 @@
         if (state.accountKey && state.accountKey !== key) return fail('STUDIO_ACCOUNT_CHANGED','当前方案属于原账号，请刷新载入当前账号的草稿。');
         if (pending.some(function (receipt) { return receipt.accountKey !== key; }) || state.uncertain && state.uncertain.accountKey !== key) return fail('STUDIO_ACCOUNT_CHANGED','任务回执属于其他账号，原回执仍保留。');
         state.accountKey = key;
-        if (!pending.length) return {ok:true,pending:false,uncertain:!!state.uncertain,accountKey:key,matchesCurrentTask:false,receipt:null};
+        // Older main-scope scans could adopt an ad receipt through a shared key
+        // prefix. Only an explicit durable workspace identity proves an orphan
+        // belongs elsewhere. Keep unknown receipts and all original journal keys.
+        var foreignOrphan = function (receipt) { return foreignWorkspaceReceipt(receipt) && !receiptSlot(receipt); };
+        var retained = (state.pendingReceipts || []).filter(function (receipt) { return !foreignOrphan(receipt); });
+        var reconciled = retained.length !== (state.pendingReceipts || []).length || foreignOrphan(state.uncertain);
+        state.pendingReceipts = retained;
+        if (foreignOrphan(state.uncertain)) state.uncertain = remainingUncertainty();
+        pending = pending.filter(function (receipt) { return !foreignWorkspaceReceipt(receipt); });
+        if (!pending.length) {
+          if (reconciled) await changed();
+          return {ok:true,pending:false,uncertain:!!state.uncertain,accountKey:key,matchesCurrentTask:false,receipt:null};
+        }
         if (concurrentReceipts()) {
           var unresolved = [];
           for (var index = 0; index < pending.length; index++) {

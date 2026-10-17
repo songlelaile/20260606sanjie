@@ -383,3 +383,81 @@ describe("studio generation history dialog", () => {
     expect(action).toContain("bridge.openHistory"); expect(action).not.toMatch(/scrollIntoView|studio-visible|creative-visible/);
   });
 });
+
+describe("advertising archives in the shared history", () => {
+  const archived = (creativeRoute = "", surfaceMode = "main", id = "original") => ({
+    archiveAssetId: `asset-${id}`, archiveBatchId: `batch-${id}`, accountKey: "tenant:alice", surfaceMode, creativeRoute,
+    businessBatchTitle: `商品 ${id}`, businessRoleName: "悬浮失重", imageIndex: 1, resultId: `result-${id}`,
+    mimeType: "image/png", blob: new Blob([`synthetic-${id}`], { type: "image/png" })
+  });
+
+  it("labels and filters advertising separately while retaining the main transport surface", () => {
+    const h = harness(), ad = archived("ad", "main", "ad"), main = archived("", "main", "main"), detail = archived("", "detail", "detail");
+    const batch = (asset: ReturnType<typeof archived>) => ({ ...asset, assetCount: 1, assets: [asset] });
+    expect(h.node("archiveRouteFilter").querySelector('[value="ad"]')?.textContent).toBe("广告图");
+    expect(h.context.archiveRouteLabel(ad)).toBe("广告图");
+    expect(h.context.archiveBatchMatches(batch(ad), "", "ad")).toBe(true);
+    expect(h.context.archiveBatchMatches(batch(ad), "", "main")).toBe(false);
+    expect(h.context.archiveBatchMatches(batch(main), "", "ad")).toBe(false);
+    expect(h.context.archiveBatchMatches(batch(detail), "", "detail")).toBe(true);
+    h.context.state.archiveBatches = [batch(main), batch(detail), batch(ad)];
+    h.node("archiveRouteFilter").value = "ad"; h.context.renderArchiveHistory();
+    expect(h.node("archiveBatchList").children).toHaveLength(1);
+    expect(h.node("archiveBatchList").textContent).toContain("广告图");
+    h.node("archiveRouteFilter").value = "all"; h.context.renderArchiveHistory();
+    expect(h.node("archiveBatchList").children).toHaveLength(3);
+    expect(h.context.archiveAssetAsResult(ad, "blob:original")).toMatchObject({
+      archiveSurfaceMode: "main", creativeRoute: "ad", resultId: ad.resultId, archiveAssetId: ad.archiveAssetId
+    });
+  });
+
+  it("uses the immutable source plan for business labels without changing project identity", () => {
+    const h = harness();
+    const original = { archiveSurfaceMode: "main", generationRoute: "studio-genesis", jobId: "original-job", resultId: "original-job:studio:shot-1", batchId: "original-batch", productName: "同一商品" };
+    const plain = h.context.archiveBusinessMetaForItem(original);
+    const ad = h.context.archiveBusinessMetaForItem({ ...original, studioGenesisPlan: { settings: { mode: "main", imageType: "ad" } } });
+    expect(ad.businessType).toBe("广告图");
+    expect(ad.archiveProjectId).toBe(plain.archiveProjectId);
+    expect(h.context.archiveCreativeRouteForItem(original)).toBe("");
+    expect(h.context.archiveCreativeRouteForItem({ productName: "UAT-AD 广告图", prompt: "商品广告图" })).toBe("");
+    expect(h.context.archiveRouteLabel({ surfaceMode: "main", productName: "UAT-AD 广告图", prompt: "商品广告图" })).toBe("主图");
+    expect(h.archive.saveResult).not.toHaveBeenCalled();
+    expect(h.localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("enables ad guided regeneration only in the live ad workspace, independent of entry URL", () => {
+    const h = harness(), ad = archived("ad"), main = archived();
+    let active = "main";
+    h.context.location.search = "?type=ad&source=web&studio=1";
+    h.context.SanjieStudioGenesisBridge = { getWorkspaceType: () => active };
+    const guide = (asset: ReturnType<typeof archived>) => h.context.renderArchiveAssetCard({ assets: [asset] }, asset, false, {})
+      .querySelectorAll("button").find((button: TestNode) => button.textContent === "引导重生") as TestNode;
+    expect(guide(ad).disabled).toBe(true); expect(guide(main).disabled).toBe(false);
+    active = "ad";
+    expect(guide(ad).disabled).toBe(false); expect(guide(main).disabled).toBe(true);
+    active = "detail"; expect(guide(ad).disabled).toBe(true);
+    active = ""; expect(guide(ad).disabled).toBe(true);
+    delete h.context.SanjieStudioGenesisBridge;
+    expect(guide(ad).disabled).toBe(true); expect(guide(main).disabled).toBe(false);
+  });
+
+  it("rechecks the live workspace before a previously enabled ad action opens", () => {
+    const h = harness(), ad = archived("ad");
+    let active = "ad";
+    h.context.SanjieStudioGenesisBridge = { getWorkspaceType: () => active };
+    const card: TestNode = h.context.renderArchiveAssetCard({ assets: [ad] }, ad, false, {});
+    const guide = card.querySelectorAll("button").find(button => button.textContent === "引导重生")!;
+    const open = vi.fn(); h.context.openGuideRegenerateModal = open;
+    expect(guide.disabled).toBe(false);
+    active = "main"; guide.dispatch("click");
+    expect(open).not.toHaveBeenCalled();
+    active = "ad"; guide.dispatch("click");
+    expect(open).toHaveBeenCalledOnce();
+    expect(open.mock.calls[0][0]).toMatchObject({ creativeRoute: "ad", archiveSurfaceMode: "main", archiveAssetId: ad.archiveAssetId });
+  });
+
+  it.each([{}, { getWorkspaceType: () => "" }, { getWorkspaceType: () => { throw new Error("initializing"); } }])("fails closed when a studio cannot prove its current type", bridge => {
+    const h = harness(); h.context.SanjieStudioGenesisBridge = bridge;
+    expect(h.context.archiveItemCompatibleWithCurrentSurface(archived("ad"))).toBe(false);
+  });
+});

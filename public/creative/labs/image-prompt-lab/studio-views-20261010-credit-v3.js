@@ -800,6 +800,7 @@
   function locked() { return navigationLocked() || deactivating; }
   window.SanjieStudioGenesisBridge = {
     getTaskState,
+    getWorkspaceType: () => !initializing&&!restoring&&!startupFailed&&draft?workspaceType(draft.settings):'',
     revealTask,
     async activate() {
       if(startupFailed)return {ok:false,error:'创作工作台暂未就绪，请重试读取。'};
@@ -939,11 +940,24 @@
       if(!value||typeof value.taskId!=='string'||!value.taskId.trim()||typeof value.shotId!=='string'||!value.shotId.trim()||value.accountKey!==account||value.createdAt!==undefined&&(!Number.isFinite(value.createdAt)||value.createdAt<=0)||value.jobId!==undefined&&(typeof value.jobId!=='string'||!value.jobId.trim()))throw new Error('本机任务回执内容损坏或所属账号不一致，请核对已有请求。');
       return value;
     }
+    function scopedValue(key) {
+      if(!key?.startsWith(prefix))return null;
+      const value=validate(localStorage.getItem(key));
+      // A main scope is also a string prefix of its ad scope. Reproduce the
+      // complete key, rather than adopting another scope's valid receipt.
+      if(value.jobId&&key===prefix+value.jobId)return value;
+      if(value.jobId&&scope.endsWith(':main')&&key===prefix+'ad:'+value.jobId)return null;
+      // An unknown/malformed key is not proof of another workspace or success.
+      throw new Error('本机任务回执位置暂不能核对，请保留原回执并核对已有请求。');
+    }
     function read(excluded=[]) {
       try {
       const legacy=localStorage.getItem(legacyKey);
       if(legacy!==null)return validate(legacy);
-      for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key?.startsWith(prefix)&&!excluded.includes(key.slice(prefix.length)))return validate(localStorage.getItem(key));}
+      for(let i=0;i<localStorage.length;i++){
+        const value=scopedValue(localStorage.key(i));
+        if(value&&!excluded.includes(value.jobId))return value;
+      }
       return null;
       } catch(error) { if(/回执/.test(error.message))throw error;throw new Error('本机任务回执无法读取，请保留草稿并核对已有请求。'); }
     }
@@ -952,8 +966,8 @@
         const values=[], legacy=localStorage.getItem(legacyKey);
         if(legacy!==null)values.push(validate(legacy));
         for(let i=0;i<localStorage.length;i++){
-          const key=localStorage.key(i);
-          if(key?.startsWith(prefix))values.push(validate(localStorage.getItem(key)));
+          const value=scopedValue(localStorage.key(i));
+          if(value)values.push(value);
         }
         return values.filter((value,index)=>!values.slice(0,index).some(known=>['jobId','accountKey','taskId','shotId','batchId'].every(field=>known[field]===value[field])));
       } catch(error) { if(/回执/.test(error.message))throw error;throw new Error('本机任务回执无法读取，请保留草稿并重新打开工作台。'); }
