@@ -1,0 +1,204 @@
+{
+  "sourceRevision": "r56-sunburst-guide-v1.9.84",
+  "products": [
+    {
+      "productId": "ai-automation",
+      "version": "1.9.84",
+      "bootstrapVersion": "1.9.60.1",
+      "bootstrapReferenceVersion": "1.9.61"
+    },
+    {
+      "productId": "dmp-collector",
+      "version": "2.3.61",
+      "bootstrapVersion": "2.3.60.1"
+    }
+  ],
+  "publicKeyJwkSha256": "9c9fd05adf85325fa12bd196a9288f85e594b3436f1a4d172770c4ca274e119d",
+  "artifacts": [
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.61.zip",
+      "size": 1658695,
+      "sha256": "22987c5cc4aae29279af24645086bc393a1bc5fde2e35e0e0f22b5cf1eb5620f"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/bootstrap.zip",
+      "size": 1658701,
+      "sha256": "ec074ce386d1c179475f878cbed382ddeca0995df3136f9f144ba5fffd8c4759"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.61.json",
+      "size": 7970654,
+      "sha256": "a13ef6d54cb3b84b18bf401c79eeabcd1e8eadc6148eeb3462c6cfa23e0779b9"
+    },
+    {
+      "path": "private-assets/dmp/shaozhuang-dmp-unified-automation-v2.3.61.zip",
+      "size": 428143,
+      "sha256": "af7b152381489eeb8845ff6a0a2c7a204e3af8dff5cd6455624164563aedd9c7"
+    },
+    {
+      "path": "private-assets/extension-updates/dmp-collector/bootstrap.zip",
+      "size": 428179,
+      "sha256": "050798a83819c909903b37879e579febcb477a21793baac0322970881c05f452"
+    },
+    {
+      "path": "private-assets/extension-updates/dmp-collector/latest.json",
+      "size": 769,
+      "sha256": "b5961042e0f66f415afdf2fd4637f1b6398a520de6fe324ce0727665a568d221"
+    },
+    {
+      "path": "private-assets/extension-updates/dmp-collector/2.3.61.json",
+      "size": 2254997,
+      "sha256": "442ddfed14bdf1bd3aef8f29e4772291803c980b2fc0a6c4c6979bfb3ff26f01"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.62.zip",
+      "size": 1723566,
+      "sha256": "dd5396b36fe19f994abcbd895ea143b168ecdd0a776dc60a24249884956d573a"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.62.json",
+      "size": 8514782,
+      "sha256": "2d675ba78f838a10daaf85e836d0d85e9d4d16333f96fddc02d3e9abfec00930"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.63.zip",
+      "size": 1725300,
+      "sha256": "3644216558b7369cd73335cc1663818572427fb5985e69055995c4127f7ccf6d"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.63.json",
+      "size": 8520946,
+      "sha256": "4ffe6018bf7a91c11067c6e0f93e9122f53da08ae18ab51882c18629162c646e"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.67.json",
+      "size": 21813091,
+      "sha256": "ed24871efccfc3ff814f9e87d704da31f3eb644be16c6fb63d47be069d997de2"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.68.json",
+      "size": 21907853,
+      "sha256": "a66fe0aad5112ed0ba65d6ca81c9ceace4e431805c0137ed47778b68d5cd39e4"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.69.json",
+      "size": 21923965,
+      "sha256": "9fa609d23fffada6627de8f9157eef7f56e01a72bf88b02ec490029171400e9c"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.70.json",
+      "size": 21937585,
+      "sha256": "721d003273cf211687d40256e2b0753d46727d9611f77e93ff9a8b1cf2121816"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.71.json",
+      "size": 21974177,
+      "sha256": "aea3372b5919a7ea81ad34368d4feed119490d712fa0555cb73179cf2df9b4d7"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.71.zip",
+      "size": 6495431,
+      "sha256": "74138704ac4bc80f841039f803862561da53413d1e6f45858c75fd5f43555ced"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.72.zip",
+      "size": 6496690,
+      "sha256": "62c2789e3d7501a169da299eb0ce9a4491e0d3b57148dcba0dc19e3baf9355d1"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.72.json",
+      "size": 21979953,
+      "sha256": "405f04d98c1f1910590d223d3020976dd9d43c7dab9727ccc96c7cd672553f4a"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.73.zip",
+      "size": 6511355,
+      "sha256": "5991e2fa0ed5a583156e6c151514f9fe4b5a91f8279d92472049b5c9a7b9d1e3"
+    },
+    {
+      "path": "public/downloads/shaozhuang-ai-v1.9.73-macos-full.zip",
+      "size": 196593933,
+      "sha256": "7887475cb07dc757b9f2f2fd343caba640a4c6362151b8b514516776a656cabc"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.73.json",
+      "size": 21982605,
+      "sha256": "0961c737e459b7e2dd84d152748aaf36e801ca3f15f24e4fe327ab1ce5cec332"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.74.zip",
+      "size": 6516578,
+      "sha256": "741b63b283af067b485b76aea1e757b2d2b52d9e2bb71e8bb590dcdcd03ada5e"
+    },
+    {
+      "path": "public/downloads/shaozhuang-ai-v1.9.74-macos-full.zip",
+      "size": 205152718,
+      "sha256": "72b501e1dfb55591aa7925fb0148b59a06c9f767aad7666d413683f4e4706df4"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.74.json",
+      "size": 22003873,
+      "sha256": "1d2da563a4b361253b62bd0a3b7972d2166ebf2cb566dc48309d46d732f86664"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.80.zip",
+      "size": 6593181,
+      "sha256": "4bfc486f5ad317229e12cece8051549d3030d34945da4370447051c132284a3c"
+    },
+    {
+      "path": "public/downloads/shaozhuang-ai-v1.9.80-macos-full.zip",
+      "size": 213896775,
+      "sha256": "4ed17d7fb16224670439c0b4245b3b5742ab62a2438902b7a8a17a72d38fcfe4"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.80.json",
+      "size": 22383122,
+      "sha256": "98e695f8192f605335a18152f92d4dab521b53efdd8c4f18c610901afa9f9112"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/latest.json",
+      "size": 1297,
+      "sha256": "4beada31dc13915b05705157c6b05e18224b6b4a6c3d9e861af59ba39abfcf55"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.83.zip",
+      "size": 6551444,
+      "sha256": "c68063d242da920cfb3942edfb3c145cc290a7f1b4a4c765c43972793ec43611"
+    },
+    {
+      "path": "public/downloads/shaozhuang-ai-v1.9.83-macos-full.zip",
+      "size": 239788712,
+      "sha256": "612e0fcfbb671e3b8d2d1654973461bd06c2540108c1a58b3b019d7d109ef8d5"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.83.json",
+      "size": 22216950,
+      "sha256": "e7c1bd8af622cbe6c0d2d7ed6ac208a3176e1965eb03ddb5de3891dcaa11b47b"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.83.json.gz",
+      "size": 8606780,
+      "sha256": "768f5bb78fda394ba002cbf80f5f130d6ad346cb837089739a3c229a1668f7da"
+    },
+    {
+      "path": "public/downloads/sycm-keyword-collector-v1.9.84.zip",
+      "size": 6553606,
+      "sha256": "3bc7fe8b87597448105b8d3c6bf7f158ae025559ba36e74ee9212193e1d74bca"
+    },
+    {
+      "path": "public/downloads/shaozhuang-ai-v1.9.84-macos-full.zip",
+      "size": 248418161,
+      "sha256": "c95a6591bca8a67f24a24c009e7842073bef94dc78f68dd5af8d9aca67c30e8b"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.84.json",
+      "size": 22224818,
+      "sha256": "46680d434ebd29b5a7ecc3e3efd1846eebba3463d0c75edeab6878d9ea4cc64c"
+    },
+    {
+      "path": "private-assets/extension-updates/ai-automation/1.9.84.json.gz",
+      "size": 8610128,
+      "sha256": "637b77b6940046674053ed54680e91bc6ff53a5305d43ce060af84cff2585032"
+    }
+  ]
+}

@@ -3,12 +3,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CANONICAL_ROOT="${SANJIE_CANONICAL_ROOT:-/Users/shaozhuang/20260606sanjie}"
-EXPECTED_VERSION="1.9.23"
-EXPECTED_ZIP_SHA256="5b147e48cb5ecab07f1acf70d95442985e07a2780e4946d9e6e9f966227d0609"
+EXPECTED_VERSION="1.9.84"
 ZIP_PATH="public/downloads/sycm-keyword-collector-v${EXPECTED_VERSION}.zip"
-DMP_VERSION="2.3.55"
-DMP_ZIP_SHA256="af21961a9b4b96dba0cc54a50fcf579c7bfd3081c42605f7564751b09165841c"
+DMP_VERSION="2.3.61"
+DMP_ZIP_SHA256="af7b152381489eeb8845ff6a0a2c7a204e3af8dff5cd6455624164563aedd9c7"
 DMP_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip"
+# The signed legacy channel and the currently downloadable DMP product are distinct.
+DMP_CURRENT_PRODUCT_VERSION="2.4.11"
+DMP_CURRENT_PRODUCT_ZIP_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v${DMP_CURRENT_PRODUCT_VERSION}.zip"
+DMP_CURRENT_PRODUCT_ZIP_SHA256="e9825f0ed5a7dbc26d51c2fdda9d9270496f8b054c936e297b2e868c14096230"
+FROZEN_DMP_V2359_PATH="private-assets/dmp/shaozhuang-dmp-unified-automation-v2.3.59.zip"
+FROZEN_DMP_V2359_SHA256="98abed5ddad3f6dd12d46d7c8d758134a0e4b699bcf53406b79c3d6eed99be27"
+FROZEN_DMP_V2359_SIZE_BYTES="406176"
 
 fail() {
   echo "发布保护失败：$*" >&2
@@ -53,8 +59,23 @@ forbid_fixed() {
   fi
 }
 
-[[ "$ROOT" == "$CANONICAL_ROOT" ]] || fail "当前目录是 $ROOT；只允许从唯一生产工程 $CANONICAL_ROOT 发版"
+[[ "$ROOT" == "$CANONICAL_ROOT" ]] || fail "当前目录是 ${ROOT}；只允许从唯一生产工程 ${CANONICAL_ROOT} 发版"
 cd "$ROOT"
+
+# The authorized version is fixed above; bytes and hashes come from its frozen receipt.
+artifact_info="$(python3 - "$EXPECTED_VERSION" "$ZIP_PATH" <<'PYCODE'
+import json,re,sys
+receipt=json.load(open('frozen/extension-updates-v1.json'))
+assert next(item['version'] for item in receipt['products'] if item['productId']=='ai-automation')==sys.argv[1], 'current AI version does not match the authorized release'
+items=[item for item in receipt['artifacts'] if item['path']==sys.argv[2]]
+assert len(items)==1, 'missing or duplicate current AI ZIP receipt'
+item=items[0]
+assert isinstance(item['size'],int) and item['size']>0
+assert re.fullmatch(r'[a-f0-9]{64}',item['sha256'])
+print(item['size'],item['sha256'])
+PYCODE
+)" || fail "当前 AI 正式包尚未进入冻结发布凭据"
+read -r EXPECTED_ZIP_SIZE_BYTES EXPECTED_ZIP_SHA256 <<<"$artifact_info"
 
 for file in \
   src/app/login/page.tsx \
@@ -63,6 +84,10 @@ for file in \
   src/middleware.ts \
   prisma/schema.prisma \
   src/app/tools/page.tsx \
+  src/app/tools/tutorials/page.tsx \
+  src/components/tools/ToolsSubnav.tsx \
+  src/lib/tool-tutorials.ts \
+  .env.example \
   src/app/tools/dmp-report/page.tsx \
   src/app/api/dmp-market-reports/route.ts \
   src/app/api/dmp-reports/route.ts \
@@ -86,6 +111,7 @@ for file in \
   src/components/management/ManagementConsole.tsx \
   src/components/management/DmpShareAnalyticsPanel.tsx \
   src/lib/dmp-product.ts \
+  src/lib/dmp-report-import.ts \
   src/lib/dmp-report-export-authorization.ts \
   src/lib/dmp-report-export-contract.ts \
   src/lib/dmp-report-format.ts \
@@ -128,40 +154,164 @@ require_file "prisma/migrations/20260816203000_add_dmp_report_sharing/migration.
 require_file "prisma/migrations/20260817090000_public_dmp_share_analytics/migration.sql"
 require_file "prisma/migrations/20260817160000_dmp_report_export_audit/migration.sql"
 require_file "prisma/migrations/20260822093000_add_dmp_report_shop/migration.sql"
-require_file "prisma/migrations/20260830143000_dmp_report_summary_and_pair_indexes/migration.sql"
 require_fixed "fingerprint" prisma/schema.prisma "达摩盘历史报告缺少幂等指纹字段"
 require_fixed "tenantId_userId_fingerprint" src/lib/dmp-report-store.ts "达摩盘报告保存缺少账号内幂等约束"
 require_fixed "dmpBusinessReportFingerprint" src/lib/dmp-report-store.ts "达摩盘报告保存缺少稳定指纹计算"
-require_fixed 'archiveMode: "replace-latest-pair";' src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少同商品对原子更新模式"
-require_fixed "replaceLatestPairReport" src/lib/dmp-report-store.ts "达摩盘报告存储缺少同店同商品对原子更新"
+require_fixed 'parseArchiveReplacement' src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少同商品对原子更新参数校验"
+require_fixed 'mode !== "replace-latest-pair"' src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少同商品对原子更新模式"
+require_fixed "replaceLatestDmpGrowthReport" src/lib/dmp-report-store.ts "达摩盘报告存储缺少同店同商品对原子更新"
 require_fixed "pg_advisory_xact_lock" src/lib/dmp-report-store.ts "达摩盘同商品对更新缺少并发事务锁"
 require_fixed "absorbedReportIds" src/lib/dmp-report-store.ts "达摩盘同商品对更新缺少被吸收报告复核"
+require_fixed "DMP_REPORT_HISTORY_STALE" src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少并发历史过期恢复合同"
+require_fixed "lockDmpReportTargets" src/lib/dmp-report-share.ts "达摩盘报告分享创建未参与原子替换锁协议"
 
-# 工具页保持登录保护；安装包必须走实时账号授权下载。
+# 工具页保持登录保护；静态插件包继续允许直接下载。
 require_fixed 'pathname === "/login"' src/middleware.ts "中间件缺少登录页公开规则"
 require_fixed 'pathname.startsWith("/api/auth/")' src/middleware.ts "中间件缺少认证接口公开规则"
 forbid_fixed 'pathname === "/tools"' src/middleware.ts "工具页被错误加入未登录公开白名单"
-require_fixed '/api/protected-downloads/' src/middleware.ts "插件下载缺少受保护路由"
-require_fixed 'runtime: "nodejs"' src/middleware.ts "共享安全配额需要 Node 中间件"
-require_fixed 'consumeSecurityRateLimit' src/middleware.ts "中间件缺少账号共享限流"
-require_file 'prisma/migrations/20261002143000_security_rate_bucket/migration.sql'
+require_fixed "downloads/" src/middleware.ts "插件下载目录未从鉴权中间件排除"
+
+# 教程专区必须沿用工具页登录保护，只在配置正式视频地址后生成播放器。
+require_fixed '<ToolsSubnav active="overview" />' src/app/tools/page.tsx "AI 工具页缺少视频教程二级导航"
+require_fixed 'href: "/tools/tutorials"' src/components/tools/ToolsSubnav.tsx "AI 工具二级导航缺少教程入口"
+require_fixed '<ToolsSubnav active="tutorials" />' src/app/tools/tutorials/page.tsx "视频教程页缺少当前导航状态"
+require_fixed "TOOL_TUTORIALS.length > 0" src/app/tools/tutorials/page.tsx "视频教程页缺少正式视频门禁"
+require_fixed "NEXT_PUBLIC_TUTORIAL_VIDEO_URL" src/lib/tool-tutorials.ts "视频教程缺少正式视频环境变量"
+require_fixed "POSTER_URL" src/lib/tool-tutorials.ts "视频教程缺少封面环境变量"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_VIDEO_URL" src/lib/tool-tutorials.ts "豆包 API 教程缺少正式视频环境变量"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_POSTER_URL" src/lib/tool-tutorials.ts "豆包 API 教程缺少封面环境变量"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_VIDEO_URL" .env.example "环境变量示例缺少豆包 API 教程视频地址"
+require_fixed "NEXT_PUBLIC_TUTORIAL_DOUBAO_API_POSTER_URL" .env.example "环境变量示例缺少豆包 API 教程封面地址"
+require_fixed "flatMap<ToolTutorial>" src/lib/tool-tutorials.ts "视频教程未逐条执行独立环境校验"
+require_fixed "if (!videoSrc) return [];" src/lib/tool-tutorials.ts "未配置单条视频地址时仍可能展示伪视频"
+require_fixed 'title: "少壮AI自动化教程"' src/lib/tool-tutorials.ts "视频教程标题不一致"
+require_fixed 'trackNo: "02"' src/lib/tool-tutorials.ts "少壮 AI 自动化教程学习路径不一致"
+require_fixed 'duration: "04:04"' src/lib/tool-tutorials.ts "视频教程时长不一致"
+require_fixed 'slug: "configure-doubao-api"' src/lib/tool-tutorials.ts "豆包 API 教程路径标识不一致"
+require_fixed 'trackNo: "01"' src/lib/tool-tutorials.ts "豆包 API 教程学习路径不一致"
+require_fixed 'title: "配置豆包API"' src/lib/tool-tutorials.ts "豆包 API 教程标题不一致"
+require_fixed 'category: "模型配置"' src/lib/tool-tutorials.ts "豆包 API 教程分类不一致"
+require_fixed 'duration: "04:25"' src/lib/tool-tutorials.ts "豆包 API 教程时长不一致"
+require_fixed 'publishedAt: "2026-08-27"' src/lib/tool-tutorials.ts "视频教程发布日期不一致"
+require_fixed "TOOL_TUTORIALS.length" src/components/tools/ToolsSubnav.tsx "AI 工具二级导航教程数量不是动态统计"
+require_fixed "tutorialCountByTrack" src/app/tools/tutorials/page.tsx "视频教程学习路径数量不是动态统计"
+forbid_fixed 'badge: "1 条教程"' src/components/tools/ToolsSubnav.tsx "AI 工具二级导航仍硬编码一条教程"
+forbid_fixed '"已上线 1 条"' src/app/tools/tutorials/page.tsx "视频教程路径仍硬编码一条教程"
+require_fixed "aspect-ratio: 3 / 2;" src/app/globals.css "视频播放器不是 3:2 比例"
+require_fixed "object-fit: contain;" src/app/globals.css "视频播放器未完整容纳画面"
 
 # 工具页版本、文件与哈希必须一致，避免页面版本和下载包串版。
 require_fixed "version: \"${EXPECTED_VERSION}\"" src/app/tools/page.tsx "工具页版本不是 v${EXPECTED_VERSION}"
 require_fixed "sycm-keyword-collector-v${EXPECTED_VERSION}.zip" src/app/tools/page.tsx "工具页下载地址不是 v${EXPECTED_VERSION}"
+require_fixed 'sizeLabel: "Mac 完整包约 248.4 MB"' src/app/tools/page.tsx "工具页 Mac 完整包大小标识不一致"
+require_fixed 'macHref: "/downloads/shaozhuang-ai-v1.9.84-macos-full.zip"' src/app/tools/page.tsx "工具页 Mac 完整包下载版本不一致"
+require_fixed 'href={COLLECTOR.macHref}' src/app/tools/page.tsx "工具页主按钮未使用 Mac 完整包"
+require_fixed 'href={COLLECTOR.zipHref}' src/app/tools/page.tsx "工具页未保留普通插件包入口"
+require_fixed '仅下载插件（约 6.6 MB，Chrome / Edge）' src/app/tools/page.tsx "工具页普通插件包大小或适用浏览器不一致"
+require_fixed 'platform: "Chrome / Edge 116+"' src/app/tools/page.tsx "AI 插件更新器最低浏览器版本不一致"
+require_fixed 'id="update-help"' src/app/tools/page.tsx "缺少插件更新帮助锚点"
+require_fixed "如果原目录位于 UnpackedExtensions，网页更新器无法取得写入权限" src/app/tools/page.tsx "缺少受保护安装目录的网页更新限制"
+require_fixed "v1.9.67–v1.9.74 可按提示安排包内离线升级" src/app/tools/page.tsx "缺少包内离线升级版本边界"
+require_fixed "安装器不修改 Chrome 安全策略，不修改 Chrome 配置、API 与图视频历史数据" src/app/tools/page.tsx "缺少安装器保留原配置历史的说明"
+require_fixed "Windows 尚无本机助手安装器" src/app/tools/page.tsx "工具页错误承诺 Windows 本机助手"
+require_fixed "macOS 13.5+ 的 Chrome" src/app/tools/page.tsx "缺少 Mac 安装器系统与浏览器限制"
+require_fixed "尚未完成全新 Mac 的系统安装拦截验收" src/app/tools/page.tsx "缺少 Mac 全新安装验收边界"
+require_fixed "不要直接选择 ZIP" src/app/tools/page.tsx "缺少先解压到固定目录的安装说明"
 require_fixed "shaozhuang-ai-legacy-icon.png" src/app/tools/page.tsx "工具页未使用老板旧版 Logo"
+require_fixed "参考成详" src/app/tools/page.tsx "工具页缺少独立参考成详卡"
+require_fixed "摘取详情页面" src/app/tools/page.tsx "参考成详缺少当前商品摘取入口"
+require_fixed "淘宝 / 天猫从“图文详情”开始，在“店铺推荐”之前停止，并排除紧前最后一整张详情图" src/app/tools/page.tsx "参考成详缺少淘宝天猫正文双锚点边界"
+require_fixed "1688 从“商品详情”开始，在“【平台活动下价格】”之前停止" src/app/tools/page.tsx "参考成详缺少1688正文双锚点边界"
+require_fixed "未找到结束标记时提示重试，不提交不完整详情" src/app/tools/page.tsx "参考成详缺少结束标记未找到时的失败关闭边界"
+require_fixed "按原页面顺序形成只读来源快照" src/app/tools/page.tsx "参考成详缺少只读来源快照合同"
+require_fixed "每屏只保留一句可编辑的核心内容 / 描述方向" src/app/tools/page.tsx "参考成详缺少一句话结构方向"
+require_fixed "warning、确定性 fallback 和 partial 会自动整理" src/app/tools/page.tsx "参考成详缺少可恢复状态自动整理"
+require_fixed "受阻模块自动跳过，全部模块都受阻时仍会阻断" src/app/tools/page.tsx "参考成详缺少自主放行与失败关闭边界"
+require_fixed "确认前可修改方向、重排、删除、复制或合并" src/app/tools/page.tsx "参考成详缺少锁定前编辑能力"
+require_fixed "至少绑定 1 张自有或已授权的主体图" src/app/tools/page.tsx "参考成详缺少主体必填合同"
+require_fixed "模特图完全可选" src/app/tools/page.tsx "参考成详缺少模特可选合同"
+require_fixed "不创建、不选择、不审核事实卡" src/app/tools/page.tsx "参考成详仍未去除事实卡审核"
+require_fixed "只点一次「锁定结构并进入批量」" src/app/tools/page.tsx "参考成详缺少一次锁定入口"
+require_fixed "正式来源、至少一个安全模块、授权、视觉服务商能力" src/app/tools/page.tsx "参考成详缺少内部安全门禁"
+require_fixed "精确 revision / 账号 / 任务身份和防重复计费仍是硬门禁" src/app/tools/page.tsx "参考成详缺少身份与重复计费门禁"
+require_fixed "5–16 个独立分屏" src/app/tools/page.tsx "参考成详分屏数量边界不正确"
+require_fixed "双并发、停止、失败屏重试、刷新恢复和逐目标长详情预览" src/app/tools/page.tsx "参考成详缺少批次生命周期说明"
+require_fixed "取得安全完成权威后才标记完成" src/app/tools/page.tsx "参考成详缺少本机安全落盘门禁"
+require_fixed "不同商品的主体、模特、提示词、图片和结果严格隔离" src/app/tools/page.tsx "参考成详缺少跨商品隔离说明"
+forbid_fixed "多张自家商品事实卡" src/app/tools/page.tsx "参考成详仍展示多事实卡审核"
+forbid_fixed "分别选择事实卡" src/app/tools/page.tsx "参考成详仍要求选择事实卡"
+forbid_fixed "核验事实" src/app/tools/page.tsx "参考成详仍要求核验事实"
+forbid_fixed "确认并进入批量生成" src/app/tools/page.tsx "参考成详仍展示旧确认入口"
+require_fixed "链接成详（L 编号）" src/app/tools/page.tsx "工具页未保留链接成详 L 编号流程"
+forbid_fixed "参考图模式会先反推并覆盖当前提示词" src/app/tools/page.tsx "工具页仍展示已移除的旧参考图详情流程"
+require_fixed "对象 / 参考 SKU 原图" src/app/tools/page.tsx "工具页缺少对象 SKU 底图合同"
+require_fixed "冻结为不可变视觉基底" src/app/tools/page.tsx "工具页缺少对象 SKU 冻结合同"
+require_fixed "只替换其中的商品主体" src/app/tools/page.tsx "工具页缺少 SKU 只替换主体合同"
+require_fixed "其他可见细节保持原样" src/app/tools/page.tsx "工具页缺少 SKU 非主体细节冻结合同"
+require_fixed "不得重新设计、改色、重排或增删" src/app/tools/page.tsx "工具页缺少 SKU 非主体变更禁令"
+require_fixed "真实 JPG" src/app/tools/page.tsx "工具页缺少 SKU JPG 下载说明"
+require_fixed "业务 SKU 标题" src/app/tools/page.tsx "工具页缺少业务 SKU 标题命名合同"
+require_fixed "技术 SKU 编号" src/app/tools/page.tsx "工具页未声明下载文件名不含技术 SKU 编号"
+require_fixed "用户自定义最终宽×高" src/app/tools/page.tsx "工具页缺少 SKU 自定义尺寸说明"
+require_fixed "每边 256–4096 px" src/app/tools/page.tsx "工具页缺少 SKU 单边尺寸范围"
+require_fixed "总像素不超过 16,777,216" src/app/tools/page.tsx "工具页缺少 SKU 总像素上限"
+require_fixed "用户指定的精确尺寸验收" src/app/tools/page.tsx "工具页缺少 SKU 最终精确像素门禁"
+forbid_fixed "模型只创作无字、无商品背景" src/app/tools/page.tsx "工具页仍展示已废弃的 SKU 仅生成背景合同"
+forbid_fixed "字体、字号、文字位置、整体布局和商品主体位置由浏览器固定" src/app/tools/page.tsx "工具页仍展示已废弃的 SKU 固定版式合同"
+forbid_fixed "仅背景色、邻近渐变和轻背景氛围可变" src/app/tools/page.tsx "工具页仍展示已废弃的 SKU 背景可变合同"
+forbid_fixed "商品规格.jpg" src/app/tools/page.tsx "工具页仍使用已废弃的商品规格文件名合同"
+forbid_fixed "等比裁切且不拉伸" src/app/tools/page.tsx "工具页仍展示已废弃的 SKU 底图裁切合同"
+forbid_fixed "分日商品排行" src/app/tools/page.tsx "工具页仍宣称已移除的分日商品排行模块"
+forbid_fixed "商品排行分日下载" src/app/tools/page.tsx "工具页仍展示已移除的商品排行模块"
+forbid_fixed "货盘 / 无界源表" src/app/tools/page.tsx "工具页仍展示已移除的货盘/无界插件模块"
+forbid_fixed "插件「商品排行」" src/app/tools/page.tsx "工具页仍指导使用已移除的商品排行入口"
+forbid_fixed 'title: "商品排行"' src/app/tools/page.tsx "工具页重新出现已移除的商品排行卡片"
+forbid_fixed 'title: "货盘"' src/app/tools/page.tsx "工具页重新出现已移除的货盘卡片"
+forbid_fixed 'title: "无界商品"' src/app/tools/page.tsx "工具页重新出现已移除的无界商品卡片"
+forbid_fixed 'title: "无界人群"' src/app/tools/page.tsx "工具页重新出现已移除的无界人群卡片"
 require_file "$ZIP_PATH"
 require_file "public/downloads/shaozhuang-ai-legacy-icon.png"
 
+actual_zip_size_bytes="$(wc -c < "$ZIP_PATH" | tr -d '[:space:]')"
+[[ "$actual_zip_size_bytes" == "$EXPECTED_ZIP_SIZE_BYTES" ]] || fail "v${EXPECTED_VERSION} ZIP 大小不一致：${actual_zip_size_bytes} bytes"
 actual_zip_sha256="$(sha256_file "$ZIP_PATH")"
 [[ "$actual_zip_sha256" == "$EXPECTED_ZIP_SHA256" ]] || fail "v${EXPECTED_VERSION} ZIP 哈希不一致：$actual_zip_sha256"
+unzip -t "$ZIP_PATH" >/dev/null || fail "v${EXPECTED_VERSION} ZIP 完整性校验失败"
+# Retain the immutable historical R51 TEST runtime and its recovery installer.
+# The extension-only ZIP keeps its 114 files at the root; the full Mac bundle
+# keeps those same bytes under its reviewed prefix and pins the entire installer.
+require_file "frozen/ai-v1980-test-runtime.json"
+require_file "public/downloads/shaozhuang-ai-v1.9.80-macos-full.zip"
+require_file "scripts/verify-ai-test-origin.py"
+python3 scripts/verify-ai-test-origin.py || fail "历史 R51 ZIP 与不可变发布原件不一致"
+require_fixed "v1.9.84 官网模块统一导航" src/app/tools/page.tsx "官网未标明本次创作导航版本"
+require_fixed "MANIFEST_SCOPE_CHANGED" src/app/tools/page.tsx "官网缺少旧版跨权限更新限制"
+require_fixed "检测到新版本不等于已经写入完成" src/app/tools/page.tsx "官网错误承诺自动更新完成"
+require_fixed "待补存" src/app/tools/page.tsx "官网缺少本机档案助手未安装时的状态"
+require_fixed "gpt-image-2 使用结构化修复方案" src/app/tools/page.tsx "官网缺少 Image-2 修复方案"
+require_fixed "gpt-image-2.5-sunburst（Image-2.5-sunburst）使用独立" src/app/tools/page.tsx "官网缺少 Sunburst 独立编辑方案"
+require_fixed "修改 / 保留 / 证据" src/app/tools/page.tsx "官网缺少 Sunburst 编辑约束"
+require_fixed "超远观" src/app/tools/page.tsx "官网缺少场景延展景别"
+
 
 # 达摩盘插件、付费授权、受保护下载与历史报告中心必须成套发布。
-require_fixed "DMP_AUTOMATION_VERSION = \"${DMP_VERSION}\"" src/lib/dmp-product.ts "达摩盘工具卡版本不是 v${DMP_VERSION}"
-require_fixed 'DMP_AUTOMATION_NAME = `达摩盘一体化自动取数｜${DMP_AUTOMATION_BRAND}`' src/lib/dmp-product.ts "达摩盘官网当前产品不是一体化品牌版本"
+require_fixed "DMP_AUTOMATION_VERSION = \"${DMP_CURRENT_PRODUCT_VERSION}\"" src/lib/dmp-product.ts "达摩盘工具卡版本不是 v${DMP_CURRENT_PRODUCT_VERSION}"
+require_fixed 'DMP_AUTOMATION_NAME = "少壮AI自动化-数据报告";' src/lib/dmp-product.ts "达摩盘官网当前产品名称与已发布版本不一致"
 require_fixed 'zipHref: "/api/tools/dmp/download"' src/app/tools/page.tsx "达摩盘工具卡未使用受保护下载接口"
+require_fixed 'const resolvesArchiveShop = scope === "archive-shop";' src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少扩展默认店铺专用路由"
+require_fixed "getDmpDefaultArchiveShop" src/app/api/dmp-reports/route.ts "达摩盘默认店铺路由未使用账号内权威解析"
+require_fixed "listDmpBusinessReportArchivePair" src/app/api/dmp-reports/route.ts "达摩盘商品对归档缺少账号与店铺隔离读取"
+require_fixed 'archiveMode: "replace-current-report"' src/app/api/dmp-reports/route.ts "达摩盘原地重生成缺少当前报告替换模式"
+require_fixed "replaceReportCreatedAt" src/app/api/dmp-reports/route.ts "达摩盘原地重生成缺少目标版本 CAS 参数"
+require_fixed 'candidate.code === "DMP_REPORT_TARGET_STALE"' src/app/api/dmp-reports/route.ts "达摩盘原地重生成缺少并发过期响应码"
+require_fixed "replaceCurrentDmpGrowthReport" src/lib/dmp-report-store.ts "达摩盘官网缺少当前报告原地替换事务"
+require_fixed "createdAt: input.replacement.expectedCreatedAt" src/lib/dmp-report-store.ts "达摩盘当前报告替换未执行 createdAt 原子 CAS"
+require_fixed 'mode: "replace-current-report" as const' src/lib/dmp-report-store.ts "达摩盘当前报告替换缺少可验收回执"
+require_fixed 'readonly code = "DMP_REPORT_TARGET_STALE"' src/lib/dmp-report-store.ts "达摩盘当前报告替换缺少专用并发冲突码"
+require_fixed 'orderBy: [{ createdAt: "asc" }, { id: "asc" }]' src/lib/dmp-report-store.ts "达摩盘默认店铺排序不稳定"
+require_fixed 'orderBy: [{ createdAt: "asc" }, { id: "asc" }]' src/lib/store/runtime-store.ts "官网登录默认店铺排序与归档接口不一致"
 require_fixed "getDmpReportAccess" src/app/tools/dmp-report/page.tsx "达摩盘报告中心缺少数据库付费授权复核"
-require_fixed "listDmpBusinessReportSummaries" src/app/tools/dmp-report/page.tsx "达摩盘报告中心未加载分页历史摘要"
+require_fixed "listDmpBusinessReports" src/app/tools/dmp-report/page.tsx "达摩盘报告中心未加载历史报告"
 forbid_fixed 'session?.role === "admin"' src/app/tools/dmp-report/page.tsx "达摩盘报告中心仍被错误限制为管理员"
 require_fixed "历史报告" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少历史管理"
 require_fixed "复制分享链接" src/components/tools/DmpReportWorkspace.tsx "达摩盘报告中心缺少官网分享入口"
@@ -183,25 +333,20 @@ require_fixed "data-report-watermark" src/components/tools/DmpGrowthReportViewer
 require_fixed "data-report-watermark" src/components/tools/DmpMarketReportViewer.tsx "达摩盘类目大盘预览缺少全篇水印"
 require_fixed "background: #0d716b !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一绿色"
 require_fixed "color: #fff !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告表头不是统一白字"
-require_fixed "background-color: #fff;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告正文未隔离后台黑色表格样式"
+require_fixed "background-color: #edf5f3 !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网增长报告正文不是定版浅绿色"
+require_fixed "color-scheme: light !important;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网增长报告未隔离后台深色主题"
+require_fixed "data-chart-tooltip=\"svg\"" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品曲线缺少即时数值提示"
+require_fixed "data-chart-point={series}" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品曲线缺少逐点悬停合同"
+require_fixed "data-period={payload.period}" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品曲线提示缺少周期"
+require_fixed "data-role={payload.role}" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品曲线提示缺少主体/对手角色"
+require_fixed "data-value={value}" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品曲线提示缺少数值"
 require_fixed "text-align: right;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告数值未靠右展示"
 require_fixed "vertical-align: middle;" src/components/tools/DmpGrowthReportViewer.module.css "达摩盘官网报告数值未垂直居中"
 require_fixed "background: var(--market-green) !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘表头不是统一绿色"
 require_fixed "color: #fff !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘表头不是统一白字"
+require_fixed "background: #edf5f3 !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘正文不是定版浅绿色"
+require_fixed "td.trackHeatCell" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目价格带热力编码缺少高权重隔离"
 require_fixed "text-align: right !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘数值未靠右展示"
-require_fixed "color-scheme: light !important;" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘未锁定浅色视觉"
-require_fixed ".tableShell tbody > tr > td { color: var(--market-ink) !important; background: #fff !important; }" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘普通表仍可能继承全局黑底"
-require_fixed ".opportunityMatrixShell tbody > tr > td.opportunityMatrixCell" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘机会矩阵缺少浅色隔离"
-require_fixed ".trackHeatmapTable tbody > tr > td.trackHeatCell" src/components/tools/DmpMarketReportViewer.module.css "达摩盘类目大盘赛道热图缺少浅色隔离"
-require_fixed "buildDmpMarketGrowthOpportunityGroups" src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网类目报告未解析货品增长机会"
-require_fixed "货品增长机会" src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网类目报告未保留机会归档表"
-require_fixed "data-growth-opportunity-view" src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网类目报告未使用机会分组视图"
-require_fixed ".opportunityGroups" src/components/tools/DmpMarketReportViewer.module.css "达摩盘官网货品机会缺少分组排版"
-require_fixed 'export type DmpMarketPeriodMode = "all" | "day" | "week" | "month"' src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网类目报告缺少全部已采周期"
-require_fixed "buildDmpMarketOpportunityWorkspace" src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网未合并赛道与增长机会长表"
-require_fixed "isDmpMarketOpportunityWorkspaceSource" src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网仍会重复展示机会原始长表"
-require_fixed 'data-opportunity-workspace="true"' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网缺少统一货品增长机会工作区"
-require_fixed ".opportunityWorkspace" src/components/tools/DmpMarketReportViewer.module.css "达摩盘官网增长机会工作区缺少排版"
 require_fixed 'focusReport={query.view === "report"}' src/app/tools/dmp-report/page.tsx "达摩盘报告页不支持插件聚焦打开"
 require_fixed 'body?.reportType !== "market" || body?.report?.report_type !== "market"' src/app/api/dmp-market-reports/route.ts "达摩盘类目大盘独立归档接口缺少双重类型校验"
 require_fixed 'archiveDmpReport(new Request' src/app/api/dmp-market-reports/route.ts "达摩盘类目大盘归档未复用受保护存储入口"
@@ -217,15 +362,30 @@ forbid_fixed 'pathname.startsWith("/api/shared/dmp-reports")' src/middleware.ts 
 require_fixed 'pathname.startsWith("/api/dmp-runtime/")' src/middleware.ts "达摩盘云端运行接口未绕过页面中间件"
 require_fixed "x-sanjie-session" src/app/api/dmp-reports/route.ts "达摩盘报告同步接口缺少插件登录令牌"
 require_fixed "x-sanjie-session" src/app/api/dmp-report-shares/route.ts "达摩盘分享接口缺少插件登录令牌"
-require_fixed 'requestUrl.searchParams.get("scope") === "archive-shop"' src/app/api/dmp-reports/route.ts "达摩盘报告接口缺少扩展默认店铺专用路由"
-require_fixed "allowDefaultShop: true" src/app/api/dmp-reports/route.ts "达摩盘默认店铺路由未显式授权服务端解析"
-require_fixed 'orderBy: [{ createdAt: "asc" as const }, { id: "asc" as const }]' src/lib/dmp-report-store.ts "达摩盘默认店铺排序不稳定"
-require_fixed 'orderBy: [{ createdAt: "asc" }, { id: "asc" }]' src/lib/store/runtime-store.ts "官网登录默认店铺排序与归档接口不一致"
 forbid_fixed "export async function GET" src/app/api/dmp-report-shares/route.ts "普通报告所有者接口仍暴露传播分析 GET"
 forbid_fixed "getDmpReportInteractionSummary" src/app/api/dmp-report-shares/route.ts "普通报告所有者仍可读取传播分析"
 require_fixed "getPublicDmpSharedReport(token)" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘分享页未使用公开高熵令牌读取"
-forbid_fixed "getDmpReportAccess" src/app/shared/dmp-reports/[token]/page.tsx "达摩盘公开分享页仍强制官网登录"
-require_fixed "getDmpBusinessReport(access, reportId, shopId)" src/lib/dmp-report-share.ts "达摩盘分享创建缺少账号与店铺双重隔离"
+python3 - <<'PY_DMP_CURRENT_SHARED_GATE' || fail "达摩盘分享页登录与付费授权顺序不符合当前线上合同"
+from pathlib import Path
+import re
+source = (Path(globals().get('SOURCE_ROOT', '.')) / 'src/app/shared/dmp-reports/[token]/page.tsx').read_text()
+# The live page documents the authorization sequence using whole-line comments.
+# Strip those comments; executable statements must remain contiguous and ordered.
+source = re.sub(r'^\s*//[^\n]*(?:\n|$)', '', source, flags=re.M)
+compact = re.sub(r'\s+', '', source)
+def statement(value):
+    escaped = re.escape(value)
+    return '(?:' + escaped + '|\\{' + escaped + '\\})'
+pattern = re.escape('const{token}=awaitparams;constreturnTo=safeDmpReportReturnPath(`/shared/dmp-reports/${token}`);')
+pattern += re.escape('if(!returnTo)') + statement('notFound();')
+pattern += re.escape('if(!(awaitgetCurrentSession()))') + statement('redirect(`/login?returnTo=${encodeURIComponent(returnTo)}`);')
+pattern += re.escape('if(!(awaitgetDmpReportAccess()))') + statement('redirect("/tools?dmpAccess=paid");')
+pattern += re.escape('constsnapshot=awaitgetPublicDmpSharedReport(token);')
+assert len(re.findall(pattern, compact)) == 1, 'DMP share authorization must validate return path, then session, then paid access before reading report data'
+assert compact.count('getPublicDmpSharedReport(token)') == 1, 'DMP share data may only be read after its authorization gate'
+PY_DMP_CURRENT_SHARED_GATE
+require_fixed "tenantId: access.tenantId" src/lib/dmp-report-share.ts "达摩盘分享创建缺少租户所有者隔离"
+require_fixed "userId: access.userId" src/lib/dmp-report-share.ts "达摩盘分享创建缺少用户所有者隔离"
 require_fixed "revokedAt: null" src/lib/dmp-report-share.ts "达摩盘公开读取或事件写入缺少撤销状态过滤"
 require_fixed "createHash(\"sha256\")" src/lib/dmp-report-share.ts "达摩盘分享令牌未做哈希落库"
 require_fixed 'const DEFAULT_PUBLIC_APP_ORIGIN = "https://shaozhuangai.com"' src/lib/dmp-public-origin.ts "达摩盘分享缺少固定官网域名"
@@ -254,7 +414,11 @@ require_fixed "remainingDays" src/lib/tool-entitlements.ts "达摩盘授权缺�
 require_fixed "dmpEntitlement: dmpAccess" src/app/api/auth/me/route.ts "认证端点未返回达摩盘授权倒计时"
 require_fixed 'DMP_AUTOMATION_TOOL_CODE = "dmp-automation"' src/lib/dmp-product.ts "达摩盘产品码不稳定"
 require_fixed "returnOnSpend" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 ROI 区间计算"
-require_fixed "contributionRatio" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费 GMV 贡献率区间计算"
+require_fixed "preferredMetricValue(previous.subject, parsed.subject)" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件仍会丢失同义指标中的付费区间"
+require_fixed "subjectRange?.exact === false || competitorRange?.exact === false" public/tools/dmp-report-engine/report-engine.js "达摩盘插件仍会为区间指标伪造精确相对差"
+require_fixed "contributionRatio" public/tools/dmp-report-engine/completeness-engine.js "达摩盘插件缺少付费金额占比区间计算"
+require_fixed 'paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"]' public/tools/dmp-report-engine/completeness-engine.js "达摩盘付费金额占比缺少新名称及历史名称兼容"
+require_fixed "const contribution = safeIntervalDivide(metrics[side].paidGmv, metrics[side].totalGmv, {" public/tools/dmp-report-engine/completeness-engine.js "达摩盘付费金额占比未按付费成交额除以总成交额安全计算"
 require_fixed "calculatedDirectRoi" public/tools/dmp-report-engine/completeness-engine.js "达摩盘场景未按分配后消耗计算直接 ROI"
 require_fixed "calculableMetricValue" public/tools/dmp-report-engine/completeness-engine.js "达摩盘量级区间未先转换为可计算数值"
 require_fixed "transportOnlyReason" public/tools/dmp-report-engine/completeness-engine.js "达摩盘完整性引擎未忽略 OPTIONS/HEAD/redirect 传输记录"
@@ -262,37 +426,83 @@ require_fixed "classifyGrowthRecord" public/tools/dmp-report-engine/completeness
 require_fixed '["投放", "ROI"' public/tools/dmp-report-engine/report-engine.js "达摩盘业务报告缺少 ROI"
 require_fixed '投入产出比|投产比|ROI|ROAS' public/tools/dmp-report-engine/report-engine.js "达摩盘云端报告仍可能把投产比格式化为百分比"
 require_fixed 'isDmpMultipleMetric' src/lib/dmp-report-format.ts "达摩盘官网报告未区分投产倍数与百分比"
+require_fixed 'dmpDisplayCellText' src/lib/dmp-report-format.ts "达摩盘官网报告未解析区间对象"
+require_fixed 'reconcilePaidMetricRanges' src/lib/dmp-report-import.ts "达摩盘官网报告未贯通付费成交额、ROI 与 PPC 区间"
+require_fixed 'suppressIntervalMetricDifferences' src/lib/dmp-report-import.ts "达摩盘官网导出仍可能保留区间伪精确差值"
+require_fixed 'rangeDividedByRange' src/lib/dmp-report-import.ts "达摩盘官网未按区间安全计算付费金额占比"
+require_fixed 'ensurePaidAmountShareRows' src/lib/dmp-report-import.ts "达摩盘官网总览未补齐付费金额占比"
+require_fixed 'columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.totalGmv)' src/lib/dmp-report-import.ts "达摩盘官网未兼容全渠道总GMV周期列"
+require_fixed 'columnIndexByAliases(periodTable, CROSS_TABLE_METRICS.paidGmv)' src/lib/dmp-report-import.ts "达摩盘官网未兼容付费GMV周期列"
+require_fixed 'isDmpIntervalCell' src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网报告仍可能展示区间伪精确差值"
 require_fixed "periodMetricsForItem" public/tools/dmp-report-engine/report-engine.js "达摩盘商品表未按商品 ID 匹配周期指标"
 require_fixed "canonicalRenderData" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少官网预览渲染合同"
 require_fixed "subject_daily_gmv" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体逐日 GMV 合同"
-require_fixed "buildSubjectDaily" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少主体逐日 GMV 构建"
+require_fixed "buildPairedDaily" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少主体与对手逐日 GMV 构建"
 require_fixed "METRIC_ALIAS_GROUPS" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少同义指标归一"
 require_fixed "buildAlignedMetrics" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少全量同维指标"
 require_fixed "sameComparedPeriod" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未校验目标对手周期"
 require_fixed "promotionDetailIssues" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未审计推广明细"
+require_fixed "SUBJECT_MINIMUM_PROMOTION_CONTRACT" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少主体推广最低字段合同"
+require_fixed "missingSubjectMinimumPromotionMetrics" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎不会阻断主体推广最低字段缺失"
+require_fixed "subjectPromotionSceneIssues" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未审计主体推广场景"
 require_fixed "coreRowsWithAlignedFallback" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少核心指标同维回填"
 require_fixed '["ROI", metric("subject", "roi"), metric("competitor", "roi")' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告总览缺少主体与对手 ROI"
 require_fixed '["PPC", metric("subject", "ppc"), metric("competitor", "ppc")' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告总览缺少主体与对手 PPC"
 require_fixed "spendSingleDayPartial" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未按单日花费缺口补算"
 require_fixed "dailyKeywordSpend / spend" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未按同覆盖日计算关键词占比"
 require_fixed "reportSpendScope" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少花费覆盖范围"
-require_fixed "coverageValueAllowed" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少单日覆盖值门禁"
-require_fixed "SUBJECT_MINIMUM_PROMOTION_CONTRACT" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎缺少主体投放最低合同"
-require_fixed "missingSubjectMinimumPromotionMetrics" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未审计主体投放最低指标"
-require_fixed "subjectPromotionSceneIssues" public/tools/dmp-report-engine/completeness-engine.js "达摩盘公共完整性引擎未审计主体一级推广场景"
+require_fixed "const overviewMetrics = CORE_METRIC_CONTRACT.map" public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎未固化双侧八指标字段"
 require_fixed '"主体日GMV", "对手日GMV"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手分日 GMV"
 require_fixed '"主体展现", "对手展现"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手关键词同维列"
 require_fixed '"主体起始GMV", "对手起始GMV"' public/tools/dmp-report-engine/report-engine.js "达摩盘公共报告引擎缺少主体与对手成长阶段同维列"
-require_fixed "GROWTH_OVERVIEW_METRICS" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少统一指标映射"
+require_fixed "DMP_GROWTH_OVERVIEW_METRICS" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少统一八指标映射"
 require_fixed "DMP_GROWTH_METRIC_ALIASES" src/lib/dmp-report-types.ts "达摩盘官网总览未集中定义统一指标别名"
+require_fixed '{ key: "paidGmv", label: "付费成交额"' src/lib/dmp-report-types.ts "达摩盘官网总览缺少付费成交额"
 require_fixed '{ key: "roi", label: "ROI"' src/lib/dmp-report-types.ts "达摩盘官网总览缺少 ROI"
 require_fixed '{ key: "ppc", label: "PPC"' src/lib/dmp-report-types.ts "达摩盘官网总览缺少 PPC"
+require_fixed '{ key: "paidShare", label: "付费金额占比"' src/lib/dmp-report-types.ts "达摩盘官网总览缺少付费金额占比"
+require_fixed "assessDmpEffectiveReportQuality" src/lib/dmp-report-quality.ts "达摩盘官网缺少服务端有效质量复核"
+require_fixed "normalizeDmpCanonicalReportForUse" src/lib/dmp-report-import.ts "达摩盘官网缺少只读规范化入口"
+forbid_fixed 'data-report-quality="partial"' src/components/tools/DmpGrowthReportViewer.tsx "达摩盘成长报告仍展示完整性诊断"
+forbid_fixed "数据完整性提示" src/lib/dmp-report-export.ts "达摩盘导出仍展示完整性诊断"
+require_fixed "effectiveDmpReportQuality" src/lib/dmp-report-share.ts "达摩盘公开分享未复核有效质量"
 require_fixed "firstDisclosed" src/components/tools/DmpGrowthReportViewModel.ts "达摩盘官网总览缺少逐侧安全回退"
 require_fixed "data-overview-metric" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网未并排展示主体与目标对手指标"
-require_fixed "data-chart-point" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网曲线点缺少悬停数值合同"
-require_fixed "SvgChartTooltip" src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网曲线缺少即时悬停浮层"
+require_fixed 'const TRACK_COMPACT_COLUMNS = [' src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网缺少细分赛道十列紧凑表解析"
+require_fixed 'TRACK_OPPORTUNITY_ARCHIVE' src/components/tools/DmpMarketReportViewModel.ts "达摩盘官网未合并货品增长机会分片"
+require_fixed 'dmpMarketTrackPeriodOptions' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网缺少全部已采赛道周期选择"
+require_fixed 'data-track-period-selector' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网细分赛道周期选择器缺少稳定标识"
+forbid_fixed 'data-report-quality="partial"' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网市场报告仍展示完整性诊断"
+forbid_fixed '缺失项不会按 0 处理' src/components/tools/DmpMarketReportViewer.tsx "达摩盘官网市场报告仍展示工程缺失提示"
+forbid_fixed '部分数据报告' src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品报告仍展示完整性诊断"
+forbid_fixed '继续补采' src/components/tools/DmpGrowthReportViewer.tsx "达摩盘官网商品报告仍展示补采工程入口"
+require_fixed 'const MAX_REPORT_BYTES = 8 * 1024 * 1024' src/lib/dmp-report-store.ts "达摩盘官网类目报告容量未覆盖全周期归档"
+require_fixed 'const MAX_REPORT_CELLS = 1_000_000' src/lib/dmp-report-store.ts "达摩盘官网细分赛道单元格容量不足"
+require_fixed '类目大盘单表超过 ${MAX_TABLE_ROWS} 行，请按周期或属性分片后重试' src/lib/dmp-report-store.ts "达摩盘官网仍可能静默截断细分赛道行"
+require_fixed 'update: effectiveQuality === "complete"' src/lib/dmp-report-store.ts "达摩盘重试报告质量未按服务端复核结果单向升级"
+require_file "frozen/dmp-v2.3.59.json"
+require_fixed '"packageSha256": "98abed5ddad3f6dd12d46d7c8d758134a0e4b699bcf53406b79c3d6eed99be27"' frozen/dmp-v2.3.59.json "达摩盘 v2.3.59 官网冻结凭据不一致"
+# Current product bytes are verified independently of the immutable legacy update channel.
+require_file "$DMP_CURRENT_PRODUCT_ZIP_PATH"
+require_file "private-assets/dmp/shaozhuang-dmp-unified-automation-v2.4.10.zip"
+[[ "$(sha256_file "private-assets/dmp/shaozhuang-dmp-unified-automation-v2.4.10.zip")" == "cad748f29f759d014dce007048529640db6fb539cb8b0d1952ef618eebc4e08a" ]] || fail "达摩盘 v2.4.10 历史发布包发生变化"
+[[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_CURRENT_PRODUCT_VERSION}.zip" ]] || fail "当前达摩盘付费插件仍暴露在 public 下载目录"
+[[ "$(sha256_file "$DMP_CURRENT_PRODUCT_ZIP_PATH")" == "$DMP_CURRENT_PRODUCT_ZIP_SHA256" ]] || fail "当前达摩盘产品包与已发布 v2.4.11 原件不一致"
+python3 - "$DMP_CURRENT_PRODUCT_ZIP_PATH" <<'PY_DMP_CURRENT_PRODUCT' || fail "当前达摩盘产品包 Manifest 不一致"
+import json,sys,zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    assert archive.testzip() is None
+    names=archive.namelist()
+    assert len(names)==len(set(names))==55
+    manifest=json.loads(archive.read('manifest.json'))
+    assert manifest['version']=='2.4.11'
+    assert manifest['name']=='少壮AI自动化-数据报告'
+    assert manifest['version_name']=='2.4.11 店铺趋势柱状对比'
+PY_DMP_CURRENT_PRODUCT
 require_file "$DMP_ZIP_PATH"
+require_file "$FROZEN_DMP_V2359_PATH"
 [[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v${DMP_VERSION}.zip" ]] || fail "达摩盘付费插件仍暴露在 public 下载目录"
+[[ ! -e "public/downloads/shaozhuang-dmp-unified-automation-v2.3.59.zip" ]] || fail "达摩盘 v2.3.59 黄金包被错误暴露在 public 下载目录"
 unzip -p "$DMP_ZIP_PATH" '*official-share-url.mjs' | grep -F 'normalizeOfficialShareUrl' >/dev/null || fail "达摩盘插件缺少官网分享地址规范化模块"
 # Linux 的 unzip 在下游 grep -q 提前退出时会收到 SIGPIPE；配合 pipefail 会把“已命中”误判成失败。
 # 这里让 grep 读完整个条目再丢弃输出，保证本机与生产机得到一致结果。
@@ -320,42 +530,62 @@ unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_DIRECT_GET_R
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'tools/dmp-report?source=dmp-extension#launch=' >/dev/null || fail "达摩盘插件未从官网地址打开本机报告"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'scheduleStoredReportArchive("worker-wake")' >/dev/null || fail "达摩盘插件缺少后台唤醒自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'url.searchParams.set("scope", "archive-shop")' >/dev/null || fail "达摩盘商品与类目归档未读取官网登录默认店铺"
-unzip -p "$DMP_ZIP_PATH" '*direct-popup.js' | grep -F '自动归入该登录账号的默认店铺' >/dev/null || fail "达摩盘弹窗仍提示用户手动识别店铺"
+unzip -p "$DMP_ZIP_PATH" '*direct-popup.js' | grep -F '报告将由官网按当前账号自动归档并打开' >/dev/null || fail "达摩盘弹窗缺少默认同步并打开官网报告提示"
 if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' '*service-worker.js' | grep -Eq 'sanjie_active_shop|activeShopExplicit|/api/shops|ensureManualOfficialArchivePage'; then
   fail "达摩盘插件仍在本地识别活动店铺或预热官网页面"
 fi
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'runDirectSupplementPass' >/dev/null || fail "达摩盘插件缺少付费指标与推广明细自动补抓"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'for (const templateId of [...readinessIds, ...stored.keys()])' >/dev/null || fail "达摩盘插件未保留历史费用效率卡模板"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'capturedById.get(templateId) || stored.get(templateId)' >/dev/null || fail "达摩盘插件抓取后可能覆盖费用效率卡模板"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'async function fetchTrackChanceCodes' >/dev/null || fail "达摩盘插件缺少动态机会类型采集"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'await collectOpportunityPeriod(currentDate)' >/dev/null || fail "达摩盘插件未采本期货品增长机会"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'await collectOpportunityPeriod(previousDate)' >/dev/null || fail "达摩盘插件未采上一周期货品增长机会"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const ROLLING7_TRACK_CONTRACT_VERSION = 3;' >/dev/null || fail "达摩盘插件未升级增长机会缓存合同"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function mergeRolling7TrackSnapshots' >/dev/null || fail "达摩盘插件未跨轮次合并赛道周期"
-unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'opportunityCaptureComplete' >/dev/null || fail "达摩盘插件未校验增长机会完整性"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F '["all-collected", "全部已采周期"]' >/dev/null || fail "达摩盘类目报告缺少全部已采周期"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const TRACK_ARCHIVE_TABLE_PREFIX = "细分赛道矩阵-";' >/dev/null || fail "达摩盘类目报告未按属性维度归档赛道周期长表"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'data-quality-layer="price-band-property-matrix"' >/dev/null || fail "达摩盘类目报告缺少赛道数据质量分层"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F '["货品增长机会概览", ["周期"' >/dev/null || fail "达摩盘类目报告未保留空机会组概览"
-if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F '/track/collect' >/dev/null; then
-  fail "达摩盘插件误调用关注或收藏写接口"
-fi
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onInstalled?.addListener' >/dev/null || fail "达摩盘插件升级后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.runtime.onStartup?.addListener' >/dev/null || fail "达摩盘插件启动后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'chrome.cookies.onChanged?.addListener' >/dev/null || fail "达摩盘插件登录恢复后不会自动补归档"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'async function synchronizeArchiveOutboxEntry(state, entry, options = {})' >/dev/null || fail "达摩盘后台补归档缺少静默队列同步"
 unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'autoOpened: false' >/dev/null || fail "达摩盘后台补归档仍会自动弹出报告"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackMatrixContractComplete(value)' >/dev/null || fail "达摩盘类目归档缺少细分赛道矩阵完整性检查"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const matrixComplete = Boolean(categoryComplete && track && rolling7TrackMatrixContractComplete(track));' >/dev/null || fail "达摩盘细分赛道矩阵完整性未纳入三层归档合同"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const opportunityComplete = Boolean(matrixComplete && rolling7TrackOpportunityContractComplete(track));' >/dev/null || fail "达摩盘货品机会完整性未与矩阵合同联动"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const ROLLING7_TRACK_CONTRACT_VERSION = 3' >/dev/null || fail "达摩盘细分赛道完整性合同不是最新版本"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackLatestContract(value, options = {})' >/dev/null || fail "达摩盘细分赛道缺少本轮精确合同"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'payload.archiveMode = "replace-latest-pair"' >/dev/null || fail "达摩盘商品报告未请求官网原子更新"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'payload.archiveMode = "replace-current-report"' >/dev/null || fail "达摩盘插件原地重生成未请求同 ID 替换"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'payload.replaceReportCreatedAt = currentReplacement.reportCreatedAt' >/dev/null || fail "达摩盘插件原地重生成未携带目标版本"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_REPORT_TARGET_STALE' >/dev/null || fail "达摩盘插件缺少当前报告并发过期识别"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'payload.replaceReportId = historyRetention.replaceReportId' >/dev/null || fail "达摩盘商品报告未冻结最新更新目标"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'DMP_REPORT_HISTORY_STALE' >/dev/null || fail "达摩盘商品报告缺少官网历史过期识别"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'resetStaleGrowthArchivePreparation' >/dev/null || fail "达摩盘商品报告缺少过期冻结体安全重建"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackMatrixShapeComplete(value)' >/dev/null || fail "达摩盘细分赛道缺少可展示矩阵形状门禁"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'authoritativePropertyMetadataCaptured' >/dev/null || fail "达摩盘细分赛道没有区分权威属性全集与已观察矩阵"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'function rolling7TrackSnapshotMatchesTarget(value, targetRequest = null)' >/dev/null || fail "达摩盘赛道缓存未绑定精确周期和目标日期"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'readyWhen: value => value?.marketTrackTemplateReady === true' >/dev/null || fail "达摩盘赛道懒加载模板没有稳定等待"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'const retained = {' >/dev/null || fail "达摩盘本轮赛道失败时不会保留最后有效矩阵"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'latestAttempt: {' >/dev/null || fail "达摩盘本轮赛道失败没有独立记录最近尝试"
+unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_MARKET_NORMALIZED_REPORT_MAX_BYTES = 8 * 1024 * 1024' >/dev/null || fail "达摩盘类目报告上传容量不足"
 if unzip -p "$DMP_ZIP_PATH" '*direct-service-worker.js' | grep -F 'SANJIE_IMPORT_ENABLED' >/dev/null; then
   fail "达摩盘插件仍保留已淘汰的导入占位开关"
 fi
 unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'data-report-watermark' >/dev/null || fail "达摩盘本机报告缺少全篇水印"
 unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F '少壮AI自动化 · shaozhuangai.com' >/dev/null || fail "达摩盘本机报告水印品牌不一致"
 unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'Array.from({ length: 54 }' >/dev/null || fail "达摩盘本机报告水印未覆盖全篇"
-unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘成长报告曲线点缺少悬停数值"
-unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'data-chart-tooltip' >/dev/null || fail "达摩盘成长报告曲线缺少悬停浮层"
 unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F '.table-shell thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘本机报告表头不是统一绿色白字"
-unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F '.table-shell tbody{background:#fff}' >/dev/null || fail "达摩盘本机报告缺少定版浅色表格背景"
-unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F '.table-shell tbody td{background-color:#fff}' >/dev/null || fail "达摩盘本机报告正文未隔离黑色表格样式"
+unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F '.table-shell tbody td{background-color:#fff}' >/dev/null || fail "达摩盘本机报告表格正文缺少明确浅色背景"
+unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'tbody tr:nth-child(even)>td{background-color:#f9fbfb}' >/dev/null || fail "达摩盘本机报告表格缺少浅色隔行背景"
+unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘本机商品曲线缺少逐点悬停"
+unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -F 'data-chart-tooltip' >/dev/null || fail "达摩盘本机商品曲线缺少数值提示层"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘本机类目曲线缺少逐点悬停"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const TRACK_ARCHIVE_TABLE_PREFIX = "细分赛道矩阵-"' >/dev/null || fail "达摩盘类目报告缺少按属性稳定命名的细分赛道归档表"
+if unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'name: "细分赛道数据状态"' >/dev/null; then
+  fail "达摩盘类目报告仍对用户展示赛道完整性诊断"
+fi
+if unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -Eq '细分赛道数据待补采|货品增长机会待补采|变化值为分值绝对差'; then
+  fail "达摩盘类目报告仍展示补采或计算逻辑"
+fi
+if unzip -p "$DMP_ZIP_PATH" 'html-writer.js' | grep -Eq '<ul class="data-notice">|<p class="section-note">|<small class="metric-scope">'; then
+  fail "达摩盘商品报告仍展示工程口径或缺失诊断"
+fi
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const TRACK_ARCHIVE_MAX_ROWS = 5000' >/dev/null || fail "达摩盘细分赛道归档缺少安全分片上限"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F '"搜索潜力", "成交潜力", "拉新潜力", "蓝海指数"' >/dev/null || fail "达摩盘细分赛道矩阵不是固定十列紧凑合同"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'archiveTablesFromAtomicGroups' >/dev/null || fail "达摩盘货品增长机会归档缺少原子分片"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F -- '-分片${String' >/dev/null || fail "达摩盘细分赛道归档缺少稳定分片命名"
+unzip -p "$DMP_ZIP_PATH" '*rolling7-report.js' | grep -F 'bindChartTooltips' >/dev/null || fail "达摩盘本机类目曲线未绑定悬停交互"
 unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell thead th,.extra-table thead th{color:#fff!important;background:#0d716b!important' >/dev/null || fail "达摩盘竞争态势报告表头不是统一绿色白字"
 unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.table-shell tbody td,.extra-table tbody td{background-color:#fff}' >/dev/null || fail "达摩盘竞争态势报告正文未使用浅色背景"
 unzip -p "$DMP_ZIP_PATH" 'modes/competition-shop/html-writer.js' | grep -F '.numeric{text-align:right;vertical-align:middle;font-variant-numeric:tabular-nums}' >/dev/null || fail "达摩盘竞争态势报告数值未垂直居中靠右"
@@ -365,19 +595,22 @@ unzip -p "$DMP_ZIP_PATH" '*direct-core.js' | grep -F 'sanitizeRenderData' >/dev/
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'costPerClick(allocated, click)' >/dev/null || fail "达摩盘场景 CPC 未按分配花费与点击区间计算"
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'returnOnSpend(directDealAmount, allocated)' >/dev/null || fail "达摩盘场景 ROI 未按成交额区间与分配花费计算"
 unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'const closureGroups = new Map()' >/dev/null || fail "达摩盘场景分配缺少比例与金额闭合校验"
-unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'SUBJECT_MINIMUM_PROMOTION_CONTRACT' >/dev/null || fail "达摩盘安装包缺少主体投放最低合同"
-unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'subjectPromotionSceneIssues' >/dev/null || fail "达摩盘安装包未审计主体一级推广场景"
-unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F '付费GMV' >/dev/null || fail "达摩盘安装包未归一付费GMV别名"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'SUBJECT_MINIMUM_PROMOTION_CONTRACT' >/dev/null || fail "达摩盘安装包缺少主体推广消耗、费比、ROI、PPC 最低合同"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'missingSubjectMinimumPromotionMetrics' >/dev/null || fail "达摩盘安装包不会阻断主体最低投放指标缺失"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"]' >/dev/null || fail "达摩盘安装包未兼容付费金额占比历史名称"
+unzip -p "$DMP_ZIP_PATH" '*completeness-engine.js' | grep -F 'const contribution = safeIntervalDivide(metrics[side].paidGmv, metrics[side].totalGmv, {' >/dev/null || fail "达摩盘安装包付费金额占比公式不正确"
+unzip -p "$DMP_ZIP_PATH" 'competition-item-supplement.js' | grep -F 'const AGGREGATE_DIRECT_FIELDS = Object.freeze(new Set(["paidGmv", "roi"]));' >/dev/null || fail "达摩盘安装包未固定对手 30 日汇总直取字段"
+unzip -p "$DMP_ZIP_PATH" 'completeness-engine.js' | grep -F 'preferAggregateDirect: daysInclusive(period.startDate, period.endDate) === 30' >/dev/null || fail "达摩盘安装包未把汇总直取限制为精确 30 天"
+unzip -p "$DMP_ZIP_PATH" 'report-engine.js' | grep -F 'const periodDirect = side === "competitor" && ["paidGmv", "roi"].includes(key)' >/dev/null || fail "达摩盘安装包未优先读取目标对手汇总直取值"
+unzip -p "$DMP_ZIP_PATH" 'report-engine.js' | grep -F '分日表不调用本函数中的 periodDirectMetrics' >/dev/null || fail "达摩盘安装包未锁定汇总与逐日分源边界"
+require_fixed 'preferAggregateDirect: daysInclusive(period.startDate, period.endDate) === 30' public/tools/dmp-report-engine/completeness-engine.js "达摩盘官网引擎未把汇总直取限制为精确 30 天"
+require_fixed 'const periodDirect = side === "competitor" && ["paidGmv", "roi"].includes(key)' public/tools/dmp-report-engine/report-engine.js "达摩盘官网引擎未优先读取目标对手汇总直取值"
+require_fixed '分日表不调用本函数中的 periodDirectMetrics' public/tools/dmp-report-engine/report-engine.js "达摩盘官网引擎未锁定汇总与逐日分源边界"
+cmp -s <(unzip -p "$DMP_ZIP_PATH" 'completeness-engine.js') public/tools/dmp-report-engine/completeness-engine.js || fail "达摩盘 ZIP 与官网完整性引擎不一致"
+cmp -s <(unzip -p "$DMP_ZIP_PATH" 'report-engine.js') public/tools/dmp-report-engine/report-engine.js || fail "达摩盘 ZIP 与官网报告引擎不一致"
+unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F 'const overviewMetrics = CORE_METRIC_CONTRACT.map' >/dev/null || fail "达摩盘安装包未把双侧八指标写入报告门禁"
 unzip -p "$DMP_ZIP_PATH" '*report-engine.js' | grep -F '投入产出比|投产比|ROI|ROAS' >/dev/null || fail "达摩盘安装包仍可能把投产比格式化为百分比"
 unzip -p "$DMP_ZIP_PATH" '*direct-main.js' | grep -F 'indexCardTemplates' >/dev/null || fail "达摩盘安装包未采集同页全部核心指标卡"
-unzip -p "$DMP_ZIP_PATH" '*direct-main.js' | grep -F '"/api/subdivide/market/item/chance": "GET"' >/dev/null || fail "达摩盘安装包未放行机会类型读接口"
-unzip -p "$DMP_ZIP_PATH" '*track-engine.js' | grep -F 'function parseChance' >/dev/null || fail "达摩盘安装包未解析动态机会分类"
-unzip -p "$DMP_ZIP_PATH" '*track-engine.js' | grep -F 'opportunities' >/dev/null || fail "达摩盘安装包未建立机会周期快照"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F '<h2>货品增长机会</h2>' >/dev/null || fail "达摩盘类目报告未展示货品增长机会"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'function buildTrackOpportunityArchiveTables' >/dev/null || fail "达摩盘类目报告未归档机会明细"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'Math.round(raw * 100)' >/dev/null || fail "达摩盘赛道矩阵未使用官方百分制口径"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'data-chart-point' >/dev/null || fail "达摩盘类目趋势点缺少悬停数值"
-unzip -p "$DMP_ZIP_PATH" '*rolling7-html-writer.js' | grep -F 'const path = points.map((point, index) =>' >/dev/null || fail "达摩盘类目趋势错误压缩缺失日期横轴"
 if unzip -p "$DMP_ZIP_PATH" '*direct-popup.html' | grep -Eq 'XLSX|下载 HTML|清除本地结果'; then
   fail "达摩盘打爆路径弹窗仍暴露已移除的下载或清理入口"
 fi
@@ -393,6 +626,16 @@ fi
 
 actual_dmp_zip_sha256="$(sha256_file "$DMP_ZIP_PATH")"
 [[ "$actual_dmp_zip_sha256" == "$DMP_ZIP_SHA256" ]] || fail "达摩盘 v${DMP_VERSION} ZIP 哈希不一致：$actual_dmp_zip_sha256"
+actual_frozen_dmp_v2359_sha256="$(sha256_file "$FROZEN_DMP_V2359_PATH")"
+[[ "$actual_frozen_dmp_v2359_sha256" == "$FROZEN_DMP_V2359_SHA256" ]] || fail "达摩盘 v2.3.59 黄金回滚包哈希不一致：$actual_frozen_dmp_v2359_sha256"
+actual_frozen_dmp_v2359_size="$(wc -c < "$FROZEN_DMP_V2359_PATH" | tr -d '[:space:]')"
+[[ "$actual_frozen_dmp_v2359_size" == "$FROZEN_DMP_V2359_SIZE_BYTES" ]] || fail "达摩盘 v2.3.59 黄金回滚包大小不一致：$actual_frozen_dmp_v2359_size"
+
+# 官网签名更新包必须与正式 ZIP、版本路由和迁移包逐文件一致。
+require_file "frozen/extension-update-public-key.json"
+require_file "frozen/extension-updates-v1.json"
+require_file "scripts/verify-extension-updates.mjs"
+node scripts/verify-extension-updates.mjs || fail "官网签名更新包验证未通过"
 
 echo "发布保护通过：工程、登录、密码哈希、数据库模型、AI 工具页、少壮AI v${EXPECTED_VERSION} 与达摩盘 v${DMP_VERSION} 插件包均匹配。"
 

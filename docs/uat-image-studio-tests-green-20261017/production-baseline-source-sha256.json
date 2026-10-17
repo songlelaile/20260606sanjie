@@ -1,5 +1,6 @@
 {
   ".eslintrc.json": "8d4a8d81dab1c22bcb28635249606f2e59fa816e8e58c56eecf6d2430949847a",
+  "frozen/extension-updates-v1.json": "760df25f4aa2d21f3373ea51c9fd4dcf56111fdfa3a59851a033ff332ca4b5e3",
   "next-env.d.ts": "85ae5aee75f011967cf2d25cbc342f62d69314e9d925f7f4aa3456fc2cffcca6",
   "next.config.mjs": "ae34d7173fa3c2bfcd0845400697385d4599f6e64c6a9fcbdf026e0a6f967966",
   "package-lock.json": "d85460213b6352e842110237ca0fa6e9f0fee1e6b0d7fc60480054d03ab58469",
@@ -77,6 +78,8 @@
   "public/creative/src/vendor/xlsx.full.min.js": "cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41",
   "public/creative/web-chrome.js": "d471f81541555650093da0c670f00a4613d7b6b7b18d1d94253e3f4dbc095c73",
   "public/creative/web-video-host.js": "ab0e2be0aced990f1be8b4f6bd1260801aad8d3a4ba640b870d7d3e6014895a9",
+  "public/tools/dmp-report-engine/completeness-engine.js": "21d2d0a1b554e54530e06c21e70b2680a7bab411601c3e827e0ce0745cee29c0",
+  "public/tools/dmp-report-engine/report-engine.js": "6495010735c43c792864c13c85146d3542aa75e365b3afaa12dbb74bed1beffa",
   "scripts/adopt-direct-native-billing.ts": "3252ea4919ea4382b89de55516755aa6b670cb02d690dfb14249994e9006ff8b",
   "scripts/build-credit-v3-bundles.mjs": "9691ab6fe48db56296d9b3c17cf35372ae968a56b08017cffab0bd20315174dc",
   "scripts/image-prompt-lab-tenant-errors.node-test.mjs": "4adc375bd921210d9b502c15e6925ccc663cf750309adaff906dac153085c73c",
@@ -84,6 +87,7 @@
   "scripts/patch-next-middleware-finalize.mjs": "5ce21125eabb21b02f085eb1e2cbd2590c6188025cdcdcda94e15afa92596f5f",
   "scripts/payment-uat-db.d.mts": "11ee63d5a2de8afd7994f9871b95d387fbb77f2a8b7924ec9a8dede313a2cdda",
   "scripts/payment-uat-db.mjs": "3d023ad4632541111f71eb322d2b6847e12007447abdea13d359ed99b4d41a51",
+  "scripts/predeploy-guard.sh": "672ab36954e41a4d2e2ed5b86b8ab22630d33397949b23a55484da3b00e03e4a",
   "scripts/reconcile-gateway-video.ts": "28ec8cb5b211cb0fa8027ac03fcd07e13b5bb64f8e89bb16f0b1ff596d747fea",
   "scripts/reconcile-native-video.ts": "8c53e2ad42933af5b11dc732370886c748173cbe3819dd21298c7deae692c7fc",
   "scripts/reference-detail-request-safety.node-test.mjs": "ab29bd6e5f2f335b0854444bf4107fbf1eaf318389f893a9624369a506f185be",

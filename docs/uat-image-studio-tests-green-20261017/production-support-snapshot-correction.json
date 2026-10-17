@@ -1,0 +1,40 @@
+{
+  "applicationBehaviorModified": false,
+  "copiedBytesUnmodified": true,
+  "correctedSourceFileCount": 746,
+  "databaseMigrationsRun": false,
+  "downloadManifestSha256": "e9ce5f6ae79bc92bff2b9dfbe93aa457c00f20f6bb9081e90029a320e0f96b01",
+  "files": {
+    "frozen/extension-updates-v1.json": {
+      "sha256": "760df25f4aa2d21f3373ea51c9fd4dcf56111fdfa3a59851a033ff332ca4b5e3",
+      "size": 7605
+    },
+    "public/tools/dmp-report-engine/completeness-engine.js": {
+      "sha256": "21d2d0a1b554e54530e06c21e70b2680a7bab411601c3e827e0ce0745cee29c0",
+      "size": 168877
+    },
+    "public/tools/dmp-report-engine/report-engine.js": {
+      "sha256": "6495010735c43c792864c13c85146d3542aa75e365b3afaa12dbb74bed1beffa",
+      "size": 104891
+    },
+    "scripts/predeploy-guard.sh": {
+      "sha256": "672ab36954e41a4d2e2ed5b86b8ab22630d33397949b23a55484da3b00e03e4a",
+      "size": 69239
+    }
+  },
+  "immutableSupportingBaselineFiles": [
+    "frozen/extension-updates-v1.json",
+    "public/tools/dmp-report-engine/completeness-engine.js",
+    "public/tools/dmp-report-engine/report-engine.js",
+    "scripts/predeploy-guard.sh"
+  ],
+  "localReferenceFilesUsed": false,
+  "previousBaselineCommit": "8eaf7bb5550e3794ed5814951858aac3c1cc8825",
+  "previousSourceFileCount": 742,
+  "productionEnvironmentModified": false,
+  "productionRoot": "/opt/sanjie-releases/20261017-image-studio-optimize-v1",
+  "seedOrResetRun": false,
+  "snapshotCorrectionVersion": 1,
+  "source": "Production original raw-file export; independently verified against supplied size and SHA-256 manifest",
+  "sourceManifestSha256": "d5939bbce04bc5e5931cab0801376c9f8b979c940ac3c2ba541b6d364668fec3"
+}

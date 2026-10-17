@@ -1,8 +1,9 @@
 (function initDmpCompletenessEngine(root, factory) {
-  const api = factory();
+  const supplement = root.DmpCompetitionItemSupplement || (typeof module === "object" && module.exports ? require("./competition-item-supplement.js") : null);
+  const api = factory(supplement);
   if (typeof module === "object" && module.exports) module.exports = api;
   root.DmpCompletenessEngine = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function createDmpCompletenessEngine() {
+})(typeof globalThis !== "undefined" ? globalThis : this, function createDmpCompletenessEngine(competitionItemSupplement) {
   "use strict";
 
   // 浏览器内版本的 v2.0 completeness parser。这里不生成任何可见结论，只建立
@@ -48,19 +49,42 @@
   ]);
   const SUBJECT_MINIMUM_PROMOTION_METRICS = SUBJECT_MINIMUM_PROMOTION_CONTRACT;
 
+  // 商品成长报告的双方固定合同。sourceKeys 保留历史字段名，避免旧报告和旧官网
+  // 仍使用 roas / paidAmountShare 时被误判为缺失；对外统一暴露 canonical key。
+  const CORE_METRIC_CONTRACT = Object.freeze([
+    Object.freeze({ key: "totalGmv", label: "总GMV", sourceKeys: Object.freeze(["totalGmv"]) }),
+    Object.freeze({ key: "paidGmv", label: "付费成交额", sourceKeys: Object.freeze(["paidGmv"]) }),
+    Object.freeze({ key: "spend", label: "推广消耗", sourceKeys: Object.freeze(["spend"]) }),
+    Object.freeze({ key: "feeRatio", label: "费比", sourceKeys: Object.freeze(["feeRatio"]) }),
+    Object.freeze({ key: "roi", label: "ROI", sourceKeys: Object.freeze(["roi"]) }),
+    Object.freeze({ key: "ppc", label: "PPC", sourceKeys: Object.freeze(["ppc"]) }),
+    Object.freeze({ key: "paidGmvContribution", label: "付费金额占比", sourceKeys: Object.freeze(["paidGmvContribution", "paidAmountShare"]) }),
+    Object.freeze({ key: "globalROAS", label: "全域ROAS", sourceKeys: Object.freeze(["globalROAS", "roas"]) })
+  ]);
+
+  const VALUE_STATES = Object.freeze({
+    EXACT: "exact",
+    INTERVAL: "interval",
+    NA: "n/a",
+    MISSING: "missing",
+    INVALID: "invalid",
+    CONFLICT: "conflict"
+  });
+
   // INDEX_CARD 的同一业务指标会因页面版本或接口模板不同而出现不同名称。
   // 统一身份只用于同义去重，不改变接口披露的数值；列表顺序同时定义核心指标优先级。
   const METRIC_ALIAS_GROUPS = [
     { key: "marketingClicks", name: "营销推广点击量", aliases: ["营销推广点击量", "营销推广点击数", "营销推广点击", "广告点击量", "广告点击数", "推广点击量", "推广点击数", "付费点击量", "promotionclick", "promotionclicks", "adclick"] },
     { key: "naturalClicks", name: "自然点击量", aliases: ["自然点击量", "自然流量点击量", "organicclick"] },
-    { key: "orders", name: "成交笔数", aliases: ["成交笔数", "支付成交笔数", "支付笔数", "alipaycnt", "alipaycnt1d"] },
+    { key: "orders", name: "成交笔数", aliases: ["成交笔数", "支付成交笔数", "支付笔数", "alipaycnt"] },
     { key: "conversion", name: "支付转化率", aliases: ["支付转化率", "成交转化率", "支付成交转化率", "alipayconversion", "conversionrate"] },
     { key: "aov", name: "笔单价", aliases: ["笔单价", "客单价", "平均订单金额", "unitprice", "avgorder"] },
     { key: "cartRate", name: "加购率", aliases: ["加购率", "收藏加购率", "cartrate"] },
     { key: "visitors", name: "访客数", aliases: ["访客数", "访问人数", "访客", "uv"] },
     { key: "totalGmv", name: "总GMV", aliases: ["总gmv", "成交金额", "支付成交金额", "alipayamt", "gmv30d"] },
     { key: "paidGmv", name: "付费成交额", aliases: ["付费成交额", "付费成交金额", "付费GMV", "营销推广成交额", "营销推广成交金额", "营销推广GMV", "推广成交额", "推广成交金额", "推广GMV", "广告归因gmv", "广告成交额", "广告成交金额", "直接成交额", "直接成交金额", "直接支付金额", "directalipayamt", "directalipayamount", "gmv1d", "alipayamt1d"] },
-    { key: "paidOrders", name: "付费成交笔数", aliases: ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数"] },
+    { key: "paidAmountShare", name: "付费金额占比", aliases: ["付费金额占比", "付费成交额占比", "付费gmv贡献率", "广告gmv贡献率", "广告归因gmv贡献率"] },
+    { key: "paidOrders", name: "付费成交笔数", aliases: ["付费成交笔数", "营销推广成交笔数", "广告成交笔数", "广告归因成交笔数", "alipaycnt1d"] },
     { key: "spend", name: "推广消耗", aliases: ["推广消耗", "推广花费", "广告消耗", "广告花费", "广告/推广消耗", "营销推广消耗", "营销推广花费", "总消耗", "总花费", "charge", "adspend", "promotioncost"] },
     { key: "roi", name: "ROI", aliases: ["roi", "直接roi", "roi1d", "directroi", "推广roi", "营销推广roi", "投入产出比", "直接投入产出比", "直接投产比", "投产比"] },
     { key: "ppc", name: "PPC", aliases: ["ppc", "cpc", "clickcost", "costclick", "costperclick", "cost_per", "点击成本", "平均点击成本", "点击单价", "平均点击单价", "营销推广点击单价", "广告点击单价"] },
@@ -196,6 +220,109 @@
     };
   }
 
+  // A failed response may describe the transport/body/API failure in `parser`,
+  // while a later valid response describes the business parser (for example
+  // `api` versus `index-card`).  Replacement therefore has to infer the
+  // expected parser from the immutable request shape, not from the failure
+  // phase.  Only period-bound endpoints participate in replacement below;
+  // periodless item/success-definition failures remain blocking.
+  function expectedGrowthParser(record) {
+    const path = recordPath(record);
+    if (path === "/api/goods/item/info") return "item-info";
+    if (path === "/api/goods/grow/define/success/load") return "selected-success-items";
+    if (path === "/api/goods/grow/define/success/item/list") return "success-item-search";
+    if (path === "/api/goods/grow/define/success") return "success-write-ack";
+    if (path === "/api/goods/grow/line") return "growth-definitions";
+    if (path === "/api/goods/grow/define/line/data") return "growth-line";
+    if (path === "/api/goods/grow/comparison/scene/keyword") return "growth-keywords";
+    if (path === "/api/goods/grow/comparison/scene") return "growth-scenes";
+    if (path === "/dataplatform/dataset/report/query") {
+      const requestType = datasetRequestType(record);
+      if (requestType === "INDEX_CARD") return "index-card";
+      if (requestType === "TABLE") return "dataset-table";
+    }
+    return "";
+  }
+
+  function exactReplacementIds(values) {
+    const source = Array.isArray(values) ? values : String(values ?? "").split(",");
+    const normalized = source.map(value => String(value ?? "").trim()).filter(Boolean);
+    if (!normalized.length || normalized.some(value => !/^\d{6,20}$/.test(value))) return null;
+    return [...new Set(normalized)].sort();
+  }
+
+  function exactReplacementPeriod(startValue, endValue) {
+    const startDate = normalizeDate(startValue);
+    const endDate = normalizeDate(endValue);
+    const dates = enumerateDates(startDate, endDate);
+    if (!startDate || !endDate || !dates.length || dates[0] !== startDate || dates.at(-1) !== endDate) return null;
+    return { startDate, endDate };
+  }
+
+  function growthRecordReplacementScope(record) {
+    const method = String(record?.method || record?.request?.method || "").trim().toUpperCase();
+    const path = recordPath(record);
+    const parser = expectedGrowthParser(record);
+    if (!/^(?:GET|POST)$/.test(method) || !path || !parser) return null;
+
+    let subjectItemIds = null;
+    let competitorItemIds = null;
+    let subjectPeriod = null;
+    let competitorPeriod = null;
+    let variant = null;
+
+    if (path === "/dataplatform/dataset/report/query") {
+      const scope = datasetScope(record);
+      const requestType = datasetRequestType(record);
+      const templateId = String(record?.templateId || "").trim();
+      const templateFingerprint = String(record?.templateFingerprint || "").trim();
+      subjectItemIds = exactReplacementIds(scope.subjectItemIds);
+      competitorItemIds = exactReplacementIds(scope.competitorItemIds);
+      subjectPeriod = exactReplacementPeriod(scope.subjectStart, scope.subjectEnd);
+      competitorPeriod = exactReplacementPeriod(scope.competitorStart, scope.competitorEnd);
+      if (!requestType || (!templateId && !templateFingerprint)) return null;
+      // Keep both immutable identifiers when available. Treating templateId as
+      // an alias for a different body fingerprint could otherwise let a newer
+      // response clear an unrelated template failure.
+      variant = { requestType, templateId, templateFingerprint };
+    } else if (path === "/api/goods/grow/define/line/data"
+      || path === "/api/goods/grow/comparison/scene"
+      || path === "/api/goods/grow/comparison/scene/keyword") {
+      subjectItemIds = exactReplacementIds(getParam(record, ["itemId", "entityId"]));
+      competitorItemIds = exactReplacementIds(getParam(record, ["successItemId", "succItemId", "successItemIds", "succItemIds"]));
+      subjectPeriod = exactReplacementPeriod(
+        getParam(record, ["startDate", "start", "beginDate"]),
+        getParam(record, ["endDate", "end", "finishDate"])
+      );
+      // These comparison endpoints apply the same exact requested period to
+      // both objects; keeping two explicit period segments prevents a future
+      // paired-period request from collapsing into this key accidentally.
+      competitorPeriod = subjectPeriod ? { ...subjectPeriod } : null;
+      variant = path === "/api/goods/grow/comparison/scene"
+        ? { parentSceneId: String(getParam(record, ["sceneLevel1Id", "parentSceneId"]) || "") }
+        : {};
+    } else {
+      return null;
+    }
+
+    if (!subjectItemIds || !competitorItemIds || !subjectPeriod || !competitorPeriod || !variant) return null;
+    return {
+      method,
+      path,
+      parser,
+      subjectItemIds,
+      competitorItemIds,
+      subjectPeriod,
+      competitorPeriod,
+      variant
+    };
+  }
+
+  function growthRecordReplacementKey(record) {
+    const scope = growthRecordReplacementScope(record);
+    return scope ? JSON.stringify(scope) : "";
+  }
+
   function magnitudeScalar(value, inheritedMultiplier = 1) {
     if (typeof value === "number" && Number.isFinite(value)) return value;
     if (typeof value !== "string") return null;
@@ -240,21 +367,7 @@
   }
 
   function costPerClick(spend, clicks) {
-    if (!Number.isFinite(spend) || spend < 0) return null;
-    const exactClicks = numberOrNull(clicks);
-    if (exactClicks != null) return exactClicks > 0 ? round(spend / exactClicks) : null;
-    const range = parseVagueRange(clicks);
-    if (!range) return null;
-    const minimumClicks = Number.isFinite(range.min) ? range.min : null;
-    const maximumClicks = Number.isFinite(range.max) ? range.max : null;
-    if (minimumClicks != null && minimumClicks > 0 && maximumClicks != null && maximumClicks > 0) {
-      const lower = round(spend / maximumClicks);
-      const upper = round(spend / minimumClicks);
-      return lower === upper ? lower : `${lower.toFixed(2)}~${upper.toFixed(2)}`;
-    }
-    if (maximumClicks != null && maximumClicks > 0) return `>${round(spend / maximumClicks).toFixed(2)}`;
-    if (minimumClicks != null && minimumClicks > 0) return `<${round(spend / minimumClicks).toFixed(2)}`;
-    return null;
+    return safeIntervalDivide(spend, clicks, { digits: 2, metric: "PPC", outward: true }).value;
   }
 
   function sumMetricRanges(values) {
@@ -283,39 +396,15 @@
   }
 
   function returnOnSpend(paidGmv, spend) {
-    if (!Number.isFinite(spend) || spend <= 0) return null;
-    const exactGmv = numberOrNull(paidGmv);
-    if (exactGmv != null) return exactGmv >= 0 ? round(exactGmv / spend) : null;
-    const range = parseVagueRange(paidGmv);
-    if (!range) return null;
-    const minimumGmv = Number.isFinite(range.min) ? range.min : null;
-    const maximumGmv = Number.isFinite(range.max) ? range.max : null;
-    if (range.upperOpen && maximumGmv != null) return `<${round(maximumGmv / spend).toFixed(2)}`;
-    if (range.lowerOpen && minimumGmv != null) return `>${round(minimumGmv / spend).toFixed(2)}`;
-    if (minimumGmv != null && maximumGmv != null) {
-      const lower = round(minimumGmv / spend);
-      const upper = round(maximumGmv / spend);
-      return lower === upper ? lower : `${lower.toFixed(2)}~${upper.toFixed(2)}`;
-    }
-    if (maximumGmv != null) return `<${round(maximumGmv / spend).toFixed(2)}`;
-    if (minimumGmv != null) return `>${round(minimumGmv / spend).toFixed(2)}`;
-    return null;
+    return safeIntervalDivide(paidGmv, spend, { digits: 2, metric: "ROI", outward: true }).value;
+  }
+
+  function paidGmvFromSpendAndRoi(spend, roi) {
+    return safeIntervalMultiply(spend, roi, { digits: 2, metric: "付费成交额", outward: true }).value;
   }
 
   function contributionRatio(value, total) {
-    if (!Number.isFinite(total) || total <= 0) return null;
-    const exact = numberOrNull(value);
-    if (exact != null) return exact >= 0 ? round(exact / total, 6) : null;
-    const range = parseVagueRange(value);
-    if (!range) return null;
-    const minimum = Number.isFinite(range.min) ? round(range.min / total, 6) : null;
-    const maximum = Number.isFinite(range.max) ? round(range.max / total, 6) : null;
-    if (range.upperOpen && maximum != null) return `<${maximum}`;
-    if (range.lowerOpen && minimum != null) return `>${minimum}`;
-    if (minimum != null && maximum != null) return minimum === maximum ? minimum : `${minimum}~${maximum}`;
-    if (maximum != null) return `<${maximum}`;
-    if (minimum != null) return `>${minimum}`;
-    return null;
+    return safeIntervalDivide(value, total, { digits: 6, metric: "付费金额占比", compact: true }).value;
   }
 
   function round(value, digits = 2) {
@@ -379,6 +468,268 @@
     return exact == null || exact < 0 ? null : { min: exact, max: exact, exact: true };
   }
 
+  function metricValueState(value, options = {}) {
+    const explicitState = value && typeof value === "object" && !Array.isArray(value)
+      ? String(value.state || value.valueState || "").toLowerCase()
+      : "";
+    if (Object.values(VALUE_STATES).includes(explicitState)) {
+      return {
+        state: explicitState,
+        value: Object.prototype.hasOwnProperty.call(value, "value") ? value.value : null,
+        reason: String(value.reason || options.reason || explicitState),
+        range: value.range || null
+      };
+    }
+    if (value === null || value === undefined || (typeof value === "string" && /^(?:\s*|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value))) {
+      return { state: VALUE_STATES.MISSING, value: null, reason: String(options.reason || "源字段缺失"), range: null };
+    }
+    if (typeof value === "string" && /^(?:n\/?a|不适用|无法计算|分母为0)$/i.test(value.trim())) {
+      return { state: VALUE_STATES.NA, value: null, reason: String(options.reason || value.trim()), range: null };
+    }
+    if (typeof value === "number" && (!Number.isFinite(value) || (!options.allowNegative && value < 0))) {
+      return { state: VALUE_STATES.INVALID, value: null, reason: String(options.reason || "数值非法"), range: null };
+    }
+    const range = parseVagueRange(value);
+    if (!range || (!options.allowNegative && ((Number.isFinite(range.min) && range.min < 0) || (Number.isFinite(range.max) && range.max < 0)))) {
+      return { state: VALUE_STATES.INVALID, value: null, reason: String(options.reason || "无法识别为精确值或合法区间"), range: null };
+    }
+    return {
+      state: range.exact ? VALUE_STATES.EXACT : VALUE_STATES.INTERVAL,
+      value: range.exact ? range.min : value,
+      reason: "",
+      range
+    };
+  }
+
+  function isNumericMetricValue(value) {
+    return [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(metricValueState(value).state);
+  }
+
+  function metricRangesCompatible(leftValue, rightValue, tolerance = 0.01) {
+    const left = metricValueState(leftValue);
+    const right = metricValueState(rightValue);
+    if (![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(left.state)
+      || ![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(right.state)) return false;
+    const leftRange = left.range;
+    const rightRange = right.range;
+    const scale = Math.max(
+      1,
+      Math.abs(leftRange.min || 0), Math.abs(leftRange.max || 0),
+      Math.abs(rightRange.min || 0), Math.abs(rightRange.max || 0)
+    );
+    const slack = scale * tolerance;
+    const leftMin = Number.isFinite(leftRange.min) ? leftRange.min : -Infinity;
+    const leftMax = Number.isFinite(leftRange.max) ? leftRange.max : Infinity;
+    const rightMin = Number.isFinite(rightRange.min) ? rightRange.min : -Infinity;
+    const rightMax = Number.isFinite(rightRange.max) ? rightRange.max : Infinity;
+    return leftMin <= rightMax + slack && rightMin <= leftMax + slack;
+  }
+
+  function parseDirectionalComparison(value) {
+    if (typeof value !== "string") return null;
+    const text = value.replace(/\s+/g, "").trim();
+    let match = text.match(/^(?:比|较)(本品|对手|竞品)(高|低)$/);
+    if (!match) {
+      const reversed = text.match(/^(高|低)于(本品|对手|竞品)$/);
+      if (reversed) match = [reversed[0], reversed[2], reversed[1]];
+    }
+    if (!match) return null;
+    return {
+      relation: match[2] === "高" ? "higher" : "lower",
+      referenceSide: match[1] === "本品" ? "subject" : "competitor"
+    };
+  }
+
+  // 明确比较方向只能收敛为数学上可证明的单边区间，不能猜一个有限区间。
+  // 例如参考值为 5~6，目标“比参考高”最多只能确定为 >5。
+  function resolveDirectionalBound(directionValue, referenceValue, targetSide, options = {}) {
+    const direction = parseDirectionalComparison(directionValue);
+    const reference = metricValueState(referenceValue);
+    if (!direction || direction.referenceSide === targetSide
+      || ![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(reference.state)) return null;
+    const digits = Number.isInteger(options.digits) ? options.digits : 6;
+    if (direction.relation === "higher" && Number.isFinite(reference.range?.min)) {
+      return `>${formattedBound(reference.range.min, digits, true)}`;
+    }
+    if (direction.relation === "lower" && Number.isFinite(reference.range?.max)) {
+      return `<${formattedBound(reference.range.max, digits, true)}`;
+    }
+    return null;
+  }
+
+  function metricContextMismatch(left, right) {
+    if (!left || !right) return "";
+    const comparisons = [
+      ["entityId", "对象不匹配"],
+      ["startDate", "周期开始日期不匹配"],
+      ["endDate", "周期结束日期不匹配"],
+      ["coverageDays", "覆盖天数不匹配"],
+      ["periodKey", "周期口径不匹配"]
+    ];
+    for (const [key, reason] of comparisons) {
+      if (left[key] !== undefined && left[key] !== null && left[key] !== ""
+        && right[key] !== undefined && right[key] !== null && right[key] !== ""
+        && String(left[key]) !== String(right[key])) return reason;
+    }
+    return "";
+  }
+
+  function formattedBound(value, digits, compact) {
+    const rounded = round(value, digits);
+    if (!Number.isFinite(rounded)) return "";
+    return compact ? String(rounded) : rounded.toFixed(digits);
+  }
+
+  // 所有比值统一经过这一层。它不取区间中点，并允许调用方携带对象/周期/
+  // 覆盖上下文；上下文不一致时返回 conflict，而不是产出一个看似精确的值。
+  function safeIntervalDivide(numeratorValue, denominatorValue, options = {}) {
+    const digits = Number.isInteger(options.digits) ? options.digits : 6;
+    const compact = options.compact === true;
+    const numerator = metricValueState(numeratorValue, { reason: options.numeratorReason || "分子缺失" });
+    const denominator = metricValueState(denominatorValue, { reason: options.denominatorReason || "分母缺失" });
+    const base = {
+      state: VALUE_STATES.MISSING,
+      value: null,
+      reason: "",
+      metric: String(options.metric || "比值"),
+      numeratorState: numerator.state,
+      denominatorState: denominator.state
+    };
+    const contextReason = metricContextMismatch(options.numeratorContext, options.denominatorContext);
+    if (contextReason) return { ...base, state: VALUE_STATES.CONFLICT, reason: contextReason };
+    if ([VALUE_STATES.CONFLICT, VALUE_STATES.INVALID].includes(numerator.state)) return { ...base, state: numerator.state, reason: `分子${numerator.reason}` };
+    if ([VALUE_STATES.CONFLICT, VALUE_STATES.INVALID].includes(denominator.state)) return { ...base, state: denominator.state, reason: `分母${denominator.reason}` };
+    if (numerator.state === VALUE_STATES.NA || denominator.state === VALUE_STATES.NA) {
+      return { ...base, state: VALUE_STATES.NA, reason: numerator.state === VALUE_STATES.NA ? numerator.reason : denominator.reason };
+    }
+    if (numerator.state === VALUE_STATES.MISSING) return { ...base, reason: numerator.reason };
+    if (denominator.state === VALUE_STATES.MISSING) return { ...base, reason: denominator.reason };
+
+    const numeratorRange = numerator.range;
+    const denominatorRange = denominator.range;
+    const denominatorExactZero = denominatorRange.exact && denominatorRange.min === 0;
+    if (denominatorExactZero) return { ...base, state: VALUE_STATES.NA, reason: "分母为0" };
+    const denominatorGuaranteedPositive = (denominatorRange.exact && denominatorRange.min > 0)
+      || (denominatorRange.lowerOpen && Number.isFinite(denominatorRange.min) && denominatorRange.min >= 0)
+      || (Number.isFinite(denominatorRange.min) && denominatorRange.min > 0);
+    if (numeratorRange.exact && numeratorRange.min === 0) {
+      return denominatorGuaranteedPositive
+        ? { ...base, state: VALUE_STATES.EXACT, value: 0, reason: "" }
+        : { ...base, reason: "分母区间可能包含0，无法确认0比值" };
+    }
+
+    const nMin = Number.isFinite(numeratorRange.min) ? numeratorRange.min : null;
+    const nMax = Number.isFinite(numeratorRange.max) ? numeratorRange.max : null;
+    const dMin = denominatorGuaranteedPositive && Number.isFinite(denominatorRange.min) ? denominatorRange.min : null;
+    const dMax = Number.isFinite(denominatorRange.max) && denominatorRange.max > 0 ? denominatorRange.max : null;
+    if (numeratorRange.exact && denominatorRange.exact && dMin > 0) {
+      return { ...base, state: VALUE_STATES.EXACT, value: round(nMin / dMin, digits), reason: "" };
+    }
+
+    // A displayed interval must contain the mathematical interval after
+    // formatting. PPC requests outward rounding so the lower bound never
+    // rounds up and the upper bound never rounds down.
+    const scale = 10 ** digits;
+    const lowerRaw = nMin != null && dMax != null ? nMin / dMax : null;
+    const upperRaw = nMax != null && dMin != null && dMin > 0 ? nMax / dMin : null;
+    const lower = lowerRaw == null
+      ? null
+      : options.outward === true
+        ? Math.floor((lowerRaw + Number.EPSILON) * scale) / scale
+        : round(lowerRaw, digits);
+    const upper = upperRaw == null
+      ? null
+      : options.outward === true
+        ? Math.ceil((upperRaw - Number.EPSILON) * scale) / scale
+        : round(upperRaw, digits);
+    if (lower != null && upper != null) {
+      if (lower === upper && numeratorRange.exact && denominatorRange.exact) {
+        return { ...base, state: VALUE_STATES.EXACT, value: lower, reason: "" };
+      }
+      if (lower === 0 && (numeratorRange.upperOpen || denominatorRange.lowerOpen)) {
+        return { ...base, state: VALUE_STATES.INTERVAL, value: `<${formattedBound(upper, digits, compact)}`, reason: "" };
+      }
+      return {
+        ...base,
+        state: VALUE_STATES.INTERVAL,
+        value: `${formattedBound(lower, digits, compact)}~${formattedBound(upper, digits, compact)}`,
+        reason: ""
+      };
+    }
+    if (upper != null) return { ...base, state: VALUE_STATES.INTERVAL, value: `<${formattedBound(upper, digits, compact)}`, reason: "" };
+    if (lower != null && lower > 0) return { ...base, state: VALUE_STATES.INTERVAL, value: `>${formattedBound(lower, digits, compact)}`, reason: "" };
+    return { ...base, reason: "区间包含0且无法得到可靠边界" };
+  }
+
+  // 非负业务指标的乘积统一经过这一层。与安全除法一样，它不取区间
+  // 中点；同一对象、同一天或同一周期的上下文不一致时直接返回冲突。
+  function safeIntervalMultiply(leftValue, rightValue, options = {}) {
+    const digits = Number.isInteger(options.digits) ? options.digits : 6;
+    const compact = options.compact === true;
+    const left = metricValueState(leftValue);
+    const right = metricValueState(rightValue);
+    const base = {
+      state: VALUE_STATES.MISSING,
+      value: null,
+      reason: "",
+      metric: String(options.metric || "乘积"),
+      leftState: left.state,
+      rightState: right.state
+    };
+    const contextReason = metricContextMismatch(options.leftContext, options.rightContext);
+    if (contextReason) return { ...base, state: VALUE_STATES.CONFLICT, reason: contextReason };
+    if ([VALUE_STATES.CONFLICT, VALUE_STATES.INVALID].includes(left.state)) return { ...base, state: left.state, reason: `左乘数${left.reason}` };
+    if ([VALUE_STATES.CONFLICT, VALUE_STATES.INVALID].includes(right.state)) return { ...base, state: right.state, reason: `右乘数${right.reason}` };
+    if (left.state === VALUE_STATES.NA || right.state === VALUE_STATES.NA) {
+      return { ...base, state: VALUE_STATES.NA, reason: left.state === VALUE_STATES.NA ? left.reason : right.reason };
+    }
+    if (left.state === VALUE_STATES.MISSING) return { ...base, reason: String(options.leftReason || "左乘数缺失") };
+    if (right.state === VALUE_STATES.MISSING) return { ...base, reason: String(options.rightReason || "右乘数缺失") };
+
+    const leftRange = left.range;
+    const rightRange = right.range;
+    if ((leftRange.exact && leftRange.min === 0) || (rightRange.exact && rightRange.min === 0)) {
+      return { ...base, state: VALUE_STATES.EXACT, value: 0, reason: "" };
+    }
+    const leftMin = Number.isFinite(leftRange.min) ? leftRange.min : null;
+    const leftMax = Number.isFinite(leftRange.max) ? leftRange.max : null;
+    const rightMin = Number.isFinite(rightRange.min) ? rightRange.min : null;
+    const rightMax = Number.isFinite(rightRange.max) ? rightRange.max : null;
+    if (leftRange.exact && rightRange.exact) {
+      return { ...base, state: VALUE_STATES.EXACT, value: round(leftMin * rightMin, digits), reason: "" };
+    }
+
+    const scale = 10 ** digits;
+    const lowerRaw = leftMin != null && rightMin != null ? leftMin * rightMin : null;
+    const upperRaw = leftMax != null && rightMax != null ? leftMax * rightMax : null;
+    const lower = lowerRaw == null
+      ? null
+      : options.outward === true
+        ? Math.floor((lowerRaw + Number.EPSILON) * scale) / scale
+        : round(lowerRaw, digits);
+    const upper = upperRaw == null
+      ? null
+      : options.outward === true
+        ? Math.ceil((upperRaw - Number.EPSILON) * scale) / scale
+        : round(upperRaw, digits);
+    if (lower != null && upper != null) {
+      if (lower === 0 && (leftRange.upperOpen || rightRange.upperOpen)) {
+        return { ...base, state: VALUE_STATES.INTERVAL, value: `<${formattedBound(upper, digits, compact)}`, reason: "" };
+      }
+      return {
+        ...base,
+        state: VALUE_STATES.INTERVAL,
+        value: `${formattedBound(lower, digits, compact)}~${formattedBound(upper, digits, compact)}`,
+        reason: ""
+      };
+    }
+    if (upper != null) return { ...base, state: VALUE_STATES.INTERVAL, value: `<${formattedBound(upper, digits, compact)}`, reason: "" };
+    if (lower != null && (lower > 0 || ((leftRange.lowerOpen || rightRange.lowerOpen) && lower === 0))) {
+      return { ...base, state: VALUE_STATES.INTERVAL, value: `>${formattedBound(lower, digits, compact)}`, reason: "" };
+    }
+    return { ...base, reason: "区间无可靠乘积边界" };
+  }
+
   function calculableMetricValue(value) {
     const range = parseVagueRange(value);
     if (!range) return value ?? null;
@@ -439,7 +790,16 @@
     if (Array.isArray(card.fields) && Array.isArray(card.values)) {
       pairs = card.fields.slice(0, card.values.length).map((field, index) => ({ field, value: card.values[index] ?? {} }));
     } else if (Array.isArray(card.list)) {
-      pairs = card.list.map(row => ({ field: row.field || { name: row.name, description: row.description, id: row.id }, value: row.value && typeof row.value === "object" ? row.value : row }));
+      pairs = card.list.map(row => ({
+        field: row.field || { name: row.name, description: row.description, id: row.id },
+        // 真实 INDEX_CARD 会把主体 value 写成 { indicatorValue }，同时把
+        // 对手 c_value 作为该行的兄弟字段。旧逻辑一旦看到对象 value 就只保留
+        // row.value，会把 c_value 区间整个丢掉。合并两层后既兼容兄弟
+        // c_value，也兼容 value 内部自带 itemValue/succItemValue 的结构。
+        value: row?.value && typeof row.value === "object" && !Array.isArray(row.value)
+          ? { ...row, ...row.value }
+          : row
+      }));
     } else return null;
     const metrics = {};
     const metricRows = [];
@@ -460,8 +820,8 @@
       const previous = metrics[name];
       metrics[name] = previous ? {
         ...previous,
-        subject: isDisclosedMetric(previous.subject) ? previous.subject : parsed.subject,
-        competitor: isDisclosedMetric(previous.competitor) ? previous.competitor : parsed.competitor,
+        subject: preferredMetricValue(previous.subject, parsed.subject),
+        competitor: preferredMetricValue(previous.competitor, parsed.competitor),
         difference: isDisclosedMetric(previous.difference) ? previous.difference : parsed.difference,
         trend: isDisclosedMetric(previous.trend) ? previous.trend : parsed.trend
       } : parsed;
@@ -700,8 +1060,8 @@
       const previous = metrics[name];
       metrics[name] = previous ? {
         ...previous,
-        subject: isDisclosedMetric(previous.subject) ? previous.subject : row.subject,
-        competitor: isDisclosedMetric(previous.competitor) ? previous.competitor : row.competitor,
+        subject: preferredMetricValue(previous.subject, row.subject),
+        competitor: preferredMetricValue(previous.competitor, row.competitor),
         difference: isDisclosedMetric(previous.difference) ? previous.difference : row.difference,
         trend: isDisclosedMetric(previous.trend) ? previous.trend : row.trend
       } : { ...row };
@@ -726,7 +1086,11 @@
     for (const [name, value] of Object.entries(card?.metrics || {})) {
       if (!identities.has(metricIdentity(name))) continue;
       for (const side of ["subject", "competitor", "difference", "trend"]) {
-        if (!isDisclosedMetric(merged[side]) && isDisclosedMetric(value?.[side])) merged[side] = value[side];
+        if (side === "subject" || side === "competitor") {
+          merged[side] = preferredMetricValue(merged[side], value?.[side]);
+        } else if (!isDisclosedMetric(merged[side]) && isDisclosedMetric(value?.[side])) {
+          merged[side] = value[side];
+        }
       }
     }
     return merged;
@@ -759,10 +1123,10 @@
     function append(identity, name, candidates, core) {
       if (!candidates.length || emitted.has(identity)) return;
       const preferred = candidates.find(entry => normalizeMetricName(entry.name) === normalizeMetricName(name)) || candidates[0];
-      const firstValue = side => {
-        const candidate = candidates.find(entry => isDisclosedMetric(entry?.[side]));
-        return candidate ? alignedMetricValue(candidate[side]) : null;
-      };
+      const firstValue = side => alignedMetricValue(candidates.reduce(
+        (selected, entry) => preferredMetricValue(selected, entry?.[side]),
+        null
+      ));
       const subject = firstValue("subject");
       const competitor = firstValue("competitor");
       if (!isDisclosedMetric(subject) && !isDisclosedMetric(competitor)) return;
@@ -806,7 +1170,7 @@
     const subject = {
       marketingClicks: read("营销推广点击量", "subject"), naturalClicks: read("自然点击量", "subject"),
       orders: read("成交笔数", "subject"), conversion: read("支付转化率", "subject"), aov: read("笔单价", "subject"),
-      cartRate: read("加购率", "subject"), ipv: read("IPV", "subject"),
+      cartRate: read("加购率", "subject"), visitors: read("访客数", "subject"), ipv: read("IPV", "subject"),
       totalGmv: read("总GMV", "subject"),
       paidGmv: calculableMetricValue(paidGmv.subject), paidOrders: calculableMetricValue(paidOrders.subject),
       spend: read("推广消耗", "subject"), feeRatio: read("费比", "subject"),
@@ -815,28 +1179,36 @@
     const competitor = {
       marketingClicks: read("营销推广点击量", "competitor"), naturalClicks: read("自然点击量", "competitor"),
       orders: read("成交笔数", "competitor"), conversion: read("支付转化率", "competitor"), aov: read("笔单价", "competitor"),
-      cartRate: read("加购率", "competitor"), ipv: read("IPV", "competitor"),
+      cartRate: read("加购率", "competitor"), visitors: read("访客数", "competitor"), ipv: read("IPV", "competitor"),
       totalGmv: read("总GMV", "competitor"),
       paidGmv: calculableMetricValue(paidGmv.competitor), paidOrders: calculableMetricValue(paidOrders.competitor),
       spend: read("推广消耗", "competitor"), feeRatio: read("费比", "competitor"),
       roi: read("ROI", "competitor"), ppc: read("PPC", "competitor"), roas: read("全域ROAS", "competitor")
     };
     for (const side of [subject, competitor]) {
-      const orders = numberOrNull(side.orders);
-      const aov = numberOrNull(side.aov);
-      const conversion = numberOrNull(side.conversion);
-      if (!isDisclosedMetric(side.totalGmv)) side.totalGmv = orders != null && aov != null ? round(orders * aov) : null;
-      else side.totalGmv = calculableMetricValue(side.totalGmv);
-      const visitor = orders != null && conversion != null && conversion !== 0 ? round(orders / conversion) : null;
-      const ipvExact = numberOrNull(side.ipv);
-      const ipvRange = parseVagueRange(side.ipv);
-      const closed = visitor != null && ((ipvExact != null && ipvExact !== 0 && Math.abs(visitor - ipvExact) / Math.abs(ipvExact) <= 0.01) || rangeContains(ipvRange, visitor));
-      side.visitors = closed ? visitor : null;
-      side.visitorClosed = closed;
-      const exactSpend = numberOrNull(side.spend);
-      if (!isDisclosedMetric(side.feeRatio) && exactSpend != null && Number.isFinite(side.totalGmv) && side.totalGmv !== 0) {
-        side.feeRatio = round(exactSpend / side.totalGmv, 6);
-      }
+      captureDirectionalComparisons(side);
+      const namedVisitorDisclosed = isDisclosedMetric(side.visitors);
+      if (!isNumericMetricValue(side.totalGmv)) {
+        const calculated = safeIntervalMultiply(side.orders, side.aov, {
+          digits: 2, metric: "总GMV", outward: true
+        });
+        if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(calculated.state)) side.totalGmv = calculated.value;
+      } else side.totalGmv = calculableMetricValue(side.totalGmv);
+
+      const calculatedVisitor = safeIntervalDivide(side.orders, side.conversion, {
+        digits: 2, metric: "访客数", outward: true
+      });
+      const calculatedVisitorNumeric = [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(calculatedVisitor.state);
+      const visitorClosed = calculatedVisitorNumeric && (
+        namedVisitorDisclosed
+          ? (!isNumericMetricValue(side.visitors) || metricRangesCompatible(side.visitors, calculatedVisitor.value))
+          : metricRangesCompatible(side.ipv, calculatedVisitor.value)
+      );
+      if (!isNumericMetricValue(side.visitors) && visitorClosed) side.visitors = calculatedVisitor.value;
+      side.visitorClosed = visitorClosed;
+
+      applyCanonicalEfficiencyMetrics(side);
+      closePeriodMetricSet(side);
     }
     return {
       subject,
@@ -845,7 +1217,43 @@
     };
   }
 
-  function buildSubjectDaily(cards, subjectItemId, successItemId, period, periodMetrics) {
+  function previousOneDayPeriod(date) {
+    const parsed = Date.parse(`${date}T00:00:00.000Z`);
+    if (!Number.isFinite(parsed)) return null;
+    const previous = new Date(parsed - 86400000).toISOString().slice(0, 10);
+    return { startDate: previous, endDate: previous, days: 1 };
+  }
+
+  function summarizeExactDailySide(rows, expectedDates, periodSide) {
+    const missingDates = expectedDates.filter(date => !rows.some(row => row.date === date));
+    const unresolvedDates = rows.filter(row => !Number.isFinite(row.orders) || !Number.isFinite(row.gmv)).map(row => row.date);
+    const resolvedRows = rows.filter(row => Number.isFinite(row.orders) && Number.isFinite(row.gmv));
+    const orderTotal = round(resolvedRows.reduce((sum, row) => sum + row.orders, 0));
+    const gmvTotal = round(resolvedRows.reduce((sum, row) => sum + row.gmv, 0));
+    const expectedOrders = numberOrNull(periodSide?.orders);
+    const expectedGmv = numberOrNull(periodSide?.totalGmv);
+    const ordersClosed = Number.isFinite(expectedOrders) && resolvedRows.length === expectedDates.length
+      && Math.abs(orderTotal - expectedOrders) <= 0.000001;
+    const gmvDifference = Number.isFinite(expectedGmv) && Number.isFinite(gmvTotal) ? round(Math.abs(gmvTotal - expectedGmv)) : null;
+    const gmvClosed = Number.isFinite(gmvDifference) && resolvedRows.length === expectedDates.length && gmvDifference <= 0.01;
+    return {
+      rows,
+      expectedDates,
+      missingDates,
+      unresolvedDates,
+      orderTotal,
+      expectedOrders,
+      ordersClosed,
+      gmvTotal,
+      expectedGmv,
+      gmvDifference,
+      gmvClosed,
+      complete: expectedDates.length > 0 && !missingDates.length && !unresolvedDates.length
+        && rows.length === expectedDates.length && ordersClosed && gmvClosed
+    };
+  }
+
+  function buildPairedDaily(cards, subjectItemId, successItemId, period, periodMetrics, dailySupplements = [], runId = "") {
     const expectedDates = enumerateDates(period?.startDate, period?.endDate);
     const byDate = new Map();
     for (const card of cards || []) {
@@ -856,56 +1264,59 @@
       list.push(card);
       byDate.set(card.start, list);
     }
-    const missingDates = expectedDates.filter(date => !byDate.has(date));
     const cardMetricSignature = card => [...new Set((card?.metricRows || []).map(row => metricIdentity(row.name)))].sort().join("|");
     const duplicateDates = expectedDates.filter(date => {
       const signatures = (byDate.get(date) || []).map(cardMetricSignature);
       return signatures.length > new Set(signatures).size;
     });
-    const unresolvedDates = [];
-    const rows = [];
+    const supplementByDate = new Map();
+    for (const supplementValue of dailySupplements || []) {
+      const date = normalizeDate(supplementValue?.period?.startDate);
+      if (!date || supplementValue?.period?.endDate !== date || !expectedDates.includes(date)) continue;
+      if (String(supplementValue?.subject?.itemId || "") !== subjectItemId
+        || String(supplementValue?.competitor?.itemId || "") !== successItemId) continue;
+      if (runId && String(supplementValue?.runId || "") !== String(runId)) continue;
+      const previous = supplementByDate.get(date);
+      if (!previous || String(supplementValue?.capturedAt || "").localeCompare(String(previous?.capturedAt || "")) > 0) {
+        supplementByDate.set(date, supplementValue);
+      }
+    }
+    const subjectRows = [];
+    const competitorRows = [];
+    const supplementAudits = [];
     for (const date of expectedDates) {
       const candidates = (byDate.get(date) || []).sort((left, right) => String(right.capturedAt || "").localeCompare(String(left.capturedAt || "")));
-      if (!candidates.length) continue;
-      const dailyMetrics = buildMetrics(mergeMetricCards(candidates)).subject;
-      const orders = numberOrNull(dailyMetrics.orders);
-      const aov = numberOrNull(dailyMetrics.aov);
-      let gmv = null;
-      if (orders === 0) gmv = 0;
-      else if (orders != null && orders > 0 && aov != null && aov >= 0) gmv = round(orders * aov);
-      if (orders == null || gmv == null) unresolvedDates.push(date);
-      rows.push({
-        date, orders, aov, gmv,
-        totalSpend: isDisclosedMetric(dailyMetrics.spend) ? dailyMetrics.spend : null,
-        feeRatio: isDisclosedMetric(dailyMetrics.feeRatio) ? dailyMetrics.feeRatio : null,
-        metrics: { ...dailyMetrics }
-      });
+      const pairedMetrics = buildMetrics(candidates.length ? mergeMetricCards(candidates) : null);
+      const supplementValue = supplementByDate.get(date);
+      if (supplementValue && competitionItemSupplement?.applyToMetrics) {
+        const audit = competitionItemSupplement.applyToMetrics(pairedMetrics, supplementValue, {
+          subjectItemId,
+          competitorItemId: successItemId,
+          runId,
+          period: { startDate: date, endDate: date, days: 1 },
+          previousPeriod: previousOneDayPeriod(date)
+        });
+        supplementAudits.push({ date, ...audit });
+      }
+      for (const [side, target] of [["subject", subjectRows], ["competitor", competitorRows]]) {
+        const dailyMetrics = pairedMetrics[side] || {};
+        const orders = numberOrNull(dailyMetrics.orders);
+        const aov = numberOrNull(dailyMetrics.aov);
+        const gmv = numberOrNull(dailyMetrics.totalGmv);
+        if (!candidates.length && !supplementValue) continue;
+        target.push({
+          date, orders, aov, gmv,
+          totalSpend: isDisclosedMetric(dailyMetrics.spend) ? dailyMetrics.spend : null,
+          feeRatio: isDisclosedMetric(dailyMetrics.feeRatio) ? dailyMetrics.feeRatio : null,
+          metrics: { ...dailyMetrics }
+        });
+      }
     }
-    const resolvedRows = rows.filter(row => Number.isFinite(row.orders) && Number.isFinite(row.gmv));
-    const orderTotal = round(resolvedRows.reduce((sum, row) => sum + row.orders, 0));
-    const gmvTotal = round(resolvedRows.reduce((sum, row) => sum + row.gmv, 0));
-    const expectedOrders = numberOrNull(periodMetrics?.subject?.orders);
-    const expectedGmv = numberOrNull(periodMetrics?.subject?.totalGmv);
-    const ordersClosed = Number.isFinite(expectedOrders) && resolvedRows.length === expectedDates.length
-      && Math.abs(orderTotal - expectedOrders) <= 0.000001;
-    const gmvDifference = Number.isFinite(expectedGmv) && Number.isFinite(gmvTotal) ? round(Math.abs(gmvTotal - expectedGmv)) : null;
-    const gmvClosed = Number.isFinite(gmvDifference) && resolvedRows.length === expectedDates.length && gmvDifference <= 0.01;
-    const complete = expectedDates.length > 0 && !missingDates.length && !duplicateDates.length && !unresolvedDates.length
-      && rows.length === expectedDates.length && ordersClosed && gmvClosed;
     return {
-      rows,
-      expectedDates,
-      missingDates,
       duplicateDates,
-      unresolvedDates,
-      orderTotal,
-      expectedOrders,
-      ordersClosed,
-      gmvTotal,
-      expectedGmv,
-      gmvDifference,
-      gmvClosed,
-      complete
+      supplementAudits,
+      subject: { ...summarizeExactDailySide(subjectRows, expectedDates, periodMetrics?.subject), duplicateDates },
+      competitor: { ...summarizeExactDailySide(competitorRows, expectedDates, periodMetrics?.competitor), duplicateDates }
     };
   }
 
@@ -1095,41 +1506,127 @@
     };
   }
 
-  function enrichSubjectDailyWithLine(subjectDaily, daily) {
+  function enrichPairedDailyWithLine(dailySide, daily, side) {
     const byDate = new Map((daily?.rows || []).map(row => [row.date, row]));
-    for (const row of subjectDaily?.rows || []) {
+    for (const row of dailySide?.rows || []) {
       const lineRow = byDate.get(row.date);
-      const pairedChannels = lineRow?.subjectChannelSpend || {};
-      row.channelFieldCoverage = Number(lineRow?.subjectChannelFieldCoverage || 0);
-      if (row.channelFieldCoverage > 0) row.channelSpend = { ...pairedChannels };
-      if (!isDisclosedMetric(row.totalSpend) && Number.isFinite(lineRow?.subjectTotalSpend)) {
-        row.totalSpend = lineRow.subjectTotalSpend;
+      const pairedChannels = side === "subject" ? lineRow?.subjectChannelSpend || {} : lineRow?.channelSpend || {};
+      row.channelFieldCoverage = Number(side === "subject"
+        ? lineRow?.subjectChannelFieldCoverage || 0
+        : lineRow?.channelFieldCoverage || 0);
+      const lineSpend = side === "subject" ? lineRow?.subjectTotalSpend : lineRow?.totalSpend;
+      const exactRowSpend = numberOrNull(row.totalSpend);
+      const lineSpendMatches = exactRowSpend == null || !Number.isFinite(lineSpend)
+        || Math.abs(exactRowSpend - lineSpend) / Math.max(1, Math.abs(exactRowSpend), Math.abs(lineSpend)) <= 0.01;
+      if (row.channelFieldCoverage > 0 && lineSpendMatches) row.channelSpend = { ...pairedChannels };
+      else if (row.channelFieldCoverage > 0 && !lineSpendMatches) {
+        row.channelFieldCoverage = 0;
+        row.channelSpendConflict = true;
       }
-      if (!isDisclosedMetric(row.feeRatio) && Number.isFinite(row.totalSpend) && Number.isFinite(row.gmv) && row.gmv !== 0) {
-        row.feeRatio = round(row.totalSpend / row.gmv, 6);
+      if (!isNumericMetricValue(row.totalSpend) && Number.isFinite(lineSpend)) {
+        row.totalSpend = lineSpend;
+      }
+      const derivedFeeRatio = safeIntervalDivide(row.totalSpend, row.gmv, {
+        digits: 6, metric: "费比", compact: true, outward: true
+      });
+      if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(derivedFeeRatio.state)) {
+        row.feeRatio = derivedFeeRatio.value;
       }
       const dailyMetrics = row.metrics || {};
-      if (!isDisclosedMetric(dailyMetrics.spend) && Number.isFinite(row.totalSpend)) dailyMetrics.spend = row.totalSpend;
-      if (!isDisclosedMetric(dailyMetrics.feeRatio) && isDisclosedMetric(row.feeRatio)) dailyMetrics.feeRatio = row.feeRatio;
-      if (!isDisclosedMetric(dailyMetrics.ppc)) dailyMetrics.ppc = costPerClick(numberOrNull(row.totalSpend), dailyMetrics.marketingClicks);
-      if (!isDisclosedMetric(dailyMetrics.roi)) dailyMetrics.roi = returnOnSpend(dailyMetrics.paidGmv, numberOrNull(row.totalSpend));
+      if (!isNumericMetricValue(dailyMetrics.spend) && isNumericMetricValue(row.totalSpend)) dailyMetrics.spend = row.totalSpend;
+      if (isNumericMetricValue(row.feeRatio)) dailyMetrics.feeRatio = row.feeRatio;
+      // API 直出的同日付费成交额精确值/区间优先。只有它缺失或仅有
+      // 非数值方向时，才允许用同日消耗 × 同日 ROI 数值区间闭合。
+      const paidGmvState = metricValueState(dailyMetrics.paidGmv);
+      if (![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(paidGmvState.state)) {
+        const derivedPaidGmv = paidGmvFromSpendAndRoi(row.totalSpend, dailyMetrics.roi);
+        const derivedPaidGmvState = metricValueState(derivedPaidGmv);
+        if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(derivedPaidGmvState.state)) {
+          dailyMetrics.paidGmv = derivedPaidGmv;
+        }
+      }
+      // 同日付费成交额和消耗已落实时，ROI 必须由两者相除，覆盖接口旧值或方向文案。
+      const derivedRoi = returnOnSpend(dailyMetrics.paidGmv, row.totalSpend);
+      const derivedRoiState = metricValueState(derivedRoi);
+      if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(derivedRoiState.state)) {
+        dailyMetrics.roi = derivedRoi;
+      }
+      // `clickCost` may disclose only a relative direction (for example
+      // “比本品高”), while the same exact-day supplement discloses a bounded
+      // click interval. A direction is truthful but not a numeric PPC value.
+      // 同日消耗和营销点击量已落实时，PPC 同样强制按反向端点相除。
+      const derivedPpc = costPerClick(row.totalSpend, dailyMetrics.marketingClicks);
+      const derivedPpcState = metricValueState(derivedPpc);
+      if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(derivedPpcState.state)) {
+        dailyMetrics.ppc = derivedPpc;
+      }
       row.metrics = dailyMetrics;
     }
-    const expectedDates = Array.isArray(subjectDaily?.expectedDates) && subjectDaily.expectedDates.length
-      ? subjectDaily.expectedDates
+    const expectedDates = Array.isArray(dailySide?.expectedDates) && dailySide.expectedDates.length
+      ? dailySide.expectedDates
       : (daily?.expectedDates || []);
-    const coverageModel = summarizeSpendCoverage(subjectDaily?.rows || [], expectedDates, Boolean(subjectDaily?.rows?.length));
-    subjectDaily.totalSpend = coverageModel.spend;
-    subjectDaily.channelSpend = coverageModel.channelSpend;
-    subjectDaily.spendCoverageDays = coverageModel.coverageDays;
-    subjectDaily.spendExpectedDays = coverageModel.expectedDays;
-    subjectDaily.spendMissingDates = coverageModel.missingDates;
-    subjectDaily.spendComplete = coverageModel.complete;
-    subjectDaily.spendPartial = coverageModel.partial;
-    subjectDaily.spendSingleDayPartial = coverageModel.singleDayPartial;
-    subjectDaily.spendUsable = coverageModel.usable;
-    subjectDaily.spendCoverage = publicSpendCoverage(coverageModel);
-    return subjectDaily;
+    const coverageModel = summarizeSpendCoverage(dailySide?.rows || [], expectedDates, Boolean(dailySide?.rows?.length));
+    dailySide.totalSpend = coverageModel.spend;
+    dailySide.channelSpend = coverageModel.channelSpend;
+    dailySide.spendCoverageDays = coverageModel.coverageDays;
+    dailySide.spendExpectedDays = coverageModel.expectedDays;
+    dailySide.spendMissingDates = coverageModel.missingDates;
+    dailySide.spendComplete = coverageModel.complete;
+    dailySide.spendPartial = coverageModel.partial;
+    dailySide.spendSingleDayPartial = coverageModel.singleDayPartial;
+    dailySide.spendUsable = coverageModel.usable;
+    dailySide.spendCoverage = publicSpendCoverage(coverageModel);
+    return dailySide;
+  }
+
+  function resolvePairedDailyDirections(subjectDaily, competitorDaily) {
+    const subjectByDate = new Map((subjectDaily?.rows || []).map(row => [row.date, row]));
+    const competitorByDate = new Map((competitorDaily?.rows || []).map(row => [row.date, row]));
+    const descriptors = [
+      { key: "paidGmv", get: row => row?.metrics?.paidGmv, set: (row, value) => { (row.metrics || (row.metrics = {})).paidGmv = value; } },
+      { key: "spend", get: row => row?.totalSpend ?? row?.metrics?.spend, set: (row, value) => { row.totalSpend = value; (row.metrics || (row.metrics = {})).spend = value; } },
+      { key: "roi", get: row => row?.metrics?.roi, set: (row, value) => { (row.metrics || (row.metrics = {})).roi = value; } },
+      { key: "ppc", get: row => row?.metrics?.ppc, set: (row, value) => { (row.metrics || (row.metrics = {})).ppc = value; } },
+      { key: "feeRatio", get: row => row?.feeRatio ?? row?.metrics?.feeRatio, set: (row, value) => { row.feeRatio = value; (row.metrics || (row.metrics = {})).feeRatio = value; } },
+      { key: "marketingClicks", get: row => row?.metrics?.marketingClicks, set: (row, value) => { (row.metrics || (row.metrics = {})).marketingClicks = value; } }
+    ];
+    for (const date of new Set([...subjectByDate.keys(), ...competitorByDate.keys()])) {
+      const rows = { subject: subjectByDate.get(date), competitor: competitorByDate.get(date) };
+      if (!rows.subject || !rows.competitor) continue;
+      for (const descriptor of descriptors) {
+        if (["roi", "ppc", "feeRatio"].includes(descriptor.key)) continue;
+        for (const side of ["subject", "competitor"]) {
+          const referenceSide = side === "subject" ? "competitor" : "subject";
+          const value = descriptor.get(rows[side]);
+          if (isNumericMetricValue(value)) continue;
+          const bound = resolveDirectionalBound(value, descriptor.get(rows[referenceSide]), side);
+          if (bound) descriptor.set(rows[side], bound);
+        }
+      }
+    }
+    return { subject: subjectDaily, competitor: competitorDaily };
+  }
+
+  function dailyMetricNotApplicable(metrics, key) {
+    const spend = numberOrNull(metrics?.spend);
+    const paidGmv = numberOrNull(metrics?.paidGmv);
+    const clicks = numberOrNull(metrics?.marketingClicks);
+    if (key === "roi") return spend === 0 && (paidGmv === 0 || paidGmv == null);
+    if (key === "ppc") return spend === 0 && clicks === 0;
+    return false;
+  }
+
+  function missingPairedDailyMetricDates(dailySide, key) {
+    const byDate = new Map((dailySide?.rows || []).map(row => [row.date, row]));
+    return (dailySide?.expectedDates || []).filter(date => {
+      const metrics = byDate.get(date)?.metrics;
+      const state = metricValueState(metrics?.[key]);
+      const numericResolved = [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(state.state);
+      const resolved = ["paidGmv", "roi", "ppc"].includes(key)
+        ? numericResolved
+        : isDisclosedMetric(metrics?.[key]);
+      return !resolved && !dailyMetricNotApplicable(metrics, key);
+    });
   }
 
   function sceneScalar(value, depth = 0) {
@@ -1160,10 +1657,159 @@
     return calculatedValue ?? apiValue;
   }
 
+  function metricValuePrecision(value) {
+    if (!isDisclosedMetric(value)) return 0;
+    if (numberOrNull(value) != null) return 3;
+    const range = parseVagueRange(value);
+    if (range) return range.exact ? 3 : 2;
+    return 1;
+  }
+
+  // 同一指标在多个模板或同义行里同时披露时，精确值必须胜过
+  // 脱敏区间；同等精度保留已选值，以继续遵循“最新卡片优先”。
+  function preferredMetricValue(currentValue, candidateValue) {
+    return metricValuePrecision(candidateValue) > metricValuePrecision(currentValue)
+      ? candidateValue
+      : currentValue;
+  }
+
   function isDisclosedMetric(value) {
     if (value === null || value === undefined) return false;
     if (typeof value === "string" && /^(?:|[-–—]|--|暂无|无数据|null|undefined)$/i.test(value.trim())) return false;
     return true;
+  }
+
+  function coreMetricValue(metrics, definition) {
+    for (const key of definition.sourceKeys || [definition.key]) {
+      if (isDisclosedMetric(metrics?.[key])) return metrics[key];
+    }
+    return null;
+  }
+
+  function validZeroDenominatorNa(key, metrics) {
+    const spend = numberOrNull(metrics?.spend);
+    const totalGmv = numberOrNull(metrics?.totalGmv);
+    const paidGmv = numberOrNull(metrics?.paidGmv);
+    const clicks = numberOrNull(metrics?.marketingClicks);
+    if (key === "roi" || key === "globalROAS") return spend === 0 && (key !== "roi" || paidGmv === 0 || paidGmv == null);
+    if (key === "ppc") return clicks === 0 && spend === 0;
+    if (key === "feeRatio") return totalGmv === 0 && spend === 0;
+    if (key === "paidGmvContribution") return totalGmv === 0 && paidGmv === 0;
+    return false;
+  }
+
+  function coreMetricMissingReason(key, metrics) {
+    const missing = label => !isDisclosedMetric(metrics?.[label]);
+    if (key === "totalGmv") return "未返回总GMV，且成交笔数/笔单价不足以按同周期计算";
+    if (key === "paidGmv") return "未返回付费成交额，且同周期推广场景直接成交金额不足以汇总";
+    if (key === "spend") return "未返回同对象、同周期推广消耗";
+    if (key === "feeRatio") return `${missing("spend") ? "推广消耗" : "总GMV"}缺失或分母无效，无法计算费比`;
+    if (key === "roi") return `${missing("paidGmv") ? "付费成交额" : "推广消耗"}缺失或分母无效，无法计算ROI`;
+    if (key === "ppc") return `${missing("marketingClicks") ? "付费点击量" : "推广消耗"}缺失或点击量分母无效，无法计算PPC`;
+    if (key === "paidGmvContribution") return `${missing("paidGmv") ? "付费成交额" : "总GMV"}缺失或分母无效，无法计算付费金额占比`;
+    if (key === "globalROAS") return `${missing("totalGmv") ? "总GMV" : "推广消耗"}缺失或分母无效，无法计算全域ROAS`;
+    return "源字段缺失";
+  }
+
+  const CONTRACT_DEPENDENCIES = Object.freeze({
+    feeRatio: Object.freeze(["spend", "totalGmv"]),
+    roi: Object.freeze(["paidGmv", "spend"]),
+    ppc: Object.freeze(["spend", "marketingClicks"]),
+    paidGmvContribution: Object.freeze(["paidGmv", "totalGmv"]),
+    globalROAS: Object.freeze(["totalGmv", "spend"])
+  });
+
+  function promotionDetailsContract(metrics, sceneRows, side) {
+    const spendState = metricValueState(metrics?.spend);
+    const spendRange = spendState.range;
+    if (spendState.state === VALUE_STATES.EXACT && spendRange?.min === 0) {
+      return { state: VALUE_STATES.NA, value: null, resolved: true, required: false, reason: "推广消耗为0，不要求推广详情", missingFields: [] };
+    }
+    const mayHaveSpend = spendRange && ((Number.isFinite(spendRange.max) && spendRange.max > 0) || (Number.isFinite(spendRange.min) && spendRange.min > 0));
+    if (!mayHaveSpend) {
+      return { state: VALUE_STATES.MISSING, value: null, resolved: false, required: false, reason: "推广消耗未落实，无法判断推广详情条件", missingFields: [] };
+    }
+    const role = side === "subject" ? "主体" : "对手";
+    const rows = (sceneRows?.level1 || []).filter(row => row.role === role);
+    if (!rows.length) {
+      return { state: VALUE_STATES.MISSING, value: null, resolved: false, required: true, reason: `${role}推广消耗大于0，但一级推广详情为空`, missingFields: ["一级推广详情"] };
+    }
+    const requiredFields = [
+      ["allocated", "场景消耗"], ["impression", "展现"], ["click", "点击"],
+      ["cpc", "PPC"], ["directDealAmount", "付费成交额"], ["directRoi", "ROI"]
+    ];
+    const relevantRows = rows.filter(row => {
+      const allocation = parseVagueRange(row.allocated ?? row.charge);
+      return allocation && ((Number.isFinite(allocation.max) && allocation.max > 0) || (Number.isFinite(allocation.min) && allocation.min > 0));
+    });
+    if (!relevantRows.length) {
+      return { state: VALUE_STATES.MISSING, value: null, resolved: false, required: true, reason: `${role}推广消耗大于0，但场景花费无法对齐`, missingFields: ["场景消耗"] };
+    }
+    const missingFields = [];
+    for (const row of relevantRows) {
+      const missing = requiredFields.filter(([key]) => !isDisclosedMetric(row[key])).map(([, label]) => label);
+      if (missing.length) missingFields.push(`${row.primary || `场景${row.sceneId || "未知"}`}：${missing.join("、")}`);
+    }
+    if (missingFields.length) {
+      return { state: VALUE_STATES.MISSING, value: null, resolved: false, required: true, reason: `${role}推广详情字段不完整`, missingFields };
+    }
+    return { state: VALUE_STATES.EXACT, value: relevantRows.length, resolved: true, required: true, reason: "", missingFields: [] };
+  }
+
+  function evaluateCoreMetricContract(metricsBySide = {}, options = {}) {
+    const sideLabels = { subject: "主体", competitor: "对手" };
+    const sides = {};
+    const missing = [];
+    let resolvedValues = 0;
+    for (const side of ["subject", "competitor"]) {
+      const metrics = metricsBySide?.[side] || {};
+      const expectedContext = options.contexts?.[side]?.expected || null;
+      const valueContexts = options.contexts?.[side]?.values || metrics.valueContexts || {};
+      const entries = [];
+      for (const definition of CORE_METRIC_CONTRACT) {
+        const raw = coreMetricValue(metrics, definition);
+        let semantic = metricValueState(raw, { reason: coreMetricMissingReason(definition.key, metrics) });
+        const explicitConflict = (definition.sourceKeys || [definition.key])
+          .map(key => metrics.valueConflicts?.[key])
+          .find(Boolean);
+        if (explicitConflict) semantic = { state: VALUE_STATES.CONFLICT, value: null, range: null, reason: String(explicitConflict) };
+        if (semantic.state === VALUE_STATES.MISSING && validZeroDenominatorNa(definition.key, metrics)) {
+          semantic = { state: VALUE_STATES.NA, value: null, range: null, reason: "分母明确为0，该指标不适用" };
+        }
+        const ownContext = valueContexts[definition.key]
+          || valueContexts[(definition.sourceKeys || []).find(key => valueContexts[key])];
+        const expectedMismatch = metricContextMismatch(ownContext, expectedContext);
+        if (expectedMismatch && [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(semantic.state)) {
+          semantic = { state: VALUE_STATES.CONFLICT, value: null, range: null, reason: expectedMismatch };
+        }
+        for (const dependency of CONTRACT_DEPENDENCIES[definition.key] || []) {
+          const dependencyMismatch = metricContextMismatch(ownContext || expectedContext, valueContexts[dependency] || expectedContext);
+          if (dependencyMismatch && [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(semantic.state)) {
+            semantic = { state: VALUE_STATES.CONFLICT, value: null, range: null, reason: `${dependency}与${definition.key}${dependencyMismatch}` };
+            break;
+          }
+        }
+        const resolved = [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL, VALUE_STATES.NA].includes(semantic.state);
+        if (resolved) resolvedValues += 1;
+        else missing.push({ side, key: definition.key, label: `${sideLabels[side]}${definition.label}`, state: semantic.state, reason: semantic.reason });
+        entries.push({ key: definition.key, label: definition.label, raw, ...semantic, resolved });
+      }
+      const promotionDetails = promotionDetailsContract(metrics, options.sceneRows, side);
+      if (promotionDetails.required && !promotionDetails.resolved) {
+        missing.push({ side, key: "promotionDetails", label: `${sideLabels[side]}推广详情`, state: promotionDetails.state, reason: `${promotionDetails.reason}${promotionDetails.missingFields.length ? `：${promotionDetails.missingFields.join("；")}` : ""}` });
+      }
+      sides[side] = { role: sideLabels[side], entries, promotionDetails };
+    }
+    const requiredValues = CORE_METRIC_CONTRACT.length * 2;
+    return {
+      status: missing.length ? "partial" : "complete",
+      complete: missing.length === 0,
+      requiredValues,
+      resolvedValues,
+      missing,
+      missingReasons: Object.fromEntries(missing.map(entry => [entry.label, { state: entry.state, reason: entry.reason }])),
+      sides
+    };
   }
 
   function missingSubjectMinimumPromotionMetrics(metrics = {}) {
@@ -1183,20 +1829,65 @@
     return Math.max(0.05, Math.abs(base) * 0.000001);
   }
 
+  const SCENE_CLOSURE_FIELDS = Object.freeze([
+    "charge", "ratio", "impression", "click", "ctr", "cpc", "directDealAmount", "directRoi"
+  ]);
+
+  // 达摩盘会把未投放的同级场景返回为空，而不是显式 0。只有实际披露的场景
+  // 同时给出精确花费、精确占比，占比闭合到 100%，且花费份额与占比一致时，
+  // 才能把这些稀疏行合成周期总花费。空兄弟行被保留为空；任何有业务活动但
+  // 缺花费/占比的行都会进入闭合校验并使聚合失败，绝不把缺失当作 0。
+  function closedSceneAllocation(rows, valueFor = (row, key) => row?.[key], expectedTotal = null) {
+    const disclosedRows = (rows || []).filter(row => SCENE_CLOSURE_FIELDS
+      .some(key => isDisclosedMetric(valueFor(row, key))));
+    if (!disclosedRows.length) return { complete: false, spend: null, rows: [] };
+    const charges = disclosedRows.map(row => numberOrNull(valueFor(row, "charge")));
+    const ratios = disclosedRows.map(row => ratioOrNull(valueFor(row, "ratio")));
+    if (!charges.every(value => Number.isFinite(value) && value >= 0) || !ratios.every(Number.isFinite)) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const expected = numberOrNull(expectedTotal);
+    if (charges.every(value => value === 0) && ratios.every(value => value === 0)) {
+      return expected == null || expected === 0
+        ? { complete: true, spend: 0, rows: disclosedRows }
+        : { complete: false, spend: null, rows: disclosedRows };
+    }
+    const ratioSum = ratios.reduce((sum, value) => sum + value, 0);
+    if (Math.abs(ratioSum - 1) > 0.000001) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const summedSpend = round(charges.reduce((sum, value) => sum + value, 0));
+    const total = expected ?? summedSpend;
+    if (!(total > 0) || Math.abs(summedSpend - total) > allocationTolerance(total)) {
+      return { complete: false, spend: null, rows: disclosedRows };
+    }
+    const sharesAlign = charges.every((charge, index) => Math.abs(charge / total - ratios[index]) <= 0.00005);
+    return sharesAlign
+      ? { complete: true, spend: round(total), rows: disclosedRows }
+      : { complete: false, spend: null, rows: disclosedRows };
+  }
+
+  function rawSceneAllocation(rows, side) {
+    return closedSceneAllocation(rows, (row, key) => sceneMetric(row, key === "ratio" ? "chargeRatio" : key, side));
+  }
+
   function buildSceneRows(responses, totalSpends = {}) {
     const level1Response = responses.find(response => response.level === 1) || null;
     const parentNames = new Map((level1Response?.rows || []).map(row => [String(row.sceneId || ""), row.sceneName]));
-    const subjectLevel1Charges = (level1Response?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "subject")));
-    const sceneSubjectSpend = subjectLevel1Charges.length && subjectLevel1Charges.every(Number.isFinite)
-      ? round(subjectLevel1Charges.reduce((sum, value) => sum + value, 0))
-      : null;
+    const subjectSceneAllocation = rawSceneAllocation(level1Response?.rows || [], "subject");
+    const competitorSceneAllocation = rawSceneAllocation(level1Response?.rows || [], "competitor");
+    const sceneSubjectSpend = subjectSceneAllocation.spend;
     const passed = typeof totalSpends === "number" ? { competitor: totalSpends } : (totalSpends || {});
     const totals = {
       subject: numberOrNull(passed.subject) ?? sceneSubjectSpend,
       competitor: numberOrNull(passed.competitor)
     };
     const parentSpend = new Map();
-    const result = { level1: [], level2: [], validationIssues: [], allocationTotals: { ...totals } };
+    const result = {
+      level1: [], level2: [], validationIssues: [], allocationTotals: { ...totals },
+      exactSceneSpend: { subject: subjectSceneAllocation.spend, competitor: competitorSceneAllocation.spend },
+      closedSceneRows: { subject: [], competitor: [] }
+    };
 
     function buildRow(response, row, side) {
       const role = side === "subject" ? "主体" : "对手";
@@ -1214,20 +1905,32 @@
       }
       const impression = sceneMetric(row, "impression", side);
       const click = sceneMetric(row, "click", side);
-      const directDealAmount = sceneMetric(row, "directDealAmount", side);
+      const apiDirectDealAmount = sceneMetric(row, "directDealAmount", side);
+      const apiCtr = sceneMetric(row, "ctr", side);
       const apiCpc = sceneMetric(row, "cpc", side);
       const apiDirectRoi = sceneMetric(row, "directRoi", side);
       const calculatedCpc = Number.isFinite(allocated) ? costPerClick(allocated, click) : null;
-      const calculatedDirectRoi = Number.isFinite(allocated) ? returnOnSpend(directDealAmount, allocated) : null;
+      const calculatedCtr = safeIntervalDivide(click, impression, {
+        digits: 6, metric: "CTR", compact: true, outward: true
+      }).value;
+      const calculatedDirectDealAmount = Number.isFinite(allocated)
+        ? safeIntervalMultiply(allocated, apiDirectRoi, {
+            digits: 2, metric: "直接成交金额", outward: true
+          }).value
+        : null;
+      const directDealAmount = preferExactMetric(apiDirectDealAmount, calculatedDirectDealAmount);
+      const calculatedDirectRoi = Number.isFinite(allocated) && isNumericMetricValue(apiDirectDealAmount)
+        ? returnOnSpend(apiDirectDealAmount, allocated)
+        : null;
       const values = {
         role, level: response.level, primary, secondary, sceneId: row.sceneId,
         parentSceneId: response.parentSceneId || "",
         charge, ratio: ratioValue, allocated,
         impression, click,
-        ctr: sceneMetric(row, "ctr", side),
-        cpc: preferExactMetric(apiCpc, calculatedCpc),
+        ctr: preferExactMetric(apiCtr, calculatedCtr),
+        cpc: isNumericMetricValue(calculatedCpc) ? calculatedCpc : preferExactMetric(apiCpc, calculatedCpc),
         directDealAmount,
-        directRoi: preferExactMetric(apiDirectRoi, calculatedDirectRoi)
+        directRoi: isNumericMetricValue(calculatedDirectRoi) ? calculatedDirectRoi : preferExactMetric(apiDirectRoi, calculatedDirectRoi)
       };
       if (response.level === 1 && Number.isFinite(allocated)) {
         parentSpend.set(`${side}|${String(row.sceneId || "")}`, allocated);
@@ -1235,10 +1938,10 @@
       if (ratioValue !== "" && ratioValue != null && ratio == null) {
         result.validationIssues.push(`${role}${primary}${secondary ? `/${secondary}` : ""}的消耗占比无效`);
       }
-      if (isDisclosedMetric(click) && !parseVagueRange(click)) {
+      if (isDisclosedMetric(click) && !parseVagueRange(click) && !parseDirectionalComparison(click)) {
         result.validationIssues.push(`${role}${primary}${secondary ? `/${secondary}` : ""}的点击量区间无效`);
       }
-      if (isDisclosedMetric(directDealAmount) && !parseVagueRange(directDealAmount)) {
+      if (isDisclosedMetric(directDealAmount) && !parseVagueRange(directDealAmount) && !parseDirectionalComparison(directDealAmount)) {
         result.validationIssues.push(`${role}${primary}${secondary ? `/${secondary}` : ""}的直接成交金额区间无效`);
       }
       if (ratio != null && Number.isFinite(response.level === 1 ? totals[side] : parentSpend.get(`${side}|${String(response.parentSceneId || "")}`)) && !Number.isFinite(allocated)) {
@@ -1259,12 +1962,29 @@
       for (const response of responsesForLevel) {
         for (const row of response.rows) {
           const pair = [buildRow(response, row, "subject"), buildRow(response, row, "competitor")];
+          for (const key of ["charge", "ratio", "allocated", "impression", "click", "ctr", "cpc", "directDealAmount", "directRoi"]) {
+            for (const [index, side] of [[0, "subject"], [1, "competitor"]]) {
+              if (isNumericMetricValue(pair[index][key])) continue;
+              const bound = resolveDirectionalBound(pair[index][key], pair[1 - index][key], side);
+              if (bound) pair[index][key] = bound;
+            }
+          }
           if (pair.some(hasSceneData)) target.push(...pair);
         }
       }
     };
     appendPairs(responses.filter(value => value.level === 1), result.level1);
     appendPairs(responses.filter(value => value.level === 2), result.level2);
+    for (const side of ["subject", "competitor"]) {
+      const role = side === "subject" ? "主体" : "对手";
+      const rows = result.level1.filter(row => row.role === role);
+      const closure = closedSceneAllocation(
+        rows,
+        (row, key) => key === "charge" ? row.allocated : row[key],
+        totals[side]
+      );
+      result.closedSceneRows[side] = closure.complete ? closure.rows : [];
+    }
     const closureGroups = new Map();
     for (const row of [...result.level1, ...result.level2]) {
       const key = row.level === 1 ? `${row.role}|1` : `${row.role}|2|${row.parentSceneId}`;
@@ -1300,7 +2020,295 @@
     return values.length && values.every(Number.isFinite) ? round(values.reduce((sum, value) => sum + value, 0)) : null;
   }
 
-  function enrichMetrics(metrics, sceneRows, daily, subjectDaily) {
+  function calculationResultContext(valueContexts, sourceKeys, expectedContext) {
+    return sourceKeys.map(key => valueContexts?.[key]).find(Boolean) || expectedContext || null;
+  }
+
+  function applyCalculatedMetric(current, key, result, valueContexts, sourceKeys, expectedContext) {
+    if (isNumericMetricValue(current[key])) return false;
+    if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(result?.state)) {
+      current[key] = result.value;
+      valueContexts[key] = calculationResultContext(valueContexts, sourceKeys, expectedContext);
+      if (current.valueConflicts) delete current.valueConflicts[key];
+      return true;
+    }
+    if (result?.state === VALUE_STATES.CONFLICT) {
+      current.valueConflicts = current.valueConflicts || {};
+      current.valueConflicts[key] = result.reason;
+    }
+    return false;
+  }
+
+  function intervalDivideResult(current, numeratorKey, denominatorKey, options = {}) {
+    const valueContexts = current.valueContexts || {};
+    return safeIntervalDivide(current[numeratorKey], current[denominatorKey], {
+      ...options,
+      numeratorContext: valueContexts[numeratorKey],
+      denominatorContext: valueContexts[denominatorKey]
+    });
+  }
+
+  function intervalMultiplyResult(current, leftKey, rightKey, options = {}) {
+    const valueContexts = current.valueContexts || {};
+    return safeIntervalMultiply(current[leftKey], current[rightKey], {
+      ...options,
+      leftContext: valueContexts[leftKey],
+      rightContext: valueContexts[rightKey]
+    });
+  }
+
+  const CANONICAL_EFFICIENCY_FORMULAS = Object.freeze([
+    Object.freeze({ key: "roi", numeratorKey: "paidGmv", denominatorKey: "spend", digits: 2, metric: "ROI", compact: false }),
+    Object.freeze({ key: "ppc", numeratorKey: "spend", denominatorKey: "marketingClicks", digits: 2, metric: "PPC", compact: false }),
+    Object.freeze({ key: "feeRatio", numeratorKey: "spend", denominatorKey: "totalGmv", digits: 6, metric: "费比", compact: true })
+  ]);
+
+  // ROI、PPC、费比不是“缺失时才补”的展示字段。只要同一对象、同一期间、
+  // 同一覆盖口径的分子和分母已经落实为具体值或合法区间，就必须以恒等式结果
+  // 作为最终业务值，覆盖接口中的旧数值、脱敏区间或“比本品高/低”文案。
+  function applyCanonicalEfficiencyMetrics(current, expectedContext = null) {
+    if (!current) return current;
+    const valueContexts = current.valueContexts || (current.valueContexts = {});
+    const resolved = current.canonicalEfficiencyMetrics || (current.canonicalEfficiencyMetrics = {});
+    current.valueConflicts = current.valueConflicts || {};
+    for (const definition of CANONICAL_EFFICIENCY_FORMULAS) {
+      const periodDirect = current.periodDirectMetrics?.[definition.key];
+      if (isNumericMetricValue(periodDirect)) {
+        current[definition.key] = periodDirect;
+        valueContexts[definition.key] = valueContexts[definition.key] || expectedContext;
+        delete resolved[definition.key];
+        delete current.valueConflicts[definition.key];
+        continue;
+      }
+      const numeratorState = metricValueState(current[definition.numeratorKey]);
+      const denominatorState = metricValueState(current[definition.denominatorKey]);
+      const numericStates = [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL];
+      if (!numericStates.includes(numeratorState.state) || !numericStates.includes(denominatorState.state)) continue;
+      const result = safeIntervalDivide(current[definition.numeratorKey], current[definition.denominatorKey], {
+        digits: definition.digits,
+        metric: definition.metric,
+        compact: definition.compact,
+        outward: true,
+        numeratorContext: valueContexts[definition.numeratorKey],
+        denominatorContext: valueContexts[definition.denominatorKey]
+      });
+      if (numericStates.includes(result.state)) {
+        current[definition.key] = result.value;
+        valueContexts[definition.key] = calculationResultContext(
+          valueContexts,
+          [definition.numeratorKey, definition.denominatorKey],
+          expectedContext
+        );
+        resolved[definition.key] = {
+          formula: `${definition.numeratorKey}/${definition.denominatorKey}`,
+          numeratorKey: definition.numeratorKey,
+          denominatorKey: definition.denominatorKey
+        };
+        delete current.valueConflicts[definition.key];
+        continue;
+      }
+      current[definition.key] = null;
+      delete resolved[definition.key];
+      current.valueConflicts[definition.key] = result.reason || `${definition.metric}分母无效`;
+    }
+    return current;
+  }
+
+  function chooseCompatibleCalculation(current, key, candidates, expectedContext) {
+    if (isNumericMetricValue(current[key])) return false;
+    const numeric = candidates.filter(candidate => [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(candidate.result?.state));
+    if (!numeric.length) {
+      const conflict = candidates.find(candidate => candidate.result?.state === VALUE_STATES.CONFLICT);
+      if (conflict) {
+        current.valueConflicts = current.valueConflicts || {};
+        current.valueConflicts[key] = conflict.result.reason;
+      }
+      return false;
+    }
+    const compatible = numeric.every((left, index) => numeric.slice(index + 1)
+      .every(right => metricRangesCompatible(left.result.value, right.result.value)));
+    if (!compatible) {
+      current.valueConflicts = current.valueConflicts || {};
+      current.valueConflicts[key] = `${key}的同周期恒等式结果不在1%内闭合`;
+      return false;
+    }
+    const selected = numeric[0];
+    return applyCalculatedMetric(
+      current, key, selected.result, current.valueContexts,
+      selected.sourceKeys, expectedContext
+    );
+  }
+
+  // 对周期模型执行有限次恒等式闭包。只把 exact/interval 当作数值种子；
+  // 方向文字既不会阻断计算，也不会参与乘除。所有区间都按端点外扩，绝不取中点。
+  function closePeriodMetricSet(current, expectedContext = null) {
+    if (!current) return current;
+    const valueContexts = current.valueContexts || (current.valueContexts = {});
+    current.valueConflicts = current.valueConflicts || {};
+    for (let pass = 0; pass < 6; pass += 1) {
+      let changed = false;
+      const multiply = (key, leftKey, rightKey, digits, metric, compact = false) => {
+        const result = intervalMultiplyResult(current, leftKey, rightKey, { digits, metric, compact, outward: true });
+        changed = applyCalculatedMetric(current, key, result, valueContexts, [leftKey, rightKey], expectedContext) || changed;
+      };
+      const divide = (key, numeratorKey, denominatorKey, digits, metric, compact = false) => {
+        const result = intervalDivideResult(current, numeratorKey, denominatorKey, { digits, metric, compact, outward: true });
+        changed = applyCalculatedMetric(current, key, result, valueContexts, [numeratorKey, denominatorKey], expectedContext) || changed;
+      };
+
+      multiply("totalGmv", "orders", "aov", 2, "总GMV");
+      divide("orders", "totalGmv", "aov", 2, "成交笔数");
+      divide("aov", "totalGmv", "orders", 2, "笔单价");
+      if (isDisclosedMetric(current.visitors) || current.visitorClosed) {
+        divide("visitors", "orders", "conversion", 2, "访客数");
+      }
+      multiply("orders", "visitors", "conversion", 2, "成交笔数");
+      divide("conversion", "orders", "visitors", 6, "支付转化率", true);
+
+      changed = chooseCompatibleCalculation(current, "spend", [
+        { result: intervalDivideResult(current, "paidGmv", "roi", { digits: 2, metric: "推广消耗", outward: true }), sourceKeys: ["paidGmv", "roi"] },
+        { result: intervalMultiplyResult(current, "marketingClicks", "ppc", { digits: 2, metric: "推广消耗", outward: true }), sourceKeys: ["marketingClicks", "ppc"] },
+        { result: intervalMultiplyResult(current, "totalGmv", "feeRatio", { digits: 2, metric: "推广消耗", outward: true }), sourceKeys: ["totalGmv", "feeRatio"] },
+        { result: intervalDivideResult(current, "totalGmv", "roas", { digits: 2, metric: "推广消耗", outward: true }), sourceKeys: ["totalGmv", "roas"] }
+      ], expectedContext) || changed;
+
+      changed = chooseCompatibleCalculation(current, "paidGmv", [
+        { result: intervalMultiplyResult(current, "spend", "roi", { digits: 2, metric: "付费成交额", outward: true }), sourceKeys: ["spend", "roi"] },
+        { result: intervalMultiplyResult(current, "totalGmv", "paidGmvContribution", { digits: 2, metric: "付费成交额", outward: true }), sourceKeys: ["totalGmv", "paidGmvContribution"] }
+      ], expectedContext) || changed;
+
+      divide("marketingClicks", "spend", "ppc", 2, "营销推广点击量");
+      divide("roi", "paidGmv", "spend", 2, "ROI");
+      divide("ppc", "spend", "marketingClicks", 2, "PPC");
+      divide("feeRatio", "spend", "totalGmv", 6, "费比", true);
+      divide("roas", "totalGmv", "spend", 4, "全域ROAS", true);
+      divide("paidGmvContribution", "paidGmv", "totalGmv", 6, "付费金额占比", true);
+      divide("paidOrderContribution", "paidOrders", "orders", 6, "广告订单贡献率", true);
+      multiply("paidOrders", "orders", "paidOrderContribution", 2, "付费成交笔数");
+
+      if (!changed) break;
+    }
+    current.attributedGmv = isNumericMetricValue(current.paidGmv) ? current.paidGmv : current.attributedGmv;
+    current.paidAmountShare = current.paidGmvContribution;
+    current.globalROAS = current.roas;
+    if (valueContexts.paidGmv) valueContexts.attributedGmv = valueContexts.paidGmv;
+    if (valueContexts.paidGmvContribution) valueContexts.paidAmountShare = valueContexts.paidGmvContribution;
+    if (valueContexts.roas) valueContexts.globalROAS = valueContexts.roas;
+    return current;
+  }
+
+  function comparisonContextMismatch(left, right) {
+    if (!left || !right) return "";
+    const withoutEntity = value => ({
+      startDate: value.startDate,
+      endDate: value.endDate,
+      coverageDays: value.coverageDays,
+      periodKey: value.periodKey
+    });
+    return metricContextMismatch(withoutEntity(left), withoutEntity(right));
+  }
+
+  function resolveMetricPairDirections(metrics) {
+    if (!metrics?.subject || !metrics?.competitor) return metrics;
+    const keys = new Set([
+      ...METRIC_ALIAS_GROUPS.map(group => group.key),
+      "totalGmv", "paidGmv", "paidOrders", "spend", "feeRatio", "roi", "ppc", "roas",
+      "paidGmvContribution", "paidOrderContribution", "globalROAS", "paidAmountShare"
+    ]);
+    for (const key of keys) {
+      if (["roi", "ppc", "feeRatio"].includes(key)) continue;
+      for (const side of ["subject", "competitor"]) {
+        if (isNumericMetricValue(metrics[side][key])) continue;
+        const referenceSide = side === "subject" ? "competitor" : "subject";
+        const direction = parseDirectionalComparison(metrics[side][key]);
+        if (!direction || direction.referenceSide !== referenceSide || !isNumericMetricValue(metrics[referenceSide][key])) continue;
+        const targetContext = metrics[side].valueContexts?.[key] || metrics[side].expectedContext;
+        const referenceContext = metrics[referenceSide].valueContexts?.[key] || metrics[referenceSide].expectedContext;
+        if (comparisonContextMismatch(targetContext, referenceContext)) continue;
+        const bound = resolveDirectionalBound(metrics[side][key], metrics[referenceSide][key], side);
+        if (!bound) continue;
+        metrics[side][key] = bound;
+        metrics[side].valueContexts[key] = targetContext || metrics[side].expectedContext || null;
+      }
+    }
+    for (const aligned of metrics.aligned || []) {
+      const modelKey = aligned.key === "paidAmountShare" ? "paidGmvContribution" : aligned.key;
+      for (const side of ["subject", "competitor"]) {
+        if (isNumericMetricValue(metrics[side]?.[modelKey])) aligned[side] = metrics[side][modelKey];
+      }
+      if (["roi", "ppc", "feeRatio"].includes(modelKey)) continue;
+      for (const side of ["subject", "competitor"]) {
+        if (isNumericMetricValue(aligned[side])) continue;
+        const referenceSide = side === "subject" ? "competitor" : "subject";
+        const bound = resolveDirectionalBound(aligned[side], aligned[referenceSide], side);
+        if (bound) aligned[side] = bound;
+      }
+    }
+    return metrics;
+  }
+
+  function captureDirectionalComparisons(current) {
+    if (!current) return current;
+    const captured = current.directionalComparisons || (current.directionalComparisons = {});
+    for (const [key, value] of Object.entries(current)) {
+      const direction = parseDirectionalComparison(value);
+      if (direction) captured[key] = { ...direction, raw: value };
+    }
+    return current;
+  }
+
+  function directionCanMatch(targetValue, referenceValue, relation) {
+    const target = metricValueState(targetValue);
+    const reference = metricValueState(referenceValue);
+    if (![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(target.state)
+      || ![VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(reference.state)) return true;
+    if (relation === "higher") {
+      return !Number.isFinite(target.range?.max) || !Number.isFinite(reference.range?.min)
+        || target.range.max > reference.range.min;
+    }
+    return !Number.isFinite(target.range?.min) || !Number.isFinite(reference.range?.max)
+      || target.range.min < reference.range.max;
+  }
+
+  function validateDirectionalComparisons(metrics) {
+    for (const side of ["subject", "competitor"]) {
+      const current = metrics?.[side];
+      if (!current) continue;
+      for (const [key, direction] of Object.entries(current.directionalComparisons || {})) {
+        if (isNumericMetricValue(current.periodDirectMetrics?.[key])) continue;
+        // 三项效率指标一旦由同期间分子/分母公式闭合，方向文案仅保留为内部
+        // 原始披露，不得撤销公式结果或重新进入生产报告。
+        if (current.canonicalEfficiencyMetrics?.[key]) continue;
+        const referenceSide = side === "subject" ? "competitor" : "subject";
+        if (direction.referenceSide !== referenceSide || !isNumericMetricValue(current[key])
+          || !isNumericMetricValue(metrics[referenceSide]?.[key])) continue;
+        if (directionCanMatch(current[key], metrics[referenceSide][key], direction.relation)) continue;
+        current.valueConflicts = current.valueConflicts || {};
+        current.valueConflicts[key] = `${key}的数值结果与原始比较方向矛盾`;
+        current[key] = direction.raw;
+        if (key === "roas") current.globalROAS = direction.raw;
+        if (key === "paidGmvContribution") current.paidAmountShare = direction.raw;
+        for (const aligned of metrics.aligned || []) {
+          const modelKey = aligned.key === "paidAmountShare" ? "paidGmvContribution" : aligned.key;
+          if (modelKey === key) aligned[side] = direction.raw;
+        }
+      }
+    }
+    return metrics;
+  }
+
+  function finalizeMetricDirections(metrics) {
+    for (let pass = 0; pass < 3; pass += 1) {
+      for (const side of ["subject", "competitor"]) {
+        closePeriodMetricSet(metrics?.[side], metrics?.[side]?.expectedContext || null);
+      }
+      resolveMetricPairDirections(metrics);
+    }
+    return validateDirectionalComparisons(metrics);
+  }
+
+  function enrichMetrics(metrics, sceneRows, daily, subjectDaily, context = {}) {
+    for (const side of ["subject", "competitor"]) captureDirectionalComparisons(metrics?.[side]);
     const subjectLevel1 = sceneRows.level1.filter(row => row.role === "主体");
     const competitorLevel1 = sceneRows.level1.filter(row => row.role === "对手");
     const spendCoverageBySide = {
@@ -1308,15 +2316,30 @@
       competitor: daily?.spendCoverage || null
     };
     const level1BySide = { subject: subjectLevel1, competitor: competitorLevel1 };
+    const expectedContextBySide = Object.fromEntries(["subject", "competitor"].map(side => {
+      const entityId = side === "subject" ? context.subjectItemId : context.successItemId;
+      const periodKey = `${context.period?.startDate || ""}|${context.period?.endDate || ""}|${context.period?.days || ""}`;
+      return [side, {
+        entityId: String(entityId || ""),
+        startDate: context.period?.startDate || "",
+        endDate: context.period?.endDate || "",
+        coverageDays: Number(context.period?.days) || null,
+        periodKey
+      }];
+    }));
+    const initiallyDisclosed = Object.fromEntries(["subject", "competitor"].map(side => [side,
+      new Set(Object.keys(metrics[side] || {}).filter(key => isNumericMetricValue(metrics[side][key])
+        || parseDirectionalComparison(metrics[side][key])))
+    ]));
 
     // INDEX_CARD 严格周期值优先，其次是一级场景精确花费。两者都没有时，
     // 完整日序列可作为严格周期；若仅缺 1 天，使用真实返回日的直接求和，
     // 但显式标记 coverage-period，不把缺失日当成 0。缺 2 天仍仅用于场景覆盖分配。
     for (const side of ["subject", "competitor"]) {
       const coverage = spendCoverageBySide[side];
-      let spendScope = isDisclosedMetric(metrics[side].spend) ? "strict-period" : "missing";
-      if (!isDisclosedMetric(metrics[side].spend)) {
-        const sceneSpend = sumFinite(level1BySide[side].map(row => numberOrNull(row.charge)));
+      let spendScope = isNumericMetricValue(metrics[side].spend) ? "strict-period" : "missing";
+      if (!isNumericMetricValue(metrics[side].spend)) {
+        const sceneSpend = numberOrNull(sceneRows.exactSceneSpend?.[side]);
         if (Number.isFinite(sceneSpend)) {
           metrics[side].spend = sceneSpend;
           spendScope = "scene-exact";
@@ -1327,17 +2350,49 @@
       }
       metrics[side].spendScope = spendScope;
       metrics[side].spendCoverage = coverage;
+      const expectedContext = expectedContextBySide[side];
+      const coverageContext = coverage?.startDate && coverage?.endDate ? {
+        entityId: expectedContext.entityId,
+        startDate: coverage.startDate,
+        endDate: coverage.endDate,
+        coverageDays: coverage.coverageDays,
+        periodKey: `${coverage.startDate}|${coverage.endDate}|${coverage.coverageDays}`
+      } : expectedContext;
+      metrics[side].valueContexts = metrics[side].valueContexts || {};
+      for (const key of initiallyDisclosed[side]) metrics[side].valueContexts[key] = expectedContext;
+      if (isNumericMetricValue(metrics[side].spend)) {
+        metrics[side].valueContexts.spend = spendScope === "coverage-period" ? coverageContext : expectedContext;
+      }
+      metrics[side].expectedContext = expectedContext;
     }
-    metrics.subject.paidGmv = metrics.subject.paidGmv ?? sumMetricRanges(subjectLevel1.map(row => row.directDealAmount));
-    metrics.competitor.paidGmv = metrics.competitor.paidGmv ?? sumMetricRanges(competitorLevel1.map(row => row.directDealAmount));
+    for (const side of ["subject", "competitor"]) {
+      const metricRows = side === "subject"
+        ? (sceneRows.closedSceneRows?.subject || [])
+        : competitorLevel1;
+      if (!isNumericMetricValue(metrics[side].paidGmv) && metricRows.length) {
+        metrics[side].paidGmv = sumMetricRanges(metricRows.map(row => row.directDealAmount));
+      }
+    }
     metrics.subject.attributedGmv = metrics.subject.paidGmv;
     metrics.competitor.attributedGmv = metrics.competitor.paidGmv;
     for (const side of ["subject", "competitor"]) {
       const values = level1BySide[side];
       const coverage = spendCoverageBySide[side];
-      if (!isDisclosedMetric(metrics[side].marketingClicks)) {
-        metrics[side].marketingClicks = sumMetricRanges(values.map(row => row.click));
+      const expectedContext = expectedContextBySide[side];
+      const valueContexts = metrics[side].valueContexts;
+      if (!isNumericMetricValue(metrics[side].marketingClicks)) {
+        const metricRows = side === "subject"
+          ? (sceneRows.closedSceneRows?.subject || [])
+          : competitorLevel1;
+        metrics[side].marketingClicks = metricRows.length
+          ? sumMetricRanges(metricRows.map(row => row.click))
+          : null;
+        if (isNumericMetricValue(metrics[side].marketingClicks)) valueContexts.marketingClicks = expectedContext;
       }
+      if (isNumericMetricValue(metrics[side].paidGmv) && !valueContexts.paidGmv) valueContexts.paidGmv = expectedContext;
+      if (isNumericMetricValue(metrics[side].totalGmv) && !valueContexts.totalGmv) valueContexts.totalGmv = expectedContext;
+      applyCanonicalEfficiencyMetrics(metrics[side], expectedContext);
+      closePeriodMetricSet(metrics[side], expectedContext);
       const keywordRows = values.filter(row => row.primary === "关键词推广");
       const spend = numberOrNull(metrics[side].spend);
       const dailyKeywordSpend = numberOrNull(coverage?.channelSpend?.["关键词推广"]);
@@ -1358,7 +2413,7 @@
         metrics[side].keywordSpend = sceneKeywordSpend;
         metrics[side].keywordShare = round(sceneKeywordSpend / spend, 6);
         metrics[side].keywordShareSource = "level1-scene-spend";
-      } else if (isDisclosedMetric(existingKeywordShare)) {
+      } else if (isNumericMetricValue(existingKeywordShare)) {
         metrics[side].keywordSpend = null;
         metrics[side].keywordShare = existingKeywordShare;
         metrics[side].keywordShareSource = "index-card";
@@ -1367,19 +2422,141 @@
         metrics[side].keywordShare = apiKeywordShare;
         metrics[side].keywordShareSource = Number.isFinite(apiKeywordShare) ? "api-ratio" : "missing";
       }
-      const ratios = values.map(row => numberOrNull(row.ratio));
+      const hhiRows = sceneRows.closedSceneRows?.[side] || [];
+      const ratios = hhiRows.map(row => numberOrNull(row.ratio));
       const sum = ratios.reduce((total, value) => total + value, 0);
       metrics[side].channelHhi = ratios.length && ratios.every(Number.isFinite) && Math.abs(sum - 1) <= 0.01 ? round(ratios.reduce((total, value) => total + value ** 2, 0), 6) : null;
-      if (!isDisclosedMetric(metrics[side].feeRatio)) {
-        metrics[side].feeRatio = Number.isFinite(metrics[side].spend) && Number.isFinite(metrics[side].totalGmv) && metrics[side].totalGmv !== 0 ? round(metrics[side].spend / metrics[side].totalGmv, 6) : null;
+      metrics[side].valueConflicts = metrics[side].valueConflicts || {};
+      const deriveRatio = (key, numerator, denominator, numeratorKey, denominatorKey, digits, metric, compact = false) => {
+        if (isNumericMetricValue(metrics[side][key])) return;
+        const result = safeIntervalDivide(numerator, denominator, {
+          digits, metric, compact, outward: true,
+          numeratorContext: valueContexts[numeratorKey],
+          denominatorContext: valueContexts[denominatorKey]
+        });
+        if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(result.state)) {
+          metrics[side][key] = result.value;
+          valueContexts[key] = valueContexts[numeratorKey] || valueContexts[denominatorKey] || expectedContext;
+        } else if (result.state === VALUE_STATES.CONFLICT) {
+          metrics[side].valueConflicts[key] = result.reason;
+        }
+      };
+      deriveRatio("feeRatio", metrics[side].spend, metrics[side].totalGmv, "spend", "totalGmv", 6, "费比", true);
+      deriveRatio("roas", metrics[side].totalGmv, metrics[side].spend, "totalGmv", "spend", 4, "全域ROAS", true);
+      deriveRatio("ppc", metrics[side].spend, metrics[side].marketingClicks, "spend", "marketingClicks", 2, "PPC");
+      deriveRatio("roi", metrics[side].paidGmv, metrics[side].spend, "paidGmv", "spend", 2, "ROI");
+      const contribution = safeIntervalDivide(metrics[side].paidGmv, metrics[side].totalGmv, {
+        digits: 6, metric: "付费金额占比", compact: true, outward: true,
+        numeratorContext: valueContexts.paidGmv,
+        denominatorContext: valueContexts.totalGmv
+      });
+      if (!isNumericMetricValue(metrics[side].paidGmvContribution)
+        && [VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(contribution.state)) {
+        metrics[side].paidGmvContribution = contribution.value;
+        valueContexts.paidGmvContribution = valueContexts.paidGmv || expectedContext;
+      } else if (contribution.state === VALUE_STATES.CONFLICT) {
+        metrics[side].valueConflicts.paidGmvContribution = contribution.reason;
       }
-      if (!isDisclosedMetric(metrics[side].roas)) {
-        metrics[side].roas = Number.isFinite(metrics[side].spend) && metrics[side].spend !== 0 && Number.isFinite(metrics[side].totalGmv) ? round(metrics[side].totalGmv / metrics[side].spend, 4) : null;
+      metrics[side].paidAmountShare = metrics[side].paidGmvContribution;
+      if (valueContexts.paidGmvContribution) valueContexts.paidAmountShare = valueContexts.paidGmvContribution;
+      metrics[side].globalROAS = metrics[side].roas;
+      if (valueContexts.roas) valueContexts.globalROAS = valueContexts.roas;
+      closePeriodMetricSet(metrics[side], expectedContext);
+    }
+    finalizeMetricDirections(metrics);
+    return metrics;
+  }
+
+  function enrichItemSupplementMetrics(metrics, gate) {
+    const accepted = new Set(Array.isArray(gate?.acceptedFields) ? gate.acceptedFields : []);
+    const aggregateDirect = new Set(Array.isArray(gate?.aggregateDirectFields) ? gate.aggregateDirectFields : []);
+    for (const side of ["subject", "competitor"]) {
+      const current = metrics?.[side];
+      if (!current) continue;
+      const expectedContext = current.expectedContext || null;
+      const valueContexts = current.valueContexts || (current.valueContexts = {});
+      for (const field of accepted) {
+        const prefix = `${side}.`;
+        if (field.startsWith(prefix)) valueContexts[field.slice(prefix.length)] = expectedContext;
       }
-      if (!isDisclosedMetric(metrics[side].ppc)) metrics[side].ppc = costPerClick(metrics[side].spend, metrics[side].marketingClicks);
-      if (!isDisclosedMetric(metrics[side].roi)) metrics[side].roi = returnOnSpend(metrics[side].paidGmv, metrics[side].spend);
-      metrics[side].paidGmvContribution = contributionRatio(metrics[side].paidGmv, metrics[side].totalGmv);
-      metrics[side].paidOrderContribution = contributionRatio(metrics[side].paidOrders, numberOrNull(metrics[side].orders));
+      if (accepted.has(`${side}.spend`)) {
+        current.spendScope = "competition-item-exact";
+        current.spendCoverage = null;
+      }
+      current.valueConflicts = current.valueConflicts || {};
+      const directKeys = ["paidGmv", "roi"].filter(key => aggregateDirect.has(`${side}.${key}`)
+        && isNumericMetricValue(current[key]));
+      if (directKeys.length) {
+        current.periodDirectMetrics = current.periodDirectMetrics || {};
+        for (const key of directKeys) {
+          current.periodDirectMetrics[key] = current[key];
+          valueContexts[key] = expectedContext;
+          delete current.valueConflicts[key];
+        }
+      }
+      if (directKeys.includes("paidGmv")) {
+        current.attributedGmv = current.paidGmv;
+        valueContexts.attributedGmv = expectedContext;
+        current.paidGmvContribution = null;
+        current.paidAmountShare = null;
+        delete valueContexts.paidGmvContribution;
+        delete valueContexts.paidAmountShare;
+        delete current.valueConflicts.paidGmvContribution;
+      }
+      if (directKeys.includes("roi")) delete current.canonicalEfficiencyMetrics?.roi;
+      captureDirectionalComparisons(current);
+      applyCanonicalEfficiencyMetrics(current, expectedContext);
+      closePeriodMetricSet(current, expectedContext);
+      const deriveRatio = (key, numerator, denominator, numeratorKey, denominatorKey, digits, metric, compact = false) => {
+        if (isNumericMetricValue(current[key])) return;
+        const result = safeIntervalDivide(numerator, denominator, {
+          digits, metric, compact, outward: true,
+          numeratorContext: valueContexts[numeratorKey],
+          denominatorContext: valueContexts[denominatorKey]
+        });
+        if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(result.state)) {
+          current[key] = result.value;
+          valueContexts[key] = valueContexts[numeratorKey] || valueContexts[denominatorKey] || expectedContext;
+        } else if (result.state === VALUE_STATES.CONFLICT) {
+          current.valueConflicts[key] = result.reason;
+        }
+      };
+      deriveRatio("feeRatio", current.spend, current.totalGmv, "spend", "totalGmv", 6, "费比", true);
+      deriveRatio("roas", current.totalGmv, current.spend, "totalGmv", "spend", 4, "全域ROAS", true);
+      deriveRatio("ppc", current.spend, current.marketingClicks, "spend", "marketingClicks", 2, "PPC");
+      deriveRatio("roi", current.paidGmv, current.spend, "paidGmv", "spend", 2, "ROI");
+      if (!isNumericMetricValue(current.paidGmvContribution)) {
+        const contribution = safeIntervalDivide(current.paidGmv, current.totalGmv, {
+          digits: 6,
+          metric: "付费金额占比",
+          compact: true,
+          outward: true,
+          numeratorContext: valueContexts.paidGmv,
+          denominatorContext: valueContexts.totalGmv
+        });
+        if ([VALUE_STATES.EXACT, VALUE_STATES.INTERVAL].includes(contribution.state)) {
+          current.paidGmvContribution = contribution.value;
+          valueContexts.paidGmvContribution = valueContexts.paidGmv || expectedContext;
+        } else if (contribution.state === VALUE_STATES.CONFLICT) {
+          current.valueConflicts.paidGmvContribution = contribution.reason;
+        }
+      }
+      current.paidAmountShare = current.paidGmvContribution;
+      if (valueContexts.paidGmvContribution) valueContexts.paidAmountShare = valueContexts.paidGmvContribution;
+      current.globalROAS = current.roas;
+      if (valueContexts.roas) valueContexts.globalROAS = valueContexts.roas;
+      closePeriodMetricSet(current, expectedContext);
+    }
+    finalizeMetricDirections(metrics);
+    const directCompetitor = metrics?.competitor?.periodDirectMetrics || {};
+    for (const aligned of metrics?.aligned || []) {
+      const modelKey = aligned.key === "paidAmountShare" ? "paidGmvContribution" : aligned.key;
+      if (["paidGmv", "roi"].includes(modelKey) && isNumericMetricValue(directCompetitor[modelKey])) {
+        aligned.competitor = directCompetitor[modelKey];
+      }
+      if (modelKey === "paidGmvContribution" && isNumericMetricValue(metrics?.competitor?.paidGmvContribution)) {
+        aligned.competitor = metrics.competitor.paidGmvContribution;
+      }
     }
     return metrics;
   }
@@ -1396,7 +2573,7 @@
     for (const row of [...(sceneRows?.level1 || []), ...(sceneRows?.level2 || [])]) {
       const allocated = numberOrNull(row.allocated);
       if (!Number.isFinite(allocated) || allocated <= 0) continue;
-      const missing = required.filter(([key]) => !isDisclosedMetric(row[key])).map(([, label]) => label);
+      const missing = required.filter(([key]) => !isNumericMetricValue(row[key])).map(([, label]) => label);
       if (!missing.length) continue;
       const location = `${row.role}${row.level === 1 ? "一级" : "二级"}场景 ${row.primary}${row.secondary ? `/${row.secondary}` : ""}`;
       issues.push(`${location}缺少可披露或可严格计算的${missing.join("、")}`);
@@ -1415,7 +2592,7 @@
     if (!rows.length || !rows.some(hasData)) {
       return ["主体推广消耗大于0，但主体一级推广场景数据为空"];
     }
-    const missingAllocation = rows.filter(row => !Number.isFinite(numberOrNull(row.allocated)));
+    const missingAllocation = rows.filter(hasData).filter(row => !Number.isFinite(numberOrNull(row.allocated)));
     if (!missingAllocation.length) return [];
     const names = missingAllocation.map(row => row.primary || `场景${row.sceneId || "未知"}`);
     return [`主体推广消耗大于0，但主体一级推广场景有 ${missingAllocation.length} 项花费/占比未能分配：${names.join("、")}`];
@@ -1521,18 +2698,63 @@
     const keywords = [];
     const parsedDefinitions = [];
 
-    function audit(path, parser, status, reason = "") {
-      const entry = auditMap.get(path) || { path, records: 0, parsed: 0, empty: 0, failed: 0, parsers: new Set(), reasons: new Set() };
-      entry.records += 1;
+    function audit(path, parser, expectedParser, status, reason = "") {
+      const entry = auditMap.get(path) || {
+        path,
+        // `records` remains the effective audit population so the established
+        // parsedRecords + failedRecords = businessRecords invariant stays true.
+        // Raw observations and superseded failures are retained alongside it.
+        records: 0,
+        rawRecords: 0,
+        parsed: 0,
+        empty: 0,
+        failed: 0,
+        supersededFailed: 0,
+        parsers: new Set(),
+        expectedParsers: new Set(),
+        reasons: new Set(),
+        supersededReasons: new Set()
+      };
+      entry.rawRecords += 1;
       entry.parsers.add(parser);
-      entry[status] += 1;
-      if (reason) entry.reasons.add(reason);
+      if (expectedParser) entry.expectedParsers.add(expectedParser);
+      if (status === "superseded-failed") {
+        entry.supersededFailed += 1;
+        if (reason) entry.supersededReasons.add(reason);
+      } else {
+        entry.records += 1;
+        entry[status] += 1;
+        if (reason) entry.reasons.add(reason);
+      }
       auditMap.set(path, entry);
     }
 
-    for (const record of scoped) {
+    const observations = scoped.map((record, index) => {
       const result = classifyGrowthRecord(record);
-      audit(result.path, result.parser, result.status, result.reason);
+      const expectedParser = expectedGrowthParser(record);
+      const replacementKey = growthRecordReplacementKey(record);
+      return { record, index, result, expectedParser, replacementKey };
+    });
+    const latestParsedIndexByKey = new Map();
+    for (const observation of observations) {
+      if (observation.result.status !== "parsed"
+        || !observation.replacementKey
+        || observation.result.parser !== observation.expectedParser) continue;
+      latestParsedIndexByKey.set(observation.replacementKey, observation.index);
+    }
+
+    for (const observation of observations) {
+      const { result, expectedParser, replacementKey, index } = observation;
+      const superseded = result.status === "failed"
+        && Boolean(replacementKey)
+        && Number(latestParsedIndexByKey.get(replacementKey)) > index;
+      audit(
+        result.path,
+        result.parser,
+        expectedParser,
+        superseded ? "superseded-failed" : result.status,
+        result.reason
+      );
       if (result.status === "failed") continue;
       if (result.parser === "item-info") itemInfos.push(result.parsed);
       else if (result.parser === "selected-success-items" || result.parser === "success-item-search") successItems.push(...result.parsed);
@@ -1545,8 +2767,18 @@
     }
 
     const endpointCoverage = [...auditMap.values()].map(entry => ({
-      path: entry.path, records: entry.records, parsed: entry.parsed, empty: entry.empty, failed: entry.failed,
-      parsers: [...entry.parsers], reasons: [...entry.reasons]
+      path: entry.path,
+      records: entry.records,
+      rawRecords: entry.rawRecords,
+      parsed: entry.parsed,
+      empty: entry.empty,
+      failed: entry.failed,
+      rawFailed: entry.failed + entry.supersededFailed,
+      supersededFailed: entry.supersededFailed,
+      parsers: [...entry.parsers],
+      expectedParsers: [...entry.expectedParsers],
+      reasons: [...entry.reasons],
+      supersededReasons: [...entry.supersededReasons]
     })).sort((left, right) => left.path.localeCompare(right.path));
     const blockingIssues = [];
     const warnings = [];
@@ -1562,9 +2794,17 @@
 
     const item = itemInfos.find(value => value.itemId === subjectItemId) || null;
     if (!item) blockingIssues.push(`主体商品 ${subjectItemId || "未指定"} 未能与商品概况精确匹配`);
-    const targetSuccess = successItems
+    const listedTargetSuccess = successItems
       .filter(value => !successItemId || value.itemId === successItemId)
       .sort((left, right) => Number(right.source === "selected") - Number(left.source === "selected") || String(right.capturedAt || "").localeCompare(String(left.capturedAt || "")))[0] || null;
+    // 同一商品可以同时作为主体与对照对象。这里只复用同一对象的
+    // 标题/图片等身份元数据，不复制任何主体指标到竞品指标。
+    const targetSuccess = listedTargetSuccess || (item && subjectItemId === successItemId
+      ? { ...item, itemId: successItemId, source: "same-identity-subject" }
+      : null);
+    const effectiveSuccessItems = targetSuccess && !successItems.some(value => value.itemId === targetSuccess.itemId)
+      ? [...successItems, targetSuccess]
+      : successItems;
     if (!targetSuccess || (successItemId && targetSuccess.itemId !== successItemId)) blockingIssues.push(`目标成功品 ${successItemId || "未指定"} 未能与成功品接口精确匹配`);
 
     const subjectScopedCards = cards.filter(card => samePeriod(card, period)
@@ -1582,9 +2822,19 @@
     if (![metrics.subject.orders, metrics.subject.aov, metrics.competitor.orders, metrics.competitor.aov].every(value => numberOrNull(value) != null)) {
       blockingIssues.push("主体或目标成功品缺少同周期精确成交笔数/笔单价，无法落实总GMV");
     }
-    const subjectDaily = buildSubjectDaily(cards, subjectItemId, successItemId, period, metrics);
-    if (subjectDaily.duplicateDates.length) {
-      notes.push(`主体逐日核心指标日期重复，已按最新响应去重：${subjectDaily.duplicateDates.join("、")}`);
+    const pairedDaily = buildPairedDaily(
+      cards,
+      subjectItemId,
+      successItemId,
+      period,
+      metrics,
+      options.competitionItemDailySupplements,
+      options.id || options.runId
+    );
+    const subjectDaily = pairedDaily.subject;
+    const competitorDaily = pairedDaily.competitor;
+    if (pairedDaily.duplicateDates.length) {
+      notes.push(`主体与对手逐日核心指标日期重复，已按最新响应去重：${pairedDaily.duplicateDates.join("、")}`);
     }
     if (options.requireSubjectDaily === true) {
       if (subjectDaily.missingDates.length) blockingIssues.push(`主体逐日核心指标缺少 ${subjectDaily.missingDates.length} 天：${subjectDaily.missingDates.join("、")}`);
@@ -1597,7 +2847,21 @@
     const line = chooseLine(lines, subjectItemId, successItemId, period);
     if (!line) blockingIssues.push("没有找到与主体、成功品及目标周期匹配的成长趋势序列");
     const daily = buildDaily(line, period, numberOrNull(metrics.competitor.totalGmv));
-    enrichSubjectDailyWithLine(subjectDaily, daily);
+    enrichPairedDailyWithLine(subjectDaily, daily, "subject");
+    enrichPairedDailyWithLine(competitorDaily, daily, "competitor");
+    resolvePairedDailyDirections(subjectDaily, competitorDaily);
+    if (options.requirePairedDaily === true) {
+      for (const [side, label] of [[subjectDaily, "主体"], [competitorDaily, "对手"]]) {
+        if (side.missingDates.length) blockingIssues.push(`${label}逐日核心指标缺少 ${side.missingDates.length} 天：${side.missingDates.join("、")}`);
+        if (side.unresolvedDates.length) blockingIssues.push(`${label}逐日成交金额无法精确计算：${side.unresolvedDates.join("、")}`);
+        if (!side.ordersClosed) blockingIssues.push(`${label}逐日成交笔数合计与周期成交笔数不闭合`);
+        if (!side.gmvClosed) blockingIssues.push(`${label}逐日GMV合计与周期GMV不闭合`);
+        for (const [key, metricLabel] of [["paidGmv", "付费成交额"], ["spend", "日总消耗"], ["roi", "ROI"], ["ppc", "PPC"]]) {
+          const missingDates = missingPairedDailyMetricDates(side, key);
+          if (missingDates.length) blockingIssues.push(`${label}逐日${metricLabel}缺少 ${missingDates.length} 天：${missingDates.join("、")}`);
+        }
+      }
+    }
     if (daily.duplicateDates.length) {
       notes.push(`目标趋势日期重复，已按日期保留最后一条：${daily.duplicateDates.join("、")}`);
     }
@@ -1619,12 +2883,21 @@
 
     const targetScenes = scenes.filter(scene => scene.itemId === subjectItemId
       && scene.successItemIds.includes(successItemId) && samePeriod(scene, period));
-    const dedupScenes = [];
-    const seenScene = new Set();
+    const sceneByScope = new Map();
     for (const scene of targetScenes.sort((left, right) => String(right.capturedAt || "").localeCompare(String(left.capturedAt || "")))) {
       const key = `${scene.level}|${scene.parentSceneId || ""}`;
-      if (!seenScene.has(key)) { seenScene.add(key); dedupScenes.push(scene); }
+      const current = sceneByScope.get(key);
+      // A direct retry can legitimately return an empty array while an earlier
+      // response in the same immutable object/period scope already contains
+      // the disclosed scene rows. Do not let the later empty retry erase those
+      // rows; among candidates with the same emptiness state the sort order
+      // still keeps the newest response. An all-empty scope remains empty and
+      // never borrows rows from another parent, object or period.
+      if (!current || (!(current.rows || []).length && (scene.rows || []).length)) {
+        sceneByScope.set(key, scene);
+      }
     }
+    const dedupScenes = [...sceneByScope.values()];
     if (!dedupScenes.some(scene => scene.level === 1)) blockingIssues.push("没有找到与目标周期匹配的一级投放场景响应");
     const level1 = dedupScenes.find(scene => scene.level === 1);
     const expectedParents = [...new Set((level1?.rows || []).map(row => String(row.sceneId || "")).filter(Boolean))];
@@ -1633,10 +2906,15 @@
     if (missingParents.length) blockingIssues.push(`缺少 ${missingParents.length} 个一级场景的二级明细响应：${missingParents.join("、")}`);
     const exactSubjectSpend = numberOrNull(metrics.subject.spend);
     const exactCompetitorSpend = numberOrNull(metrics.competitor.spend);
-    const sceneSubjectSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "subject"))));
-    const sceneCompetitorSpend = sumFinite((level1?.rows || []).map(row => numberOrNull(sceneMetric(row, "charge", "competitor"))));
-    const subjectCoverageSpend = subjectDaily.spendUsable ? numberOrNull(subjectDaily.totalSpend) : null;
-    const competitorCoverageSpend = daily.spendUsable ? numberOrNull(daily.totalSpend) : null;
+    const sceneSubjectSpend = rawSceneAllocation(level1?.rows || [], "subject").spend;
+    const sceneCompetitorSpend = rawSceneAllocation(level1?.rows || [], "competitor").spend;
+    // 场景响应是请求完整周期口径；日消耗只覆盖 29/30 或 28/30 日时可以作为
+    // partial 汇总展示，却不能乘完整周期场景占比。只有日覆盖完整时才可充当
+    // 场景分配基数，避免跨覆盖天数混算。
+    const subjectCoverageSpend = subjectDaily.spendComplete ? numberOrNull(subjectDaily.totalSpend) : null;
+    const competitorCoverageSpend = competitorDaily.spendComplete
+      ? numberOrNull(competitorDaily.totalSpend)
+      : daily.spendComplete ? numberOrNull(daily.totalSpend) : null;
     const sceneRows = buildSceneRows(dedupScenes, {
       subject: exactSubjectSpend ?? sceneSubjectSpend ?? subjectCoverageSpend,
       competitor: exactCompetitorSpend ?? sceneCompetitorSpend ?? competitorCoverageSpend
@@ -1655,20 +2933,37 @@
         ? "strict-period"
         : Number.isFinite(sceneCompetitorSpend)
           ? "scene-exact"
-          : daily.spendComplete
+          : competitorDaily.spendComplete || daily.spendComplete
             ? "strict-period-daily"
-            : daily.spendPartial
+            : competitorDaily.spendPartial || daily.spendPartial
               ? "coverage-period"
               : "missing",
       subjectStart: subjectDaily.spendPartial ? subjectDaily.spendCoverage.startDate : period.startDate,
       subjectEnd: subjectDaily.spendPartial ? subjectDaily.spendCoverage.endDate : period.endDate,
       subjectDays: subjectDaily.spendPartial ? subjectDaily.spendCoverageDays : period.days,
-      competitorStart: daily.spendPartial ? daily.spendCoverage.startDate : period.startDate,
-      competitorEnd: daily.spendPartial ? daily.spendCoverage.endDate : period.endDate,
-      competitorDays: daily.spendPartial ? daily.spendCoverageDays : period.days
+      competitorStart: competitorDaily.spendPartial
+        ? competitorDaily.spendCoverage.startDate
+        : daily.spendPartial ? daily.spendCoverage.startDate : period.startDate,
+      competitorEnd: competitorDaily.spendPartial
+        ? competitorDaily.spendCoverage.endDate
+        : daily.spendPartial ? daily.spendCoverage.endDate : period.endDate,
+      competitorDays: competitorDaily.spendPartial
+        ? competitorDaily.spendCoverageDays
+        : daily.spendPartial ? daily.spendCoverageDays : period.days
     };
     if (sceneRows.validationIssues.length) blockingIssues.push(...sceneRows.validationIssues);
-    enrichMetrics(metrics, sceneRows, daily, subjectDaily);
+    enrichMetrics(metrics, sceneRows, daily, subjectDaily, { period, subjectItemId, successItemId });
+    const itemSupplementGate = options.competitionItemSupplement && competitionItemSupplement?.applyToMetrics
+      ? competitionItemSupplement.applyToMetrics(metrics, options.competitionItemSupplement, {
+          subjectItemId,
+          competitorItemId: successItemId,
+          period,
+          previousPeriod: options.previousPeriod,
+          runId: options.id || options.runId,
+          preferAggregateDirect: daysInclusive(period.startDate, period.endDate) === 30
+        })
+      : null;
+    if (itemSupplementGate?.acceptedFields?.length) enrichItemSupplementMetrics(metrics, itemSupplementGate);
     const promotionIssues = [
       ...subjectPromotionSceneIssues(sceneRows, metrics.subject),
       ...promotionDetailIssues(sceneRows)
@@ -1685,16 +2980,32 @@
     if (!targetKeywords) blockingIssues.push("未捕获与主体、成功品及目标周期精确匹配的关键词响应");
     if (Array.isArray(options.sceneMissed) && options.sceneMissed.length) blockingIssues.push(`场景明细渠道未遍历完整：${options.sceneMissed.join("、")}`);
 
+    const metricContract = evaluateCoreMetricContract(metrics, {
+      sceneRows,
+      contexts: {
+        subject: { expected: metrics.subject.expectedContext, values: metrics.subject.valueContexts },
+        competitor: { expected: metrics.competitor.expectedContext, values: metrics.competitor.valueContexts }
+      }
+    });
+    if (!metricContract.complete) {
+      for (const gap of metricContract.missing) {
+        blockingIssues.push(`${gap.label}${gap.state === VALUE_STATES.CONFLICT ? "口径冲突" : "缺失"}：${gap.reason}`);
+      }
+    }
+
     const completenessStatus = blockingIssues.length ? "blocked" : warnings.length ? "ready-with-warnings" : "ready";
     return {
-      pageType: "growth", period, item, targetSuccess, successItems, targetCard, cards, datasetTables, line, daily, subjectDaily,
-      stages: line?.stages || [], sceneResponses: dedupScenes, sceneRows, keywords: targetKeywords?.rows || [], metrics,
+      pageType: "growth", period, item, targetSuccess, successItems: effectiveSuccessItems, targetCard, cards, datasetTables, line, daily, subjectDaily, competitorDaily, pairedDaily,
+      stages: line?.stages || [], sceneResponses: dedupScenes, sceneRows, keywords: targetKeywords?.rows || [], metrics, metricContract,
+      itemSupplementGate,
       definitions: parsedDefinitions,
       completeness: {
         status: completenessStatus,
+        rawBusinessRecords: endpointCoverage.reduce((sum, entry) => sum + entry.rawRecords, 0),
         businessRecords: endpointCoverage.reduce((sum, entry) => sum + entry.records, 0),
         parsedRecords: endpointCoverage.reduce((sum, entry) => sum + entry.parsed + entry.empty, 0),
         failedRecords: endpointCoverage.reduce((sum, entry) => sum + entry.failed, 0),
+        supersededFailedRecords: endpointCoverage.reduce((sum, entry) => sum + entry.supersededFailed, 0),
         platformGap: {
           days: daily.platformGapDays,
           dates: daily.platformGapDates,
@@ -1703,7 +3014,8 @@
           coverageDays: daily.coverageDays,
           expectedDays: daily.expectedDates.length
         },
-        endpointCoverage, blockingIssues: [...new Set(blockingIssues)], warnings: [...new Set(warnings)], notes: [...new Set(notes)]
+        endpointCoverage, blockingIssues: [...new Set(blockingIssues)], warnings: [...new Set(warnings)], notes: [...new Set(notes)],
+        metricContract, itemSupplementGate
       }
     };
   }
@@ -1711,8 +3023,11 @@
   return {
     CHANNELS, SCENE_CODES, STANDARD_PATHS, PLATFORM_DAY_GAP_TOLERANCE, METRIC_ALIAS_GROUPS,
     SUBJECT_MINIMUM_PROMOTION_CONTRACT, SUBJECT_MINIMUM_PROMOTION_METRICS, missingSubjectMinimumPromotionMetrics,
+    CORE_METRIC_CONTRACT, VALUE_STATES, metricValueState, isNumericMetricValue, metricContextMismatch, metricRangesCompatible,
+    parseDirectionalComparison, resolveDirectionalBound, safeIntervalDivide, safeIntervalMultiply, applyCanonicalEfficiencyMetrics, evaluateCoreMetricContract,
     metricIdentity, canonicalPath, recordPath, parseBody, parseVagueRange,
-    numberOrNull, calculableMetricValue, normalizeDate, enumerateDates, lineGmvIndex, fitDailyGmv, costPerClick, sumMetricRanges, returnOnSpend, contributionRatio,
-    datasetRequestType, transportOnlyReason, isTransportOnlyRecord, classifyGrowthRecord, deriveGrowth
+    numberOrNull, calculableMetricValue, normalizeDate, enumerateDates, lineGmvIndex, fitDailyGmv, costPerClick, sumMetricRanges, returnOnSpend, paidGmvFromSpendAndRoi, contributionRatio,
+    datasetRequestType, expectedGrowthParser, growthRecordReplacementScope, growthRecordReplacementKey,
+    transportOnlyReason, isTransportOnlyRecord, classifyGrowthRecord, deriveGrowth
   };
 });
