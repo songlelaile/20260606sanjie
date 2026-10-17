@@ -18,7 +18,14 @@ function harness() {
   let cursor = 0, tree: Value, pending: Array<() => void> = [];
   const requests: Array<{ url: string; resolve: (response: { ok: boolean; json: () => Promise<unknown> }) => void; signal: AbortSignal }> = [];
   const messages: Array<{ message: { data: unknown }; origin: string }> = [];
-  const events = new Map<string, () => void>();
+  // Browser collaborators keep exact handler identities, so removal is verifiable.
+  const windowEvents = new Map<string, Set<() => void>>(), documentEvents = new Map<string, Set<() => void>>();
+  const listen = (registry: Map<string, Set<() => void>>) => (name: string, handler: () => void) => { if (!registry.has(name)) registry.set(name, new Set()); registry.get(name)!.add(handler); };
+  const unlisten = (registry: Map<string, Set<() => void>>) => (name: string, handler: () => void) => { registry.get(name)?.delete(handler); if (registry.get(name)?.size === 0) registry.delete(name); };
+  const fire = (registry: Map<string, Set<() => void>>, name: string) => { [...(registry.get(name) || [])].forEach(handler => handler()); };
+  const events = { get: (name: string) => windowEvents.has(name) ? () => fire(windowEvents, name) : undefined };
+  const browserDocument = { visibilityState: "visible" as "visible" | "hidden", addEventListener: listen(documentEvents), removeEventListener: unlisten(documentEvents),
+    querySelectorAll: () => [{ contentWindow: { postMessage: (message: { data: unknown }, origin: string) => messages.push({ message, origin }) } }] };
   const react = {
     useState(initial: unknown) { const slot = slots[cursor++] ||= { value: initial }; return [slot.value, (next: unknown) => { slot.value = typeof next === "function" ? (next as (v: unknown) => unknown)(slot.value) : next; }]; },
     useEffect(callback: () => (() => void) | undefined, deps: unknown[]) { const slot = slots[cursor++] ||= {}; if (!slot.deps || !deps.every((d, i) => Object.is(d, slot.deps![i]))) { slot.deps = deps; pending.push(() => { slot.cleanup?.(); slot.cleanup = callback(); }); } }
@@ -27,7 +34,7 @@ function harness() {
   const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
   let sequence = 0;
   const context = createContext({ exports, module: { exports }, AbortController, Date, Intl, console,
-    crypto: { randomUUID: () => `demo-${++sequence}` }, document: { querySelectorAll: () => [{ contentWindow: { postMessage: (message: { data: unknown }, origin: string) => messages.push({ message, origin }) } }] }, window: { location: { origin: "http://localhost" }, addEventListener: (name: string, handler: () => void) => events.set(name, handler), removeEventListener: (name: string) => events.delete(name) },
+    crypto: { randomUUID: () => `demo-${++sequence}` }, document: browserDocument, window: { location: { origin: "http://localhost" }, addEventListener: listen(windowEvents), removeEventListener: unlisten(windowEvents) },
     fetch: vi.fn((url: string, options: { signal: AbortSignal }) => new Promise(resolve => requests.push({ url, resolve, signal: options.signal }))),
     require: (name: string) => {
       if (name === "react") return react;
@@ -47,7 +54,9 @@ function harness() {
   function click(label: string) { const node = button(label); (node.props.onClick as () => void)(); render(); }
   async function respond(index: number, body: unknown, ok = true) { requests[index].resolve({ ok, json: async () => body }); await new Promise(resolve => setImmediate(resolve)); render(); }
   render();
-  return { render, nodes, text, button, click, respond, requests, messages, quote, context, events };
+  const unmount = () => slots.forEach(slot => { slot.cleanup?.(); slot.cleanup = undefined; });
+  return { render, nodes, text, button, click, respond, requests, messages, quote, context, events, windowEvents, documentEvents, browserDocument,
+    fireWindow: (name: string) => fire(windowEvents, name), fireDocument: (name: string) => fire(documentEvents, name), unmount };
 }
 
 describe("creative credit display and safe demonstration", () => {
@@ -124,5 +133,36 @@ describe("creative credit display and safe demonstration", () => {
     expect(h.text()).not.toContain("本次预计 4 积分");
     expect(h.button("模拟扣分并查看记录").props.disabled).toBe(true);
     expect(h.messages.at(-1)).toMatchObject({ message: { data: null }, origin: "http://localhost" });
+  });
+});
+
+describe("credit visibility and listener lifecycle", () => {
+  it("refreshes once per visible return, never while hidden, and drops superseded or post-unmount replies", async () => {
+    const h = harness(); await h.respond(0, { data });
+    expect(h.requests.map(request => request.url)).toEqual(["/api/creative/credits"]);
+    expect([...h.windowEvents.keys()].sort()).toEqual(["focus", "sanjie:credits-changed", "sanjie:payment-paid"]);
+    expect([...h.documentEvents.keys()]).toEqual(["visibilitychange"]);
+    h.browserDocument.visibilityState = "hidden";
+    h.fireDocument("visibilitychange"); h.fireWindow("focus"); h.render();
+    expect(h.requests).toHaveLength(1);
+    h.browserDocument.visibilityState = "visible";
+    h.fireDocument("visibilitychange"); h.render();
+    expect(h.requests).toHaveLength(2); expect(h.requests[1].url).toBe("/api/creative/credits");
+    // A newer visible refresh supersedes the pending one; its late reply cannot update the balance.
+    h.fireWindow("focus"); h.render();
+    expect(h.requests).toHaveLength(3); expect(h.requests[1].signal.aborted).toBe(true);
+    await h.respond(1, { data: { ...data, wallet: { balanceCents: 777700, balancePoints: 77770 } } });
+    expect(h.text()).not.toContain("77,770");
+    await h.respond(2, { data: { ...data, wallet: { balanceCents: 15000, balancePoints: 1500 } } });
+    expect(h.text()).toContain("1,500");
+    h.fireDocument("visibilitychange"); h.render();
+    expect(h.requests).toHaveLength(4);
+    h.unmount();
+    expect(h.requests[3].signal.aborted).toBe(true);
+    expect(h.windowEvents.size).toBe(0); expect(h.documentEvents.size).toBe(0);
+    await h.respond(3, { data: { ...data, wallet: { balanceCents: 999900, balancePoints: 99990 } } });
+    expect(h.text()).not.toContain("99,990"); expect(h.text()).toContain("1,500");
+    h.fireDocument("visibilitychange"); h.fireWindow("focus"); h.fireWindow("sanjie:credits-changed");
+    expect(h.requests).toHaveLength(4);
   });
 });

@@ -29,6 +29,12 @@ function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
   if (start < 0 || end < 0) throw new Error("Production creative bridge was not found");
   const credentialStart = script.indexOf("function creativeUsesPlatformWallet(cfg, kind) {"), credentialEnd = script.indexOf("\nfunction creativeSupplyChannel", credentialStart);
   if (credentialStart < 0 || credentialEnd < 0) throw new Error("Production creative credential helpers were not found");
+  // The bridge exposes the production API-busy helper; run it with its real state.
+  const epochStart = script.indexOf("var configReadEpoch = 0;"), epochEnd = script.indexOf("\n", script.indexOf("var pendingProviderProfile = 0;", epochStart));
+  const busyStart = script.indexOf("var creativeWebBusy = Object.create(null);"), busyEnd = script.indexOf("\nfunction creativeWebProfile(", busyStart);
+  if ([epochStart, epochEnd, busyStart, busyEnd].some(index => index < 0)) throw new Error("Production API busy helpers were not found");
+  expect(script.slice(epochStart, epochEnd).split("\n")).toEqual(["var configReadEpoch = 0;", "var pendingProviderSelection = 0;", "var pendingProviderProfile = 0;"]);
+  expect(script.slice(busyStart, busyEnd).match(/\nfunction /g)).toHaveLength(2);
   const calls: Array<{ type: string; envelope: Envelope }> = [];
   const openEditor = vi.fn((_item: Record<string, unknown>) => ({ ok: true }));
   const context = createContext({
@@ -36,15 +42,17 @@ function bridgeHarness(key = "fixture-key", imageAdapter = "openai-images") {
     send: async (type: string, envelope: Envelope) => { calls.push({ type, envelope: clone(envelope) }); return { ok: true }; },
     queueArchiveResult: vi.fn(), state: { archiveAccountKey: "fixture-account" },
     creativeWebAccountKey: vi.fn(), creativeToolsReady: true, creativeWebRefresh: vi.fn(),
-    creativeWebListBoundApis: vi.fn(), creativeWebSelectBoundApi: vi.fn(), creativeWebBusy: {},
+    creativeWebListBoundApis: vi.fn(), creativeWebSelectBoundApi: vi.fn(),
     newJobId: vi.fn(), registerGenerationJob: vi.fn(), unregisterGenerationJob: vi.fn(),
-    creativeWebIsBusy: () => false, openConfigModal: vi.fn(), openArchiveHistory: vi.fn(),
+    openConfigModal: vi.fn(), openArchiveHistory: vi.fn(),
     cloneGuideValue: clone, $: () => null, openGuideRegenerateModal: openEditor
   });
   context.window = context;
+  runInContext(script.slice(epochStart, epochEnd), context, { filename: "promptlab-production-config-epoch.js" });
+  runInContext(script.slice(busyStart, busyEnd), context, { filename: "promptlab-production-api-busy.js" });
   runInContext(script.slice(credentialStart, credentialEnd), context, { filename: "promptlab-production-credentials.js" });
   runInContext(script.slice(start, end + "\n  };".length), context, { filename: "promptlab-production-bridge.js" });
-  return { bridge: context.SZ_CREATIVE_TOOLS_BRIDGE as Bridge, calls, openEditor };
+  return { bridge: context.SZ_CREATIVE_TOOLS_BRIDGE as Bridge, calls, openEditor, context };
 }
 
 function backgroundHarness() {
@@ -54,6 +62,11 @@ function backgroundHarness() {
   const evidenceStart = script.indexOf("function productEvidenceItems(payload) {"), evidenceEnd = script.indexOf("\nfunction productEvidenceNote", evidenceStart);
   const localizationStart = script.indexOf("function localizePromptProductImages(payload) {"), localizationEnd = script.indexOf("\nfunction imagePartForGemini", localizationStart);
   if ([evidenceStart, evidenceEnd, localizationStart, localizationEnd].some(index => index < 0)) throw new Error("Production evidence/localization helpers were not found");
+  // The analyzer resolves cancellation through the production signal registries.
+  const registryStart = script.indexOf("var activeJobs = {};"), registryEnd = script.indexOf("\nvar legacyPromptJobSequence", registryStart);
+  const signalStart = script.indexOf("function signalForPayload(payload) {"), signalEnd = script.indexOf("\nfunction beginLegacyPromptJob", signalStart);
+  if ([registryStart, registryEnd, signalStart, signalEnd].some(index => index < 0)) throw new Error("Production signal lookup was not found");
+  expect(script.slice(registryStart, registryEnd).split("\n").every(line => /^var \w+ = (?:\{\}|new WeakMap\(\));$/.test(line))).toBe(true);
   const requests: Array<Array<{ role: string; content: unknown }>> = [];
   const context = createContext({
     DEFAULT_CFG: { visionModel: "fixture-vision" },
@@ -65,6 +78,8 @@ function backgroundHarness() {
       return { ok: true, data: { productName: "原图商品", identityPoints: ["正面纹理清晰"], confidence: 90, unsupportedClaim: "未确认的宣传事实" } };
     }
   });
+  runInContext(script.slice(registryStart, registryEnd), context, { filename: "background-production-signal-registries.js" });
+  runInContext(script.slice(signalStart, signalEnd), context, { filename: "background-production-signal.js" });
   runInContext(script.slice(evidenceStart, evidenceEnd), context, { filename: "background-production-evidence.js" });
   runInContext(script.slice(localizationStart, localizationEnd), context, { filename: "background-production-localization.js" });
   runInContext(script.slice(start, end), context, { filename: "background-production-subject-analysis.js" });
@@ -72,6 +87,15 @@ function backgroundHarness() {
 }
 
 describe("studio analysis and editing bridge", () => {
+  it("routes studio busy state through the production API busy helper and config epoch", () => {
+    const { bridge, context } = bridgeHarness(), setApiBusy = (bridge as unknown as { setApiBusy(scope: string, on: boolean): void }).setApiBusy;
+    expect(setApiBusy).toBe(context.creativeWebSetApiBusy); expect(context.creativeWebIsBusy()).toBe(false); expect(context.configReadEpoch).toBe(0);
+    setApiBusy("studio-genesis", true); expect(context.creativeWebIsBusy()).toBe(true); expect(context.configReadEpoch).toBe(1);
+    setApiBusy("studio-genesis", true); expect(context.configReadEpoch).toBe(1);
+    setApiBusy("studio-genesis", false); expect(context.creativeWebIsBusy()).toBe(false); expect(context.configReadEpoch).toBe(2);
+    context.pendingProviderSelection = 1; setApiBusy("studio-genesis", true);
+    expect(context.creativeWebIsBusy()).toBe(true); expect(context.configReadEpoch).toBe(2);
+  });
   it("exposes provider quality capability without advertising an unsupported fast mode", () => {
     const supported = bridgeHarness().bridge.modelInfo();
     expect(supported.qualityOptions).toEqual(["auto", "low", "medium", "high"]);

@@ -4,7 +4,12 @@ import { createContext, runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve("public/creative/labs/image-prompt-lab/promptlab.js"), "utf8");
-const quoteSource = source.slice(source.indexOf("function refreshLegacyCreditHints()"));
+// Execute only the named legacy quote function and its registration, never the
+// unrelated workbench bootstrap that follows it in promptlab.js.
+const quoteStart = source.indexOf("function refreshLegacyCreditHints()");
+const quoteRegistration = "window.SZCreativeCreditHints?.register('legacy-image-workbench', refreshLegacyCreditHints);";
+const quoteEnd = source.indexOf(quoteRegistration, quoteStart) + quoteRegistration.length;
+const quoteSource = source.slice(quoteStart, quoteEnd);
 function quotes(options: { mode?: string; count?: number; style?: boolean; formal?: boolean; product?: boolean } = {}) {
   const values = new Map<string, { id: string; value: string; dataset: Record<string, string> }>();
   const button = (id: string) => {
@@ -51,29 +56,66 @@ function quotes(options: { mode?: string; count?: number; style?: boolean; forma
   return { state, context, button, run: () => { context.refreshLegacyCreditHints(); return output; } };
 }
 
+// Run renderCredits with the real studio pricing helpers (pendingImage,
+// eligibleShots, newGenerationTasks) over valid shot and slot records.
+function studioCredits(options: { revised?: boolean } = {}) {
+  const ui = readFileSync(resolve("public/creative/labs/image-prompt-lab/studio-genesis-ui.js"), "utf8");
+  const start = ui.indexOf("  function renderCredits()"), end = ui.indexOf("  window.SZCreativeCreditHints?.register('studio-genesis'", start);
+  const helpersStart = ui.indexOf("  function pendingImage(taskId,shotId) {"), helpersEnd = ui.indexOf("  function copyGenerationTasks(entries) {", helpersStart);
+  expect([start, end, helpersStart, helpersEnd].every(index => index > 0)).toBe(true);
+  expect(ui.slice(helpersStart, helpersEnd).match(/\n  function /g)).toHaveLength(2);
+  expect(ui.slice(start, end).match(/\n  function /g)).toBeNull();
+  const button = (id: string, dataset: Record<string, string> = {}) => ({ id, dataset });
+  const brief = button("brief"), retry = button("retry", { taskId: "task" }), generate = button("generate"), retryAll = button("retry-all");
+  const output = new Map<string, { kind: string; model: string; requests?: number[] }>();
+  const shots = ["shot-1", "shot-2", "shot-3"].map((id, index) => ({ id, index: index + 1 }));
+  const plan = { signature: "same", settings: { model: "frozen-task-model" }, shots };
+  const record = { id: "task", plan, slots: [
+    { shot: shots[0], status: "done", item: { resultId: "kept" } },
+    { shot: shots[1], status: "failed", item: null },
+    { shot: shots[2], status: "ready", item: null }
+  ] };
+  const draftPlan = options.revised ? { signature: "revised", settings: { model: "revised-task-model" }, shots } : plan;
+  const studio = { tasks: [record], pendingReceipts: [{ accountKey: "fixture-account", taskId: "task", shotId: "shot-3", jobId: "paid-job" }], uncertain: null };
+  const context = createContext({
+    window: { SZCreativeCreditHints: {
+      chat: (node: typeof brief, model: string) => output.set(node.id, { kind: "chat", model }),
+      image: (node: typeof retry, model: string, requests: number[]) => output.set(node.id, { kind: "image", model, requests })
+    } },
+    root: { querySelectorAll: (selector: string) => selector.includes('="write-brief"') ? [brief] : selector.includes('="retry-slot"') ? [retry]
+      : selector.includes('="generate"') ? [generate] : selector.includes('="retry"') ? [retryAll] : [] },
+    bridge: { config: () => ({ visionModel: "selected-vision-model", imageModel: "current-default-image-model" }) },
+    account: "fixture-account", draft: { tasks: [{ id: "task", plan: draftPlan }] }, current: () => studio, modelInfo: {}
+  });
+  runInContext(ui.slice(helpersStart, helpersEnd), context);
+  runInContext(ui.slice(start, end), context);
+  return { renderCredits: () => context.renderCredits(), output };
+}
+
 describe("image action hints quote the existing request shape without submitting requests", () => {
+  it("extracts exactly the legacy quote function and its registration", () => {
+    expect(quoteStart).toBeGreaterThan(0); expect(quoteEnd).toBeGreaterThan(quoteStart + quoteRegistration.length);
+    expect(source.indexOf("function refreshLegacyCreditHints()", quoteStart + 1)).toBe(-1);
+    expect(quoteSource.startsWith("function refreshLegacyCreditHints() {")).toBe(true);
+    expect(quoteSource.endsWith("}\n" + quoteRegistration)).toBe(true);
+    expect(quoteSource.match(/\n\S/g)).toEqual(["\n}", "\nw"]);
+    expect(quoteSource).not.toContain("URLSearchParams");
+    expect(source.slice(quoteEnd).trimStart().startsWith("// Cached legacy workspaces")).toBe(true);
+  });
   it("labels AI brief writing by vision model and a single-image retry by its task model", () => {
-    const ui = readFileSync(resolve("public/creative/labs/image-prompt-lab/studio-genesis-ui.js"), "utf8");
-    const start = ui.indexOf("function renderCredits()"), end = ui.indexOf("window.SZCreativeCreditHints?.register('studio-genesis'", start);
-    const brief = { id: "brief", dataset: {} }, retry = { id: "retry", dataset: { taskId: "task" } };
-    const output = new Map<string, { kind: string; model: string; requests?: number[] }>();
-    const plan = { signature: "same", settings: { model: "frozen-task-model" }, shots: [{}] };
-    const record = { id: "task", plan, slots: [{ status: "done" }] };
-    const context = createContext({
-      window: { SZCreativeCreditHints: {
-        chat: (button: typeof brief, model: string) => output.set(button.id, { kind: "chat", model }),
-        image: (button: typeof retry, model: string, requests: number[]) => output.set(button.id, { kind: "image", model, requests })
-      } },
-      root: { querySelectorAll: (selector: string) => selector.includes('="write-brief"') ? [brief] : selector.includes('="retry-slot"') ? [retry] : [] },
-      bridge: { config: () => ({ visionModel: "selected-vision-model", imageModel: "current-default-image-model" }) },
-      draft: { tasks: [{ id: "task", plan }] }, current: () => ({ tasks: [record] }), modelInfo: {}
-    });
-    const slotsStart = ui.indexOf("function matchingSlots(entry)"), slotsEnd = ui.indexOf("function activeSlots()", slotsStart);
-    runInContext(ui.slice(slotsStart, slotsEnd), context);
-    runInContext(ui.slice(start, end), context);
-    context.renderCredits();
-    expect(output.get("brief")).toEqual({ kind: "chat", model: "selected-vision-model" });
-    expect(output.get("retry")).toEqual({ kind: "image", model: "frozen-task-model", requests: [1] });
+    const h = studioCredits();
+    h.renderCredits();
+    expect(h.output.get("brief")).toEqual({ kind: "chat", model: "selected-vision-model" });
+    expect(h.output.get("retry")).toEqual({ kind: "image", model: "frozen-task-model", requests: [1] });
+    // The real pricing helpers exclude the done and pending images and quote only the failed one.
+    expect(h.output.get("generate")).toEqual({ kind: "image", model: "", requests: [] });
+    expect(h.output.get("retry-all")).toEqual({ kind: "image", model: "frozen-task-model", requests: [1] });
+  });
+  it("prices a revised plan behind a pending receipt as an independent new task", () => {
+    const h = studioCredits({ revised: true });
+    h.renderCredits();
+    expect(h.output.get("generate")).toEqual({ kind: "image", model: "revised-task-model", requests: [1, 1, 1] });
+    expect(h.output.get("retry-all")).toEqual({ kind: "image", model: "", requests: [] });
   });
   it("only registers API submissions and leaves navigation, downloads and unknown controls untouched", () => {
     const buttons = [
