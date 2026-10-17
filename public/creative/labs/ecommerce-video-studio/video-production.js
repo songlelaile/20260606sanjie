@@ -8,7 +8,18 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function (root, Contract) {
   'use strict';
 
+  // Official five-second reference examples, without video input. These are not
+  // calculated from the final canvas: the provider may align its raw dimensions.
+  // https://docs.volcengine.com/docs/ark/model-pricing?lang=en&redirect=1
+  var RESOLUTION_PRICES = Object.freeze({
+    'seedance-2.0-mini': Object.freeze({ '480p': 1.16, '720p': 2.48 }),
+    'seedance-2.0': Object.freeze({ '480p': 2.31, '720p': 4.97, '1080p': 12.39, '4k': 25.27 }),
+    'seedance-2.5': Object.freeze({ '480p': 3.36, '720p': 7.56, '1080p': 18.71 })
+  });
   var PRICES = Object.freeze({ 'seedance-2.0-mini': 2.48, 'seedance-2.0': 4.97, 'seedance-2.5': 7.56 });
+  // Product export sizes, independent of model-native source alignment/pricing.
+  var OUTPUT_SIZES = Object.freeze({ '480p': [854, 480], '720p': [1280, 720], '1080p': [1920, 1080], '4k': [3840, 2160] });
+  var OUTPUT_BITRATES = Object.freeze({ '480p': 2000000, '720p': 4000000, '1080p': 8000000, '4k': 24000000 });
   var MODES = Object.freeze(['economic', 'balanced', 'quality']);
   function error(code, message, details) {
     var value = new Error(message); value.code = code; value.name = 'VideoProductionError';
@@ -26,6 +37,28 @@
     return value !== '' && value != null && Number.isFinite(Number(value)) ? Number(value) : fallback;
   }
   function round(value) { return Math.round((value + Number.EPSILON) * 100) / 100; }
+  function outputDimensions(resolution, ratio) {
+    var size = Object.prototype.hasOwnProperty.call(OUTPUT_SIZES, resolution) && OUTPUT_SIZES[resolution];
+    if (!size) throw error('PRODUCTION_RESOLUTION_UNSUPPORTED', '不支持此成片分辨率，禁止自动降级。');
+    if (['16:9', '9:16'].indexOf(ratio) < 0) throw error('PRODUCTION_RATIO_UNSUPPORTED', '成片合成仅支持 16:9 或 9:16，禁止自动更改画幅。');
+    return { width: ratio === '9:16' ? size[1] : size[0], height: ratio === '9:16' ? size[0] : size[1] };
+  }
+  function planOutput(plan) {
+    // Historical plans were always composed at 720p, even if an older request
+    // snapshot happened to contain another UI selection. Never read current UI.
+    var legacy = plan.version == null || plan.version === 1;
+    if (!legacy && plan.version !== 2) throw error('PRODUCTION_PLAN_VERSION_UNSUPPORTED', '无法核验此版本的成片尺寸，请保留原计划核对。');
+    var resolution = plan.resolution || (legacy ? '720p' : '');
+    var dimensions = outputDimensions(resolution, plan.ratio);
+    if ((!legacy && (plan.width == null || plan.height == null)) ||
+        (plan.width != null && plan.width !== dimensions.width) || (plan.height != null && plan.height !== dimensions.height) ||
+        (!legacy && plan.request && (plan.request.resolution !== resolution || plan.request.ratio != null && plan.request.ratio !== plan.ratio)) ||
+        (!legacy && plan.shots.some(function (shot) { return shot.kind === 'ai' && (!shot.request || shot.request.resolution !== resolution || shot.request.ratio !== plan.ratio); }))) {
+      throw error('PRODUCTION_DIMENSIONS_MISMATCH', '成片尺寸与已保存计划不一致，禁止改写原计划或静默降级。');
+    }
+    if (!legacy && plan.outputFrameRate != null && plan.outputFrameRate !== 24) throw error('PRODUCTION_FRAME_RATE_UNSUPPORTED', '无法核验此成片计划的输出帧率，请保留原计划核对。');
+    return { resolution: resolution, width: dimensions.width, height: dimensions.height, frameRate: legacy ? 30 : 24, videoBitsPerSecond: legacy ? 4000000 : OUTPUT_BITRATES[resolution] };
+  }
   function id(prefix) {
     return prefix + '_' + (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10));
   }
@@ -54,11 +87,12 @@
     if (shot && shot.kind === 'local') return 0;
     var request = shot && (shot.request || shot) || {};
     var key = shot && shot.productKey || request.productKey;
-    var rate = PRICES[key];
+    var rates = Object.prototype.hasOwnProperty.call(RESOLUTION_PRICES, key) && RESOLUTION_PRICES[key];
+    var rate = rates && Object.prototype.hasOwnProperty.call(rates, request.resolution) && rates[request.resolution];
     var duration = finite(shot && shot.durationSeconds, finite(request.durationSeconds, 0));
-    if (!rate) throw error('PRODUCTION_PRICE_UNKNOWN', '该模型没有已核对的镜头参考价格。');
-    if (request.resolution !== '720p' || ['16:9', '9:16'].indexOf(request.ratio) < 0) {
-      throw error('PRODUCTION_PRICE_UNKNOWN', '预算仅支持 720p 的 16:9 或 9:16，不估算其他画幅。');
+    if (!rate) throw error('PRODUCTION_PRICE_UNKNOWN', '该模型与分辨率组合没有已核对的镜头参考价格，禁止自动降级。');
+    if (['16:9', '9:16'].indexOf(request.ratio) < 0) {
+      throw error('PRODUCTION_PRICE_UNKNOWN', '预算仅支持 16:9 或 9:16，不估算其他画幅。');
     }
     if (duration < 4 || duration > 15) throw error('PRODUCTION_SHOT_DURATION_INVALID', 'AI 镜头时长必须为 4–15 秒。');
     if ((request.videos && request.videos.length) || (request.audios && request.audios.length) || request.referenceVideo) {
@@ -116,7 +150,7 @@
     ].filter(Boolean).join('\n');
     var raw = Object.assign({}, clone(original), {
       mode: 'direct', creativeRoute: route, productKey: key, durationSeconds: 5,
-      resolution: '720p', audioMode: 'silent', generateSound: false, narration: false, narrationLanguage: '', images: clone(images), videos: [], audios: [],
+      resolution: original.resolution, audioMode: 'silent', generateSound: false, narration: false, narrationLanguage: '', images: clone(images), videos: [], audios: [],
       generationVideos: [], referenceAudios: [], referenceVideos: [], referenceVideo: null, referenceFrames: [],
       storyboard: [], scriptConfirmed: false, reviewFingerprint: '', reviewConfirmedAt: '',
       script: String(original.script || original.confirmedScript || original.goal || original.prompt || '').trim(),
@@ -131,6 +165,7 @@
     if (!Contract) throw error('PRODUCTION_CONTRACT_MISSING', '视频合同尚未加载。');
     if (!input || typeof input !== 'object') throw error('PRODUCTION_REQUEST_INVALID', '缺少原始创作请求。');
     var request = clone(input), options = normalizeOptions(rawOptions);
+    var dimensions = outputDimensions(request.resolution, request.ratio);
     var total = totalDuration(options.totalDurationSeconds == null ? request.durationSeconds : options.totalDurationSeconds);
     if (['16:9', '9:16'].indexOf(request.ratio) < 0) throw error('PRODUCTION_PRICE_UNKNOWN', '成本方案仅支持 16:9 或 9:16，请先选择画幅。');
     assertRights(request);
@@ -173,13 +208,14 @@
     var audios = selected(request.audios || request.referenceAudios);
     var music = audios.find(function (asset) { return asset.role === 'rhythm'; }) || audios[0];
     return freeze({
-      id: planId, version: 1, createdAt: new Date().toISOString(), options: options, request: request,
+      id: planId, version: 2, createdAt: new Date().toISOString(), options: options, request: request,
       shots: shots, totalSeconds: total, aiSeconds: aiCount * 5, localSeconds: total - aiCount * 5,
       estimateYuan: estimate, reservedEstimateYuan: reserved, maximumGenerationYuan: round(estimate * options.maxAttempts), maximumReservedYuan: round(reserved * options.maxAttempts), withinBudget: reserved <= options.budgetYuan,
-      resolution: '720p', ratio: request.ratio, width: request.ratio === '9:16' ? 720 : 1280, height: request.ratio === '9:16' ? 1280 : 720,
+      resolution: request.resolution, ratio: request.ratio, width: dimensions.width, height: dimensions.height,
+      outputDimensionPolicy: 'standard-video-v1', outputFrameRate: 24,
       musicAssetIds: music && assetId(music) ? [assetId(music)] : [],
-      estimateScope: '首轮 5 秒 AI 镜头参考价；不含生图、素材采购、存储或付费剪辑，不承诺实际结算价。',
-      adjustments: [request.resolution !== '720p' ? '本方案统一以 720p 生成与交付。' : '', request.audioMode && request.audioMode !== 'silent' ? 'AI 镜头使用静音生成，已上传声音仅在本地合成。' : '', audios.length > 1 ? '本地合成使用第一个节奏/声音素材，其余音频未混入。' : ''].filter(Boolean)
+      estimateScope: '首轮 5 秒 AI 镜头的官方无参考视频估价示例，按模型与请求分辨率区分；上游原生尺寸与最终合成画布分别处理。预留不是费用上限，实际费用以供应商用量回执为准；不含生图、素材采购、存储或付费剪辑。',
+      adjustments: [request.audioMode && request.audioMode !== 'silent' ? 'AI 镜头使用静音生成，已上传声音仅在本地合成。' : '', audios.length > 1 ? '本地合成使用第一个节奏/声音素材，其余音频未混入。' : ''].filter(Boolean)
     });
   }
 
@@ -358,8 +394,9 @@
       if (Math.abs(total - plan.totalSeconds) > 0.01 || total < 1 || total > 60) throw error('PRODUCTION_PLAN_INVALID', '时间轴与成片时长不一致。');
       var tracks = normalizeAudioTracks(audioSelection, total);
       var sourceAudioVolume = preserveAudio ? volume(requestedSourceVolume, tracks.length ? 0.35 : 1) : 0;
-      var width = plan.ratio === '9:16' ? 720 : 1280, height = plan.ratio === '9:16' ? 1280 : 720;
+      var output = planOutput(plan), width = output.width, height = output.height;
       var canvas = root.document.createElement('canvas'); canvas.width = width; canvas.height = height;
+      if (canvas.width !== width || canvas.height !== height) throw error('PRODUCTION_CAPTURE_DIMENSIONS', '浏览器不支持所选成片尺寸，禁止降低分辨率输出。');
       if (!canvas.captureStream) throw error('PRODUCTION_CAPTURE_UNAVAILABLE', '当前浏览器无法录制 Canvas 视频。');
       var context = canvas.getContext('2d', { alpha: false });
       if (!context) throw error('PRODUCTION_CANVAS_UNAVAILABLE', '无法建立本地视频画布。');
@@ -448,9 +485,13 @@
       }
       aborted(signal);
       drawMedia(context, visuals[0].media, width, height, 0, visuals[0].kind === 'image'); drawSubtitle(context, plan.shots[0].subtitle, width, height);
-      stream = canvas.captureStream(30);
+      stream = canvas.captureStream(output.frameRate);
+      var videoTracks = typeof stream.getVideoTracks === 'function' ? stream.getVideoTracks() : [];
+      var trackSettings = videoTracks[0] && typeof videoTracks[0].getSettings === 'function' ? videoTracks[0].getSettings() : null;
+      if (trackSettings && ((trackSettings.width != null && trackSettings.width !== width) || (trackSettings.height != null && trackSettings.height !== height))) throw error('PRODUCTION_CAPTURE_DIMENSIONS', '浏览器捕获尺寸与所选分辨率不一致，已停止合成，不会降低清晰度。');
       if (destination) destination.stream.getAudioTracks().forEach(function (track) { stream.addTrack(track); });
-      recorder = new root.MediaRecorder(stream, { mimeType: recorderMime(), videoBitsPerSecond: 4000000, audioBitsPerSecond: 128000 });
+      try { recorder = new root.MediaRecorder(stream, { mimeType: recorderMime(), videoBitsPerSecond: output.videoBitsPerSecond, audioBitsPerSecond: 128000 }); }
+      catch (_) { throw error('PRODUCTION_RECORDER_RESOLUTION_UNSUPPORTED', '浏览器无法按所选分辨率录制成片，请更换浏览器后继续本地合成；已生成镜头保留。'); }
       var chunks = [], recorded = new Promise(function (resolve, reject) {
         recorder.ondataavailable = function (event) { if (event.data && event.data.size) chunks.push(event.data); };
         recorder.onerror = function (event) { var failure = error('PRODUCTION_RECORDING_FAILED', event.error && event.error.message || '浏览器视频录制失败。'); controller.abort(failure); reject(failure); };
@@ -484,7 +525,7 @@
               drawSubtitle(context, currentShot.subtitle, width, height);
               progress({ stage: 'rendering', shotIndex: index, totalShots: visuals.length, secondsRendered: rendered + elapsed, progress: (rendered + elapsed) / total });
               if (elapsed >= currentShot.durationSeconds) { done(); resolve(); }
-              else timer = root.setTimeout(frame, Math.min(1000 / 30, (currentShot.durationSeconds - elapsed) * 1000));
+              else timer = root.setTimeout(frame, Math.min(1000 / output.frameRate, (currentShot.durationSeconds - elapsed) * 1000));
             } catch (failure) { done(); reject(failure); }
           }
           signal.addEventListener('abort', cancelShot, { once: true }); frame();
@@ -501,7 +542,7 @@
         tracks: audioBuffers.map(function (item) { return Object.assign({}, item.track, { durationSeconds: item.durationSeconds,
           outputDurationSeconds: item.track.role === 'narration' ? item.durationSeconds :
             item.track.loop ? total - item.track.startSeconds : Math.min(item.durationSeconds, total - item.track.startSeconds) }); }) };
-      return { blob: blob, width: width, height: height, durationSeconds: total, mimeType: blob.type, warnings: warnings, audioMix: audioMix };
+      return { blob: blob, resolution: output.resolution, width: width, height: height, frameRate: output.frameRate, durationSeconds: total, mimeType: blob.type, warnings: warnings, audioMix: audioMix };
     } finally {
       if (parentSignal) parentSignal.removeEventListener('abort', cancel);
       if (!signal.aborted) controller.abort();
@@ -515,5 +556,5 @@
       urls.forEach(function (url) { root.URL.revokeObjectURL(url); });
     }
   }
-  return Object.freeze({ MODES: MODES, PRICES_PER_FIVE_SECONDS: PRICES, normalizeOptions: normalizeOptions, normalizeAudioTracks: normalizeAudioTracks, estimateShot: estimateShot, buildPlan: buildPlan, renderTimeline: renderTimeline, fixWebmDuration: fixWebmDuration });
+  return Object.freeze({ MODES: MODES, PRICES_PER_FIVE_SECONDS: PRICES, PRICES_PER_FIVE_SECONDS_BY_RESOLUTION: RESOLUTION_PRICES, outputDimensions: outputDimensions, normalizeOptions: normalizeOptions, normalizeAudioTracks: normalizeAudioTracks, estimateShot: estimateShot, buildPlan: buildPlan, renderTimeline: renderTimeline, fixWebmDuration: fixWebmDuration });
 });

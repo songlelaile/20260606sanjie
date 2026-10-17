@@ -1,0 +1,55 @@
+{
+  "originalV3Commit": "a36fb47fa78979417aa254afe4f3266b0d8c940f",
+  "originalManifestSha256": "cb8bb7c8675c7cd1d795c09b2319fe76b7e8807299c0190dbab724cdfa560dfe",
+  "deployedVideoSourceCommit": "63ec8d7939b9596ac49555ff25539105d6dafdae",
+  "sourceScope": "Exactly four already-deployed static video files; no automatic portrait reporting candidate.",
+  "serverReceipts": [
+    {
+      "path": "docs/uat-image-key-binding-20261018/video-overlay/video-resolution-fix-20261018-r2-current-receipt.json",
+      "serverPath": "/opt/sanjie-private/video-resolution-fix-20261018-r2-current/receipt.json",
+      "sha256": "0adc5b3ff8bed960534fc272398d3f5e1d0319a7e35209f812ff085ffde68b84"
+    },
+    {
+      "path": "docs/uat-image-key-binding-20261018/video-overlay/video-retry-visibility-20261018-r1-receipt.json",
+      "serverPath": "/opt/sanjie-private/video-retry-visibility-20261018-r1/receipt.json",
+      "sha256": "ae4b4c2113c523cd7f8ff8fcce3b2b7f6747cc428006d712e5b8208d547b5e4a"
+    },
+    {
+      "path": "docs/uat-image-key-binding-20261018/video-overlay/video-retry-visibility-20261018-r2-receipt.json",
+      "serverPath": "/opt/sanjie-private/video-retry-visibility-20261018-r2/receipt.json",
+      "sha256": "679a4d9bcf80b1d39842e75991efc3faaceac7c4f0389087146a128bfd76bc63"
+    },
+    {
+      "path": "docs/uat-image-key-binding-20261018/video-overlay/video-claude-recovery-20261018-v1-receipt.json",
+      "serverPath": "/opt/sanjie-private/video-claude-recovery-20261018-v1/receipt.json",
+      "sha256": "119f7f3e76cc42a3b09b4c26eab872b9d86e04a3854ec304805babb3f5c4bd01"
+    }
+  ],
+  "freshLiveDriftSha256": "a9ae699252fa5ca0c77978899c176b83806a54ceb3e9c209d074e81f5d353773",
+  "files": [
+    {
+      "after": "ad4c94f440c82884c9bbdc645f76201a6beed3ee30f65bf082891a991ab937f3",
+      "before": "e478c7f55acbd35c6bd529ebb5a0c6a30e91dc3677d298be64d413675ee62b73",
+      "path": "public/creative/labs/ecommerce-video-studio/video-production.js",
+      "size": 44900
+    },
+    {
+      "after": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5",
+      "before": "ef79578097f1c12c7ca2295f8d4add0e91d21b42c5fbb51bc1c07cfb72234ae1",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio-store.js",
+      "size": 18038
+    },
+    {
+      "after": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4",
+      "before": "0aae700583115feee1bd373589a1376755618dfa329aae0efa591f273fe04a92",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "size": 30770
+    },
+    {
+      "after": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313",
+      "before": "bcba8ae2ec62ae0a42b8402792ef3c0c52172ed11d559c81d5669bbcbaecbef2",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "size": 249000
+    }
+  ]
+}

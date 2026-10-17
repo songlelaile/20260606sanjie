@@ -163,6 +163,7 @@
                 </label>
               </div>
               <div id="asset-list" class="asset-list" aria-live="polite"></div>
+              <p class="field-help">移除只影响当前草稿；已保存成片计划仍引用的本地素材会保留。</p>
             </section>
 
             <section class="prompt-section" aria-labelledby="prompt-title">
@@ -276,7 +277,7 @@
         </section>
         <section id="production-panel" class="panel production-panel" aria-labelledby="production-run-title" hidden>
           <div class="panel-heading"><div><h2 id="production-run-title">镜头进度与合成</h2><p id="production-run-summary"></p></div><button id="production-resume" type="button" class="button button-primary">继续 / 核对已提交镜头</button><button id="production-new-plan" type="button" class="button button-secondary" aria-describedby="production-new-plan-help" hidden>新建成片计划</button><button id="production-stop" type="button" class="button button-secondary" hidden>停止本地合成</button></div>
-          <p id="production-new-plan-help" class="section-note" hidden>保留原计划与费用记录，继续编辑当前素材和方案；点击生成后才会创建新计划。</p>
+          <p id="production-new-plan-help" class="section-note" hidden>原计划与费用记录均保留在历史中；继续编辑当前素材和方案，点击生成后才会创建新计划，新计划按当前设置单独估算、核对权利与预算并重新提交。</p>
           <div id="production-shot-list" class="production-shot-list" aria-live="polite"></div>
           <div id="production-run-notice" class="inline-notice" role="status" hidden></div>
         </section>
@@ -468,9 +469,9 @@
   <script src="./video-studio-contract.js?v=reference-role-20261016-v1"></script>
   <script src="/creative/web-video-host.js?v=20261011-wallet-switch-v1"></script>
   <script src="/creative/src/ecommerce-video-background.js"></script>
-  <script src="./video-studio-store.js"></script>
-  <script src="./video-production.js?v=audio-mix-20261010-v1"></script>
+  <script src="./video-studio-store.js?v=asset-retention-20261018-v1"></script>
+  <script src="./video-production.js?v=resolution-20261018-v1"></script>
   <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
-  <script src="./video-studio.js?v=portrait-capability-envelope-20261018-v3"></script>
+  <script src="./video-studio.js?v=asset-retention-20261018-v1"></script>
 </body>
 </html>

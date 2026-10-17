@@ -1,0 +1,31 @@
+{
+  "changes": [
+    {
+      "after": "ad4c94f440c82884c9bbdc645f76201a6beed3ee30f65bf082891a991ab937f3",
+      "before": "e478c7f55acbd35c6bd529ebb5a0c6a30e91dc3677d298be64d413675ee62b73",
+      "path": "public/creative/labs/ecommerce-video-studio/video-production.js",
+      "size": 44900
+    },
+    {
+      "after": "1c2ae086f90231ebe791ec8dc84f69c052e046d6d8bb1722f32a012e54bb06f5",
+      "before": "ef79578097f1c12c7ca2295f8d4add0e91d21b42c5fbb51bc1c07cfb72234ae1",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio-store.js",
+      "size": 18038
+    },
+    {
+      "after": "129dfa5d9ba9fc4fb3779fecf6b6d43f3d788e58b7fc0924a23ef2627b46ebb4",
+      "before": "0aae700583115feee1bd373589a1376755618dfa329aae0efa591f273fe04a92",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.html",
+      "size": 30770
+    },
+    {
+      "after": "68407bd071a017a57998d8685b2d681a61308cfaeba0f8b7a71c1fa58de09313",
+      "before": "bcba8ae2ec62ae0a42b8402792ef3c0c52172ed11d559c81d5669bbcbaecbef2",
+      "path": "public/creative/labs/ecommerce-video-studio/video-studio.js",
+      "size": 249000
+    }
+  ],
+  "nginxSha256": "4cc1d5a6eebb3b93751773bb27ec742fb34691358a0dde24ea72ca9e9b5460e6",
+  "receiptSha256": "30a1a4b053f349c7b5e491dba595f463d19dd4d8be2db76772ad137848b1af04",
+  "sourceManifestSha256": "cb8bb7c8675c7cd1d795c09b2319fe76b7e8807299c0190dbab724cdfa560dfe"
+}

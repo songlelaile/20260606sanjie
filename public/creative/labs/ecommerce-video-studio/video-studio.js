@@ -115,6 +115,8 @@
     configOpenPending: false,
     awaitingConfigRefresh: false,
     draftTimer: null,
+    draftEpoch: 0,
+    sourceMutationPending: false,
     activeRun: null,
     history: [],
     historyViewAccountKey: null,
@@ -486,6 +488,7 @@
       var previousAccountKey = state.accountKey;
       state.backendConnected = true;
       state.accountKey = cleanText(payload.accountKey);
+      if (previousAccountKey !== state.accountKey) state.draftEpoch += 1;
       var capabilityDetails = payload.capabilities || payload.data || payload;
       state.capabilities = Object.assign({}, capabilityDetails, {
         provider: cleanText(payload.provider || capabilityDetails.provider),
@@ -738,10 +741,12 @@
       input.disabled = resolutions.indexOf(input.value) < 0;
       input.closest('label').classList.toggle('is-disabled', input.disabled);
     });
-    if (resolutions.indexOf(state.settings.resolution) < 0) state.settings.resolution = resolutions[0];
+    // Keep the user's choice visible. Unsupported combinations fail validation rather than silently changing resolution.
     setRadio('resolution', state.settings.resolution);
     if (dom.resolutionHelp) {
-      if (model.nativePlatform) {
+      if (resolutions.indexOf(state.settings.resolution) < 0) {
+        dom.resolutionHelp.textContent = '当前模型不支持所选 ' + state.settings.resolution + '，请更换模型或明确选择受支持的分辨率。';
+      } else if (model.nativePlatform) {
         dom.resolutionHelp.textContent = '当前平台供应支持 ' + resolutions.join(' / ') + '；以实际生成原件为准。';
       } else if (model.productKey === 'seedance-2.5') {
         dom.resolutionHelp.textContent = 'Seedance 2.5 支持 480P / 720P / 1080P；1080P 为 10-bit H.265，部分浏览器可能无法直接预览。';
@@ -979,16 +984,13 @@
       return item && item.productKey === productKey;
     });
     var limits = (model && (model.limits || model.capabilities)) || model || effectiveLimits(mode, productKey);
-    var resolutions = Array.isArray(limits.resolutions) && limits.resolutions.length
-      ? limits.resolutions
-      : Contract.RESOLUTIONS;
     var ratios = Array.isArray(limits.ratios) && limits.ratios.length
       ? limits.ratios
       : Contract.RATIOS;
     var requestedResolution = cleanText(raw.resolution).toLowerCase();
-    var resolution = resolutions.indexOf(requestedResolution) >= 0
+    var resolution = Contract.RESOLUTIONS.indexOf(requestedResolution) >= 0
       ? requestedResolution
-      : (resolutions.indexOf('720p') >= 0 ? '720p' : resolutions[0]);
+      : '720p';
     var requestedRatio = cleanText(raw.ratio || raw.aspectRatio).toLowerCase();
     var ratio = ratios.indexOf(requestedRatio) >= 0
       ? requestedRatio
@@ -1163,23 +1165,70 @@
     };
   }
 
+  function captureDraftContext(guardActivity) {
+    return { accountKey: state.accountKey, mode: state.mode, epoch: state.draftEpoch,
+      assets: state.assets, reference: state.reference, frames: state.referenceFrames,
+      activity: guardActivity ? [state.productionStarting, state.productionBusy, state.actionPending].join(':') : '',
+      snapshot: JSON.stringify(draftSnapshot()) };
+  }
+
+  function draftContextCurrent(context) {
+    return !!context && context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch &&
+      (!context.activity || context.activity === [state.productionStarting, state.productionBusy, state.actionPending].join(':')) &&
+      context.assets === state.assets && context.reference === state.reference && context.frames === state.referenceFrames &&
+      context.snapshot === JSON.stringify(draftSnapshot());
+  }
+
+  async function confirmDraftContext(context) {
+    if (!draftContextCurrent(context)) return false;
+    if (globalThis.SZ_WEB_ACCOUNT && typeof globalThis.SZ_WEB_ACCOUNT.require === 'function') {
+      try {
+        var account = await globalThis.SZ_WEB_ACCOUNT.require();
+        if (!draftContextCurrent(context) || account !== context.accountKey) return false;
+      } catch (_) { return false; }
+    }
+    return draftContextCurrent(context);
+  }
+
+  function draftWriteOptions(context) {
+    return { expectedAccountKey: context.accountKey, isCurrent: function () { return draftContextCurrent(context); } };
+  }
+
+  function withSourceMutation(work) {
+    if (state.sourceMutationPending || state.productionStarting || state.productionBusy || state.actionPending) return Promise.resolve(false);
+    state.sourceMutationPending = true;
+    renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();
+    var controls = Array.from(document.querySelectorAll('#mode-panel input, #mode-panel textarea, #mode-panel select, #mode-panel button, #mode-tabs button, #review-panel input, #review-panel textarea, #review-panel select, #review-panel button'))
+      .map(function (node) { var entry = { node: node, disabled: node.disabled }; node.disabled = true; return entry; });
+    return Promise.resolve().then(work).finally(function () {
+      state.sourceMutationPending = false;
+      controls.forEach(function (entry) { entry.node.disabled = entry.disabled; });
+      renderReadiness(); if (!state.productionRun || state.productionRun.plan) renderProductionRun();
+    });
+  }
+
   function scheduleDraftSave() {
     if (!state.booted) return;
     if (state.draftTimer) globalThis.clearTimeout(state.draftTimer);
+    var context = captureDraftContext();
     state.draftTimer = globalThis.setTimeout(function persistLater() {
       state.draftTimer = null;
-      saveCurrentDraft().catch(function onDraftError(error) {
+      if (!draftContextCurrent(context)) return;
+      saveCurrentDraft(context).catch(function onDraftError(error) {
+        if (!draftContextCurrent(context)) return;
         showToast('草稿保存失败：' + safeErrorMessage(error), 'error');
       });
     }, 320);
   }
 
-  function saveCurrentDraft() {
+  function saveCurrentDraft(context) {
     if (state.draftTimer) {
       globalThis.clearTimeout(state.draftTimer);
       state.draftTimer = null;
     }
-    return Store.saveDraft(state.mode, draftSnapshot());
+    context = context || captureDraftContext();
+    if (!draftContextCurrent(context)) return Promise.resolve(false);
+    return Store.saveDraft(context.mode, JSON.parse(context.snapshot), draftWriteOptions(context));
   }
 
   function revokePreview(asset) {
@@ -1232,6 +1281,7 @@
   }
 
   async function restoreDraft(mode) {
+    state.draftEpoch += 1;
     revokeAllPreviews();
     state.assets = { image: [], video: [], audio: [] };
     state.reference = null;
@@ -1257,12 +1307,21 @@
     state.productionOptions = { mode: 'economic', totalDurationSeconds: 15, hybridAiSeconds: 0, budgetYuan: 10, maxAttempts: 1 };
     state.productionAudio = { sourceAudioVolume: 0 };
     state.legacySingle = false;
+    var context = captureDraftContext();
     var record = null;
     try { record = await Store.getDraft(mode); } catch (error) {
+      if (!draftContextCurrent(context)) return false;
       showToast('读取本地草稿失败：' + safeErrorMessage(error), 'error');
     }
+    if (!draftContextCurrent(context)) return false;
     var draft = record && record.data;
     if (draft && draft.mode === mode) {
+      var hydrated = await Promise.all([hydrateList(draft.assets && draft.assets.image), hydrateList(draft.assets && draft.assets.video),
+        hydrateList(draft.assets && draft.assets.audio), hydrateAsset(draft.reference), hydrateList(draft.referenceFrames)]);
+      if (!draftContextCurrent(context)) {
+        [].concat(hydrated[0], hydrated[1], hydrated[2], hydrated[3] || [], hydrated[4]).forEach(revokePreview);
+        return false;
+      }
       state.prompt = cleanText(draft.prompt);
       state.expertEnabled = draft.expertEnabled === true;
       state.expertRequirements = cleanText(draft.expertRequirements);
@@ -1270,11 +1329,11 @@
       state.legacySingle = draft.productionOptions ? draft.legacySingle === true : true;
       state.productionOptions = normalizeProductionOptions(draft.productionOptions || { mode: 'quality', totalDurationSeconds: 15, budgetYuan: 10, maxAttempts: 1 });
       state.productionAudio = normalizeProductionAudio(draft.productionAudio);
-      state.assets.image = await hydrateList(draft.assets && draft.assets.image);
-      state.assets.video = await hydrateList(draft.assets && draft.assets.video);
-      state.assets.audio = await hydrateList(draft.assets && draft.assets.audio);
-      state.reference = await hydrateAsset(draft.reference);
-      state.referenceFrames = await hydrateList(draft.referenceFrames);
+      state.assets.image = hydrated[0];
+      state.assets.video = hydrated[1];
+      state.assets.audio = hydrated[2];
+      state.reference = hydrated[3];
+      state.referenceFrames = hydrated[4];
       state.review = normalizeDraftReview(draft.review);
 
       var fingerprint = assetRightsFingerprint();
@@ -1293,6 +1352,7 @@
     }
     applyDraftToDom();
     renderProductionOptions();
+    return true;
   }
 
   function startupImportQuery() {
@@ -1488,9 +1548,12 @@
 
   async function switchMode(mode) {
     mode = Contract.normalizeMode(mode);
-    if (!mode || mode === state.mode || state.actionPending) return;
-    try { await saveCurrentDraft(); } catch (_) { /* user can still switch */ }
+    if (!mode || mode === state.mode || state.actionPending || state.sourceMutationPending) return;
+    var context = captureDraftContext();
+    try { await saveCurrentDraft(context); } catch (_) { /* user can still switch */ }
+    if (!draftContextCurrent(context)) return;
     state.mode = mode;
+    state.draftEpoch += 1;
     if (!routeSupportsMode(state.settings.creativeRoute, mode)) {
       state.settings.creativeRoute = defaultRouteForMode(mode);
     }
@@ -1595,23 +1658,20 @@
     updateCreditAnnotations();
   }
 
-  async function resetCurrentDraft() {
+  function resetCurrentDraft() { return withSourceMutation(resetDraftSources); }
+  async function resetDraftSources() {
     var hasContent = state.prompt || state.assets.image.length || state.assets.video.length ||
       state.assets.audio.length || state.reference || state.review.script;
-    if (hasContent && !globalThis.confirm('清空当前模式草稿？本地保存的相关素材也会被删除，此操作不可恢复。')) return;
+    if (hasContent && !globalThis.confirm('清空当前模式草稿？本地保存的相关素材也会被删除（成片计划仍引用的素材保留），此操作不可恢复。')) return;
 
     var all = state.assets.image.concat(state.assets.video, state.assets.audio, state.referenceFrames);
     if (state.reference) all.push(state.reference);
-    await Promise.all(all.map(function remove(item) {
-      revokePreview(item);
-      var storedId = localStorageAssetId(item);
-      var retainedByPlan = state.history.some(function (run) { return run.purpose === 'production' && run.plan && run.plan.shots.some(function (shot) { return shot.sourceAssetId === item.id; }); });
-      return storedId && !retainedByPlan
-        ? Store.deleteAsset(storedId).catch(function ignore() {})
-        : Promise.resolve();
-    }));
-    await Store.deleteDraft(state.mode).catch(function ignore() {});
-    await restoreDraft(state.mode);
+    var context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets(all, context) || !draftContextCurrent(context)) return;
+    try { await Store.deleteDraft(context.mode, draftWriteOptions(context)); } catch (_) { return; }
+    if (!draftContextCurrent(context)) return;
+    all.forEach(revokePreview);
+    if (!await restoreDraft(context.mode)) return;
     showToast('当前模式草稿已清空。', 'success');
   }
 
@@ -1626,6 +1686,7 @@
   }
 
   async function addFiles(kind, files) {
+    if (state.sourceMutationPending) return;
     var incoming = Array.from(files || []);
     var uploadAccountKey = state.accountKey;
     if (!incoming.length) return;
@@ -1682,41 +1743,40 @@
     }
   }
 
-  async function setReferenceVideo(file) {
+  function setReferenceVideo(file) { return withSourceMutation(function () { return replaceReferenceVideo(file); }); }
+  async function replaceReferenceVideo(file) {
     if (!file) return;
+    var context = captureDraftContext(true), previous = state.reference, previousFrames = state.referenceFrames.slice();
     try {
       validateFile('video', file);
       var metadata = await readFileMetadata('video', file);
+      if (!await confirmDraftContext(context)) return;
       if (!metadata.durationSec || metadata.durationSec < 4 || metadata.durationSec > 15) {
         throw new Error('参考视频时长必须为 4–15 秒。');
       }
       var summary = await Store.saveAsset(file, Object.assign(metadata, {
         kind: 'video',
         role: 'asset',
+        expectedAccountKey: context.accountKey,
+        isCurrent: function () { return draftContextCurrent(context); },
         name: file.name,
         mimeType: file.type
       }));
       var hydrated = await hydrateAsset(summary);
+      if (!draftContextCurrent(context)) { revokePreview(hydrated); return; }
       if (!hydrated) throw new Error('参考视频写入后无法从本地库读取。');
 
       var extractedFrames;
       try {
-        extractedFrames = await extractAndStoreReferenceFrames(file, hydrated.id, hydrated.name);
+        extractedFrames = await extractAndStoreReferenceFrames(file, hydrated.id, hydrated.name, context);
       } catch (frameError) {
         revokePreview(hydrated);
-        await Store.deleteAsset(hydrated.id).catch(function ignore() {});
+        await deleteUnreferencedDraftAssets([hydrated], context);
         throw new Error('关键帧提取失败，参考视频未保存：' + safeErrorMessage(frameError));
       }
 
-      if (state.reference) {
-        var previous = state.reference;
-        revokePreview(previous);
-        var previousStoredId = localStorageAssetId(previous);
-        if (previousStoredId) {
-          Store.deleteAsset(previousStoredId).catch(function ignore() {});
-        }
-      }
-      await deleteReferenceFrames(state.referenceFrames);
+      if (!await deleteUnreferencedDraftAssets([previous].concat(previousFrames), context) || !draftContextCurrent(context)) return;
+      [previous].concat(previousFrames).forEach(revokePreview);
       state.reference = hydrated;
       state.referenceFrames = extractedFrames;
       invalidateRights();
@@ -1725,21 +1785,26 @@
       renderReadiness();
       scheduleDraftSave();
     } catch (error) {
+      if (!draftContextCurrent(context)) return;
       showToast(file.name + '：' + safeErrorMessage(error), 'error');
     } finally {
-      dom.referenceVideoInput.value = '';
+      if (draftContextCurrent(context) || context.accountKey === state.accountKey && context.mode === state.mode && context.epoch === state.draftEpoch && state.reference === hydrated) dom.referenceVideoInput.value = '';
     }
   }
 
-  async function extractAndStoreReferenceFrames(file, referenceVideoId, sourceName) {
+  async function extractAndStoreReferenceFrames(file, referenceVideoId, sourceName, context) {
+    context = context || captureDraftContext(true);
     var frames = await extractReferenceFrameBlobs(file, 5);
     var saved = [];
     try {
       for (var i = 0; i < frames.length; i += 1) {
+        if (!draftContextCurrent(context)) throw new Error('草稿已变化，已停止保存关键帧。');
         var frame = frames[i];
         var summary = await Store.saveAsset(frame.blob, {
           kind: 'reference_frame',
           role: 'asset',
+          expectedAccountKey: context.accountKey,
+          isCurrent: function () { return draftContextCurrent(context); },
           name: cleanText(sourceName).replace(/\.[^.]+$/, '') + '-关键帧-' + String(i + 1).padStart(2, '0') + '.jpg',
           mimeType: 'image/jpeg',
           width: frame.width,
@@ -1747,14 +1812,16 @@
           referenceVideoId: referenceVideoId,
           timeSec: frame.timeSec
         });
+        saved.push(summary);
         var hydrated = await hydrateAsset(summary);
+        if (!draftContextCurrent(context)) { revokePreview(hydrated); throw new Error('草稿已变化，已停止保存关键帧。'); }
         if (!hydrated) throw new Error('关键帧写入后无法读取。');
-        saved.push(hydrated);
+        saved[saved.length - 1] = hydrated;
       }
       if (saved.length !== 5) throw new Error('关键帧数量不足 5 个。');
       return saved;
     } catch (error) {
-      await deleteReferenceFrames(saved);
+      await deleteReferenceFrames(saved, context);
       throw error;
     }
   }
@@ -1861,14 +1928,13 @@
     });
   }
 
-  async function deleteReferenceFrames(frames) {
-    await Promise.all((frames || []).map(function removeFrame(frame) {
-      revokePreview(frame);
-      var storedId = localStorageAssetId(frame);
-      return storedId
-        ? Store.deleteAsset(storedId).catch(function ignore() {})
-        : Promise.resolve();
-    }));
+  async function deleteReferenceFrames(frames, context) {
+    if (!context) return withSourceMutation(function () { return deleteReferenceFrames(frames, captureDraftContext(true)); });
+    context = context || captureDraftContext(true);
+    var captured = (frames || []).slice();
+    if (!await deleteUnreferencedDraftAssets(captured, context) || !draftContextCurrent(context)) return false;
+    captured.forEach(revokePreview);
+    return true;
   }
 
   function validateFile(kind, file) {
@@ -1981,19 +2047,42 @@
     });
   }
 
-  async function removeAsset(kind, id) {
+  async function deleteUnreferencedDraftAssets(items, context) {
+    if (!await confirmDraftContext(context)) return false;
+    var aliases = (items || []).filter(Boolean).map(function (item) {
+      return { storageId: localStorageAssetId(item), assetId: cleanText(item.id) };
+    }).filter(function (item) { return !!item.storageId; });
+    if (aliases.length) {
+      try {
+        // A cached older Store must fail closed; never fall back to its unguarded deleteAsset.
+        if (typeof Store.deleteAssetsIfUnreferenced !== 'function') throw new Error('素材保护模块尚未刷新，本地副本保留。');
+        await Store.deleteAssetsIfUnreferenced(aliases.map(function (item) { return item.storageId; }), {
+          expectedAccountKey: context.accountKey, assetAliases: aliases,
+          isCurrent: function () { return draftContextCurrent(context); },
+          memoryRuns: function () {
+            if (!Array.isArray(state.history)) throw new Error('生成历史无法核对，本地副本保留。');
+            return state.history.concat([state.productionRun, state.activeRun].filter(Boolean));
+          }
+        });
+      } catch (_) {
+        // Read/transaction failures retain the blob; a changed identity also stops the UI/draft write below.
+        if (!await confirmDraftContext(context)) return false;
+        showToast('暂时无法安全清理本地素材，副本已保留。', 'error');
+      }
+    }
+    return confirmDraftContext(context);
+  }
+
+  function removeAsset(kind, id) { return withSourceMutation(function () { return removeDraftAsset(kind, id); }); }
+  async function removeDraftAsset(kind, id) {
     var list = state.assets[kind] || [];
     var index = list.findIndex(function find(item) { return item.id === id; });
     if (index < 0) return;
     var asset = list[index];
+    var context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets([asset], context) || !draftContextCurrent(context)) return;
     list.splice(index, 1);
     revokePreview(asset);
-    var storedId = localStorageAssetId(asset);
-    if (storedId) {
-      await Store.deleteAsset(storedId).catch(function onDelete(error) {
-        showToast('本地素材删除失败：' + safeErrorMessage(error), 'error');
-      });
-    }
     invalidateRights();
     invalidateReviewForSourceChange('素材已变化，请重新分析后再确认脚本。');
     renderAssets();
@@ -2001,16 +2090,14 @@
     scheduleDraftSave();
   }
 
-  async function removeReference() {
+  function removeReference() { return withSourceMutation(removeDraftReference); }
+  async function removeDraftReference() {
     if (!state.reference) return;
-    var reference = state.reference;
+    var reference = state.reference, frames = state.referenceFrames.slice(), context = captureDraftContext(true);
+    if (!await deleteUnreferencedDraftAssets([reference].concat(frames), context) || !draftContextCurrent(context)) return;
     state.reference = null;
     revokePreview(reference);
-    var storedId = localStorageAssetId(reference);
-    if (storedId) {
-      await Store.deleteAsset(storedId).catch(function ignore() {});
-    }
-    await deleteReferenceFrames(state.referenceFrames);
+    frames.forEach(revokePreview);
     state.referenceFrames = [];
     invalidateRights();
     invalidateReviewForSourceChange('参考视频已移除，请重新拆解。');
@@ -2352,6 +2439,7 @@
     options = options || {};
     if (usingProductionPlan()) return productionValidationErrors(options);
     var errors = [];
+    if (state.sourceMutationPending) errors.push('正在更新当前草稿素材，请稍后生成。');
     var limits = effectiveLimits(state.mode, state.settings.productKey);
     var model = getSelectedModel();
     if (state.assets.image.some(function (asset) { return !!asset.trustedPortrait; }) && !personalArkPortraitAvailable()) errors.push('可信人像引用仅支持个人火山方舟 API；平台视频暂不支持，请切换个人 API 或恢复原始图片。');
@@ -2470,9 +2558,9 @@
     var needsReviewScroll = state.mode !== 'direct' &&
       (state.review.state === 'editing' || state.review.state === 'confirmed');
     var canPrimary = needsReviewScroll || errors.length === 0;
-    dom.primaryAction.disabled = state.actionPending || !canPrimary;
-    dom.resetDraft.disabled = state.actionPending;
-    dom.refreshCapabilities.disabled = state.actionPending;
+    dom.primaryAction.disabled = state.actionPending || state.sourceMutationPending || !canPrimary;
+    dom.resetDraft.disabled = state.actionPending || state.sourceMutationPending;
+    dom.refreshCapabilities.disabled = state.actionPending || state.sourceMutationPending;
     updatePrimaryActionLabel();
   }
 
@@ -2609,7 +2697,7 @@
   }
 
   async function handlePrimaryAction() {
-    if (state.actionPending) return;
+    if (state.actionPending || state.sourceMutationPending) return;
     if (usingProductionPlan() && state.productionOptions.mode === 'economic' && state.productionOptions.hybridAiSeconds === 0) { await startGeneration(); return; }
     if (state.mode !== 'direct' &&
         (state.review.state === 'editing' || state.review.state === 'confirmed')) {
@@ -2953,7 +3041,7 @@
     // The planner owns the long timeline. The legacy request snapshot remains within its model's limit.
     var request = {
       mode: state.mode, productKey: state.settings.productKey, durationSeconds: state.settings.durationSeconds,
-      resolution: '720p', ratio: state.settings.ratio, audioMode: state.settings.audioMode,
+      resolution: state.settings.resolution, ratio: state.settings.ratio, audioMode: state.settings.audioMode,
       narrationLanguage: state.settings.narrationLanguage, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, script: state.mode === 'direct' ? state.prompt : (state.review.script || state.prompt),
       goal: state.prompt, supplementalRequirements: state.expertEnabled ? state.expertRequirements : '',
@@ -2997,6 +3085,7 @@
   function productionValidationErrors(options) {
     options = options || {};
     var errors = [], plan;
+    if (state.sourceMutationPending) errors.push('正在更新当前草稿素材，请稍后生成。');
     if (!state.prompt) errors.push('请填写创作要求。');
     var hasAssets = state.assets.image.length || state.assets.video.length || state.assets.audio.length || state.reference;
     if (hasAssets && (!state.rightsConfirmed || state.rightsFingerprint !== assetRightsFingerprint())) errors.push('请确认素材权利，素材变化后需要重新确认。');
@@ -3014,7 +3103,7 @@
       if (ai.length && analyzing && state.analysisAvailable === false) errors.push('脚本分析不可用，请先配置分析 API。');
       if (ai.length && (!analyzing || options.requireReview)) ai.forEach(function (shot) {
         var model = state.modelCatalog.find(function (item) { return item.productKey === shot.productKey; });
-        if (!model || !model.configured || model.resolutions.indexOf('720p') < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 720p / 5 秒。');
+        if (!model || !model.configured || model.resolutions.indexOf(shot.request.resolution) < 0 || (nativeDurations(model).length && nativeDurations(model).indexOf(5) < 0)) errors.push('方案使用的 ' + (Contract.MODEL_DISPLAY_NAMES[shot.productKey] || shot.productKey) + ' 模型当前不可用或不支持 ' + shot.request.resolution + ' / 5 秒。');
       });
       var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
       if (reserve > state.productionOptions.budgetYuan + 0.00001) errors.push(productionUsesPlatform(plan) ? '本次生成已达到预算限制，请调整成片方案。' : '首轮参考费用含 10% 预留超出估算预算，请调整方案或预算。');
@@ -3061,7 +3150,7 @@
         if (dom.productionAudioSummary) dom.productionAudioSummary.textContent = plan.finalAudio.tracks.length ? plan.finalAudio.tracks.map(function (track) { var asset = plan.finalAudio.assets.find(function (item) { return item.id === track.assetId; }); return (track.role === 'narration' ? '完整口播 ' : '背景音乐 ') + formatDuration(asset.durationSec) + ' · 音量 ' + Math.round(track.volume * 100) + '%' + (track.loop ? ' · 循环' : ''); }).join('；') : '未选择最终音轨；按已有视频原声音量输出。';
         var reserve = plan.shots.reduce(function (sum, shot) { return sum + (shot.kind === 'ai' ? Math.ceil(Number(shot.estimatedYuan) * 110) / 100 : 0); }, 0);
         dom.productionEstimate.textContent = '首轮上游估算 ¥' + Number(plan.estimateYuan).toFixed(2) + ' · 含预留 ¥' + reserve.toFixed(2) + ' / 预算 ¥' + Number(state.productionOptions.budgetYuan).toFixed(2);
-        dom.productionNote.textContent = plan.aiSeconds + ' 秒 AI + ' + plan.localSeconds + ' 秒素材；统一 720p。' + (platform ? plan.aiSeconds ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。失败镜头仅手动重试，成功但不采用仍计费。' : '使用已有素材在本地合成。' : '超过估算预算停止后续镜头；自有 API 费用由对应服务计费。失败镜头仅手动重试，成功但不采用仍计成本。');
+        dom.productionNote.textContent = plan.aiSeconds + ' 秒 AI + ' + plan.localSeconds + ' 秒素材；按所选 ' + plan.resolution + ' 合成（' + plan.width + '×' + plan.height + '）。' + (platform ? plan.aiSeconds ? '平台每镜提交时按本次固定报价扣积分，成功不调差额，失败退回，取消不退。失败镜头仅手动重试，成功但不采用仍计费。' : '使用已有素材在本地合成。' : '超过估算预算停止后续镜头；自有 API 费用由对应服务计费。失败镜头仅手动重试，成功但不采用仍计成本。');
       }
     } catch (error) {
       dom.productionEstimate.textContent = '先补齐方案素材';
@@ -3076,7 +3165,6 @@
       if (!button || state.actionPending) return;
       state.legacySingle = false;
       state.productionOptions = normalizeProductionOptions(Object.assign({}, state.productionOptions, { mode: button.dataset.productionMode }));
-      state.settings.resolution = '720p';
       applySettingsToDom(); renderMode(); renderAssets(); updateEstimate(); renderReadiness(); scheduleDraftSave();
     });
     [dom.productionDuration, dom.productionAiSeconds, dom.productionBudget, dom.productionAttempts].forEach(function (input) {
@@ -3170,18 +3258,50 @@
   function canStartNewProductionPlan(run) {
     if (!run || run.purpose !== 'production' || run.status !== 'failed' || !state.accountKey || run.accountKey !== state.accountKey ||
         !Array.isArray(run.shotRuns) || !run.shotRuns.length) return false;
-    function unresolved(receipt) {
+    // savedSuccess exempts only the success markers of one already-transferred shot; its nested receipts stay checked.
+    function unresolved(receipt, savedSuccess) {
       if (!receipt || typeof receipt !== 'object') return false;
+      var statuses = [cleanText(receipt.status).toLowerCase(), cleanText(receipt.state).toLowerCase()];
       if (receipt.stateUncertain === true || receipt.cancelPending || submissionStateUncertain(receipt) ||
-          ['succeeded', 'submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(receipt.status || receipt.state) >= 0 ||
-          receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)) return true;
+          statuses.some(function (status) { return ['submitting', 'processing', 'queued', 'running', 'unknown'].indexOf(status) >= 0; }) ||
+          (!savedSuccess && (statuses.indexOf('succeeded') >= 0 ||
+            receipt.resultAssetId || (Array.isArray(receipt.resultUrls) && receipt.resultUrls.length)))) return true;
       return Object.keys(receipt).some(function (key) {
         var value = receipt[key];
-        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(unresolved) : unresolved(value));
+        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(function (item) { return unresolved(item); }) : unresolved(value));
+      });
+    }
+    function savedSuccess(shot) { return shot.status === 'succeeded' && typeof shot.resultAssetId === 'string' && !!shot.resultAssetId.trim(); }
+    // Submission evidence can arrive in nested provider receipts before the normalized shot fields are updated.
+    function submissionEvidence(receipt) {
+      if (!receipt || typeof receipt !== 'object') return false;
+      if (receipt.providerSubmitted === true || receipt.submitted === true ||
+          (receipt.attempts != null && (!Array.isArray(receipt.attempts) || receipt.attempts.length)) ||
+          ['requestId', 'taskId', 'task_id', 'jobId', 'job_id', 'providerTaskId', 'provider_task_id', 'submissionId', 'submittedAt', 'submitted_at', 'acceptedAt'].some(function (key) { return !!cleanText(receipt[key]); }) ||
+          ['task', 'job'].some(function (key) { var value = receipt[key]; return value && typeof value === 'object' && !!cleanText(value.id); })) return true;
+      return Object.keys(receipt).some(function (key) {
+        var value = receipt[key];
+        return value && typeof value === 'object' && (Array.isArray(value) ? value.some(submissionEvidence) : submissionEvidence(value));
       });
     }
     var shots = run.shotRuns.concat(run.narrationRuns || []);
-    return !unresolved(run) && shots.every(function (shot) { return shot && ['failed', 'pending', 'ready'].indexOf(shot.status) >= 0; });
+    var runFields = Object.assign({}, run); delete runFields.shotRuns; delete runFields.narrationRuns;
+    if (unresolved(runFields)) return false;
+    var valid = shots.every(function (shot) {
+      if (!shot || typeof shot !== 'object') return false;
+      if (shot.status === 'failed') return !unresolved(shot);
+      if (shot.status === 'pending' || shot.status === 'ready') return !submissionEvidence(shot) && !unresolved(shot);
+      if (shot.status === 'succeeded') return savedSuccess(shot) && !unresolved(shot, true);
+      return false;
+    });
+    // A plan whose shots all succeeded keeps its free resume/composition path instead of a new paid plan.
+    return valid && (!shots.some(savedSuccess) || shots.some(function (shot) { return shot.status === 'failed'; }));
+  }
+  function productionNewPlanGuidance(run, released) {
+    var kept = (run.shotRuns || []).some(function (shot) { return shot.status === 'succeeded'; })
+      ? '原计划及其已成功镜头、结果和费用记录均保留在历史中，不会转入新计划' : '原计划与费用记录均保留在历史中';
+    return kept + (released ? '。可编辑当前素材和方案，再点击生成：' : '；继续编辑当前素材和方案，点击生成后才会创建新计划，') +
+      '新计划按当前设置单独估算、核对权利与预算并重新提交。';
   }
   function releasedProductionPlan(run) { return !!(run && run.newPlanRequestedAt && canStartNewProductionPlan(run)); }
   async function startNewProductionPlan() {
@@ -3198,24 +3318,48 @@
       if (index < 0) state.history.unshift(released); else state.history[index] = released;
       state.productionRun = null;
       renderHistory();
-      setNotice(dom.composerValidation, '原计划与费用记录已保留。可编辑当前素材和方案，再点击生成创建新计划。', 'success');
+      setNotice(dom.composerValidation, productionNewPlanGuidance(run, true), 'success');
       return true;
     } catch (error) {
       setNotice(dom.composerValidation, safeErrorMessage(error), 'error');
       return false;
     } finally { state.productionStarting = false; renderProductionRun(); }
   }
+  function productionRetryState(run, shot) {
+    var used = shot && Array.isArray(shot.attempts) ? shot.attempts.length : 0;
+    var limit = Number(run && run.plan && run.plan.options && run.plan.options.maxAttempts);
+    var exhausted = Number.isInteger(limit) && limit > 0 && used >= limit;
+    var reason = !shot || shot.status !== 'failed' ? '仅失败镜头可以重试。' :
+      !run.accountKey || run.accountKey !== state.accountKey ? '请切回原账号后核对镜头。' :
+      releasedProductionPlan(run) ? '原计划已保留，当前不能重试此计划。' :
+      !Number.isInteger(limit) || limit < 1 ? '无法核对本计划尝试上限，请先核对原计划。' :
+      exhausted ? '已达本计划尝试上限（' + used + '/' + limit + '），当前不能重试。' : '';
+    return { allowed: !reason, exhausted: exhausted, used: used, limit: limit, reason: reason };
+  }
+  function productionShotFailureMessage(run) {
+    var failed = (run.shotRuns || []).filter(function (shot) { return shot.status === 'failed'; });
+    if (failed.some(function (shot) { return productionRetryState(run, shot).allowed; })) {
+      return '镜头失败，已完成镜头保留；可在失败镜头右侧点击“仅重试此镜”，提交前仍会核对预算。';
+    }
+    if (failed.length && failed.every(function (shot) { return productionRetryState(run, shot).exhausted; })) {
+      return '镜头失败，已完成镜头保留。失败镜头已达本计划尝试上限，当前不能重试。';
+    }
+    return '镜头未完成，已完成镜头保留；请查看各镜头状态和可用操作。';
+  }
   function renderProductionRun() {
     if (!dom.productionPanel) return;
     var run = state.productionRun;
     dom.productionPanel.hidden = !run;
     if (!run) return;
-    dom.productionResume.disabled = state.productionBusy || state.productionStarting || run.status === 'succeeded' || releasedProductionPlan(run);
+    dom.productionResume.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting || run.status === 'succeeded' || releasedProductionPlan(run);
     if (dom.productionNewPlan) {
       dom.productionNewPlan.hidden = !!run.newPlanRequestedAt || !canStartNewProductionPlan(run);
       dom.productionNewPlan.disabled = state.actionPending || state.productionBusy || state.productionStarting;
     }
-    if (dom.productionNewPlanHelp) dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+    if (dom.productionNewPlanHelp) {
+      dom.productionNewPlanHelp.hidden = !dom.productionNewPlan || dom.productionNewPlan.hidden;
+      if (!dom.productionNewPlanHelp.hidden) dom.productionNewPlanHelp.textContent = productionNewPlanGuidance(run, false);
+    }
     if (globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(dom.productionResume, productionRunCreditSpec(run));
     if (dom.productionStop) { dom.productionStop.hidden = !state.productionBusy || run.phase !== 'rendering'; dom.productionStop.disabled = !state.productionAbortController; }
     var costs = productionCostSummary(run);
@@ -3230,19 +3374,30 @@
       var row = document.createElement('div'); row.className = 'production-shot-row is-' + shot.status;
       var main = document.createElement('div'), title = document.createElement('strong'), note = document.createElement('small');
       title.textContent = '镜头 ' + (definition.index + 1) + ' · ' + definition.durationSeconds + ' 秒 · ' + (definition.kind === 'local' ? '已有素材' : Contract.MODEL_DISPLAY_NAMES[definition.productKey] || definition.productKey);
-      note.textContent = ({ pending: '待生成', ready: '素材就绪', submitting: '提交中', processing: '生成中', unknown: '接收状态未知：保留预算，只核对任务', succeeded: '已转存，可复用', failed: '失败，可手动重试' }[shot.status] || shot.status) + ' · 尝试 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' · 不采用，费用保留' : '') + (shot.error ? ' · ' + shot.error : '');
+      var retryState = productionRetryState(run, shot);
+      note.textContent = ({ pending: '待生成', ready: '素材就绪', submitting: '提交中', processing: '生成中', unknown: '接收状态未知：保留预算，只核对任务', succeeded: '已转存，可复用', failed: retryState.allowed ? '失败，可手动重试' : retryState.exhausted ? '失败，已达尝试上限' : '失败，当前不能重试' }[shot.status] || shot.status) + ' · 尝试 ' + (shot.attempts || []).length + ' / ' + run.plan.options.maxAttempts + (shot.adoptionStatus === 'rejected' ? ' · 不采用，费用保留' : '') + (shot.status === 'failed' && !retryState.allowed ? ' · ' + retryState.reason : '') + (shot.error ? ' · ' + shot.error : '');
       main.append(title, note); row.appendChild(main);
       var actions = document.createElement('div'); actions.className = 'production-shot-actions';
-      function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
+      function action(label, type) { var button = document.createElement('button'); button.className = 'button button-secondary button-small'; button.type = 'button'; button.textContent = label; button.dataset.productionShotAction = type; button.dataset.shotId = shot.id; button.disabled = state.sourceMutationPending || state.productionBusy || state.productionStarting; actions.appendChild(button); return button; }
       var retryButton;
-      if (!releasedProductionPlan(run) && shot.status === 'failed' && shot.attempts.length < run.plan.options.maxAttempts) retryButton = action('仅重试此镜', 'retry');
+      if (shot.status === 'failed') {
+        retryButton = action('仅重试此镜', 'retry');
+        retryButton.disabled = retryButton.disabled || !retryState.allowed;
+        retryButton.style.whiteSpace = 'nowrap';
+        retryButton.style.flexShrink = '0';
+        retryButton.title = retryState.reason || (state.productionBusy || state.productionStarting ? '当前计划正在执行，请稍后重试。' : '仅重试此镜头，提交前仍会核对原计划预算。');
+      }
       if (shot.status === 'succeeded') action(shot.adoptionStatus === 'rejected' ? '采用此镜' : '标记不采用', 'adopt');
       row.appendChild(actions); dom.productionShotList.appendChild(row);
       if (retryButton && globalThis.SZCreativeCredits) globalThis.SZCreativeCredits.annotate(retryButton, productionRunCreditSpec(run, shot.id));
     });
-    setNotice(dom.productionRunNotice, run.error || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
+    // Old saved generic guidance may promise a retry after its attempt limit is exhausted.
+    // Correct the display without changing the saved error, plan, budget or receipts.
+    var notice = run.error === '镜头失败，已完成镜头保留；可手动仅重试失败镜头。' ? productionShotFailureMessage(run) : run.error;
+    setNotice(dom.productionRunNotice, notice || (run.status === 'succeeded' ? '成片已保存，可以从生成历史预览与下载。' : ''), run.status === 'succeeded' ? 'success' : 'error');
   }
   async function startProductionGeneration() {
+    if (state.sourceMutationPending) return;
     if (state.productionBusy || state.productionStarting) return;
     var errors = productionValidationErrors({ requireReview: true });
     if (errors.length) { setNotice(dom.composerValidation, errors.join(' '), 'error'); return; }
@@ -3258,7 +3413,7 @@
     plan = Object.assign({}, plan, { id: makeId('production') });
     var run = { id: plan.id, taskId: plan.id, purpose: 'production', accountKey: state.accountKey,
       mode: state.mode, status: 'queued', phase: 'planned', plan: plan, durationSeconds: plan.totalSeconds,
-      resolution: '720p', ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,
+      resolution: plan.resolution, ratio: plan.ratio, productKey: state.settings.productKey, creativeRoute: state.settings.creativeRoute,
       styleProfile: state.settings.styleProfile, prompt: state.prompt, createdAt: new Date().toISOString(),
       resultUrls: [], shotRuns: plan.shots.map(function (shot) { return { id: shot.id, status: shot.kind === 'local' ? 'ready' : 'pending', adoptionStatus: 'accepted', attempts: [], taskId: '', resultAssetId: '' }; }) };
     await persistProductionRun(run);
@@ -3350,9 +3505,10 @@
     await updateProductionTask(run, shot, task);
   }
   async function retryProductionShot(run, shotId) {
+    if (state.sourceMutationPending) return;
     if (state.productionBusy || state.productionStarting || releasedProductionPlan(run)) return;
     var shot = run.shotRuns.find(function (item) { return item.id === shotId; });
-    if (!shot || shot.status !== 'failed' || shot.attempts.length >= run.plan.options.maxAttempts) return;
+    if (!productionRetryState(run, shot).allowed) return;
     state.productionStarting = true; setPending(true, '正在保存镜头重试…');
     try {
       shot.status = 'pending'; shot.taskId = ''; shot.providerTaskId = ''; shot.error = ''; run.status = 'queued'; run.error = '';
@@ -3360,6 +3516,7 @@
     } finally { state.productionStarting = false; if (!state.productionBusy) setPending(false); }
   }
   async function executeProductionRun(run) {
+    if (state.sourceMutationPending) return;
     if (state.productionBusy || !run || run.purpose !== 'production' || releasedProductionPlan(run)) return;
     state.productionBusy = true; setPending(true, '正在执行镜头计划…');
     var productionController;
@@ -3377,7 +3534,7 @@
           await queryProductionShot(run, shot);
           if (shot.status === 'unknown') throw makeStudioError('PRODUCTION_UNKNOWN', '有镜头接收状态未知：请核对，禁止重复提交。');
         }
-        if (shot.status === 'failed' || shot.status === 'cancelled') throw makeStudioError('PRODUCTION_SHOT_FAILED', '镜头失败，已完成镜头保留；可手动仅重试失败镜头。');
+        if (shot.status === 'failed' || shot.status === 'cancelled') throw makeStudioError('PRODUCTION_SHOT_FAILED', productionShotFailureMessage(run));
         if (shot.status === 'succeeded') await storeProductionShotResult(run, shot);
       }
       if (run.shotRuns.some(function (shot) { return shot.adoptionStatus === 'rejected'; })) throw makeStudioError('PRODUCTION_NOT_ADOPTED', '有成功镜头被标记不采用，费用仍保留；采用所需镜头后可继续合成。');
@@ -3415,6 +3572,7 @@
   }
 
   async function startGeneration() {
+    if (state.sourceMutationPending) return;
     if (usingProductionPlan()) return startProductionGeneration();
     var errors = validationErrors({ requireReview: state.mode !== 'direct' });
     if (errors.length) {
@@ -4464,11 +4622,15 @@
       buildRequest: buildRequest,
       claimStartupMediaImport: claimStartupMediaImport,
       normalizeSettingsSnapshot: normalizeSettingsSnapshot,
+      syncSettingsFromDom: syncSettingsFromDom, syncParameterControlsForModel: syncParameterControlsForModel,
       normalizeModelCatalog: normalizeModelCatalog, refreshCapabilities: refreshCapabilities, updateEstimate: updateEstimate, submissionQuote: submissionQuote,
       normalizeProductionOptions: normalizeProductionOptions, productionValidationErrors: productionValidationErrors,
       startProductionGeneration: startProductionGeneration, executeProductionRun: executeProductionRun,
       canStartNewProductionPlan: canStartNewProductionPlan, startNewProductionPlan: startNewProductionPlan, restoreHistory: restoreHistory,
       productionCommitments: productionCommitments, productionCostSummary: productionCostSummary, retryProductionShot: retryProductionShot,
+      productionRetryState: productionRetryState, removeAsset: removeAsset,
+      removeReference: removeReference, resetCurrentDraft: resetCurrentDraft, deleteReferenceFrames: deleteReferenceFrames, setReferenceVideo: setReferenceVideo,
+      saveCurrentDraft: saveCurrentDraft, scheduleDraftSave: scheduleDraftSave, switchMode: switchMode, startGeneration: startGeneration,
       snapshotProductionAudio: snapshotProductionAudio, productionAudioRenderOptions: productionAudioRenderOptions,
       localUploadSupported: localUploadSupported, maxForKind: maxForKind, validateAssetMetadata: validateAssetMetadata,
       productionTemplate: productionTemplate, state: state, renderProductionRun: renderProductionRun,
