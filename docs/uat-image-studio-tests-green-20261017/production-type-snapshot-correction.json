@@ -1,0 +1,19 @@
+{
+  "completeRuntimeSourceFiles": 742,
+  "databaseChanged": false,
+  "omittedExtensions": [
+    ".mts",
+    ".cts"
+  ],
+  "originalExportFiles": 736,
+  "originalProductionDeclarations": {
+    "scripts/payment-uat-db.d.mts": "11ee63d5a2de8afd7994f9871b95d387fbb77f2a8b7924ec9a8dede313a2cdda",
+    "src/lib/model-gateway/exchange-rate-core.d.mts": "ce8047af3cc23ffd18c2fd80f07280c7447f83e7b03e2c38615ee734c0add66c",
+    "src/lib/model-gateway/shared-wallet-quote.d.mts": "6288fe28b9fdc32e1f896db3c4cd3b7bd8be37fb8e2810fc5ff07ffd780c5971",
+    "src/lib/model-gateway/shared-wallet-usage.d.mts": "51b440ed85192d035bb5d0fc020828300b6108588c73b67856c8996af2d97b3d",
+    "src/lib/model-gateway/source-quote.d.mts": "1ced578e7e59a5ddbe7b4db8594b9f7cfeccbdbb3643ff96b75ba236e8c9a61a",
+    "src/lib/video-assets-r51/site-adapter.d.cts": "f0631ea3e39d5fe141493dd008ce405da40c11d03174bd862ce545579a37610c"
+  },
+  "productionBehaviorChanged": false,
+  "transferJsonSha256": "e98f7bfdf6f9f95789023550059c54b1c78da3d0e301c18c2d5ebc1f61d21072"
+}

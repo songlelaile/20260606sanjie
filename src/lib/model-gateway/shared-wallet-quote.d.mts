@@ -1,0 +1,22 @@
+import type { SharedWalletSourceObservation, SharedWalletEpoch } from './shared-wallet-source';
+import type { BillingRule, BlockedReason } from './source-quote.mjs';
+export type SharedWalletCostCoverage = 'actual_usd_required' | 'local_catalog_or_actual_usd';
+export type SharedWalletProof = Omit<SharedWalletSourceObservation, 'epoch'> & { now: string; epoch: SharedWalletEpoch;
+  pricing: { fx: { rate: string; source: 'ecb' | 'manual'; quoteId: string | null; fetchedAt: string | null; referenceDate: string | null };
+    rules: BillingRule[]; rulesComplete: true; fallbackMultiplierBps: number; costCoverage: SharedWalletCostCoverage; envelopeEvidenceHash: string };
+  liabilities: { capturedAt: string; evidenceHash: string; complete: true; consistent: true; poolVersion: number; epochId: string;
+    accountedUsd: string; accountedEvidenceHash: string; consumedCents: number;
+    wallets: { userId: string; balanceCents: number; ledgerBalanceCents: number }[];
+    holds: { eventId: string; userId: string; status: 'reserved' | 'dispatched' | 'unknown'; heldCents: number; fxRate: string; multiplierBps: number }[];
+    pendingReservations: { orderId: string; status: 'reserved'; amountCents: number }[] } };
+export type SharedWalletSourceQuote = { version: 1; scope: 'shared_user_lifetime_wallet'; configVersion: string; poolVersion: number;
+  epochId: string; epochStartedAt: string; assetExpiresAt: null; upstreamIdentityHash: string; sourceEvidenceHash: string; liabilityEvidenceHash: string;
+  capturedAt: string; sourceExpiresAt: string; proposalExpiresAt: string; quoteHash: string;
+  pricing: { fxRate: string; fxSource: 'ecb' | 'manual'; fxQuoteId: string | null; billingRulesHash: string; minimumMultiplierBps: number;
+    valuationProduct: string; reserveBps: number; costCoverage: SharedWalletCostCoverage; envelopeEvidenceHash: string };
+  usd: { postedBalanceUsd: string; localAccountedUsd: string; externalCommittedUsd: string | null;
+    externalCommitmentsState: 'proven' | 'unobservable'; effectiveBudgetUsd: string };
+  points: { totalCents: number; availableCents: number; deficitCents: number; walletCents: number; pendingCents: number;
+    consumedCents: number; heldCents: number; availablePoints: string } };
+export function evaluateSharedWalletSource(input: unknown): { ready: true; blockedReasons: []; quote: SharedWalletSourceQuote }
+  | { ready: false; blockedReasons: BlockedReason[]; observation?: SharedWalletSourceQuote };
