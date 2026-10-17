@@ -77,7 +77,9 @@ export async function GET(request: Request) {
   try {
     validAccount = await isSessionAccountValid(session);
   } catch {
-    validAccount = false;
+    // A database outage proves no identity. Deny this check while allowing
+    // callers to distinguish a retryable outage from an actually revoked login.
+    return NextResponse.json({ error: "身份验证暂不可用", code: "AUTH_UNAVAILABLE" }, { status: 503, headers: CORS });
   }
   if (!validAccount) {
     return NextResponse.json({ error: "会话已失效" }, { status: 401, headers: CORS });

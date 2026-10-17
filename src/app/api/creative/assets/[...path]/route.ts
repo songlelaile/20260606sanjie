@@ -7,6 +7,7 @@ import { getCurrentSession } from "@/lib/server-session";
 import { getCreativeAccessForSession } from "@/lib/creative-entitlements";
 import { createUatEnvironmentScript } from "@/lib/uat-environment";
 import { CREATIVE_ASSET_HEADERS, creativeAssetContentType } from "@/lib/creative-asset-policy";
+import { CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS, isCreativeEntryPath, loadCreativeEntryBundle } from "@/lib/creative-entry-bundle";
 
 export const dynamic = "force-dynamic";
 
@@ -76,13 +77,20 @@ export async function GET(request: Request, context: { params: Promise<{ path: s
   if (!contentType) return errorResponse("资源不存在", 404);
   try {
     const root = await realpath(path.join(process.cwd(), "public", "creative"));
-    const filename = await realpath(path.join(root, ...parts));
-    const relative = path.relative(root, filename);
-    if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ||
-        creativeAssetContentType(relative.split(path.sep)) !== contentType || !(await stat(filename)).isFile()) {
-      return errorResponse("资源不存在", 404);
+    let relative = parts.join("/");
+    let bytes: Buffer;
+    if (isCreativeEntryPath(relative)) {
+      const bundle = await loadCreativeEntryBundle(root);
+      bytes = Buffer.from(relative === CREATIVE_ENTRY_CSS ? bundle.css : relative === CREATIVE_ENTRY_JS ? bundle.js : bundle.html);
+    } else {
+      const filename = await realpath(path.join(root, ...parts));
+      relative = path.relative(root, filename);
+      if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) ||
+          creativeAssetContentType(relative.split(path.sep)) !== contentType || !(await stat(filename)).isFile()) {
+        return errorResponse("资源不存在", 404);
+      }
+      bytes = await readFile(filename);
     }
-    const bytes = await readFile(filename);
     if (contentType === "text/javascript; charset=utf-8" || contentType === "text/css; charset=utf-8") {
       const etag = assetETag(session, relative, bytes);
       const headers = { ...CREATIVE_ASSET_HEADERS, "Content-Type": contentType,

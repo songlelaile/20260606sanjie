@@ -23,12 +23,18 @@
       border-radius: 8px; background: var(--panel, #19200f); color: var(--text, #eeeedd); cursor: pointer; }
   </style>
   <style id="studioStartupRecoveryStyle">
-    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] body > .app:not(#labStartupStatus) {
+    html.studio-genesis-page:not([data-studio-bootstrap="resource-error"]):not([data-studio-bootstrap="timeout"])[data-studio-startup="error"][data-lab-startup="error"] body > .app:not(#labStartupStatus) {
       display: block !important;
     }
-    html.studio-genesis-page[data-studio-startup="error"][data-lab-startup="error"] #labStartupStatus {
+    html.studio-genesis-page:not([data-studio-bootstrap="resource-error"]):not([data-studio-bootstrap="timeout"])[data-studio-startup="error"][data-lab-startup="error"] #labStartupStatus {
       display: none !important;
     }
+  </style>
+  <style id="studioBootstrapStyle">
+    html[data-studio-bootstrap="resource-error"] body > :not(#labStartupStatus),
+    html[data-studio-bootstrap="timeout"] body > :not(#labStartupStatus) { display: none !important; }
+    html[data-studio-bootstrap="resource-error"] #labStartupStatus,
+    html[data-studio-bootstrap="timeout"] #labStartupStatus { display: flex !important; background: #10170b; color: #f4f4ef; }
   </style>
   <script id="labStartupScript">
     (() => {
@@ -102,7 +108,72 @@
       }, { once: true });
     })();
   </script>
-  <script src="/creative/web-chrome.js?v=20261012-reference-screenshots-v1"></script>
+  <script id="studioBootstrapScript">
+    (() => {
+      const params = new URLSearchParams(location.search);
+      if (params.get('studio') !== '1') return;
+      const html = document.documentElement;
+      const label = params.get('batch') === '1' ? '批量任务' : params.get('type') === 'ad' ? '广告图' : params.get('mode') === 'detail' ? '详情创作' : '主图创作';
+      html.dataset.labStartup = 'pending';
+      html.dataset.studioBootstrap = 'pending';
+      document.title = '少壮AI · ' + label;
+      let timer, observer, failure = '';
+      const nativeReady = () => html.dataset.labStartup === 'ready' && html.dataset.studioStartup === 'ready';
+      const nativeError = () => html.dataset.labStartup === 'error' && html.dataset.studioStartup === 'error' && document.getElementById('studioGenesisRoot');
+      const stopTimer = () => { clearTimeout(timer); timer = undefined; };
+      const renderPending = () => {
+        const status = document.getElementById('labStartupStatus');
+        if (status) { status.setAttribute('role', 'status'); status.textContent = '正在打开' + label + '…'; }
+      };
+      const renderFailure = () => {
+        const status = document.getElementById('labStartupStatus');
+        if (!status || !failure) return;
+        status.replaceChildren(); status.setAttribute('role', 'alert');
+        const heading = document.createElement('h2'); heading.textContent = label + '暂未就绪';
+        const detail = document.createElement('p');
+        detail.textContent = failure === 'resource' ? '工作台资源加载失败，请重新加载；原素材、草稿和任务记录仍保留。' : '工作台加载超时，请重新加载；原素材、草稿和任务记录仍保留。';
+        const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = '重新加载';
+        retry.addEventListener('click', () => location.reload());
+        status.append(heading, detail, retry);
+      };
+      const fail = kind => {
+        if (html.dataset.studioBootstrap === 'ready' || nativeReady() || failure === 'resource' && kind === 'timeout') return;
+        stopTimer(); failure = kind;
+        html.dataset.studioBootstrap = kind === 'resource' ? 'resource-error' : 'timeout';
+        html.dataset.labStartup = 'error'; html.dataset.studioStartup = kind === 'resource' ? 'resource-error' : 'timeout';
+        renderFailure();
+      };
+      const startTimer = () => { stopTimer(); timer = setTimeout(() => { sync(); if (!nativeReady() && !nativeError()) fail('timeout'); }, 30000); };
+      const sync = () => {
+        if (failure === 'resource') {
+          // A surviving script cannot make a missing bootstrap dependency safe.
+          if (html.dataset.labStartup !== 'error') html.dataset.labStartup = 'error';
+          if (html.dataset.studioStartup !== 'resource-error') html.dataset.studioStartup = 'resource-error';
+          renderFailure(); return;
+        }
+        if (nativeReady()) { stopTimer(); failure = ''; html.dataset.studioBootstrap = 'ready'; observer?.disconnect(); return; }
+        // The real studio owns draft/account errors and its in-place retry UI.
+        if (nativeError()) { stopTimer(); failure = ''; html.dataset.studioBootstrap = 'native-error'; return; }
+        if (html.dataset.studioBootstrap === 'native-error') { html.dataset.studioBootstrap = 'pending'; renderPending(); startTimer(); }
+      };
+      if (typeof MutationObserver === 'function') {
+        observer = new MutationObserver(sync);
+        observer.observe(html, { attributes: true, attributeFilter: ['data-lab-startup', 'data-studio-startup'] });
+      }
+      window.addEventListener('error', event => {
+        const target = event.target;
+        if (target === window || target && ['SCRIPT', 'LINK'].includes(target.tagName)) fail('resource');
+      }, true);
+      document.addEventListener('DOMContentLoaded', () => {
+        sync();
+        if (failure) renderFailure();
+        else if (html.dataset.studioBootstrap === 'pending') renderPending();
+      }, { once: true });
+      // Start before external requests: a blocked tail script can delay DCL.
+      startTimer();
+    })();
+  </script>
+  <script src="/creative/web-chrome.js?v=20261017-studio-optimize-v2"></script>
   <link rel="stylesheet" href="promptlab.css?v=20261016-task-status-v2">
   <link rel="stylesheet" href="reference-detail-blueprint.css?v=20260902-reference-detail-autonomous-release-v1">
   <link rel="stylesheet" href="aesthetic-mirror.css?v=20261014-v1">
@@ -111,12 +182,12 @@
   <link rel="stylesheet" href="creative-tools.css?v=20261001-web-creative-tools-v1">
   <link rel="stylesheet" href="studio-genesis.css?v=task-list-cleanup-20261016-v1">
   <link rel="stylesheet" href="scene-extension.css?v=20261002-scene-v1">
-  <link rel="stylesheet" href="studio-legacy-layout.css?v=20261002-list-workspace-v1">
+  <link rel="stylesheet" href="studio-legacy-layout.css?v=20261017-studio-optimize-v1">
   <link rel="stylesheet" href="image-upload.css?v=20261002-upload-v4">
-  <link rel="stylesheet" href="viral-workflow-layout.css?v=20261002-viral-split-v1">
+  <link rel="stylesheet" href="viral-workflow-layout.css?v=20261017-studio-optimize-v1">
   <link rel="stylesheet" href="creative-credit-hints.css?v=20261010-api-credit-v1">
   <link rel="stylesheet" href="sku-region-ui.css?v=20261012-sku-region-v1">
-  <link rel="stylesheet" href="./workspace-ux.css?v=20261016-1">
+  <link rel="stylesheet" href="./workspace-ux.css?v=20261017-studio-optimize-v2">
   <script>if(new URLSearchParams(location.search).get('studio')==='1')document.documentElement.classList.add('studio-genesis-page');</script>
 </head>
 <body class="main-lab-mode">
@@ -1862,7 +1933,7 @@
   <script src="../../src/reference-detail-contract.js?v=20261012-reference-screenshots-v1"></script>
   <script src="reference-detail-blueprint.js?v=20261012-reference-screenshots-v1"></script>
   <script src="reference-detail-batch.js?v=20261002-list-workspace-v1"></script>
-  <script src="image-archive-store.js?v=20260830-sku-subject-replace-v2"></script>
+  <script src="image-archive-store.js?v=20261017-studio-optimize-v2"></script>
   <script src="guide-model-profile.js?v=20261009-sunburst-guide-v1"></script>
   <script src="viral-series-contract.js?v=20260721-v1875-viral-20"></script>
   <script src="style-refresh-contract.js?v=20260905-nutrition-catalog-r1"></script>
@@ -1873,20 +1944,20 @@
   <script src="aesthetic-mirror-contract.js?v=20261014-v1"></script>
   <script src="studio-genesis-contract.js?v=20261012-continue-recovery-v2"></script>
   <script src="scene-extension-contract.js?v=20261002-list-workspace-v1"></script>
-  <script src="/creative/labs/image-prompt-lab/background.js?v=20261014-mirror-v1"></script>
+  <script src="/creative/labs/image-prompt-lab/background.js?v=20261017-studio-optimize-v2"></script>
   <script src="image-upload.js?v=20261002-upload-v3"></script>
   <script src="/creative/credit-display.js?v=20261010-api-credit-v1"></script>
   <script src="creative-credit-hints.js?v=20261010-api-credit-v1"></script>
   <script src="sku-region-ui.js?v=20261012-sku-region-v1"></script>
   <script src="sku-delivery-store.js?v=20261013-sku-delivery-v1"></script>
   <script src="sku-durable-receipt.js?v=20261013-sku-durable-v1"></script>
-  <script src="promptlab.js?v=20261016-task-status-v2"></script>
+  <script src="promptlab.js?v=20261017-studio-optimize-v2"></script>
   <script src="aesthetic-mirror-ui.js?v=20261014-v1"></script>
   <script src="link-list-import.js?v=20261015-v1"></script>
   <script src="link-image-contract.js?v=20261015-v1"></script>
   <script src="link-image-ui.js?v=task-list-cleanup-20261016-v1"></script>
   <script src="creative-tools-ui.js?v=20261002-credit-hints-v1"></script>
-  <script src="studio-genesis-ui.js?v=task-list-cleanup-20261016-v1"></script>
+  <script src="studio-genesis-ui.js?v=20261017-studio-optimize-v2"></script>
   <script src="scene-extension-ui.js?v=20261002-credit-hints-v1"></script>
   <script src="studio-legacy-layout.js?v=20261002-list-workspace-v1"></script>
   <script src="viral-workflow-layout.js?v=20261002-viral-split-v1"></script>

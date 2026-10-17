@@ -47,7 +47,9 @@ export function openCreativeHistory(
         checking = true;
         const identity = await bridge.getAccountKey();
         if (settled) return;
-        if (currentFrame() !== frame || (frame.contentWindow as HistoryWindow | null)?.SZ_CREATIVE_TOOLS_BRIDGE !== bridge) {
+        const sameContext = () => currentFrame() === frame && frame.contentDocument === document
+          && (frame.contentWindow as HistoryWindow | null)?.SZ_CREATIVE_TOOLS_BRIDGE === bridge;
+        if (!sameContext()) {
           finish(new Error("创作页面已切换，请重新点击“生图历史”。"));
           return;
         }
@@ -57,6 +59,14 @@ export function openCreativeHistory(
         }
         const result = await bridge.openHistory(document.getElementById("openArchiveBtn"));
         if (settled) return;
+        if (!sameContext()) {
+          finish(new Error("创作页面已切换，请重新点击“生图历史”。"));
+          return;
+        }
+        if (bridge.archiveContext().accountKey !== account) {
+          finish(new Error("登录账号已变化，请重新打开工作台后查看生图历史。"));
+          return;
+        }
         finish(result?.ok === false ? new Error("生成记录读取失败，请稍后重新点击“生图历史”。") : undefined);
       } catch {
         finish(new Error("生成记录暂不可用，请检查登录状态后重试。"));

@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, symlink, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, symlink, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,8 +7,10 @@ const mocks = vi.hoisted(() => ({ session: vi.fn(), access: vi.fn() }));
 vi.mock("@/lib/server-session", () => ({ getCurrentSession: mocks.session }));
 vi.mock("@/lib/creative-entitlements", () => ({ getCreativeAccessForSession: mocks.access }));
 import { GET } from "./route";
+import { CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_HTML, CREATIVE_ENTRY_JS, CREATIVE_ENTRY_SCRIPTS, CREATIVE_ENTRY_STYLES } from "@/lib/creative-entry-bundle";
 
 let fixture: string;
+const originalAssets = path.resolve("public/creative");
 const session = { username: "customer", role: "tenant", tenantId: "tenant" };
 const call = (asset: string, etag?: string) => GET(new Request(`https://site.test/api/creative/assets/${asset}`, {
   headers: etag === undefined ? {} : { "If-None-Match": etag }
@@ -50,6 +52,11 @@ describe("creative assets use current database authorization", () => {
     await symlink(path.join(fixture, "outside.js"), path.join(root, "labs/escape.js"));
     await symlink(fixture, path.join(root, "escape-directory"));
     await symlink(path.join(root, "labs/manifest.json"), path.join(root, "labs/alias.js"));
+    for (const relative of [CREATIVE_ENTRY_HTML, ...CREATIVE_ENTRY_STYLES, ...CREATIVE_ENTRY_SCRIPTS]) {
+      const target = path.join(root, relative);
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, await readFile(path.join(originalAssets, relative)));
+    }
   });
   afterAll(async () => { await rm(fixture, { recursive: true, force: true }); });
   beforeEach(() => {
@@ -61,7 +68,7 @@ describe("creative assets use current database authorization", () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
-  it.each(["labs/runtime.js", "labs/runtime.css", "labs/icon.png", "labs/workspace.html"])("denies anonymous access to %s", async asset => {
+  it.each(["labs/runtime.js", "labs/runtime.css", "labs/icon.png", "labs/workspace.html", CREATIVE_ENTRY_HTML, CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS])("denies anonymous access to %s", async asset => {
     mocks.session.mockResolvedValue(null);
     const response = await call(asset);
     expect(response.status).toBe(401);
@@ -109,7 +116,7 @@ describe("creative assets use current database authorization", () => {
     expect(new Uint8Array(await png.arrayBuffer())).toEqual(new Uint8Array([137, 80, 78, 71, 0, 255])); privateHeaders(png);
   });
 
-  it.each(["labs/runtime.js", "labs/runtime.css"])("rechecks session and database authorization before a bodyless %s 304", async asset => {
+  it.each(["labs/runtime.js", "labs/runtime.css", CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS])("rechecks session and database authorization before a bodyless %s 304", async asset => {
     const initial = await call(asset);
     expect(initial.status).toBe(200); revalidationHeaders(initial);
     const etag = initial.headers.get("ETag")!;
@@ -140,6 +147,17 @@ describe("creative assets use current database authorization", () => {
     expect(mocks.access).toHaveBeenCalledTimes(2);
   });
 
+  it.each([CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS])("checks current authorization before a conditional bundle request: %s", async asset => {
+    const etag = (await call(asset)).headers.get("ETag")!;
+    mocks.access.mockResolvedValue({ allowed: false, reason: "payment_required" });
+    const revoked = await call(asset, etag);
+    expect(revoked.status).toBe(402); privateHeaders(revoked);
+    mocks.access.mockResolvedValue({ allowed: true, reason: "paid" }); mocks.session.mockResolvedValue(null);
+    const anonymous = await call(asset, "*");
+    expect(anonymous.status).toBe(401); privateHeaders(anonymous);
+    expect(mocks.session).toHaveBeenCalledTimes(3); expect(mocks.access).toHaveBeenCalledTimes(2);
+  });
+
   it.each(["session", "authorization"])("fails closed on %s lookup failure with a matching validator", async service => {
     const etag = (await call("labs/runtime.js")).headers.get("ETag")!;
     (service === "session" ? mocks.session : mocks.access).mockRejectedValue(new Error("private connection details"));
@@ -148,11 +166,11 @@ describe("creative assets use current database authorization", () => {
     expect(await response.text()).not.toContain("private connection details");
   });
 
-  it("does not reuse another current account's private validator", async () => {
-    const initial = await call("labs/runtime.js"), etag = initial.headers.get("ETag")!;
+  it.each(["labs/runtime.js", CREATIVE_ENTRY_CSS, CREATIVE_ENTRY_JS])("does not reuse another current account's private validator for %s", async asset => {
+    const initial = await call(asset), etag = initial.headers.get("ETag")!;
     const changed = { ...session, username: "another-customer", tenantId: "another-tenant" };
     mocks.session.mockResolvedValue(changed);
-    const response = await call("labs/runtime.js", etag);
+    const response = await call(asset, etag);
     expect(response.status).toBe(200); revalidationHeaders(response);
     expect(response.headers.get("ETag")).not.toBe(etag);
     expect(response.headers.get("ETag")).not.toContain(changed.username);
@@ -173,7 +191,37 @@ describe("creative assets use current database authorization", () => {
     expect(await (await call("labs/runtime.js")).text()).toBe("window.workspaceReady = true;");
   });
 
-  it.each(["labs/runtime.js.map", "labs/README.md", "labs/manifest.json", "fixtures/runtime.js", "../outside.js", "labs/%2e%2e/outside.js", "labs/escape.js", "escape-directory/outside.js", "labs/alias.js", "labs/missing.js"])("rejects source artifacts and filesystem escapes: %s", async asset => {
+  it("serves a protected four-request studio entry with its test environment marker and original mode handling", async () => {
+    vi.stubEnv("SANJIE_TEST_ENVIRONMENT", "creative-bundle-uat");
+    const response = await call(CREATIVE_ENTRY_HTML), html = await response.text();
+    expect(response.status).toBe(200); privateHeaders(response);
+    expect(html).toContain('window.__SANJIE_ENVIRONMENT=marker'); expect(html).toContain('"creative-bundle-uat"');
+    expect([...html.matchAll(/<script\b[^>]+src=/g)]).toHaveLength(2);
+    expect([...html.matchAll(/<link\b[^>]+rel="stylesheet"/g)]).toHaveLength(1);
+    expect(html).toContain('src="/creative/web-chrome.js?v=');
+    expect(html).toContain("new URLSearchParams(location.search)");
+    expect(await readFile(path.join(fixture, "public/creative", CREATIVE_ENTRY_HTML), "utf8")).not.toContain("studio-entry.js");
+    const js = await call(CREATIVE_ENTRY_JS), css = await call(CREATIVE_ENTRY_CSS);
+    revalidationHeaders(js); revalidationHeaders(css);
+    expect(js.headers.get("Content-Type")).toBe("text/javascript; charset=utf-8");
+    expect(css.headers.get("Content-Type")).toBe("text/css; charset=utf-8");
+    expect(await js.text()).not.toContain('"creative-bundle-uat"');
+    expect(mocks.access).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not serve a cached bundle after a manifest member becomes an escaping symlink", async () => {
+    expect((await call(CREATIVE_ENTRY_JS)).status).toBe(200);
+    const target = path.join(fixture, "public/creative", CREATIVE_ENTRY_SCRIPTS[0]);
+    const original = await readFile(target);
+    try {
+      await rm(target); await symlink(path.join(fixture, "outside.js"), target);
+      const response = await call(CREATIVE_ENTRY_JS, "*");
+      expect(response.status).toBe(404); privateHeaders(response);
+      expect(await response.text()).not.toContain("private outside file");
+    } finally { await rm(target); await writeFile(target, original); }
+  });
+
+  it.each(["labs/runtime.js.map", "labs/README.md", "labs/manifest.json", "fixtures/runtime.js", "../outside.js", "labs/%2e%2e/outside.js", "labs/escape.js", "escape-directory/outside.js", "labs/alias.js", "labs/missing.js", "labs/image-prompt-lab/../studio-entry.js", "labs/image-prompt-lab/%2e%2e/studio-entry.js", "labs/other/studio-entry.js"])("rejects source artifacts and filesystem escapes: %s", async asset => {
     const response = await call(asset);
     expect(response.status).toBe(404);
     expect(await response.text()).not.toContain("private outside file");

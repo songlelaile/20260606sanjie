@@ -240,7 +240,10 @@ export function CreativeStudio({
 
   useEffect(() => {
     if (kind !== "image" || typeof window === "undefined" || !visitedWorkflows.some(isTaskSurface)) return;
+    let active = true;
+    let timer: number | undefined;
     const readTasks = () => {
+      if (!active || document.visibilityState === "hidden") return;
       const next: BackgroundTaskNotice[] = [];
       for (const id of visitedWorkflows) {
         if (!isTaskSurface(id)) continue;
@@ -281,14 +284,28 @@ export function CreativeStudio({
       event.stopPropagation();
       setNavigationNotice(`${label}有任务正在后台进行，请返回原任务查看进度或结束等待后再离开。`);
     };
-    readTasks();
-    const timer = window.setInterval(readTasks, 1000);
+    const stopPolling = () => {
+      if (timer === undefined) return;
+      window.clearInterval(timer);
+      timer = undefined;
+    };
+    const syncPolling = () => {
+      if (!active) return;
+      if (document.visibilityState === "hidden") { stopPolling(); return; }
+      if (timer !== undefined) return;
+      readTasks();
+      timer = window.setInterval(readTasks, 1000);
+    };
+    syncPolling();
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("click", protectOuterNavigation, true);
+    document.addEventListener("visibilitychange", syncPolling);
     return () => {
-      window.clearInterval(timer);
+      active = false;
+      stopPolling();
       window.removeEventListener("beforeunload", beforeUnload);
       document.removeEventListener("click", protectOuterNavigation, true);
+      document.removeEventListener("visibilitychange", syncPolling);
     };
     // Cached frames retain task callbacks; each bridge owns its account check.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -474,9 +491,7 @@ export function CreativeStudio({
     ? "批量任务"
     : kind === "video"
       ? "生成视频"
-      : surface === "main" || surface === "detail"
-        ? "主图与详情"
-        : current.label;
+      : current.label;
   const currentFrameId = batch ? BATCH_FRAME_ID : surface;
   const taskTotals = backgroundTasks.reduce((total, task) => ({
     activeCount: total.activeCount + task.activeCount,

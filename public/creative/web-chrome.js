@@ -156,13 +156,17 @@
     global.document.body.appendChild(overlay);
   }
 
+  function authenticatedAccount(auth) {
+    if (!auth || !auth.ok || !accountKey(auth.user)) {
+      var transient = auth && auth.reason === "auth_transient";
+      throw Object.assign(new Error(transient ? "身份验证暂不可用，请稍后重试；原账号的素材和回执仍保留。" : "当前账号身份已失效，请刷新工作台后继续。"),
+        { code: "ACCOUNT_UNAVAILABLE", retryable: !!transient });
+    }
+    return auth.user.id;
+  }
+
   function requireAccount() {
-    return global.authCheck().then(function (auth) {
-      if (!auth || !auth.ok || !accountKey(auth.user)) {
-        throw Object.assign(new Error("当前账号身份已失效，请刷新工作台后继续。"), { code: "ACCOUNT_UNAVAILABLE" });
-      }
-      return auth.user.id;
-    });
+    return global.authCheck().then(authenticatedAccount);
   }
   // Website model requests use the current login session. Only the canonical
   // hosted routes qualify; extension and external-provider requests still need
@@ -180,15 +184,17 @@
   }
   global.SZ_WEB_ACCOUNT = {
     require: requireAccount,
+    storageKey: profileKey,
     usesPlatformWallet: usesPlatformWallet,
     requireAccess: function () {
-      return requireAccount().then(function (id) {
-        return global.authCheck().then(function (auth) {
-          if (!auth || !auth.ok || !auth.creativeEntitlement || auth.creativeEntitlement.allowed !== true) {
-            throw Object.assign(new Error("当前账号尚未开通作图和视频，请在网站充值开通。"), { code: "CREATIVE_ACCESS_REQUIRED" });
-          }
-          return id;
-        });
+      // Identity and entitlement must come from the same current response.
+      // Retain a fresh check for every operation, without a second serial trip.
+      return global.authCheck().then(function (auth) {
+        var id = authenticatedAccount(auth);
+        if (!auth.creativeEntitlement || auth.creativeEntitlement.allowed !== true) {
+          throw Object.assign(new Error("当前账号尚未开通作图和视频，请在网站充值开通。"), { code: "CREATIVE_ACCESS_REQUIRED" });
+        }
+        return id;
       });
     }
   };
@@ -670,22 +676,27 @@
   global.authCheck = function () {
     if (accountBlocked) return Promise.resolve({ ok: false, reason: "account_changed" });
     if (authInFlight) return authInFlight;
-    authInFlight = nativeFetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" })
-      .then(function (response) { return response.ok ? response.json() : null; })
-      .then(function (body) {
-        var data = body && body.data;
-        if (!data || !data.username || !data.tenantId) {
+    authInFlight = Promise.resolve().then(function () {
+      return nativeFetch("/api/auth/me", { credentials: "same-origin", cache: "no-store" });
+    }).then(function (response) {
+        if (response.status === 401 || response.status === 403) {
           if (pinnedAccount) blockAccount();
           return { ok: false, reason: "auth_error" };
         }
-        var id = String(data.tenantId) + ":" + String(data.username);
-        if (pinnedAccount && pinnedAccount !== id) { blockAccount(); return { ok: false, reason: "account_changed" }; }
-        pinnedAccount = id;
-        return { ok: true, creativeEntitlement: data.creativeEntitlement || null, user: { id: id, username: data.username, email: data.username, name: data.name || data.username } };
+        // A transport/service failure proves no identity. Fail this operation
+        // closed, but allow the next fresh check to recover the pinned account.
+        if (!response.ok) return { ok: false, reason: "auth_transient" };
+        return response.json().then(function (body) {
+          var data = body && body.data;
+          if (!data || !data.username || !data.tenantId) return { ok: false, reason: "auth_transient" };
+          var id = String(data.tenantId) + ":" + String(data.username);
+          if (pinnedAccount && pinnedAccount !== id) { blockAccount(); return { ok: false, reason: "account_changed" }; }
+          pinnedAccount = id;
+          return { ok: true, creativeEntitlement: data.creativeEntitlement || null, user: { id: id, username: data.username, email: data.username, name: data.name || data.username } };
+        });
       })
       .catch(function () {
-        if (pinnedAccount) blockAccount();
-        return { ok: false, reason: "auth_error" };
+        return { ok: false, reason: "auth_transient" };
       }).finally(function () { authInFlight = null; });
     return authInFlight;
   };

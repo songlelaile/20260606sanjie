@@ -9,7 +9,10 @@ const source = (name: string) => readFileSync(resolve(assetRoot, "labs/image-pro
 const html = source("promptlab.html");
 const startupScript = html.match(/<script id="labStartupScript">([\s\S]*?)<\/script>/)?.[1];
 const startupStyle = html.match(/<style id="labStartupStyle">([\s\S]*?)<\/style>/)?.[1];
-if (!startupScript || !startupStyle) throw new Error("Missing the real entry startup assets");
+const studioBootstrapScript = html.match(/<script id="studioBootstrapScript">([\s\S]*?)<\/script>/)?.[1];
+const studioBootstrapStyle = html.match(/<style id="studioBootstrapStyle">([\s\S]*?)<\/style>/)?.[1];
+const studioRecoveryStyle = html.match(/<style id="studioStartupRecoveryStyle">([\s\S]*?)<\/style>/)?.[1];
+if (!startupScript || !startupStyle || !studioBootstrapScript || !studioBootstrapStyle || !studioRecoveryStyle) throw new Error("Missing the real entry startup assets");
 
 type Listener = () => void;
 type ResourceListener = (event: { target: unknown }) => void;
@@ -50,6 +53,7 @@ class Element {
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   append(...children: Element[]) { children.forEach(child => this.appendChild(child)); }
   appendChild(child: Element) { child.parentNode = this; this.children.push(child); return child; }
+  prepend(child: Element) { child.parentNode = this; this.children.unshift(child); }
   replaceChildren() { this.children.forEach(child => { child.parentNode = null; }); this.children.splice(0); this.text = ""; }
   after(child: Element) {
     if (!this.parentNode) throw new Error("Missing insertion parent");
@@ -110,6 +114,7 @@ function harness(search: string) {
   const documentElement = new Element("HTML"), body = new Element("BODY");
   const listeners = new Map<string, Listener[]>(), windowListeners = new Map<string, ResourceListener[]>();
   const timers = new Map<number, { callback: Listener; delay: number }>();
+  const observers = new Set<{ callback: Listener; connected: boolean }>();
   let timerId = 0;
   const document = {
     documentElement, body, readyState: "loading", title: "", visibilityState: "visible",
@@ -123,10 +128,17 @@ function harness(search: string) {
     location: { search, reload }, localStorage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() },
     setTimeout: (callback: Listener, delay: number) => { const id = ++timerId; timers.set(id, { callback, delay }); return id; },
     clearTimeout: (id: number) => timers.delete(id),
-    addEventListener: (name: string, listener: ResourceListener) => windowListeners.set(name, [...windowListeners.get(name) || [], listener])
+    addEventListener: (name: string, listener: ResourceListener) => windowListeners.set(name, [...windowListeners.get(name) || [], listener]),
+    MutationObserver: class {
+      private entry: { callback: Listener; connected: boolean };
+      constructor(callback: Listener) { this.entry = { callback, connected: false }; observers.add(this.entry); }
+      observe() { this.entry.connected = true; }
+      disconnect() { this.entry.connected = false; }
+    }
   });
   context.window = context;
   runInContext(startupScript!, context, { filename: "promptlab.html#labStartupScript" });
+  runInContext(studioBootstrapScript!, context, { filename: "promptlab.html#studioBootstrapScript" });
   const parseBody = () => {
     const markup = html.match(/<body[^>]*>([\s\S]*?)<\/body>/)?.[1];
     if (!markup) throw new Error("Missing actual body");
@@ -135,7 +147,8 @@ function harness(search: string) {
   const domReady = () => { document.readyState = "complete"; listeners.get("DOMContentLoaded")?.forEach(listener => listener()); };
   const element = (id: string) => { const node = document.getElementById(id); if (!node) throw new Error(`Missing ${id}`); return node; };
   return { context, document, parseBody, domReady, element, timers, reload,
-    resourceError: (tagName = "SCRIPT") => windowListeners.get("error")?.forEach(listener => listener({ target: { tagName } })),
+    mutations: () => { for (const observer of observers) if (observer.connected) observer.callback(); },
+    resourceError: (tagName = "SCRIPT", url = "") => windowListeners.get("error")?.forEach(listener => listener({ target: { tagName, src: url, href: url } })),
     expire: () => [...timers.values()].filter(timer => timer.delay === 30000).forEach(timer => timer.callback()) };
 }
 
@@ -183,11 +196,12 @@ describe("image studio entry does not paint the legacy main page", () => {
     expect(h.document.documentElement.dataset.labStartup).toBe("ready");
   });
 
-  it.each(["?source=web&studio=1", "?mode=detail&detailMode=link&source=web&studio=1"])("does not gate an existing main/detail studio: %s", search => {
+  it.each(["?source=web&studio=1", "?mode=detail&detailMode=link&source=web&studio=1"])("guards a main/detail studio without taking over its legacy startup interface: %s", search => {
     const h = harness(search); h.parseBody(); h.domReady();
-    expect(h.document.documentElement.dataset.labStartup).toBeUndefined();
+    expect(h.document.documentElement.dataset.labStartup).toBe("pending");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("pending");
     expect(h.context.SZ_LAB_STARTUP).toBeUndefined();
-    expect(h.timers.size).toBe(0);
+    expect(h.timers.size).toBe(1);
   });
 
   it.each(["resource", "timeout", "explicit"] as const)("keeps the main page hidden after %s failure and provides a working retry", kind => {
@@ -256,6 +270,135 @@ describe("image studio entry does not paint the legacy main page", () => {
     expect(h.document.documentElement.classList.contains("studio-legacy-layout")).toBe(true);
     expect(h.element("studioLegacySteps").querySelectorAll("li")).toHaveLength(5);
     expect(h.document.documentElement.dataset.labStartup).toBe("ready");
+  });
+});
+
+describe("studio head bootstrap survives missing entry resources", () => {
+  const studio = "?source=web&studio=1";
+  function nativeState(h: ReturnType<typeof harness>, state: "pending" | "ready" | "error") {
+    h.document.documentElement.setAttribute("data-lab-startup", state);
+    h.document.documentElement.setAttribute("data-studio-startup", state);
+    h.mutations();
+  }
+
+  it("installs the studio guardian and its independent failure styles before every external resource", () => {
+    const firstResource = html.search(/<(?:script\b[^>]*src=|link\b)/);
+    expect(html.indexOf('id="studioBootstrapScript"')).toBeLessThan(firstResource);
+    expect(html.indexOf('id="studioBootstrapStyle"')).toBeLessThan(firstResource);
+    expect(studioBootstrapStyle).toContain('html[data-studio-bootstrap="resource-error"] body > :not(#labStartupStatus)');
+    expect(studioBootstrapStyle).toContain('html[data-studio-bootstrap="resource-error"] #labStartupStatus');
+    expect(studioBootstrapStyle).toContain('display: flex !important');
+    expect(studioBootstrapStyle).toContain('background: #10170b; color: #f4f4ef');
+    expect(studioRecoveryStyle?.match(/:not\(\[data-studio-bootstrap="resource-error"\]\)/g)).toHaveLength(2);
+    expect(studioRecoveryStyle).not.toContain('data-studio-bootstrap="native-error"');
+  });
+
+  it.each(["/creative/web-chrome.js", "studio-entry.js"])("preserves a pre-body %s failure and renders an actionable reload screen", resource => {
+    const h = harness(studio);
+    expect(h.document.body.children).toHaveLength(0);
+    h.resourceError("SCRIPT", resource);
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("resource-error");
+    expect(h.document.documentElement.dataset.labStartup).toBe("error");
+    h.parseBody();h.domReady();
+    expect(h.document.documentElement.dataset.studioStartup).toBe("resource-error");
+    expect(h.element("labStartupStatus").getAttribute("role")).toBe("alert");
+    expect(h.element("labStartupStatus").textContent).toContain("主图创作暂未就绪");
+    expect(h.element("labStartupStatus").textContent).toContain("资源加载失败");
+    h.element("labStartupStatus").querySelector("button")!.dispatch("click");
+    expect(h.reload).toHaveBeenCalledOnce();
+    expect(h.timers.size).toBe(0);
+  });
+
+  it.each(["before-body", "after-body"] as const)("shows CSS failure %s using inline styles that do not require the missing bundle", phase => {
+    const h = harness(studio);
+    if (phase === "after-body") { h.parseBody();h.domReady(); }
+    h.resourceError("LINK", "studio-entry.css");
+    if (phase === "before-body") { h.parseBody();h.domReady(); }
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("resource-error");
+    expect(h.element("labStartupStatus").textContent).toContain("资源加载失败");
+    expect(h.element("labStartupStatus").querySelector("button")).not.toBeNull();
+    expect(studioBootstrapStyle).toMatch(/resource-error"\] body[\s\S]*display:\s*none\s*!important/);
+    expect(h.timers.size).toBe(0);
+  });
+
+  it.each([
+    ["主图创作", studio], ["详情创作", "?mode=detail&studio=1"],
+    ["广告图", "?type=ad&studio=1"], ["批量任务", "?batch=1&studio=1"]
+  ])("shows a pending %s status after DCL without pretending restoration finished", (label, search) => {
+    const h = harness(search);h.parseBody();h.domReady();
+    expect(h.element("labStartupStatus").textContent).toBe(`正在打开${label}…`);
+    expect(h.element("labStartupStatus").getAttribute("role")).toBe("status");
+    expect(h.document.documentElement.dataset.labStartup).toBe("pending");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("pending");
+    expect(h.timers.size).toBe(1);
+    expect(h.context.SZ_LAB_FIRST_PAINT).toBeUndefined();
+  });
+
+  it("does not replace a successfully restored studio with later resource or timeout failures", () => {
+    const h = harness(studio);h.parseBody();h.domReady();
+    nativeState(h, "ready");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("ready");
+    expect(h.timers.size).toBe(0);
+    h.resourceError("SCRIPT", "studio-entry.js");h.resourceError("LINK", "studio-entry.css");h.expire();
+    expect(h.document.documentElement.dataset.labStartup).toBe("ready");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("ready");
+    expect(h.element("labStartupStatus").querySelector("button")).toBeNull();
+  });
+
+  it("bounds a blocked tail script before DCL and accepts the real studio's late completion", () => {
+    const h = harness(studio);h.parseBody();
+    expect(h.document.readyState).toBe("loading");
+    h.expire();
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("timeout");
+    expect(h.element("labStartupStatus").textContent).toContain("加载超时");
+    expect(h.element("labStartupStatus").querySelector("button")).not.toBeNull();
+    h.domReady();
+    expect(h.timers.size).toBe(0);
+    h.document.documentElement.setAttribute("data-lab-startup", "ready");h.mutations();
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("timeout");
+    h.document.documentElement.setAttribute("data-studio-startup", "ready");h.mutations();
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("ready");
+    expect(h.document.documentElement.dataset.labStartup).toBe("ready");
+  });
+
+  it("keeps a fatal resource failure covered when surviving code later claims readiness", () => {
+    const h = harness(studio);h.resourceError("LINK", "studio-entry.css");h.parseBody();h.domReady();
+    nativeState(h, "ready");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("resource-error");
+    expect(h.document.documentElement.dataset.labStartup).toBe("error");
+    expect(h.document.documentElement.dataset.studioStartup).toBe("resource-error");
+    expect(h.element("labStartupStatus").textContent).toContain("资源加载失败");
+    expect(h.element("labStartupStatus").querySelector("button")).not.toBeNull();
+  });
+
+  it("ignores failed draft images while the studio is loading", () => {
+    const h = harness(studio);h.parseBody();h.domReady();h.resourceError("IMG");
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("pending");
+    expect(h.element("labStartupStatus").getAttribute("role")).toBe("status");
+    expect(h.timers.size).toBe(1);
+  });
+
+  it("retains the real studio's startup-error and in-place retry UI after a loading timeout", async () => {
+    const h = harness(studio);h.parseBody();h.expire();
+    // Execute the production studio with a missing bridge. Its own boot/catch
+    // must render the recoverable native error; the guardian must relinquish it.
+    runInContext(source("studio-genesis-ui.js"), h.context);h.domReady();
+    await vi.waitFor(() => expect(h.document.getElementById("studioGenesisRoot")?.textContent).toContain("创作模块未完整加载"));
+    h.mutations();
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("native-error");
+    expect(h.document.documentElement.dataset.studioStartup).toBe("error");
+    expect(h.timers.size).toBe(0);
+    const root = h.element("studioGenesisRoot"), retry = root.querySelector('[data-action="retry-startup"]')!;
+    expect(retry).not.toBeNull();
+    (root as Element & { onclick: (event: { target: Element }) => void }).onclick({ target: retry });
+    h.mutations();
+    expect(h.document.documentElement.dataset.studioBootstrap).toBe("pending");
+    expect(h.element("labStartupStatus").getAttribute("role")).toBe("status");
+    expect(h.element("labStartupStatus").textContent).not.toContain("加载超时");
+    expect(h.timers.size).toBe(1);
+    await vi.waitFor(() => expect(h.document.documentElement.dataset.studioStartup).toBe("error"));
+    h.mutations();expect(h.document.documentElement.dataset.studioBootstrap).toBe("native-error");
+    expect(h.timers.size).toBe(0);
   });
 });
 

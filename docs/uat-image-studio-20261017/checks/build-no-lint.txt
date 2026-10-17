@@ -1,0 +1,145 @@
+ ⚠ Linting is disabled.
+   ▲ Next.js 15.5.27
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 5.2s
+   Checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/29) ...
+   Generating static pages (7/29) 
+   Generating static pages (14/29) 
+   Generating static pages (21/29) 
+ ✓ Generating static pages (29/29)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                                        Size  First Load JS
+┌ ƒ /                                             375 B         103 kB
+├ ƒ /_not-found                                    1 kB         103 kB
+├ ƒ /admin                                        166 B         106 kB
+├ ƒ /api/ai-access/events                         375 B         103 kB
+├ ƒ /api/ai-access/execute                        375 B         103 kB
+├ ƒ /api/ai-access/grants                         375 B         103 kB
+├ ƒ /api/ai-access/grants/[id]                    375 B         103 kB
+├ ƒ /api/ai-api-config                            375 B         103 kB
+├ ƒ /api/ai-api-config/test                       375 B         103 kB
+├ ƒ /api/auth/creative-access                     375 B         103 kB
+├ ƒ /api/auth/login                               375 B         103 kB
+├ ƒ /api/auth/logout                              375 B         103 kB
+├ ƒ /api/auth/me                                  375 B         103 kB
+├ ƒ /api/auth/register                            375 B         103 kB
+├ ƒ /api/business-diagnosis/ai-report             375 B         103 kB
+├ ƒ /api/business-diagnosis/html-report           375 B         103 kB
+├ ƒ /api/business-diagnosis/source                375 B         103 kB
+├ ƒ /api/calc-runs                                375 B         103 kB
+├ ƒ /api/creative/assets/[...path]                375 B         103 kB
+├ ƒ /api/creative/credits                         375 B         103 kB
+├ ƒ /api/creative/credits/ledger                  375 B         103 kB
+├ ƒ /api/creative/narration                       375 B         103 kB
+├ ƒ /api/creative/proxy                           375 B         103 kB
+├ ƒ /api/cycles/[cycleId]/prefill-items           375 B         103 kB
+├ ƒ /api/daily-retention                          375 B         103 kB
+├ ƒ /api/dashboard-shares                         375 B         103 kB
+├ ƒ /api/dashboards/audience-plan                 375 B         103 kB
+├ ƒ /api/dashboards/management                    375 B         103 kB
+├ ƒ /api/dashboards/product-breakthrough          375 B         103 kB
+├ ƒ /api/dmp-market-reports                       375 B         103 kB
+├ ƒ /api/dmp-report-exports                       375 B         103 kB
+├ ƒ /api/dmp-report-shares                        375 B         103 kB
+├ ƒ /api/dmp-reports                              375 B         103 kB
+├ ƒ /api/dmp-runtime/[action]                     375 B         103 kB
+├ ƒ /api/dmp-source-data                          375 B         103 kB
+├ ƒ /api/growth-profit-config                     375 B         103 kB
+├ ƒ /api/import-batches                           375 B         103 kB
+├ ƒ /api/import-batches/[id]/validation           375 B         103 kB
+├ ƒ /api/import-batches/ingest                    375 B         103 kB
+├ ƒ /api/import-batches/merge-shengyi             375 B         103 kB
+├ ƒ /api/interventions                            375 B         103 kB
+├ ƒ /api/interventions/[id]                       375 B         103 kB
+├ ƒ /api/interventions/[id]/comparison            375 B         103 kB
+├ ƒ /api/invite-codes                             375 B         103 kB
+├ ƒ /api/invite-codes/[id]                        375 B         103 kB
+├ ƒ /api/managed-users                            375 B         103 kB
+├ ƒ /api/managed-users/[id]                       375 B         103 kB
+├ ƒ /api/managed-users/[id]/creative-access       375 B         103 kB
+├ ƒ /api/managed-users/[id]/dmp-access            375 B         103 kB
+├ ƒ /api/managed-users/[id]/reset-password        375 B         103 kB
+├ ƒ /api/management/creative-orders               375 B         103 kB
+├ ƒ /api/management/credit-gifts                  375 B         103 kB
+├ ƒ /api/management/dmp-report-share-analytics    375 B         103 kB
+├ ƒ /api/management/gateway-billing/accounts      375 B         103 kB
+├ ƒ /api/management/gateway-billing/ledger        375 B         103 kB
+├ ƒ /api/management/gateway-billing/rules         375 B         103 kB
+├ ƒ /api/management/user-supply                   375 B         103 kB
+├ ƒ /api/model-gateway/checkout                   375 B         103 kB
+├ ƒ /api/model-gateway/checkout/[id]              375 B         103 kB
+├ ƒ /api/model-gateway/keys                       375 B         103 kB
+├ ƒ /api/model-gateway/keys/[id]                  375 B         103 kB
+├ ƒ /api/model-gateway/orders                     375 B         103 kB
+├ ƒ /api/model-gateway/orders/[id]                375 B         103 kB
+├ ƒ /api/model-gateway/orders/[id]/mark-paid      375 B         103 kB
+├ ƒ /api/model-gateway/overview                   375 B         103 kB
+├ ƒ /api/model-gateway/relay                      375 B         103 kB
+├ ƒ /api/model-gateway/relay/sync                 375 B         103 kB
+├ ƒ /api/model-gateway/relay/test                 375 B         103 kB
+├ ƒ /api/model-gateway/wallet                     375 B         103 kB
+├ ƒ /api/operating-network/ai-report              375 B         103 kB
+├ ƒ /api/payments/alipay/notify                   375 B         103 kB
+├ ƒ /api/payments/wechat/notify                   375 B         103 kB
+├ ƒ /api/profile/orders                           375 B         103 kB
+├ ƒ /api/protected-downloads/[...path]            375 B         103 kB
+├ ƒ /api/shared/dmp-reports/[token]               375 B         103 kB
+├ ƒ /api/shops                                    375 B         103 kB
+├ ƒ /api/shops/[id]                               375 B         103 kB
+├ ƒ /api/shops/active                             375 B         103 kB
+├ ƒ /api/sower-work/access                        375 B         103 kB
+├ ƒ /api/sower-work/credits                       375 B         103 kB
+├ ƒ /api/sower-work/credits/ledger                375 B         103 kB
+├ ƒ /api/tools/dmp/download                       375 B         103 kB
+├ ƒ /api/v1/chat/completions                      375 B         103 kB
+├ ƒ /api/v1/images/edits                          375 B         103 kB
+├ ƒ /api/v1/images/generations                    375 B         103 kB
+├ ƒ /api/v1/models                                375 B         103 kB
+├ ƒ /api/v1/videos                                375 B         103 kB
+├ ƒ /api/v1/videos/[id]                           375 B         103 kB
+├ ƒ /api/v1/videos/[id]/content                   375 B         103 kB
+├ ƒ /api/versions                                 375 B         103 kB
+├ ƒ /dashboards/audience-plan                   4.46 kB         225 kB
+├ ƒ /dashboards/business-diagnosis              6.06 kB         116 kB
+├ ƒ /dashboards/diagnostics                       375 B         103 kB
+├ ƒ /dashboards/management                      10.4 kB         231 kB
+├ ƒ /dashboards/operating-network                 137 B         127 kB
+├ ƒ /dashboards/operating-network/video           137 B         127 kB
+├ ƒ /dashboards/product-breakthrough            4.38 kB         225 kB
+├ ƒ /imports                                     145 kB         250 kB
+├ ƒ /login                                       3.8 kB         106 kB
+├ ƒ /management                                 23.3 kB         129 kB
+├ ƒ /management/ai-access                       4.84 kB         107 kB
+├ ƒ /management/payments                        2.03 kB         108 kB
+├ ƒ /models                                     13.2 kB         124 kB
+├ ƒ /prefill                                    7.36 kB         113 kB
+├ ƒ /privacy                                      375 B         103 kB
+├ ƒ /profile                                     7.2 kB         113 kB
+├ ƒ /reports                                      375 B         103 kB
+├ ƒ /reports/operating-network                  2.75 kB         223 kB
+├ ƒ /shared/dashboards/[token]                    375 B         103 kB
+├ ƒ /shared/dmp-reports/[token]                 2.58 kB         142 kB
+├ ƒ /sower-work                                 4.48 kB         107 kB
+├ ƒ /tools                                      6.44 kB         112 kB
+├ ƒ /tools/dmp-report                           8.07 kB         147 kB
+├ ƒ /v1/chat/completions                          375 B         103 kB
+├ ƒ /v1/images/edits                              375 B         103 kB
+├ ƒ /v1/images/generations                        375 B         103 kB
+├ ƒ /v1/models                                    375 B         103 kB
+├ ƒ /v1/videos                                    375 B         103 kB
+├ ƒ /v1/videos/[id]                               375 B         103 kB
+├ ƒ /v1/videos/[id]/content                       375 B         103 kB
+└ ƒ /versions                                     375 B         103 kB
++ First Load JS shared by all                    102 kB
+  ├ chunks/1255-8dc91b756d944555.js             46.2 kB
+  ├ chunks/4bd1b696-100b9d70ed4e49c1.js         54.2 kB
+  └ other shared chunks (total)                    2 kB
+
+
+ƒ  (Dynamic)  server-rendered on demand
+

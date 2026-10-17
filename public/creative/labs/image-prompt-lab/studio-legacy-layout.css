@@ -94,29 +94,6 @@ html.studio-legacy-layout .sl-hero .product-name {
   display: none;
 }
 
-html.studio-legacy-layout .sl-hero .lab-logo {
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  background: var(--panel-2);
-  box-shadow: none;
-}
-
-html.studio-legacy-layout .sl-hero .lab-logo svg {
-  width: 22px;
-  height: 22px;
-}
-
-html.studio-legacy-layout .sl-hero .product-name {
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0;
-}
-
 html.studio-legacy-layout .sl-hero .eyebrow {
   color: var(--muted);
   font-size: 10px;

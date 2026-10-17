@@ -6,7 +6,7 @@
   display: grid;
   flex: 1;
   gap: 0;
-  grid-template-columns: 164px minmax(0, 1fr);
+  grid-template-columns: 184px minmax(0, 1fr);
   min-height: calc(100dvh - 30px);
   overflow: hidden;
 }
@@ -17,7 +17,8 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 24px 12px;
+  min-width: 0;
+  padding: 20px 12px;
 }
 
 .railTitle {
@@ -43,9 +44,9 @@
   cursor: pointer;
   display: flex;
   font-family: inherit;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 400;
-  gap: 12px;
+  gap: 10px;
   justify-content: flex-start;
   min-height: 42px;
   padding: 0 12px;
@@ -57,14 +58,14 @@
 .batchNav:hover {
   background: var(--sidebar-active);
   color: #131a07;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .navItem.active,
 .batchNav.batchActive {
   background: var(--sidebar-active);
   color: #131a07;
-  font-weight: 800;
+  font-weight: 600;
 }
 
 .navItem svg,
@@ -91,6 +92,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .toolbar {
@@ -100,8 +102,8 @@
   display: flex;
   gap: 14px;
   justify-content: space-between;
-  min-height: 68px;
-  padding: 14px 24px;
+  min-height: 60px;
+  padding: 12px 20px;
 }
 
 .breadcrumb {
@@ -159,7 +161,7 @@
 .frame {
   display: flex;
   flex: 1;
-  min-height: 640px;
+  min-height: 480px;
   min-width: 0;
 }
 
@@ -167,14 +169,14 @@
   border: 0;
   display: block;
   flex: 1;
-  height: calc(100dvh - 100px);
-  min-height: 640px;
+  height: calc(100dvh - 180px);
+  min-height: 480px;
   width: 100%;
 }
 
 @media (max-width: 1200px) {
   .studio:global(.creative-studio) {
-    grid-template-columns: 144px minmax(0, 1fr);
+    grid-template-columns: 164px minmax(0, 1fr);
   }
 
   .rail {
@@ -196,7 +198,9 @@
   .rail {
     border-bottom: 1px solid var(--line);
     border-right: 0;
-    gap: 6px;
+    display: grid;
+    gap: 8px;
+    grid-template-columns: minmax(0, 1fr) auto;
     padding: 10px;
   }
 
@@ -205,18 +209,29 @@
   }
 
   .navigation {
-    gap: 4px;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: flex;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 2px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+
+  .navigation:first-of-type {
+    grid-column: 1 / -1;
   }
 
   .navItem,
   .batchNav {
-    font-size: 12px;
-    gap: 5px;
+    flex: 0 0 auto;
+    font-size: 13px;
+    gap: 6px;
     justify-content: center;
-    min-height: 36px;
+    min-height: 44px;
     min-width: 0;
-    padding: 0 3px;
+    padding: 0 12px;
+    scroll-snap-align: start;
   }
 
   .navItem span,
@@ -237,10 +252,11 @@
     border: 0;
     border-radius: 7px;
     margin-top: 0;
-    width: 25%;
+    width: auto;
   }
 
   .toolbar {
+    flex-wrap: wrap;
     gap: 8px;
     min-height: 58px;
     padding: 10px 12px;
@@ -256,13 +272,14 @@
   }
 
   .batchButton {
-    font-size: 11px;
+    font-size: 12px;
+    min-height: 40px;
     padding-inline: 9px;
   }
 
   .frame,
   .frame iframe {
-    min-height: 720px;
+    min-height: 560px;
   }
 }
 
@@ -271,6 +288,7 @@
   display: flex;
   flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 
 .cachedFrame[hidden] { display: none !important; }
@@ -293,12 +311,13 @@
 .backgroundTask {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   justify-content: space-between;
   padding: 5px 0;
 }
 
-.backgroundTask p { color: var(--muted); font-size: 13px; margin: 0; }
+.backgroundTask p { color: var(--muted); flex: 1 1 220px; font-size: 13px; margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .backgroundTask strong { color: var(--ink); }
 .taskOverview { color: var(--ink); font-size: 13px; font-weight: 700; margin: 4px 0 6px; }
 .currentTask { color: var(--muted); flex-shrink: 0; font-size: 12px; }
@@ -315,3 +334,11 @@
   padding: 4px 10px;
 }
 .backgroundTaskButton:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+@media (max-width: 760px) {
+  .navigationNotice,
+  .backgroundTasks { padding: 10px 12px; }
+
+  .backgroundTask { gap: 8px; }
+  .backgroundTaskButton { min-height: 44px; }
+}

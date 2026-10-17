@@ -487,6 +487,7 @@ function setArchiveAccountKey(value, options) {
     }
     return Promise.resolve({ ok: true, unchanged: true });
   }
+  closeArchiveHistory();
   Object.keys(promptTaskFlights).forEach(function (id) { promptTaskEnd(id); });
   state.archiveAccountKey = next;
   promptTaskRender();

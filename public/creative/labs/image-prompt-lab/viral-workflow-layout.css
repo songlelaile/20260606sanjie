@@ -189,7 +189,7 @@ body.viral-dedicated-workspace[data-viral-workflow] .vw-workspace :is(.detail-in
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-body.viral-dedicated-workspace[data-viral-workflow] .vw-workspace :is(.style-refresh-source-modes, .style-refresh-strength-grid) {
+body.viral-dedicated-workspace[data-viral-workflow] .vw-workspace .style-refresh-source-modes {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 

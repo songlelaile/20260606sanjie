@@ -4,6 +4,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import { loadCreativeEntryBundle } from "./creative-entry-bundle";
 
 const publicRoot = process.env.CREATIVE_PUBLIC_TEST_ROOT
   ? path.resolve(process.env.CREATIVE_PUBLIC_TEST_ROOT)
@@ -34,7 +35,7 @@ function element() {
   };
 }
 
-function imageRuntime() {
+function imageRuntime(bundledSource?: string) {
   const elements = new Map<string, ReturnType<typeof element>>();
   const document = {
     readyState: "loading",
@@ -66,8 +67,10 @@ function imageRuntime() {
   });
   context.window = context;
   const exportedContracts = new Map<string, unknown>();
-  for (const file of scripts) {
-    vm.runInContext(readFileSync(file, "utf8"), context, { filename: file, timeout: 2000 });
+  const runtimeFiles = bundledSource === undefined ? scripts.map(file => ({ file, source: readFileSync(file, "utf8") }))
+    : [{ file: scripts[0], source: readFileSync(scripts[0], "utf8") }, { file: "studio-entry.js", source: bundledSource }];
+  for (const { file, source } of runtimeFiles) {
+    vm.runInContext(source, context, { filename: file, timeout: 2000 });
     if (file.endsWith("/background.js")) {
       expect(context.openUnifiedApiSettings).toBeUndefined();
       expect(context.buildLinkPrompt).toBeUndefined();
@@ -87,6 +90,23 @@ function send(context: vm.Context, type: string, payload: object = {}) {
 }
 
 describe("image studio background and UI coexistence", () => {
+  it("initializes the real protected tail bundle with the same bridge, contracts and API behavior", async () => {
+    const bundle = await loadCreativeEntryBundle(path.join(publicRoot, "creative"));
+    const individual = imageRuntime(), bundled = imageRuntime(bundle.js);
+    for (const key of ["SZ_REFERENCE_DETAIL_CONTRACT", "SZ_REFERENCE_DETAIL_BLUEPRINT", "SZ_REFERENCE_DETAIL_BATCH", "SZ_IMAGE_ARCHIVE", "SZ_CREATIVE_TOOLS_CONTRACT", "SZ_STUDIO_GENESIS"]) {
+      expect(Object.keys(bundled.context[key])).toEqual(Object.keys(individual.context[key]));
+    }
+    expect(Object.keys(bundled.context.SZ_CREATIVE_TOOLS_BRIDGE)).toEqual(Object.keys(individual.context.SZ_CREATIVE_TOOLS_BRIDGE));
+    expect(bundled.context.SZ_CREATIVE_TOOLS_UI).toBeUndefined();
+    expect(bundled.document.addEventListener).toHaveBeenCalledWith("DOMContentLoaded", expect.any(Function));
+    expect(bundled.context.normalizeCfg).not.toBe(bundled.context.__SZ_PROMPTLAB_BACKGROUND_TEST_API__.normalizeCfg);
+    bundled.context.applyCfg({ provider: "openai-compatible", apiKey: "" });
+    expect(bundled.context.SZ_CREATIVE_TOOLS_BRIDGE.modelInfo()).toMatchObject({ ready: true, supportsReference: true, supplyChannel: "platform_wallet" });
+    expect(await bundled.context.openUnifiedApiSettings()).toMatchObject({ ok: true, centralized: true });
+    expect(bundled.document.getElementById("configModal").hidden).toBe(false);
+    expect(bundled.fetch.mock.calls.every(([url]) => url === "/api/auth/me")).toBe(true);
+  });
+
   it("loads all HTML scripts in order and retains explicit shared exports", () => {
     const { context, document, exportedContracts } = imageRuntime();
     expect(scripts.map((file) => path.relative(publicRoot, file).split(path.sep).join("/"))).toEqual([

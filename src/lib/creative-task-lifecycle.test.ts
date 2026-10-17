@@ -256,6 +256,7 @@ describe("legacy task waiting and independent receipts", () => {
     runInContext(part("var archiveHistoryState =", "function archiveHistoryUpperModal"), h.context);
     h.context.archiveHistoryState.selected = { "previous-owner-original": true };
     h.context.archiveHistoryState.trashSelected = { "previous-owner-trash-original": true };
+    h.context.closeArchiveHistory = vi.fn(); // Dialog behavior is covered by studio-history-dialog.test.ts.
     runInContext(part("function setArchiveAccountKey", "function archiveSurfaceForItem"), h.context);
     await h.context.setArchiveAccountKey("account:alice", { deferArchive: true });
     expect(render).toHaveBeenCalled();

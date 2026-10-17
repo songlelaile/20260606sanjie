@@ -61,11 +61,11 @@ function setupScript(origin, missingApi=false) {
   return `<script>window.__SANJIE_ENVIRONMENT=${JSON.stringify(environment)};window.__STUDIO_MAIN_DEMO__=true;window.__DEMO_NATIVE_FETCH=window.fetch.bind(window);localStorage.setItem(${JSON.stringify(prefix+'sz_image_prompt_lab_config_profiles_v2')},${JSON.stringify(JSON.stringify(profile))});localStorage.setItem(${JSON.stringify(prefix+'sz_image_prompt_lab_config')},${JSON.stringify(JSON.stringify({...config,accountKey:profileId}))});document.addEventListener('securitypolicyviolation',function(event){window.__DEMO_NATIVE_FETCH('/__demo/event',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'csp-blocked',directive:event.violatedDirective,url:event.blockedURI})}).catch(function(){});});</script>`;
 }
 
-function bridgeScript(missingApi=false) {
+function bridgeScript(missingApi) {
   return `<script>
   (()=>{'use strict';
     const bridge=window.SZ_CREATIVE_TOOLS_BRIDGE;
-    const missingApi=${JSON.stringify(missingApi)};
+    const missingApi=${missingApi===undefined?'window.__STUDIO_MAIN_DEMO_MISSING_API__===true':JSON.stringify(missingApi)};
     if(!bridge)throw new Error('Demo bridge cannot attach before promptlab.');
     const nativeFetch=window.__DEMO_NATIVE_FETCH;
     const record=(type,detail={})=>nativeFetch('/__demo/event',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type,...detail})}).catch(()=>{});
@@ -144,7 +144,10 @@ function shell() {
   </body></html>`;
 }
 
-function createDemoServer({port=defaultPort}={}) {
+function createDemoServer({port=defaultPort,bundled=false}={}) {
+  // Optional production entry packaging, with the same explicit local-only
+  // analysis/generation fixtures. Run this mode with node --import tsx.
+  const entry = bundled ? require('../src/lib/creative-entry-bundle.ts') : null;
   const metrics = { startedAt:new Date().toISOString(), environment, fixtureAnalysis:0, fixtureGeneration:0, localArchives:0, blockedProxyRequests:0, blockedOtherApiRequests:0, outboundProviderRequests:0, events:[], requests:{} };
   const png = productFixture(); fs.mkdirSync(fixtureDir,{recursive:true});
   const productPath=path.join(fixtureDir,'demo-product-tote.png');fs.writeFileSync(productPath,png);
@@ -160,7 +163,7 @@ function createDemoServer({port=defaultPort}={}) {
     if(route==='/api/creative/credits')return send(200,{data:{centsPerPoint:10,plan:{code:'local-demo',name:'本地演示',multiplierBps:10000,ruleVersion:1},models:[],observedAt:new Date().toISOString()}});
     if(route==='/api/creative/proxy'||route==='/__demo/model-disabled'){metrics.blockedProxyRequests++;return send(403,{ok:false,code:'LOCAL_DEMO_PROVIDER_BLOCKED',error:'本地演示禁止模型网络调用。'});}
     if(route.startsWith('/api/')){metrics.blockedOtherApiRequests++;return send(403,{ok:false,code:'LOCAL_DEMO_API_BLOCKED',error:'该接口不属于本地演示范围。'});}
-    if(route==='/__demo/metrics')return send(200,{...metrics,productPath,productSha256:crypto.createHash('sha256').update(png).digest('hex'),mode:'actual public UI + explicit mock analysis and generation',providerNetworkPolicy:'No server outbound networking. All provider proxy routes return 403. Browser CSP allows only this origin, blob and data.'});
+    if(route==='/__demo/metrics')return send(200,{...metrics,bundled,productPath,productSha256:crypto.createHash('sha256').update(png).digest('hex'),mode:'actual public UI + explicit mock analysis and generation',providerNetworkPolicy:'No server outbound networking. All provider proxy routes return 403. Browser CSP allows only this origin, blob and data.'});
     if(route==='/__demo/product.png')return send(200,png,'image/png');
     if(route==='/__demo/event'&&req.method==='POST'){
       let body='';for await(const part of req){body+=part;if(body.length>16384){req.destroy();return;}}
@@ -170,11 +173,24 @@ function createDemoServer({port=defaultPort}={}) {
     const target=path.resolve(publicRoot,`.${route}`);
     if(!target.startsWith(publicRoot+path.sep))return send(403,{ok:false});
     try{
-      const stat=fs.statSync(target);if(!stat.isFile())return send(404,{ok:false,error:'Not found'});
-      let source=fs.readFileSync(target);
+      const entryPath = route.replace(/^\/creative\//,'');
+      let source;
+      if(entry && entry.isCreativeEntryPath(entryPath)) {
+        const packed = await entry.loadCreativeEntryBundle(path.join(publicRoot,'creative'));
+        source = entryPath===entry.CREATIVE_ENTRY_HTML ? packed.html : entryPath===entry.CREATIVE_ENTRY_CSS ? packed.css : packed.js;
+        if(entryPath===entry.CREATIVE_ENTRY_JS) {
+          const marker='/* Source: labs/image-prompt-lab/creative-tools-ui.js */';
+          if(!source.includes(marker))throw new Error('Missing demo fixture bridge insertion point');
+          source=source.replace(marker,bridgeScript().replace(/^<script>\s*|\s*<\/script>$/g,'')+'\n;\n'+marker);
+        }
+      } else {
+        const stat=fs.statSync(target);if(!stat.isFile())return send(404,{ok:false,error:'Not found'});
+        source=fs.readFileSync(target);
+      }
       if(route==='/creative/labs/image-prompt-lab/promptlab.html'&&url.searchParams.get('demo')==='1'){
         const missingApi=url.searchParams.get('demoApi')==='missing';
-        source=source.toString().replace(/<script src="\/creative\/web-chrome\.js"><\/script>/,`${setupScript(origin,missingApi)}<script src="/creative/web-chrome.js"></script>`).replace(/(<script src="creative-tools-ui\.js[^>]+><\/script>)/,`${bridgeScript(missingApi)}$1`);
+        source=source.toString().replace(/(<script src="\/creative\/web-chrome\.js(?:\?[^"<>]*)?"><\/script>)/,`${setupScript(origin,missingApi)}$1`).replace(/(<script src="creative-tools-ui\.js[^>]+><\/script>)/,`${bridgeScript(missingApi)}$1`);
+        if(bundled)source=source.replace('<head>','<head><script>window.__STUDIO_MAIN_DEMO_MISSING_API__='+JSON.stringify(missingApi)+';</script>');
       }
       return send(200,source,mime[path.extname(target)]||'application/octet-stream');
     }catch{return send(404,{ok:false,error:'Not found'});}
@@ -185,7 +201,7 @@ function createDemoServer({port=defaultPort}={}) {
 if(require.main===module){
   const portArgument=process.argv.indexOf('--port');const port=portArgument>=0?Number(process.argv[portArgument+1]):defaultPort;
   if(!Number.isInteger(port)||port<1024||port>65535)throw new Error('Port must be an integer from 1024 to 65535.');
-  const demo=createDemoServer({port});demo.server.listen(port,'127.0.0.1',()=>process.stdout.write(JSON.stringify({url:demo.origin,iframe:`${demo.origin}/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1&demo=1`,productPath:demo.productPath,metrics:`${demo.origin}/__demo/metrics`,pid:process.pid})+'\n'));
+  const demo=createDemoServer({port,bundled:process.argv.includes('--bundle')});demo.server.listen(port,'127.0.0.1',()=>process.stdout.write(JSON.stringify({url:demo.origin,iframe:`${demo.origin}/creative/labs/image-prompt-lab/promptlab.html?source=web&studio=1&demo=1`,productPath:demo.productPath,metrics:`${demo.origin}/__demo/metrics`,pid:process.pid})+'\n'));
   const close=()=>demo.server.close(()=>process.exit(0));process.on('SIGINT',close);process.on('SIGTERM',close);
 }
 module.exports={createDemoServer,productFixture};

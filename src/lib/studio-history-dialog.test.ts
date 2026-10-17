@@ -313,6 +313,30 @@ describe("studio generation history dialog", () => {
     expect(h.node("archiveBatchList").textContent).not.toContain("alice-private");
   });
 
+  it("closes the old account dialog before rebinding and leaves a newer dialog open after the old refresh settles", async () => {
+    const h = harness(), waiting = deferred<object[]>(), trigger = h.node("openArchiveBtn"), app = h.document.querySelector(".app")!;
+    h.body.style.setProperty("overflow", "clip", "important"); trigger.focus();
+    h.archive.list.mockReturnValueOnce(waiting.promise); h.archive.list.mockReturnValueOnce(waiting.promise);
+    const old = h.context.openArchiveHistory(trigger);
+    await vi.waitFor(() => expect(h.archive.list).toHaveBeenCalledTimes(2));
+    await h.context.setArchiveAccountKey("tenant:bob", { deferArchive: true });
+    expect(h.node("archiveHistoryModal").hidden).toBe(true); expect(app.inert).toBe(false);
+    expect(h.body.style.getPropertyValue("overflow")).toBe("clip");
+    expect(h.body.style.getPropertyPriority("overflow")).toBe("important"); expect(h.document.activeElement).toBe(trigger);
+    await h.context.openArchiveHistory(trigger);
+    waiting.complete([{ archiveBatchId: "alice-private", assets: [] }]); await old;
+    expect(h.node("archiveHistoryModal").hidden).toBe(false); expect(h.body.style.overflow).toBe("hidden");
+    expect(app.inert).toBe(true); expect(h.node("archiveBatchList").textContent).not.toContain("alice-private");
+  });
+
+  it("preserves an open dialog and its focus when the same archive account is rebound", async () => {
+    const h = harness(); await h.context.openArchiveHistory(h.node("openArchiveBtn"));
+    const control = h.node("archiveSearchInput"); control.focus();
+    expect(await h.context.setArchiveAccountKey("tenant:alice")).toMatchObject({ unchanged: true });
+    expect(h.node("archiveHistoryModal").hidden).toBe(false); expect(h.document.activeElement).toBe(control);
+    expect(h.body.style.overflow).toBe("hidden");
+  });
+
   it("keeps the existing database identity and version without opening an upgrade during dialog setup", () => {
     const indexedDB = { open: vi.fn() }, context = createContext({ indexedDB });
     runInContext(sharedAsset("image-archive-store.js"), context);

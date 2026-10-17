@@ -13,6 +13,7 @@ function memoryStorage() {
 function webHarness(environment?: string) {
   let username = "alice";
   let allowed = true;
+  let authMode: "ok" | "network" | "invalid" | number = "ok";
   const calls: Array<{ input: unknown; init: RequestInit | undefined }> = [];
   const localStorage = memoryStorage();
   const context = createContext({ URL, URLSearchParams, Request, Headers, Response, Blob, FormData, TextEncoder, ArrayBuffer,
@@ -20,11 +21,17 @@ function webHarness(environment?: string) {
     location: { href: "https://shaozhuangai.com/creative/labs/image-prompt-lab/promptlab.html", origin: "https://shaozhuangai.com" },
     fetch: async (input: unknown, init: RequestInit | undefined) => {
       calls.push({ input, init });
-      if (input === "/api/auth/me") return Response.json({ data: { tenantId: "shop", username, creativeEntitlement: { allowed } } });
+      if (input === "/api/auth/me") {
+        if (authMode === "network") throw new Error("fixture connection interrupted");
+        if (authMode === "invalid") return new Response("invalid JSON", { headers: { "content-type": "application/json" } });
+        if (typeof authMode === "number") return Response.json({ error: "fixture unavailable" }, { status: authMode });
+        return Response.json({ data: { tenantId: "shop", username, creativeEntitlement: { allowed } } });
+      }
       return Response.json({ ok: true });
     } });
   runInContext(script("web-chrome.js"), context);
-  return { context, localStorage, calls, setUser: (value: string) => { username = value; }, setAllowed: (value: boolean) => { allowed = value; } };
+  return { context, localStorage, calls, setUser: (value: string) => { username = value; }, setAllowed: (value: boolean) => { allowed = value; },
+    setAuthMode: (value: typeof authMode) => { authMode = value; } };
 }
 
 async function videoSettingsHarness() {
@@ -89,6 +96,65 @@ function videoStudioSettingsHarness(website = true) {
 }
 
 describe("website extension compatibility", () => {
+  it.each(["network", "invalid", 429, 500, 503] as const)("recovers from transient auth failure %s without accepting any failed identity", async mode => {
+    const h = webHarness();
+    await h.context.chrome.storage.local.set({ draft: "saved original" });
+    h.setAuthMode(mode);
+    expect(await h.context.authCheck()).toMatchObject({ ok: false, reason: "auth_transient" });
+    await expect(h.context.chrome.storage.local.set({ draft: "must not write" }))
+      .rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE", retryable: true });
+    expect(h.localStorage.getItem("sz.chrome.local.v1:account:shop%3Aalice:draft")).toBe('"saved original"');
+    h.setAuthMode("ok");
+    expect(await h.context.SZ_WEB_ACCOUNT.requireAccess()).toBe("shop:alice");
+    expect(await h.context.chrome.storage.local.get("draft")).toEqual({ draft: "saved original" });
+    h.setUser("bob");
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE", retryable: false });
+    expect(h.localStorage.getItem("sz.chrome.local.v1:account:shop%3Abob:draft")).toBeNull();
+  });
+
+  it.each([401, 403])("keeps definitive auth rejection %s blocked after a pinned login", async status => {
+    const h = webHarness();
+    expect(await h.context.SZ_WEB_ACCOUNT.requireAccess()).toBe("shop:alice");
+    h.setAuthMode(status);
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE", retryable: false });
+    h.setAuthMode("ok");
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE", retryable: false });
+  });
+
+  it("shares the exact existing account storage-key format", () => {
+    const h = webHarness();
+    for (const id of ["shop:alice", "tenant+1:name@example.com", "店铺:账号", "a".repeat(200)]) {
+      expect(h.context.SZ_WEB_ACCOUNT.storageKey(id)).toBe("user:" + id.replace(/[^\w@.+:-]/g, "_").slice(0, 120));
+    }
+  });
+
+  it("checks identity and creative access in one fresh response per operation", async () => {
+    const h = webHarness();
+    expect(await h.context.SZ_WEB_ACCOUNT.requireAccess()).toBe("shop:alice");
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(1);
+
+    h.setAllowed(false);
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "CREATIVE_ACCESS_REQUIRED" });
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(2);
+
+    h.setAllowed(true);
+    h.setUser("bob");
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE" });
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(3);
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "ACCOUNT_UNAVAILABLE" });
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(3);
+  });
+
+  it("shares concurrent access checks without retaining a stale entitlement", async () => {
+    const h = webHarness();
+    expect(await Promise.all([h.context.SZ_WEB_ACCOUNT.requireAccess(), h.context.SZ_WEB_ACCOUNT.requireAccess()]))
+      .toEqual(["shop:alice", "shop:alice"]);
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(1);
+    h.setAllowed(false);
+    await expect(h.context.SZ_WEB_ACCOUNT.requireAccess()).rejects.toMatchObject({ code: "CREATIVE_ACCESS_REQUIRED" });
+    expect(h.calls.filter(call => call.input === "/api/auth/me")).toHaveLength(2);
+  });
+
   it("copies only owned old profiles, retains the old records, and separates subsequent pages", async () => {
     const h = webHarness();
     const legacy = { accounts: { "user:shop:alice": { configs: { openai: { apiKey: "alice-key" } } }, "user:shop:bob": { configs: { openai: { apiKey: "bob-key" } } } } };

@@ -1,0 +1,13 @@
+
+> three-stage-engine-saas@0.1.0 test
+> vitest run --maxWorkers=2
+
+
+ RUN  v4.1.8 /Users/shaozhuang/.codex/worktrees/image-studio-optimize/6.6新三阶
+
+
+ Test Files  207 passed | 6 skipped (213)
+      Tests  3526 passed | 62 skipped (3588)
+   Start at  21:29:46
+   Duration  75.60s (transform 3.34s, setup 0ms, import 12.79s, tests 116.06s, environment 12ms)
+

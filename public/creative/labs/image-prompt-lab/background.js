@@ -541,6 +541,7 @@ function configAccountKeyFromAuth(auth) {
   var user = auth && auth.ok && auth.user ? auth.user : null;
   var raw = user && (user.id || user.userId || user.uid || user.email || user.username || user.name || user.mobile || user.phone);
   if (!raw) return 'local';
+  if (globalThis.SZ_WEB_ACCOUNT && typeof globalThis.SZ_WEB_ACCOUNT.storageKey === 'function') return globalThis.SZ_WEB_ACCOUNT.storageKey(raw);
   return 'user:' + String(raw).replace(/[^\w@.+:-]/g, '_').slice(0, 120);
 }
 

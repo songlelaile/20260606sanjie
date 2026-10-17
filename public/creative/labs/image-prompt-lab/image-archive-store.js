@@ -15,6 +15,7 @@
   var PROVISIONAL_RETENTION_MS = 24 * 60 * 60 * 1000;
   var MAX_PROVISIONAL_SCAN_LIMIT = 48;
   var MAX_IMAGE_BYTES = 40 * 1024 * 1024;
+  var STORAGE_TIMEOUT_MS = 15000;
   var SKU_OUTPUT_MIN_EDGE = 256;
   var SKU_OUTPUT_MAX_EDGE = 4096;
   var SKU_OUTPUT_MAX_PIXELS = 16777216;
@@ -326,60 +327,111 @@
     });
   }
 
-  function openDb() {
-    var ready = root.SZ_WEB_ACCOUNT ? root.SZ_WEB_ACCOUNT.require() : Promise.resolve();
-    return ready.then(function () { return new Promise(function (resolve, reject) {
-      if (!root.indexedDB) { reject(new Error('当前环境不支持本机图片档案')); return; }
-      var request = root.indexedDB.open(DB_NAME, DB_VERSION);
-      request.onupgradeneeded = function () {
-        var db = request.result;
-        var batches = db.objectStoreNames.contains(BATCH_STORE)
-          ? request.transaction.objectStore(BATCH_STORE)
-          : db.createObjectStore(BATCH_STORE, { keyPath: 'archiveBatchId' });
-        if (!batches.indexNames.contains('accountKey')) batches.createIndex('accountKey', 'accountKey', { unique: false });
-        if (!batches.indexNames.contains('updatedAt')) batches.createIndex('updatedAt', 'updatedAt', { unique: false });
-        var assets = db.objectStoreNames.contains(ASSET_STORE)
-          ? request.transaction.objectStore(ASSET_STORE)
-          : db.createObjectStore(ASSET_STORE, { keyPath: 'archiveAssetId' });
-        if (!assets.indexNames.contains('accountKey')) assets.createIndex('accountKey', 'accountKey', { unique: false });
-        if (!assets.indexNames.contains('archiveBatchId')) assets.createIndex('archiveBatchId', 'archiveBatchId', { unique: false });
-        if (!assets.indexNames.contains('purgeAt')) assets.createIndex('purgeAt', 'purgeAt', { unique: false });
-        if (!assets.indexNames.contains('referenceProvisionalScanKey')) {
-          assets.createIndex('referenceProvisionalScanKey', ['archiveState', 'surfaceMode', 'detailMode', 'provisionalExpiresAt', 'accountKey', 'archiveAssetId'], { unique: false });
-        }
-        if (!assets.indexNames.contains('accountReferenceProvisionalScanKey')) {
-          assets.createIndex('accountReferenceProvisionalScanKey', ['accountKey', 'archiveState', 'surfaceMode', 'detailMode', 'provisionalExpiresAt', 'archiveAssetId'], { unique: false });
-        }
-        var tombstones = db.objectStoreNames.contains(TOMBSTONE_STORE)
-          ? request.transaction.objectStore(TOMBSTONE_STORE)
-          : db.createObjectStore(TOMBSTONE_STORE, { keyPath: 'archiveAssetId' });
-        if (!tombstones.indexNames.contains('accountKey')) tombstones.createIndex('accountKey', 'accountKey', { unique: false });
-        if (!tombstones.indexNames.contains('savedAt')) tombstones.createIndex('savedAt', 'savedAt', { unique: false });
-      };
-      request.onsuccess = function () { resolve(request.result); };
-      request.onerror = function () { reject(request.error || new Error('无法打开本机图片档案')); };
-    }); });
+  function webAccountKey(id) {
+    if (root.SZ_WEB_ACCOUNT && typeof root.SZ_WEB_ACCOUNT.storageKey === 'function') {
+      return root.SZ_WEB_ACCOUNT.storageKey(id);
+    }
+    return 'user:' + String(id).replace(/[^\w@.+:-]/g, '_').slice(0, 120);
   }
 
-  function transaction(storeNames, mode, task) {
-    return openDb().then(function (db) {
+  function openDb(expectedAccountKey) {
+    return new Promise(function (resolve, reject) {
+      var request;
+      var settled = false;
+      var timer = setTimeout(function () { fail(new Error('本机图片档案打开超时，请稍后重试。')); }, STORAGE_TIMEOUT_MS);
+      function fail(error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      }
+      if (root.SZ_WEB_ACCOUNT && normalizeAccountKey(expectedAccountKey) === 'local') {
+        fail(Object.assign(new Error('图片档案账号尚未就绪，请等待工作台加载完成后重试。'), { code: 'ARCHIVE_ACCOUNT_NOT_READY' }));
+        return;
+      }
+      Promise.resolve().then(function () {
+        return root.SZ_WEB_ACCOUNT ? root.SZ_WEB_ACCOUNT.require() : null;
+      }).then(function (id) {
+        if (settled) return;
+        if (root.SZ_WEB_ACCOUNT && normalizeAccountKey(expectedAccountKey) !== webAccountKey(id)) {
+          throw new Error('登录账号已变化，请刷新工作台后继续读取原账号的图片档案。');
+        }
+        if (!root.indexedDB) throw new Error('当前环境不支持本机图片档案');
+        request = root.indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = function () {
+          if (settled) { try { request.transaction.abort(); } catch (_) {} return; }
+          var db = request.result;
+          var batches = db.objectStoreNames.contains(BATCH_STORE)
+            ? request.transaction.objectStore(BATCH_STORE)
+            : db.createObjectStore(BATCH_STORE, { keyPath: 'archiveBatchId' });
+          if (!batches.indexNames.contains('accountKey')) batches.createIndex('accountKey', 'accountKey', { unique: false });
+          if (!batches.indexNames.contains('updatedAt')) batches.createIndex('updatedAt', 'updatedAt', { unique: false });
+          var assets = db.objectStoreNames.contains(ASSET_STORE)
+            ? request.transaction.objectStore(ASSET_STORE)
+            : db.createObjectStore(ASSET_STORE, { keyPath: 'archiveAssetId' });
+          if (!assets.indexNames.contains('accountKey')) assets.createIndex('accountKey', 'accountKey', { unique: false });
+          if (!assets.indexNames.contains('archiveBatchId')) assets.createIndex('archiveBatchId', 'archiveBatchId', { unique: false });
+          if (!assets.indexNames.contains('purgeAt')) assets.createIndex('purgeAt', 'purgeAt', { unique: false });
+          if (!assets.indexNames.contains('referenceProvisionalScanKey')) {
+            assets.createIndex('referenceProvisionalScanKey', ['archiveState', 'surfaceMode', 'detailMode', 'provisionalExpiresAt', 'accountKey', 'archiveAssetId'], { unique: false });
+          }
+          if (!assets.indexNames.contains('accountReferenceProvisionalScanKey')) {
+            assets.createIndex('accountReferenceProvisionalScanKey', ['accountKey', 'archiveState', 'surfaceMode', 'detailMode', 'provisionalExpiresAt', 'archiveAssetId'], { unique: false });
+          }
+          var tombstones = db.objectStoreNames.contains(TOMBSTONE_STORE)
+            ? request.transaction.objectStore(TOMBSTONE_STORE)
+            : db.createObjectStore(TOMBSTONE_STORE, { keyPath: 'archiveAssetId' });
+          if (!tombstones.indexNames.contains('accountKey')) tombstones.createIndex('accountKey', 'accountKey', { unique: false });
+          if (!tombstones.indexNames.contains('savedAt')) tombstones.createIndex('savedAt', 'savedAt', { unique: false });
+        };
+        request.onsuccess = function () {
+          var db = request.result;
+          if (settled) { db.close(); return; }
+          settled = true;
+          clearTimeout(timer);
+          db.onversionchange = function () { db.close(); };
+          resolve(db);
+        };
+        request.onblocked = function () { fail(new Error('本机图片档案被旧工作台占用，请关闭旧页面后重试。')); };
+        request.onerror = function () { fail(request.error || new Error('无法打开本机图片档案')); };
+      }).catch(fail);
+    });
+  }
+
+  function transaction(storeNames, mode, task, accountKey) {
+    return openDb(accountKey).then(function (db) {
       return new Promise(function (resolve, reject) {
-        var tx = db.transaction(storeNames, mode);
+        var tx;
         var stores = {};
-        storeNames.forEach(function (name) { stores[name] = tx.objectStore(name); });
         var result;
-        var failed = false;
+        var settled = false;
+        var timer = setTimeout(function () { fail(new Error('本机图片档案读写超时，请稍后重试。')); }, STORAGE_TIMEOUT_MS);
         function fail(error) {
-          if (failed) return;
-          failed = true;
-          try { tx.abort(); } catch (_) {}
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (tx) { try { tx.abort(); } catch (_) {} }
+          db.close();
           reject(error || new Error('本机图片档案事务失败'));
         }
-        try { result = task(stores, fail); }
+        try {
+          tx = db.transaction(storeNames, mode);
+          tx.oncomplete = function () {
+            if (settled) return;
+            try {
+              var value = typeof result === 'function' ? result() : result;
+              settled = true;
+              clearTimeout(timer);
+              db.close();
+              resolve(value);
+            } catch (error) { fail(error); }
+          };
+          tx.onerror = function () { fail(tx.error || new Error('本机图片档案事务失败')); };
+          tx.onabort = function () { fail(tx.error || new Error('本机图片档案事务已取消')); };
+          storeNames.forEach(function (name) { stores[name] = tx.objectStore(name); });
+          result = task(stores, fail);
+        }
         catch (error) { fail(error); }
-        tx.oncomplete = function () { db.close(); if (!failed) resolve(typeof result === 'function' ? result() : result); };
-        tx.onerror = function () { db.close(); fail(tx.error || new Error('本机图片档案事务失败')); };
-        tx.onabort = function () { db.close(); if (!failed) fail(tx.error || new Error('本机图片档案事务已取消')); };
       });
     });
   }
@@ -733,6 +785,13 @@
   // limit + 1 条，返回值不含 Blob。accountKey 可省略，供后台发现注册已丢失的账号。
   function scanExpiredReferenceProvisionals(options) {
     options = options || {};
+    // Cross-account discovery is only available to the extension background.
+    // A hosted workbench always scans the current signed-in account.
+    if (root.SZ_WEB_ACCOUNT && !options.accountKey) {
+      return root.SZ_WEB_ACCOUNT.require().then(function (id) {
+        return scanExpiredReferenceProvisionals(Object.assign({}, options, { accountKey: webAccountKey(id) }));
+      });
+    }
     var accountKey = options.accountKey == null || options.accountKey === '' ? '' : normalizeAccountKey(options.accountKey);
     var now = safeInteger(options.now, 1, Number.MAX_SAFE_INTEGER, Date.now());
     var requestedLimit = Number(options.limit);
@@ -803,7 +862,7 @@
           scannedThrough: now
         };
       };
-    });
+    }, accountKey);
   }
 
   function reconcileReferenceProvisionalAuthority(rawReceipt, rawAuthority) {
@@ -903,7 +962,7 @@
       assetRequest.onsuccess = function () { asset = assetRequest.result; assetReady = true; finish(); };
       tombstoneRequest.onsuccess = function () { existingTombstone = tombstoneRequest.result; tombstoneReady = true; finish(); };
       return function () { return outcome; };
-    });
+    }, receipt.accountKey);
   }
 
   function saveProvisionalResult(raw, options) {
@@ -919,7 +978,7 @@
       assetRequest.onsuccess = function () { checked.asset = assetRequest.result; };
       tombstoneRequest.onsuccess = function () { checked.tombstone = tombstoneRequest.result; };
       return function () { return checked; };
-    }).then(function (checked) {
+    }, safe.accountKey).then(function (checked) {
       var blocked = rejectForTombstone(checked.tombstone, safe);
       if (blocked) throw blocked;
       if (!checked.asset) return null;
@@ -1017,7 +1076,7 @@
         batchRequest.onsuccess = function () { existingBatch = batchRequest.result; batchReady = true; finish(); };
         tombstoneRequest.onsuccess = function () { existingTombstone = tombstoneRequest.result; tombstoneReady = true; finish(); };
         return function () { return outcome; };
-      });
+      }, safe.accountKey);
       });
     });
   }
@@ -1066,7 +1125,7 @@
       assetRequest.onsuccess = function () { record = assetRequest.result; assetReady = true; finish(); };
       tombstoneRequest.onsuccess = function () { tombstone = tombstoneRequest.result; tombstoneReady = true; finish(); };
       return function () { return outcome; };
-    });
+    }, receipt.accountKey);
   }
 
   function commitProvisionalResult(rawReceipt) {
@@ -1125,7 +1184,7 @@
       assetRequest.onsuccess = function () { record = assetRequest.result; assetReady = true; finish(); };
       tombstoneRequest.onsuccess = function () { tombstone = tombstoneRequest.result; tombstoneReady = true; finish(); };
       return function () { return outcome; };
-    });
+    }, receipt.accountKey);
   }
 
   function saveResult(raw, options) {
@@ -1140,7 +1199,7 @@
       assetRequest.onsuccess = function () { checked.asset = assetRequest.result; };
       tombstoneRequest.onsuccess = function () { checked.tombstone = tombstoneRequest.result; };
       return function () { return checked; };
-    }).then(function (checked) {
+    }, safe.accountKey).then(function (checked) {
       var blocked = rejectForTombstone(checked.tombstone, safe);
       if (blocked) throw blocked;
       if (checked.asset) {
@@ -1244,7 +1303,7 @@
         assetRequest.onsuccess = function () { existingAsset = assetRequest.result; assetReady = true; finish(); };
         tombstoneRequest.onsuccess = function () { existingTombstone = tombstoneRequest.result; tombstoneReady = true; finish(); };
         return function () { return outcome; };
-      });
+      }, safe.accountKey);
     });
   }
 
@@ -1258,7 +1317,7 @@
       batchRequest.onerror = function () { fail(batchRequest.error || new Error('读取档案批次失败')); };
       assetRequest.onerror = function () { fail(assetRequest.error || new Error('读取档案图片失败')); };
       return function () { return output; };
-    });
+    }, accountKey);
   }
 
   function permanentlyRemove(accountKey, assetIds) {
@@ -1279,23 +1338,32 @@
         };
       });
       return function () { return { removed: removed }; };
-    }).then(function (result) {
+    }, accountKey).then(function (result) {
       return removeEmptyBatches(accountKey).then(function () { return result; });
     });
   }
 
   function removeEmptyBatches(accountKey) {
     accountKey = normalizeAccountKey(accountKey);
-    return recordsForAccount(accountKey).then(function (records) {
-      var occupied = {};
-      records.assets.forEach(function (asset) { occupied[asset.archiveBatchId] = true; });
-      var empty = records.batches.filter(function (batch) { return !occupied[batch.archiveBatchId]; });
-      if (!empty.length) return { removed: 0 };
-      return transaction([BATCH_STORE], 'readwrite', function (stores) {
-        empty.forEach(function (batch) { stores[BATCH_STORE].delete(batch.archiveBatchId); });
-        return { removed: empty.length };
-      });
-    });
+    var removed = 0;
+    // Count and delete in one transaction so another tab cannot add an asset
+    // between the emptiness check and the deletion of its batch metadata.
+    return transaction([BATCH_STORE, ASSET_STORE], 'readwrite', function (stores, fail) {
+      var request = stores[BATCH_STORE].index('accountKey').getAll(accountKey);
+      request.onerror = function () { fail(request.error || new Error('读取待清理档案批次失败')); };
+      request.onsuccess = function () {
+        (request.result || []).forEach(function (batch) {
+          var count = stores[ASSET_STORE].index('archiveBatchId').count(batch.archiveBatchId);
+          count.onerror = function () { fail(count.error || new Error('复核待清理档案批次失败')); };
+          count.onsuccess = function () {
+            if (Number(count.result) !== 0) return;
+            stores[BATCH_STORE].delete(batch.archiveBatchId);
+            removed++;
+          };
+        });
+      };
+      return function () { return { removed: removed }; };
+    }, accountKey);
   }
 
   function mutateTrash(accountKey, assetIds, deleted) {
@@ -1319,7 +1387,7 @@
         };
       });
       return function () { return { changed: changed, deleted: !!deleted, purgeAt: deleted ? now + RETENTION_MS : 0 }; };
-    });
+    }, accountKey);
   }
 
   function moveToTrash(accountKey, assetIds) { return mutateTrash(accountKey, assetIds, true); }
@@ -1338,7 +1406,7 @@
 
   function purgeAllExpired(now) {
     if (root.SZ_WEB_ACCOUNT) return root.SZ_WEB_ACCOUNT.require().then(function (id) {
-      return purgeExpired('user:' + String(id).replace(/[^\w@.+:-]/g, '_').slice(0, 120), now);
+      return purgeExpired(webAccountKey(id), now);
     });
     now = Number(now) || Date.now();
     var accountKeys = {};
@@ -1533,14 +1601,21 @@
   }
 
   function summary(accountKey) {
-    return Promise.all([list(accountKey, { trash: false }), list(accountKey, { trash: true })]).then(function (parts) {
-      var active = parts[0], trash = parts[1];
-      return {
-        activeBatches: active.length,
-        activeAssets: active.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
-        trashAssets: trash.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
-        bytes: active.concat(trash).reduce(function (sum, batch) { return sum + batch.totalBytes; }, 0)
-      };
+    accountKey = normalizeAccountKey(accountKey);
+    return purgeExpired(accountKey).then(function () {
+      return recordsForAccount(accountKey);
+    }).then(function (records) {
+      var active = projectArchiveRecords(records, { trash: false });
+      var trash = projectArchiveRecords(records, { trash: true });
+      var cleanup = active.missing.length ? permanentlyRemove(accountKey, active.missing) : Promise.resolve();
+      return cleanup.then(function () {
+        return {
+          activeBatches: active.batches.length,
+          activeAssets: active.batches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
+          trashAssets: trash.batches.reduce(function (sum, batch) { return sum + batch.assets.length; }, 0),
+          bytes: active.batches.concat(trash.batches).reduce(function (sum, batch) { return sum + batch.totalBytes; }, 0)
+        };
+      });
     });
   }
 

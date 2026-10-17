@@ -191,6 +191,14 @@ describe("GET /api/auth/me", () => {
         headers: { "x-sanjie-session": "signed-token" }
       })
     );
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    await expect(response.json()).resolves.toEqual({ error: "身份验证暂不可用", code: "AUTH_UNAVAILABLE" });
+    expect(mocks.getCreativeAccessForSession).not.toHaveBeenCalled();
+    expect(mocks.getDmpAutomationAccessForSession).not.toHaveBeenCalled();
+    // The next request must validate the account again before returning data.
+    const retry = await GET(new Request("http://localhost/api/auth/me", { headers: { "x-sanjie-session": "signed-token" } }));
+    expect(retry.status).toBe(200);
+    expect(mocks.isSessionAccountValid).toHaveBeenCalledTimes(2);
   });
 });

@@ -27,6 +27,7 @@
   let saveError = '';
   let startupFailed = false, receiptRecovery = null, bound = false;
   let taskDetailsOpen = false, taskElapsedTimer = null, analysisStartedAt = 0, lastTaskAnnouncement = '';
+  let pendingRender = null, elapsedRows = new Map(), previewReturnFocus = null;
   let deactivating = false, deactivationPromise = null;
   let moduleTab = 'official', moduleGroup = '', managingModules = false, selectedResults = new Set(), showPlan = true, briefCandidate = '';
   const displayedPlanChecks = new WeakMap();
@@ -236,8 +237,8 @@
     const binding={draft:nextDraft,scope,storageKey,legacy,legacyBackupKey:nextDraft.legacyBackupKey,controller:null,restoring:true,expectedDraftToken};
     binding.controller=engine.createController({bridge,journal:journal(scope),concurrency:100,workspaceKey:scope,withGenerationSlot,async onChange(){
       if(binding.restoring)return;
-      if(workspaceBinding===binding)render();
-      else if(retainedWorkspaces.has(binding))refreshTaskProgress();
+      if(workspaceBinding===binding)scheduleRender();
+      else if(retainedWorkspaces.has(binding))scheduleRender(false);
       await persist({fromController:true,source:binding});
     }});
     return binding;
@@ -358,10 +359,11 @@
     const owner=source||workspaceBinding;
     if (startupFailed || !owner?.draft || owner.restoring || owner===workspaceBinding&&restoring) return;
     if(fromController&&(owner===workspaceBinding?saveFault:owner.saveFault))throw new Error(owner.saveError || saveError || '本机草稿尚未保存，请稍后重试。');
-    if(fromController){const key=owner.controller.snapshot().accountKey;if(key&&key!==account)throw new Error('任务所属账号与草稿不一致，已停止保存。');}
-    else await ensureAccount();
+    if(!fromController)await ensureAccount();
     if(startupFailed)return;
-    const value={draft:clone(owner.draft),snapshot:owner.controller.snapshot(),savedAt:new Date().toISOString()};
+    const snapshot=owner.controller.snapshot();
+    if(fromController&&snapshot.accountKey&&snapshot.accountKey!==account)throw new Error('任务所属账号与草稿不一致，已停止保存。');
+    const value={draft:clone(owner.draft),snapshot,savedAt:new Date().toISOString()};
     if(owner.legacyBackupKey)value.draft.legacyBackupKey=owner.legacyBackupKey;
     saveQueue=saveQueue.catch(()=>{}).then(async()=>{
       if(startupFailed)return;
@@ -706,19 +708,31 @@
     if(!element)return;
     element.innerHTML=taskProgressMarkup();syncTaskProgress();
   }
+  function stopTaskElapsedTimer() {
+    if(!taskElapsedTimer)return;
+    if(typeof window.clearInterval==='function')window.clearInterval(taskElapsedTimer.id);
+    taskElapsedTimer=null;
+  }
+  function updateTaskElapsed() {
+    if(document.visibilityState==='hidden')return;
+    const now=Date.now();
+    root?.querySelectorAll('[data-task-elapsed]').forEach(element=>{
+      const row=elapsedRows.get(element.dataset.taskElapsed);
+      if(row){const text=elapsedText(row,now);if(element.textContent!==text)element.textContent=text;}
+    });
+  }
   function syncTaskProgress() {
     const state=getTaskState();
+    elapsedRows=new Map(state.rows.map(row=>[row.key,row]));
     // Keep the live region outside the replaced workspace. Time ticks only
     // update elapsed text, so assistive technology hears actual state changes.
     let announcer=document.getElementById('sgTaskAnnouncement');
     if(!announcer){announcer=document.createElement('div');announcer.id='sgTaskAnnouncement';announcer.className='sg-visually-hidden';announcer.innerHTML='<span role="status" aria-live="polite" aria-atomic="true"></span>';document.body.appendChild(announcer);}
     const signature=JSON.stringify([state.summary,state.rows.map(row=>[row.key,row.status])]);
     if(signature!==lastTaskAnnouncement){lastTaskAnnouncement=signature;announcer.querySelector('span').textContent=state.rows.length||state.busy?state.summary:'';}
-    const ticking=state.rows.some(row=>row.createdAt>0&&['queued','generating','analyzing','saving','uncertain'].includes(row.status));
-    if(ticking&&!taskElapsedTimer){taskElapsedTimer={id:setInterval(()=>{
-      const rows=taskRows();root?.querySelectorAll('[data-task-elapsed]').forEach(element=>{const row=rows.find(value=>value.key===element.dataset.taskElapsed);if(row)element.textContent=elapsedText(row);});
-    },1000)};}
-    else if(!ticking&&taskElapsedTimer){if(typeof clearInterval==='function')clearInterval(taskElapsedTimer.id);taskElapsedTimer=null;}
+    const ticking=document.visibilityState!=='hidden'&&state.rows.some(row=>row.createdAt>0&&['queued','generating','analyzing','saving','uncertain'].includes(row.status));
+    if(ticking&&!taskElapsedTimer)taskElapsedTimer={id:setInterval(updateTaskElapsed,1000)};
+    else if(!ticking)stopTaskElapsedTimer();
   }
   function historicalSlotError(slot) {
     const original=slot.error, stored=original&&typeof original==='object'&&!Array.isArray(original)?original:null;
@@ -771,7 +785,7 @@
       const image=slot.item&&slot.item.url;
       const taskId=slot.taskId||slot.item?.studioTaskId;
       const liveLabel=slot.status==='queued'?'等待中':slot.status==='generating'?'生成中':slot.status==='failed'?'生成失败':'';
-      return `<article class="sg-result${slot.status==='failed'?' sg-failed':''}">${image?`<label class="sg-result-select"><input type="checkbox" aria-label="选择${esc(slot.shot&&slot.shot.label||'结果图片')}" data-result-select="${esc(slot.item.resultId)}"${selectedResults.has(slot.item.resultId)?' checked':''}></label><img loading="lazy" decoding="async" src="${esc(image)}" alt="${esc(slot.shot&&slot.shot.label||'生成图片')}" data-preview="${esc(slot.item.resultId)}">`:''}<div><h3>${esc(slot.taskName||'')} ${esc(slot.shot&&slot.shot.label||'')}${slot.previous?' · 历史版本':''}</h3>${liveLabel?`<p>${liveLabel}</p>`:''}${slot.error?`<p>${esc(historicalSlotError(slot))}</p>`:''}${image?`<p>${slot.archiveSaving?'已生成，正在保存原件':slot.archiveOk?'已存入本机历史':'原件待补存'}</p><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="download" data-result="${esc(slot.item.resultId)}">下载</button><button type="button" class="sg-button sg-small" data-action="edit-result" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>编辑图片</button>${!slot.archiveOk?`<button type="button" class="sg-button sg-small" data-action="archive" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>补存原件</button>`:''}</div>`:''}${!slot.previous&&taskId&&!pendingImage(taskId,slot.shot.id)&&['done','failed'].includes(slot.status)?`<button type="button" class="sg-text-button" data-action="retry-slot" data-task-id="${esc(taskId)}" data-shot-id="${esc(slot.shot.id)}"${generationLocked()||!modelInfo.ready?' disabled':''}>${slot.status==='done'?'重新生成此图':'重试此图'}</button>`:''}</div></article>`;
+      return `<article class="sg-result${slot.status==='failed'?' sg-failed':''}">${image?`<label class="sg-result-select"><input type="checkbox" aria-label="选择${esc(slot.shot&&slot.shot.label||'结果图片')}" data-result-select="${esc(slot.item.resultId)}"${selectedResults.has(slot.item.resultId)?' checked':''}></label><img loading="lazy" decoding="async" src="${esc(image)}" alt="${esc(slot.shot&&slot.shot.label||'生成图片')}" data-preview="${esc(slot.item.resultId)}" role="button" tabindex="0" aria-label="预览${esc(slot.shot&&slot.shot.label||'生成图片')}">`:''}<div><h3>${esc(slot.taskName||'')} ${esc(slot.shot&&slot.shot.label||'')}${slot.previous?' · 历史版本':''}</h3>${liveLabel?`<p>${liveLabel}</p>`:''}${slot.error?`<p>${esc(historicalSlotError(slot))}</p>`:''}${image?`<p>${slot.archiveSaving?'已生成，正在保存原件':slot.archiveOk?'已存入本机历史':'原件待补存'}</p><div class="sg-actions"><button type="button" class="sg-button sg-small" data-action="download" data-result="${esc(slot.item.resultId)}">下载</button><button type="button" class="sg-button sg-small" data-action="edit-result" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>编辑图片</button>${!slot.archiveOk?`<button type="button" class="sg-button sg-small" data-action="archive" data-result="${esc(slot.item.resultId)}"${locked()?' disabled':''}>补存原件</button>`:''}</div>`:''}${!slot.previous&&taskId&&!pendingImage(taskId,slot.shot.id)&&['done','failed'].includes(slot.status)?`<button type="button" class="sg-text-button" data-action="retry-slot" data-task-id="${esc(taskId)}" data-shot-id="${esc(slot.shot.id)}"${generationLocked()||!modelInfo.ready?' disabled':''}>${slot.status==='done'?'重新生成此图':'重试此图'}</button>`:''}</div></article>`;
     }).join('')}</div>${pageControls('result-page',page,results.length,resultPageSize,scope)}`;
   }
   function runSummary() {
@@ -841,7 +855,6 @@
       if(!result||result.ok!==true)throw new Error(result&&result.error||'生成结果暂时无法同步，请稍后重试。');
       await ensureAccount();
       if(before!==JSON.stringify(controller.snapshot()))await persist();
-      render();
     })();
     try { await receiptRecovery; } catch(error) { modelInfo={};throw error; } finally { receiptRecovery=null;if(!startupFailed)render(); }
   }
@@ -870,12 +883,38 @@
       <button type="button" class="sg-button sg-add" data-action="add-task"${locked()||draft.tasks.length>=30?' disabled':''}>${icon('plus')}新建商品任务</button>
       <footer class="sg-footer"><div><strong>${draft.tasks.length} 项商品任务 · ${total} 张图片</strong><p>生成费用由所配置服务商计收</p></div><div class="sg-actions"><button type="button" class="sg-button" data-action="plan"${locked()?' disabled':''}>整理全部方案</button>${generateActions()}</div></footer>${runSummary()}</div>`;
   }
+  // Concurrent receipts can update many slots before the next paint. Keep every
+  // controller save awaited, but build the visible workspace once per frame.
+  function scheduleRender(full=true) {
+    if(startupFailed||!draft)return;
+    // Hidden frames may not paint. Account/config guards must still observe the
+    // latest busy state before an already queued animation frame can run.
+    bridge.setApiBusy('studio-genesis',locked());
+    if(pendingRender){pendingRender.full=pendingRender.full||full;return;}
+    const pending={full,id:null,cancel:null};pendingRender=pending;
+    const paint=()=>{
+      if(pendingRender!==pending)return;
+      pendingRender=null;
+      if(pending.full)render();else refreshTaskProgress();
+    };
+    if(typeof window.requestAnimationFrame==='function'){
+      pending.cancel=id=>window.cancelAnimationFrame?.(id);
+      pending.id=window.requestAnimationFrame(paint);
+    } else {pending.cancel=clearTimeout;pending.id=setTimeout(paint,16);}
+  }
   function render() {
+    if(pendingRender){pendingRender.cancel(pendingRender.id);pendingRender=null;}
     if(startupFailed||!draft)return;
     document.documentElement?.classList.toggle('sg-replica',true);
     root.innerHTML=legacyBanner()+(isBatch?renderBatch():renderSingle());renderMessage();syncTaskProgress();
     bridge.setApiBusy('studio-genesis',locked());
     renderCredits();
+  }
+  function syncResultSelection() {
+    root.querySelectorAll('[data-result-select]').forEach(input=>{input.checked=selectedResults.has(input.dataset.resultSelect);});
+    root.querySelectorAll('[data-action="download-selected"]').forEach(button=>{
+      button.disabled=!selectedResults.size;button.textContent=`下载已选 (${selectedResults.size})`;
+    });
   }
   function renderCredits() {
     const hints=window.SZCreativeCreditHints;if(!hints||!root||!draft||!bridge)return;
@@ -1101,7 +1140,7 @@
     if(name==='new-project') { await newProject();return; }
     if(name==='restore-project') { await restoreProject();return; }
     if(name==='restore-retained') { const key=button.dataset.projectKey;if(![...retainedWorkspaces].some(binding=>binding.storageKey===key))throw new Error('历史项目暂不可读取，请查看生成记录。');await restoreProject(key);return; }
-    if(name==='select-results') { const ids=allSlots().filter(slot=>slot.item).map(slot=>slot.item.resultId);selectedResults=ids.every(value=>selectedResults.has(value))?new Set():new Set(ids);render();return; }
+    if(name==='select-results') { const ids=allSlots().filter(slot=>slot.item).map(slot=>slot.item.resultId);selectedResults=ids.every(value=>selectedResults.has(value))?new Set():new Set(ids);syncResultSelection();return; }
     if(name==='download-selected') { for(const resultId of selectedResults)await download(resultId);return; }
     if(name==='edit-result') { const slot=allSlots().find(item=>item.item?.resultId===button.dataset.result);if(slot){const result=await bridge.openResultAction('edit',slot.item);if(result?.ok===false)throw new Error(result.error);}return; }
     if(name==='retry-slot') { draft.viewStep=3;busy=true;render();try{await persist();const result=await controller.retrySlot(button.dataset.taskId,button.dataset.shotId,draft.tasks,draft.settings);if(!result||result.ok===false)throw new Error(result&&typeof result.error==='string'&&result.error.trim()?result.error:'本次图片重试未完成，请查看此图结果。');}finally{busy=false;draft.viewStep=completedStep();try{await persist();}finally{render();}}return; }
@@ -1132,13 +1171,13 @@
     else if(name==='archive') { await controller.retryArchive(button.dataset.result);await persist();render(); }
     else if(name==='download')await download(button.dataset.result);
     else if(name==='download-all') { for(const slot of allSlots().filter(item=>item.item))await download(slot.item.resultId); }
-    else if(name==='close-preview') { document.getElementById('sgPreview').hidden=true; }
+    else if(name==='close-preview')closeModal(document.getElementById('sgPreview'));
   }
   function change(event) {
     const element=event.target;
     if(locked())return;
     if(element.hasAttribute('data-module-group')) { moduleGroup=element.value;render();return; }
-    if(element.hasAttribute('data-result-select')) { if(element.checked)selectedResults.add(element.dataset.resultSelect);else selectedResults.delete(element.dataset.resultSelect);render();return; }
+    if(element.hasAttribute('data-result-select')) { if(element.checked)selectedResults.add(element.dataset.resultSelect);else selectedResults.delete(element.dataset.resultSelect);syncResultSelection();return; }
     if(element.hasAttribute('data-module')||element.hasAttribute('data-module-all')) {
       const config=targetConfig(element.dataset.target), available=availableModules(config);
       let selected=(config.modules||[]).slice();
@@ -1163,18 +1202,34 @@
       const generate=root.querySelector('[data-action=generate]');if(generate)generate.disabled=true;root.querySelectorAll('[data-confirm]').forEach(control=>{control.checked=false;});
     } else if(element.dataset.confirm) { draft.tasks.find(item=>item.id===element.dataset.confirm).confirmed=element.checked;render();scheduleSave(); }
   }
-  function preview(resultId) {
+  function preview(resultId,trigger) {
     const slot=allSlots().find(item=>item.item&&item.item.resultId===resultId);if(!slot)return;
-    openPreview(slot.item.url,slot.shot&&slot.shot.label||'生成图片','生成图片原件');
+    openPreview(slot.item.url,slot.shot&&slot.shot.label||'生成图片','生成图片原件',trigger);
   }
   function productPreview(element) {
     const entry=draft.tasks.find(item=>item.id===element.dataset.productPreview),asset=entry&&entry.products[Number(element.dataset.index)];
-    if(asset)openPreview(asset.image,asset.name||'产品图','产品图原件');
+    if(asset)openPreview(asset.image,asset.name||'产品图','产品图原件',element);
   }
-  function openPreview(image,title,alt) {
+  function openPreview(image,title,alt,trigger) {
     let modal=document.getElementById('sgPreview');
-    if(!modal){modal=document.createElement('div');modal.id='sgPreview';modal.className='sg-modal';document.body.appendChild(modal);modal.addEventListener('click',event=>{if(event.target===modal||event.target.closest('[data-action=close-preview]'))modal.hidden=true;});}
+    if(!modal){modal=document.createElement('div');modal.id='sgPreview';modal.className='sg-modal';document.body.appendChild(modal);modal.addEventListener('click',event=>{if(event.target===modal||event.target.closest('[data-action=close-preview]'))closeModal(modal);});}
+    previewReturnFocus=trigger||document.activeElement;
     modal.innerHTML=`<div class="sg-modal-content" role="dialog" aria-modal="true" aria-label="${esc(title)}预览"><div class="sg-card-head"><h2>${esc(title)}</h2><button type="button" class="sg-button" data-action="close-preview">关闭</button></div><img src="${esc(image)}" alt="${esc(alt)}"></div>`;modal.hidden=false;modal.querySelector('button').focus();
+  }
+  function closeModal(modal) {
+    if(!modal)return;
+    modal.hidden=true;
+    if(modal.id==='sgPreview'){
+      modal.innerHTML='';
+      const origin=previewReturnFocus;previewReturnFocus=null;
+      if(origin){
+        const candidates=Array.from(root.querySelectorAll('[data-preview],[data-product-preview]'));
+        // A receipt may repaint the workspace while this modal is open. Resolve
+        // the same result/product in the new DOM instead of focusing a detached node.
+        const target=candidates.find(element=>element===origin)||candidates.find(element=>origin.dataset.preview?element.dataset.preview===origin.dataset.preview:element.dataset.productPreview===origin.dataset.productPreview&&element.dataset.index===origin.dataset.index);
+        target?.focus({preventScroll:true});
+      }
+    }
   }
   function bind() {
     if(bound)return;
@@ -1191,7 +1246,7 @@
     root.addEventListener('toggle',event=>{if(event.target.matches('[data-task-progress]'))taskDetailsOpen=event.target.open;},true);
     root.addEventListener('click',event=>{
       const button=event.target.closest('[data-action]');if(button)action(button).catch(showError);
-      const image=event.target.closest('[data-preview]');if(image)preview(image.dataset.preview);
+      const image=event.target.closest('[data-preview]');if(image)preview(image.dataset.preview,image);
       const product=event.target.closest('[data-product-preview]');if(product)productPreview(product);
     });
     root.addEventListener('input',event=>{if(event.target.type!=='checkbox')change(event);});
@@ -1209,9 +1264,9 @@
     root.addEventListener('dragleave',event=>{const drop=event.target.closest('[data-drop]');if(drop)drop.classList.remove('is-dragging');});
     root.addEventListener('drop',event=>{const drop=event.target.closest('[data-drop]');if(drop){event.preventDefault();drop.classList.remove('is-dragging');upload(drop.dataset.drop,Array.from(event.dataTransfer.files||[])).catch(showError);}});
     root.addEventListener('paste',event=>{if(event.defaultPrevented)return;const files=Array.from(event.clipboardData&&event.clipboardData.items||[]).filter(item=>item.type.startsWith('image/')).map(item=>item.getAsFile()).filter(Boolean);if(!files.length)return;const block=event.target.closest('[data-task],[data-drop]');const id=block&&(block.dataset.task||block.dataset.drop)||(!isBatch&&draft.tasks[0].id);if(!id){showError(new Error('请先选中要添加产品图的商品任务。'));return;}event.preventDefault();upload(id,files).catch(showError);});
-    document.addEventListener('keydown',event=>{if(event.defaultPrevented)return;const modal=[document.getElementById('sgDialog'),document.getElementById('sgPreview')].find(value=>value&&!value.hidden);if(event.key==='Escape'&&modal){event.preventDefault();event.stopImmediatePropagation();modal.hidden=true;}if((event.key==='Enter'||event.key===' ')&&event.target.matches('[data-product-preview]')){event.preventDefault();productPreview(event.target);}});
+    document.addEventListener('keydown',event=>{if(event.defaultPrevented)return;const modal=[document.getElementById('sgDialog'),document.getElementById('sgPreview')].find(value=>value&&!value.hidden);if(event.key==='Escape'&&modal){event.preventDefault();event.stopImmediatePropagation();closeModal(modal);}if((event.key==='Enter'||event.key===' ')&&event.target.matches('[data-product-preview],[data-preview]')){event.preventDefault();if(event.target.hasAttribute('data-preview'))preview(event.target.dataset.preview,event.target);else productPreview(event.target);}});
     window.addEventListener('beforeunload',event=>{if(unloadLocked()||!startupFailed&&(deactivating||saveFault)){event.preventDefault();event.returnValue='任务尚未结束或草稿尚未保存';}if(!startupFailed)persist().catch(()=>{});});
-    document.addEventListener('visibilitychange',()=>{if(startupFailed)return;if(document.visibilityState==='hidden')persist().catch(()=>{});else if(!locked())refreshReceipts().then(()=>bridge.refresh()).then(refreshModels).then(()=>{render();}).catch(showError);});
+    document.addEventListener('visibilitychange',()=>{if(startupFailed)return;if(document.visibilityState==='hidden'){stopTaskElapsedTimer();persist().catch(()=>{});}else{syncTaskProgress();if(!locked())refreshReceipts().then(()=>bridge.refresh()).then(refreshModels).then(()=>{render();}).catch(showError);}});
     window.addEventListener('focus',()=>{refreshReceipts().catch(showError);});
     window.addEventListener('storage',event=>{if(event.key?.startsWith(`sz_studio_genesis_pending_`))refreshReceipts().catch(showError);});
     // Returning from the existing API dialog refreshes the bound account configuration.

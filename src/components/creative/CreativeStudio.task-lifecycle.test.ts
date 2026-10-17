@@ -58,7 +58,7 @@ function taskBridge() {
       pendingReceiptCount: state.pendingReceiptCount, summary: state.busy ? "1 个任务进行中" : "请求回执待确认" })) };
 }
 
-function harness(initial: Props = { kind: "image", initialSurface: "mirror" }) {
+function harness(initial: Props = { kind: "image", initialSurface: "mirror" }, initialVisibility: "visible" | "hidden" = "visible") {
   const slots: HookSlot[] = [];
   const frames = new Map<string, Frame>();
   const frameRefs = new Map<string, (frame: Frame | null) => void>();
@@ -82,6 +82,7 @@ function harness(initial: Props = { kind: "image", initialSurface: "mirror" }) {
     removeEventListener: (name: string) => windowEvents.delete(name)
   };
   const browserDocument = {
+    visibilityState: initialVisibility,
     addEventListener: (name: string, callback: (event: unknown) => void) => documentEvents.set(name, callback),
     removeEventListener: (name: string) => documentEvents.delete(name)
   };
@@ -216,6 +217,8 @@ function harness(initial: Props = { kind: "image", initialSurface: "mirror" }) {
   render();
   return { frames, defaults, studioDefaults, toolsDefaults, promptDefaults, bridges, router, render, flush, click, button, selected, alert, status, unmount,
     text: () => text(tree),
+    breadcrumb: () => nodes("div").filter(node => node.props.className === "breadcrumb").map(node => text(node.props.children as RenderValue)).join(""),
+    visibility: (state: "visible" | "hidden") => { browserDocument.visibilityState = state; documentEvents.get("visibilitychange")?.({}); },
     tick: () => { for (const callback of intervals.values()) callback(); }, intervals, windowEvents, documentEvents,
     updatesAfterUnmount: () => updatesAfterUnmount };
 }
@@ -334,6 +337,72 @@ describe("CreativeStudio cached legacy task navigation", () => {
     task.state.pendingReceiptCount = 0;
     h.tick(); await h.flush(); expect(h.status()).toBe("");
     h.unmount();
+  });
+
+  it("identifies main and detail separately in the breadcrumb while preserving both workspaces", async () => {
+    const h = harness({ kind: "image", initialSurface: "main" });
+    const original = h.frames.get("main")!;original.draft = "主图商品方案";
+    expect(h.breadcrumb()).toBe("创作工作台主图");
+    h.click("详情");await h.flush();
+    expect(h.breadcrumb()).toBe("创作工作台详情");
+    expect(h.frames.get("main")).toBe(original);
+    expect(original.draft).toBe("主图商品方案");
+    h.click("主图");await h.flush();
+    expect(h.breadcrumb()).toBe("创作工作台主图");
+    expect(h.frames.has("detail")).toBe(true);
+    h.unmount();
+  });
+
+  it("suspends hidden task polling, keeps unload protection live, and resumes one fresh poller", async () => {
+    const h = harness({ kind: "image", initialSurface: "main" }), task = h.studioDefaults.get("main")!;
+    await h.flush();task.getTaskState.mockClear();
+    expect(h.intervals.size).toBe(1);
+    const previousTick = [...h.intervals.values()][0];
+    h.visibility("hidden");task.state.busy = true;
+    expect(h.intervals.size).toBe(0);
+    previousTick();h.tick();await h.flush();
+    expect(task.getTaskState).not.toHaveBeenCalled();
+    const unload = { preventDefault: vi.fn(), returnValue: undefined };
+    h.windowEvents.get("beforeunload")!(unload);
+    expect(unload.preventDefault).toHaveBeenCalledOnce();
+    expect(unload.returnValue).toBe("");
+    const navigation = { button: 0, target: { closest: () => ({ href: "https://offline.test/profile", target: "", hasAttribute: () => false }) },
+      preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    h.documentEvents.get("click")!(navigation);await h.flush();
+    expect(navigation.preventDefault).toHaveBeenCalledOnce();
+    task.state.busy = false;task.state.pendingReceiptCount = 2;task.getTaskState.mockClear();
+    h.visibility("visible");
+    expect(task.getTaskState).toHaveBeenCalledOnce();
+    expect(h.intervals.size).toBe(1);
+    await h.flush();
+    expect(h.text()).toContain("执行中 0 · 回执待确认 2");
+    h.visibility("visible");h.visibility("visible");
+    expect(task.getTaskState).toHaveBeenCalledOnce();
+    expect(h.intervals.size).toBe(1);
+    h.visibility("hidden");expect(h.intervals.size).toBe(0);
+    h.visibility("visible");expect(h.intervals.size).toBe(1);
+    const resumedTick = [...h.intervals.values()][0], visibilityListener = h.documentEvents.get("visibilitychange")!;
+    task.getTaskState.mockClear();h.unmount();
+    previousTick();resumedTick();visibilityListener({});
+    expect(task.getTaskState).not.toHaveBeenCalled();
+    expect(h.updatesAfterUnmount()).toBe(0);
+    expect(h.intervals.size).toBe(0);expect(h.windowEvents.size).toBe(0);expect(h.documentEvents.size).toBe(0);
+  });
+
+  it("does not start background polling when mounted hidden and reads immediately on visibility return", async () => {
+    const h = harness({ kind: "image", initialSurface: "mirror" }, "hidden"), task = h.promptDefaults.get("mirror")!;
+    await h.flush();
+    expect(h.intervals.size).toBe(0);
+    expect(task.getTaskState).not.toHaveBeenCalled();
+    expect(h.windowEvents.has("beforeunload")).toBe(true);
+    expect(h.documentEvents.has("click")).toBe(true);
+    task.state.pendingReceiptCount = 1;
+    h.visibility("visible");
+    expect(task.getTaskState).toHaveBeenCalledOnce();
+    expect(h.intervals.size).toBe(1);
+    await h.flush();expect(h.text()).toContain("执行中 0 · 回执待确认 1");
+    h.unmount();
+    expect(h.intervals.size).toBe(0);expect(h.documentEvents.size).toBe(0);
   });
 
   it("protects actual unloading of hidden studio callbacks but allows leaving once local execution ends", async () => {
